@@ -63,7 +63,6 @@ export type SkillCliErrorCode =
   | "SPAWN_FAILED"
   | "CANCELLED"
   | "CLEANUP_FAILED"
-  | "PROTOCOL_MISMATCH"
   | "TRANSACTION_CONFLICT"
   | "INTERNAL";
 export class SkillCliError extends Error {
@@ -638,20 +637,26 @@ export interface ConfigSourceImpact {
   readonly blockers: readonly ImpactBlocker[];
   readonly allowed: boolean;
 }
-export interface ListCatalogRequest {}
+export interface ListCatalogRequest {
+  readonly collection?: string;
+}
 export interface AgentCatalogEntry {
   readonly selector: string;
   readonly name: string;
   readonly description: string;
-  readonly loadingOwner: "skill-cli";
   readonly aliases: readonly string[];
-  readonly provenance: SkillProvenance;
+}
+export interface AgentCatalogReference {
+  readonly name: string;
+  readonly description: string;
+  readonly collection: string;
 }
 export interface AgentProjection {
   readonly status: "available" | "unavailable";
   readonly reason?: string;
   readonly mode?: "managed";
   readonly catalog: readonly AgentCatalogEntry[];
+  readonly references?: readonly AgentCatalogReference[];
 }
 export interface SearchSkillsRequest {
   readonly query: string;
@@ -662,7 +667,6 @@ export interface SearchSkillResult {
   readonly selector: string;
   readonly name: string;
   readonly description: string;
-  readonly provenance: SkillProvenance;
 }
 export interface SearchSkillsResult {
   readonly query: string;

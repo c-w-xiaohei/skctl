@@ -4,17 +4,13 @@ import { isAbsolute, join, resolve, win32 } from "node:path";
 
 export interface CatalogEntry {
   readonly selector: string;
-  readonly aliases: readonly string[];
   readonly name: string;
   readonly description: string;
-  readonly loadingOwner: "skill-cli";
-  readonly provenance: {
-    readonly source: string;
-    readonly origin: "local" | "git";
-    readonly declaration: { readonly layer: string };
-    readonly stability: "mutable-local" | "immutable";
-    readonly revision?: string;
-  };
+}
+export interface CatalogReference {
+  readonly name: string;
+  readonly description: string;
+  readonly collection: string;
 }
 
 export interface ChildProcess {
@@ -273,164 +269,61 @@ function validEntry(value: unknown): value is CatalogEntry {
   if (
     !isObject(value) ||
     !validSelector(value.selector) ||
-    !Array.isArray(value.aliases) ||
-    !value.aliases.every(validSelector) ||
     !validText(value.name) ||
-    !validText(value.description) ||
-    value.loadingOwner !== "skill-cli"
+    !validText(value.description)
   )
     return false;
-  const provenance = value.provenance;
-  const validProvenance =
-    isObject(provenance) &&
-    hasExactKeys(
-      provenance,
-      provenance.origin === "git"
-        ? ["declaration", "origin", "revision", "source", "stability"]
-        : ["declaration", "origin", "source", "stability"],
-    ) &&
-    validName(provenance.source, true) &&
-    isObject(provenance.declaration) &&
-    hasExactKeys(provenance.declaration, ["layer"]) &&
-    validName(provenance.declaration.layer, true) &&
-    ((provenance.origin === "local" &&
-      provenance.stability === "mutable-local" &&
-      provenance.revision === undefined) ||
-      (provenance.origin === "git" &&
-        provenance.stability === "immutable" &&
-        validText(provenance.revision)));
+  return hasExactKeys(value, ["description", "name", "selector"]);
+}
+function validReference(value: unknown): value is CatalogReference {
   return (
-    hasExactKeys(value, [
-      "aliases",
-      "description",
-      "loadingOwner",
-      "name",
-      "provenance",
-      "selector",
-    ]) && validProvenance
+    isObject(value) &&
+    validText(value.name) &&
+    validText(value.description) &&
+    validText(value.collection) &&
+    hasExactKeys(value, ["collection", "description", "name"])
   );
 }
 
-function sortedDistinctAliases(entry: CatalogEntry): boolean {
-  let previous = entry.selector;
-  for (const alias of entry.aliases) {
-    if (alias <= previous) return false;
-    previous = alias;
-  }
-  return true;
-}
-
-function validDiagnostic(value: unknown): boolean {
-  if (!isObject(value) || !validText(value.code) || !validText(value.message)) return false;
-  if (value.severity !== "info" && value.severity !== "warning") return false;
-  if (value.location !== undefined) {
-    if (!isObject(value.location) || !validText(value.location.file)) return false;
-    if (value.location.pointer !== undefined && !validText(value.location.pointer)) return false;
-    if (
-      !hasExactKeys(
-        value.location,
-        value.location.pointer === undefined ? ["file"] : ["file", "pointer"],
-      )
-    )
-      return false;
-  }
-  if (value.related !== undefined) {
-    if (!Array.isArray(value.related)) return false;
-    for (const related of value.related) {
-      if (!isObject(related) || !validText(related.message)) return false;
-      if (related.file !== undefined && !validText(related.file)) return false;
-      if (related.pointer !== undefined && !validText(related.pointer)) return false;
-      const keys = [
-        "message",
-        ...(related.file === undefined ? [] : ["file"]),
-        ...(related.pointer === undefined ? [] : ["pointer"]),
-      ].sort();
-      if (!hasExactKeys(related, keys)) return false;
-    }
-  }
-  if (value.suggestion !== undefined && !validText(value.suggestion)) return false;
-  const keys = [
-    "code",
-    "message",
-    "severity",
-    ...(value.location === undefined ? [] : ["location"]),
-    ...(value.related === undefined ? [] : ["related"]),
-    ...(value.suggestion === undefined ? [] : ["suggestion"]),
-  ].sort();
-  return hasExactKeys(value, keys);
-}
-
 type CatalogEnvelope =
-  | { readonly type: "success"; readonly entries: readonly CatalogEntry[] }
+  | {
+      readonly type: "success";
+      readonly entries: readonly CatalogEntry[];
+      readonly references: readonly CatalogReference[];
+    }
   | { readonly type: "unavailable" }
   | { readonly type: "error" };
 
-function parseCatalog(
-  stdout: Uint8Array,
-  hostVersion: string,
-  status: number | null,
-): CatalogEnvelope {
+function parseCatalog(stdout: Uint8Array, status: number | null): CatalogEnvelope {
   let value: unknown;
   try {
     value = JSON.parse(text(stdout));
   } catch {
     throw new AdapterProcessError("PROTOCOL");
   }
-  if (isObject(value) && value.protocolVersion === 1 && value.operation === "list") {
-    if (
-      value.type === "unavailable" &&
-      isObject(value.unavailable) &&
-      hasExactKeys(value, ["operation", "protocolVersion", "type", "unavailable"]) &&
-      hasExactKeys(value.unavailable, ["reason"]) &&
-      validText(value.unavailable.reason) &&
-      status === 0
-    )
-      return { type: "unavailable" };
-    if (
-      value.type === "error" &&
-      isObject(value.error) &&
-      hasExactKeys(value, ["error", "operation", "protocolVersion", "type"]) &&
-      hasExactKeys(value.error, ["code", "diagnostics", "message"]) &&
-      validText(value.error.code) &&
-      validText(value.error.message) &&
-      Array.isArray(value.error.diagnostics) &&
-      value.error.diagnostics.every(validDiagnostic) &&
-      status === 1
-    )
-      return { type: "error" };
-  }
+  if (
+    isObject(value) &&
+    hasExactKeys(value, ["unavailable"]) &&
+    value.unavailable === true &&
+    status === 0
+  )
+    return { type: "unavailable" };
   if (
     !isObject(value) ||
-    !hasExactKeys(value, ["ok", "operation", "protocolVersion", "result"]) ||
-    value.protocolVersion !== 1 ||
-    value.ok !== true ||
-    value.operation !== "list" ||
-    !isObject(value.result) ||
-    !hasExactKeys(value.result, ["agent", "entries", "mode"]) ||
-    !isObject(value.result.agent) ||
-    !hasExactKeys(value.result.agent, ["id", "version"]) ||
-    value.result.agent.id !== "opencode" ||
-    value.result.agent.version !== hostVersion ||
-    value.result.mode !== "managed" ||
-    !Array.isArray(value.result.entries) ||
-    !value.result.entries.every(validEntry) ||
+    !hasExactKeys(value, ["references", "skills"]) ||
+    !Array.isArray(value.skills) ||
+    !value.skills.every(validEntry) ||
+    !Array.isArray(value.references) ||
+    !value.references.every(validReference) ||
     status !== 0
   )
     throw new AdapterProcessError("PROTOCOL");
   const selectors = new Set<string>();
-  const identities = new Set<string>();
-  for (const entry of value.result.entries) {
-    if (!sortedDistinctAliases(entry)) throw new AdapterProcessError("PROTOCOL");
-    for (const selector of [entry.selector, ...entry.aliases]) {
-      if (selectors.has(selector)) throw new AdapterProcessError("PROTOCOL");
-      selectors.add(selector);
-    }
-    const { provenance } = entry;
-    const identity = `${provenance.source}\0${entry.name}\0${provenance.origin}\0${provenance.revision ?? ""}`;
-    if (identities.has(identity)) throw new AdapterProcessError("PROTOCOL");
-    identities.add(identity);
+  for (const entry of value.skills) {
+    if (selectors.has(entry.selector)) throw new AdapterProcessError("PROTOCOL");
+    selectors.add(entry.selector);
   }
-  return { type: "success", entries: value.result.entries };
+  return { type: "success", entries: value.skills, references: value.references };
 }
 
 const diagnosticLimit = 4096;
@@ -525,34 +418,33 @@ export function createProcessClient(options: ProcessClientOptions = {}) {
   }
 
   return {
-    async list(cwd: string): Promise<readonly CatalogEntry[]> {
+    async list(cwd: string): Promise<{
+      readonly entries: readonly CatalogEntry[];
+      readonly references: readonly CatalogReference[];
+    }> {
       const executable = await skillCli;
       if (!executable) throw new AdapterProcessError("SKILL_CLI_NOT_FOUND");
       const detectedVersion = await version();
-      const result = await execute(
-        runner,
-        [executable, "agent", "list", "--json", "--protocol", "1"],
-        {
-          cwd,
-          env: {
-            ...env,
-            SKILL_CLI_AGENT: "opencode",
-            SKILL_CLI_AGENT_VERSION: detectedVersion,
-            NO_COLOR: "1",
-            GIT_TERMINAL_PROMPT: "0",
-          },
-          timeoutMs,
-          stdoutLimit,
-          stderrLimit,
-          terminationGraceMs,
-          cleanupTimeoutMs,
+      const result = await execute(runner, [executable, "agent", "list"], {
+        cwd,
+        env: {
+          ...env,
+          SKILL_CLI_AGENT: "opencode",
+          SKILL_CLI_AGENT_VERSION: detectedVersion,
+          NO_COLOR: "1",
+          GIT_TERMINAL_PROMPT: "0",
         },
-      );
-      const envelope = parseCatalog(result.stdout, detectedVersion, result.status);
+        timeoutMs,
+        stdoutLimit,
+        stderrLimit,
+        terminationGraceMs,
+        cleanupTimeoutMs,
+      });
+      const envelope = parseCatalog(result.stdout, result.status);
       if (envelope.type === "unavailable") throw new AdapterProcessError("CATALOG_UNAVAILABLE");
       if (envelope.type === "error")
         throw new AdapterProcessError("CATALOG_ERROR", result.status, text(result.stderr));
-      return envelope.entries;
+      return { entries: envelope.entries, references: envelope.references };
     },
   };
 }

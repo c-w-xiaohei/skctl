@@ -1,6 +1,7 @@
 import { SkillCliError, type SkillCliCore } from "../core/api";
 import { createSkillCliCore } from "../core/create-core";
-import { jsonError, jsonSuccess, jsonUnavailable, type AgentOperation } from "./protocol-v1";
+
+type AgentOperation = "list" | "search" | "load" | "read" | "download" | "run";
 
 export interface AgentCommandOptions {
   readonly cwd: string;
@@ -20,7 +21,7 @@ interface ParsedAgentCommand {
 }
 
 const operations = new Set<AgentOperation>(["list", "search", "load", "read", "download", "run"]);
-const values = new Set(["--protocol", "--agent", "--agent-version", "--limit", "--output"]);
+const values = new Set(["--limit", "--output"]);
 
 function invalid(message: string): never {
   throw new SkillCliError("INVALID_ARGUMENT", message);
@@ -30,7 +31,7 @@ function parseAgentCommand(argv: readonly string[]): ParsedAgentCommand {
   const operation = argv[0];
   if (!operation || !operations.has(operation as AgentOperation)) invalid("Unknown agent command");
   const op = operation as AgentOperation;
-  const allowed = new Set(["--json", "--protocol", "--agent", "--agent-version"]);
+  const allowed = new Set<string>();
   if (op === "search") allowed.add("--limit");
   if (op === "download") {
     allowed.add("--output");
@@ -38,7 +39,6 @@ function parseAgentCommand(argv: readonly string[]): ParsedAgentCommand {
   }
   const seen = new Set<string>();
   const positional: string[] = [];
-  let protocol: string | undefined;
   let output: string | undefined;
   let limit: number | undefined;
   let force = false;
@@ -59,7 +59,6 @@ function parseAgentCommand(argv: readonly string[]): ParsedAgentCommand {
     if (!allowed.has(argument)) invalid(`Unknown or inapplicable option: ${argument}`);
     if (seen.has(argument)) invalid(`Duplicate option: ${argument}`);
     seen.add(argument);
-    if (argument === "--json") continue;
     if (argument === "--force") {
       force = true;
       continue;
@@ -67,17 +66,16 @@ function parseAgentCommand(argv: readonly string[]): ParsedAgentCommand {
     if (!values.has(argument)) invalid(`Unknown option: ${argument}`);
     const value = argv[++index];
     if (!value || value.startsWith("--")) invalid(`Option requires a value: ${argument}`);
-    if (argument === "--protocol") protocol = value;
-    else if (argument === "--output") output = value;
+    if (argument === "--output") output = value;
     else if (argument === "--limit") {
       limit = Number(value);
       if (!Number.isSafeInteger(limit) || limit < 1) invalid("--limit must be a positive integer");
     }
   }
-  if (!seen.has("--json") || protocol !== "1")
-    throw new SkillCliError("PROTOCOL_MISMATCH", "Agent protocol v1 with --json is required");
-  const expected = op === "list" ? 0 : op === "read" || op === "download" ? 2 : 1;
-  if (positional.length !== expected) invalid("Unexpected positional argument");
+  const expected = op === "read" || op === "download" ? 2 : 1;
+  if (op === "list") {
+    if (positional.length > 1) invalid("Unexpected positional argument");
+  } else if (positional.length !== expected) invalid("Unexpected positional argument");
   if (op === "download" && !output) invalid("--output is required for download");
   if (op === "run") {
     if (!child) invalid("Selector and argv after -- are required");
@@ -91,10 +89,6 @@ export async function runAgentCommand(
 ): Promise<number> {
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
-  const operation = operations.has(argv[0] as AgentOperation)
-    ? (argv[0] as AgentOperation)
-    : undefined;
-  const json = argv.includes("--json");
   try {
     const parsed = parseAgentCommand(argv);
     const core = (options.createCore ?? createSkillCliCore)({
@@ -103,29 +97,44 @@ export async function runAgentCommand(
     });
     const [selector, path] = parsed.positional;
     if (parsed.operation === "list") {
-      const result = await core.catalog.list({});
+      const result = await core.catalog.list({ collection: selector });
       if (result.value.status === "unavailable") {
-        stdout.write(
-          jsonUnavailable(parsed.operation, result.value.reason ?? "Catalog unavailable"),
-        );
+        stdout.write(`${JSON.stringify({ unavailable: true })}\n`);
         return 0;
       }
       stdout.write(
-        jsonSuccess(parsed.operation, {
-          agent: { id: "opencode", version: process.env.SKILL_CLI_AGENT_VERSION ?? "" },
-          mode: "managed",
-          entries: result.value.catalog,
-        }),
+        `${JSON.stringify({
+          skills: result.value.catalog.map(({ selector, name, description }) => ({
+            selector,
+            name,
+            description,
+          })),
+          references: result.value.references ?? [],
+        })}\n`,
       );
     } else if (parsed.operation === "search") {
       const result = await core.catalog.search({ query: selector!, limit: parsed.limit });
-      stdout.write(jsonSuccess(parsed.operation, result.value));
+      stdout.write(
+        `${JSON.stringify({
+          query: result.value.query,
+          results: result.value.results.map(({ rank, selector, name, description }) => ({
+            rank,
+            selector,
+            name,
+            description,
+          })),
+        })}\n`,
+      );
     } else if (parsed.operation === "load") {
       const result = await core.content.load({ selector: selector! });
-      stdout.write(jsonSuccess(parsed.operation, result.value));
+      const { selector: loadedSelector, name, description, path: loadedPath, text } = result.value;
+      stdout.write(
+        `${JSON.stringify({ selector: loadedSelector, name, description, path: loadedPath, text })}\n`,
+      );
     } else if (parsed.operation === "read") {
       const result = await core.content.read({ selector: selector!, path: path! });
-      stdout.write(jsonSuccess(parsed.operation, result.value));
+      const { selector: readSelector, path: readPath, text } = result.value;
+      stdout.write(`${JSON.stringify({ selector: readSelector, path: readPath, text })}\n`);
     } else if (parsed.operation === "download") {
       const result = await core.content.download({
         selector: selector!,
@@ -133,18 +142,24 @@ export async function runAgentCommand(
         output: parsed.output!,
         force: parsed.force,
       });
-      stdout.write(jsonSuccess(parsed.operation, result.value));
+      const {
+        selector: downloadedSelector,
+        path: downloadedPath,
+        output,
+        bytesWritten,
+      } = result.value;
+      stdout.write(
+        `${JSON.stringify({ selector: downloadedSelector, path: downloadedPath, output, bytesWritten })}\n`,
+      );
     } else {
       const result = await core.content.run({ selector: selector!, argv: parsed.child! });
-      stdout.write(jsonSuccess(parsed.operation, result.value));
+      stdout.write(`${JSON.stringify(result.value)}\n`);
     }
     return 0;
   } catch (error) {
     const value =
       error instanceof SkillCliError ? error : new SkillCliError("INTERNAL", "Internal error");
-    if (json && operation)
-      stdout.write(jsonError(operation, value.code, value.message, value.diagnostics));
-    stderr.write(`${value.code}: ${value.message}\n`);
+    stderr.write(`${value.message}\n`);
     return 1;
   }
 }

@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("CLI-002 process agent list writes exactly one managed v1 envelope", async () => {
+test("CLI-002 process agent list writes clean direct catalog JSON", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-process-"));
   const state = join(root, "state");
+  const configHome = join(root, "config");
   try {
     const skill = join(root, "skills", "review");
     await mkdir(skill, { recursive: true });
@@ -16,8 +17,12 @@ test("CLI-002 process agent list writes exactly one managed v1 envelope", async 
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: { c: { members: { review: { source: "source", path: "review" } } } },
         use: ["c"],
-        agents: { opencode: "managed" },
       }),
+    );
+    await mkdir(join(configHome, "skill-cli"), { recursive: true });
+    await writeFile(
+      join(configHome, "skill-cli", "config.jsonc"),
+      JSON.stringify({ agents: { opencode: "managed" } }),
     );
     const setup = Bun.spawn({
       cmd: [
@@ -30,43 +35,35 @@ test("CLI-002 process agent list writes exactly one managed v1 envelope", async 
     });
     expect(await setup.exited).toBe(0);
     const command = Bun.spawn({
-      cmd: [
-        process.execPath,
-        join(import.meta.dir, "../../src/main.ts"),
-        "agent",
-        "list",
-        "--json",
-        "--protocol",
-        "1",
-      ],
+      cmd: [process.execPath, join(import.meta.dir, "../../src/main.ts"), "agent", "list"],
       cwd: root,
-      env: { ...process.env, SKILL_CLI_STATE_DIR: state, SKILL_CLI_AGENT_VERSION: "1.18.4" },
+      env: {
+        ...process.env,
+        SKILL_CLI_STATE_DIR: state,
+        XDG_CONFIG_HOME: configHome,
+        SKILL_CLI_AGENT_VERSION: "1.18.4",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
     expect(await command.exited).toBe(0);
     expect(await new Response(command.stderr).text()).toBe("");
-    expect(JSON.parse(await new Response(command.stdout).text())).toMatchObject({
-      protocolVersion: 1,
-      ok: true,
-      operation: "list",
-      result: { mode: "managed", entries: [{ selector: "c:review", loadingOwner: "skill-cli" }] },
+    expect(JSON.parse(await new Response(command.stdout).text())).toEqual({
+      skills: [{ selector: "c:review", name: "review", description: "Review" }],
+      references: [],
     });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("CLI-002 process agent list rejects an inapplicable output option as a v1 error", async () => {
+test("CLI-002 process agent list rejects an inapplicable output option without an error envelope", async () => {
   const command = Bun.spawn({
     cmd: [
       process.execPath,
       join(import.meta.dir, "../../src/main.ts"),
       "agent",
       "list",
-      "--json",
-      "--protocol",
-      "1",
       "--output",
       "/tmp/out",
     ],
@@ -74,13 +71,6 @@ test("CLI-002 process agent list rejects an inapplicable output option as a v1 e
     stderr: "pipe",
   });
   expect(await command.exited).toBe(1);
-  const envelope = JSON.parse(await new Response(command.stdout).text());
-  expect(envelope).toMatchObject({
-    protocolVersion: 1,
-    type: "error",
-    operation: "list",
-    error: { code: "INVALID_ARGUMENT" },
-  });
-  expect(envelope.ok).toBeUndefined();
-  expect(await new Response(command.stderr).text()).toContain("INVALID_ARGUMENT");
+  expect(await new Response(command.stdout).text()).toBe("");
+  expect(await new Response(command.stderr).text()).toContain("Unknown or inapplicable option");
 });

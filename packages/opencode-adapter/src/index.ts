@@ -1,15 +1,10 @@
 import type { Plugin } from "@opencode-ai/plugin";
-import { AdapterProcessError, createProcessClient, redactDiagnostic } from "./process.ts";
+import { AdapterProcessError, createProcessClient } from "./process.ts";
 import { UNAVAILABLE_NOTICE, renderCatalog } from "./prompt.ts";
 
-function report(error: unknown): void {
-  const failure = error instanceof AdapterProcessError ? error : undefined;
-  const code = failure?.code ?? "RENDER_FAILED";
-  const status = failure?.status === undefined ? "unknown" : String(failure.status);
-  const prefix = `skill-cli adapter ${code} status=${status} stderr=`;
-  const stderr = redactDiagnostic(failure?.stderr ?? "", 4096 - Buffer.byteLength(prefix));
-  // Diagnostics stay outside model content and contain only bounded sanitized child output.
-  console.error(`${prefix}${stderr}`);
+function report(_error: unknown): void {
+  // Adapter failures are not part of the managed Skill interface.
+  console.error("skill-cli managed catalog is unavailable");
 }
 
 const SkillCliOpenCodePlugin: Plugin = async (input) => {
@@ -18,7 +13,8 @@ const SkillCliOpenCodePlugin: Plugin = async (input) => {
   return {
     "experimental.chat.system.transform": async (_request, output) => {
       try {
-        output.system.push(renderCatalog(await client.list(input.directory)));
+        const catalog = await client.list(input.directory);
+        output.system.push(renderCatalog(catalog.entries, catalog.references));
       } catch (error) {
         const isHostFailure = error instanceof AdapterProcessError && error.hostProbe;
         if (!isHostFailure || !reportedHostFailure) report(error);

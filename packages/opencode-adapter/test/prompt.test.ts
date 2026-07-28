@@ -3,51 +3,42 @@ import { UNAVAILABLE_NOTICE, renderCatalog } from "../src/prompt.ts";
 
 const entry = {
   selector: 'alpha:deploy"x',
-  aliases: ["team:release", "zeta:deploy"],
   name: "deploy\nnow",
   description: "Use \\ safely",
-  loadingOwner: "skill-cli" as const,
-  provenance: {
-    source: "team",
-    origin: "local" as const,
-    declaration: { layer: "project" },
-    stability: "mutable-local" as const,
-  },
 };
+const reference = { name: "release", description: "Release safely", collection: "team/release" };
 
 describe("catalog prompt", () => {
-  test("renders metadata records with JSON escaping and exact commands", () => {
-    const output = renderCatalog([entry]);
+  test("renders direct skills, category references, and clean commands", () => {
+    const output = renderCatalog([entry], [reference]);
     expect(output).toContain(
       JSON.stringify({
         selector: entry.selector,
-        aliases: entry.aliases,
         name: entry.name,
         description: entry.description,
       }),
     );
     for (const command of [
-      "skill-cli agent load <selector> --json --protocol 1",
-      "skill-cli agent read <selector> <root-relative-path> --json --protocol 1",
-      "skill-cli agent download <selector> <root-relative-path> --output <host-path> --json --protocol 1",
-      "skill-cli agent run <selector> --json --protocol 1 -- <command> [args...]",
+      "skill-cli agent list <collection>",
+      "skill-cli agent load <selector>",
+      "skill-cli agent read <selector> <root-relative-path>",
+      "skill-cli agent download <selector> <root-relative-path> --output <host-path>",
+      "skill-cli agent run <selector> -- <command> [args...]",
     ])
       expect(output).toContain(command);
     expect(output).not.toContain("provenance");
   });
 
   test("renders concise empty state and rejects malformed or oversized records", () => {
-    expect(renderCatalog([])).toContain("No managed Skills are currently selected.");
-    expect(() => renderCatalog([{ ...entry, selector: "" }])).toThrow("RENDER_INVALID");
-    expect(() => renderCatalog([{ ...entry, aliases: [entry.selector] }])).toThrow(
-      "RENDER_INVALID",
-    );
-    expect(() => renderCatalog([{ ...entry, aliases: ["team:z", "team:a"] }])).toThrow(
-      "RENDER_INVALID",
-    );
-    expect(() => renderCatalog(Array.from({ length: 5_000 }, () => entry))).toThrow(
-      "RENDER_TOO_LARGE",
-    );
+    expect(renderCatalog([], [])).toContain("No managed Skills are currently selected.");
+    expect(() => renderCatalog([{ ...entry, selector: "" }], [])).toThrow("RENDER_INVALID");
+    expect(() => renderCatalog([], [{ ...reference, collection: "" }])).toThrow("RENDER_INVALID");
+    expect(() =>
+      renderCatalog(
+        Array.from({ length: 5_000 }, () => entry),
+        [],
+      ),
+    ).toThrow("RENDER_TOO_LARGE");
   });
 
   test("exports the exact unavailable notice", () => {

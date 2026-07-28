@@ -1067,20 +1067,7 @@ export async function readWorkspaceUnlocked(
             selector: item.primary!,
             name: item.name,
             description: item.description,
-            loadingOwner: "skill-cli" as const,
             aliases: item.aliases,
-            provenance: {
-              source: item.address.source,
-              origin: item.source!.kind === "local" ? ("local" as const) : ("git" as const),
-              declaration: item.source!.provenance,
-              stability:
-                item.source!.kind === "local" ? ("mutable-local" as const) : ("immutable" as const),
-              ...(item.owner &&
-              "relevantRemoteRevision" in item.owner &&
-              typeof item.owner.relevantRemoteRevision === "string"
-                ? { revision: item.owner.relevantRemoteRevision }
-                : {}),
-            },
           }))
           .sort((left, right) => left.selector.localeCompare(right.selector)),
   };
@@ -1171,11 +1158,20 @@ export async function resolveInstalledSelector(
     throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
   if (!workspace.value.effective.managed)
     throw new SkillCliError("CONFIG_INVALID", "agents.opencode must be managed");
-  if (!workspace.value.effective.use.length || !workspace.value.effective.use.includes(collection))
-    throw new SkillCliError("SKILL_NOT_FOUND", `Skill Selector is not exposed: ${selector}`);
   const state = await coordinator.read();
   const resolved = await resolveEffectiveCollections(options, workspace.value, state, coordinator);
-  const selected = resolveCollectionUse(resolved, workspace.value.effective.use);
+  const reachable = new Set<string>();
+  const pending = [...workspace.value.effective.use];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (reachable.has(id)) continue;
+    reachable.add(id);
+    for (const reference of Object.values(resolved.references.get(id) ?? {}))
+      pending.push(reference.collection);
+  }
+  if (!reachable.has(collection))
+    throw new SkillCliError("SKILL_NOT_FOUND", `Skill Selector is not exposed: ${selector}`);
+  const selected = resolveCollectionUse(resolved, [collection]);
   if (!selected.complete) throw new SkillCliError("CONFIG_INVALID", "Collection Use is incomplete");
   const address = selected.members.get(collection)?.get(name);
   if (!address)

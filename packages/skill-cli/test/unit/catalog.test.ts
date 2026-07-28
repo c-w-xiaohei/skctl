@@ -36,9 +36,10 @@ test("PROJ-016 reports managed catalog unavailable for absent, empty, or incompl
   }
 });
 
-test("PROJ-015/016 projects one managed identity record with primary selector and aliases", async () => {
+test("PROJ-015/016 projects direct Collection members and References without aliases", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-catalog-records-"));
   const state = join(root, "state");
+  const global = join(root, "global.jsonc");
   try {
     const skill = join(root, "skills", "review");
     await mkdir(skill, { recursive: true });
@@ -48,29 +49,33 @@ test("PROJ-015/016 projects one managed identity record with primary selector an
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: {
-          alpha: { members: { review: { source: "source", path: "review" } } },
+          alpha: {
+            members: { review: { source: "source", path: "review" } },
+            references: { docs: { collection: "zeta", description: "Documentation" } },
+          },
           zeta: { members: { again: { source: "source", path: "review" } } },
         },
-        use: ["zeta", "alpha"],
+        use: ["alpha"],
         agents: { opencode: "managed" },
       }),
     );
     process.env.SKILL_CLI_STATE_DIR = state;
+    await writeFile(global, "{}\n");
     await new StateCoordinator(state).installLocal("source", "review", skill);
-    const catalog = await createSkillCliCore({ cwd: root }).catalog.list({});
+    const core = createSkillCliCore({ cwd: root, userConfigPath: global });
+    const catalog = await core.catalog.list({});
     expect(catalog.value).toEqual(
       expect.objectContaining({
         status: "available",
-        catalog: [
-          expect.objectContaining({
-            selector: "alpha:review",
-            aliases: ["zeta:again"],
-            loadingOwner: "skill-cli",
-            provenance: expect.objectContaining({ origin: "local", stability: "mutable-local" }),
-          }),
-        ],
+        catalog: [{ selector: "alpha:review", name: "review", description: "Review", aliases: [] }],
+        references: [{ name: "docs", collection: "zeta", description: "Documentation" }],
       }),
     );
+    await expect(core.catalog.list({ collection: "zeta" })).resolves.toMatchObject({
+      value: {
+        catalog: [{ selector: "zeta:again", name: "review", description: "Review", aliases: [] }],
+      },
+    });
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });

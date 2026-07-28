@@ -9,28 +9,8 @@ import {
 
 const encoder = new TextEncoder();
 const catalog = JSON.stringify({
-  protocolVersion: 1,
-  ok: true,
-  operation: "list",
-  result: {
-    agent: { id: "opencode", version: "1.18.4" },
-    mode: "managed",
-    entries: [
-      {
-        selector: "team:deploy",
-        aliases: ["team:release"],
-        name: "deploy",
-        description: "Deploy safely",
-        loadingOwner: "skill-cli",
-        provenance: {
-          source: "team",
-          origin: "local",
-          declaration: { layer: "project" },
-          stability: "mutable-local",
-        },
-      },
-    ],
-  },
+  skills: [{ selector: "team:deploy", name: "deploy", description: "Deploy safely" }],
+  references: [{ name: "release", description: "Release skills", collection: "release" }],
 });
 
 function stream(...chunks: string[]): ReadableStream<Uint8Array> {
@@ -56,7 +36,7 @@ function runner(calls: unknown[][], next: () => ChildProcess): ProcessRunner {
 }
 
 describe("process client", () => {
-  test("resolves PATH executables, probes the candidate host, and invokes protocol v1", async () => {
+  test("resolves PATH executables, probes the candidate host, and invokes clean agent list", async () => {
     const calls: unknown[][] = [];
     const client = createProcessClient({
       path: "/tools:/bin",
@@ -65,19 +45,13 @@ describe("process client", () => {
       env: { KEEP: "yes", PATH: "/tools:/bin", TOKEN: "ambient" },
     });
 
-    await expect(client.list("/project")).resolves.toEqual([
-      expect.objectContaining({ selector: "team:deploy" }),
-    ]);
+    await expect(client.list("/project")).resolves.toEqual({
+      entries: [expect.objectContaining({ selector: "team:deploy" })],
+      references: [expect.objectContaining({ collection: "release" })],
+    });
     expect(calls).toHaveLength(2);
     expect(calls[0]![0]).toEqual(["/tools/opencode", "--version"]);
-    expect(calls[1]![0]).toEqual([
-      "/tools/skill-cli",
-      "agent",
-      "list",
-      "--json",
-      "--protocol",
-      "1",
-    ]);
+    expect(calls[1]![0]).toEqual(["/tools/skill-cli", "agent", "list"]);
     expect(calls[1]![1]).toEqual(
       expect.objectContaining({
         cwd: "/project",
@@ -106,8 +80,8 @@ describe("process client", () => {
         })(),
       ),
     });
-    await expect(client.list("/first")).resolves.toHaveLength(1);
-    await expect(client.list("/second")).resolves.toHaveLength(1);
+    await expect(client.list("/first")).resolves.toMatchObject({ entries: expect.any(Array) });
+    await expect(client.list("/second")).resolves.toMatchObject({ entries: expect.any(Array) });
     expect(calls.filter(([argv]) => (argv as string[])[1] === "--version")).toHaveLength(1);
     expect(calls.filter(([argv]) => (argv as string[])[1] === "agent")).toHaveLength(2);
     expect(calls[2]![1]).toEqual(expect.objectContaining({ cwd: "/second" }));
@@ -123,16 +97,9 @@ describe("process client", () => {
       runner: runner(calls, () => (calls.length === 1 ? child(stream("1.18.4\n")) : child())),
     });
 
-    await expect(client.list("C:\\project")).resolves.toHaveLength(1);
+    await expect(client.list("C:\\project")).resolves.toMatchObject({ entries: expect.any(Array) });
     expect(calls[0]![0]).toEqual(["D:\\bin\\opencode.EXE", "--version"]);
-    expect(calls[1]![0]).toEqual([
-      "C:\\Tools\\skill-cli.CMD",
-      "agent",
-      "list",
-      "--json",
-      "--protocol",
-      "1",
-    ]);
+    expect(calls[1]![0]).toEqual(["C:\\Tools\\skill-cli.CMD", "agent", "list"]);
   });
 
   test("resolves relative PATH entries to absolute executables before spawning", async () => {
@@ -144,16 +111,9 @@ describe("process client", () => {
       runner: runner(calls, () => (calls.length === 1 ? child(stream("1.18.4\n")) : child())),
     });
 
-    await expect(client.list("/project")).resolves.toHaveLength(1);
+    await expect(client.list("/project")).resolves.toMatchObject({ entries: expect.any(Array) });
     expect(calls[0]![0]).toEqual([`${tools}/opencode`, "--version"]);
-    expect(calls[1]![0]).toEqual([
-      `${tools}/skill-cli`,
-      "agent",
-      "list",
-      "--json",
-      "--protocol",
-      "1",
-    ]);
+    expect(calls[1]![0]).toEqual([`${tools}/skill-cli`, "agent", "list"]);
   });
 
   test("rejects missing executables, malformed or mismatched host versions, and negative child results", async () => {
@@ -333,7 +293,7 @@ describe("process client", () => {
           })(),
         ),
       });
-      await expect(client.list("/project")).resolves.toHaveLength(1);
+      await expect(client.list("/project")).resolves.toMatchObject({ entries: expect.any(Array) });
       expect([...timers]).toEqual([]);
     } finally {
       globalThis.setTimeout = set;
@@ -386,235 +346,24 @@ describe("process client", () => {
     ).not.toMatch(/token|user:pass|\/tmp\/a|secret/i);
   });
 
-  test("accepts only a complete managed v1 catalog and rejects selector and alias inconsistencies", async () => {
-    const valid = JSON.parse(catalog) as { result: { entries: Record<string, unknown>[] } };
-    const entry = valid.result.entries[0]!;
-    const provenance = entry.provenance as Record<string, unknown>;
-    const invalidEntries = [
-      { ...entry, aliases: undefined },
-      { ...entry, aliases: ["team:deploy"] },
-      { ...entry, aliases: ["team:z", "team:a"] },
-      { ...entry, aliases: ["team:a", "team:a"] },
-      { ...entry, selector: "team deploy" },
-      { ...entry, loadingOwner: "host" },
-      { ...entry, provenance: { ...provenance, origin: "native" } },
-      { ...entry, provenance: { ...provenance, origin: "git" } },
-      {
-        ...entry,
-        provenance: { ...provenance, origin: "git", stability: "immutable" },
-      },
-      {
-        ...entry,
-        provenance: { ...provenance, revision: "abc" },
-      },
-    ];
-    for (const entry of invalidEntries) {
-      const calls: unknown[][] = [];
-      const client = createProcessClient({
-        path: "/tools",
-        exists: () => true,
-        runner: runner(calls, () =>
-          calls.length === 1
-            ? child(stream("1.18.4\n"))
-            : child(
-                stream(JSON.stringify({ ...valid, result: { ...valid.result, entries: [entry] } })),
-              ),
-        ),
-      });
-      await expect(client.list("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
-    }
-
-    const duplicate = JSON.stringify({
-      ...valid,
-      result: {
-        ...valid.result,
-        entries: [
-          valid.result.entries[0],
-          { ...valid.result.entries[0], selector: "team:release", aliases: ["team:deploy"] },
-        ],
-      },
-    });
-    const calls: unknown[][] = [];
-    const client = createProcessClient({
-      path: "/tools",
-      exists: () => true,
-      runner: runner(calls, () =>
-        calls.length === 1 ? child(stream("1.18.4\n")) : child(stream(duplicate)),
-      ),
-    });
-    await expect(client.list("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
-
-    const duplicateIdentityCalls: unknown[][] = [];
-    const duplicateIdentity = createProcessClient({
-      path: "/tools",
-      exists: () => true,
-      runner: runner(duplicateIdentityCalls, () =>
-        duplicateIdentityCalls.length === 1
-          ? child(stream("1.18.4\n"))
-          : child(
-              stream(
-                JSON.stringify({
-                  ...valid,
-                  result: {
-                    ...valid.result,
-                    entries: [
-                      { ...entry, aliases: [] },
-                      { ...entry, selector: "other:deploy", aliases: [] },
-                    ],
-                  },
-                }),
-              ),
-            ),
-      ),
-    });
-    await expect(duplicateIdentity.list("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
-  });
-
-  test("handles v1 unavailable and error envelopes explicitly", async () => {
-    for (const envelope of [
-      {
-        protocolVersion: 1,
-        type: "unavailable",
-        operation: "list",
-        unavailable: { reason: "incomplete use" },
-      },
-      {
-        protocolVersion: 1,
-        type: "error",
-        operation: "list",
-        error: { code: "CONFIG_INVALID", message: "bad", diagnostics: [] },
-      },
-    ]) {
-      const calls: unknown[][] = [];
-      const client = createProcessClient({
-        path: "/tools",
-        exists: () => true,
-        runner: runner(calls, () =>
-          calls.length === 1
-            ? child(stream("1.18.4\n"))
-            : child(stream(JSON.stringify(envelope)), stream(), envelope.type === "error" ? 1 : 0),
-        ),
-      });
-      await expect(client.list("/project")).rejects.toMatchObject({
-        code: envelope.type === "unavailable" ? "CATALOG_UNAVAILABLE" : "CATALOG_ERROR",
-      });
-    }
-  });
-
-  test("rejects malformed typed v1 unavailable and error envelopes at every child status", async () => {
-    const unavailable = {
-      protocolVersion: 1,
-      type: "unavailable",
-      operation: "list",
-      unavailable: { reason: "incomplete use" },
-    };
-    const error = {
-      protocolVersion: 1,
-      type: "error",
-      operation: "list",
-      error: {
-        code: "CONFIG_INVALID",
-        message: "bad",
-        diagnostics: [
-          {
-            code: "CONFIG_INVALID",
-            severity: "warning",
-            message: "bad",
-            location: { file: "skill-cli.jsonc", pointer: "/use" },
-            related: [{ message: "related", file: "skill-cli.jsonc", pointer: "/collections" }],
-            suggestion: "fix it",
-          },
-        ],
-      },
-    };
-    const malformed = [
-      { ...unavailable, ok: true },
-      { ...unavailable, result: {} },
-      { ...unavailable, unavailable: {} },
-      { ...unavailable, unavailable: { reason: "x", extra: true } },
-      { ...unavailable, extra: true },
-      { ...unavailable, error: {} },
-      { ...error, ok: true },
-      { ...error, result: {} },
-      { ...error, error: { ...error.error, diagnostics: [{}] } },
-      {
-        ...error,
-        error: { ...error.error, diagnostics: [{ ...error.error.diagnostics[0], extra: true }] },
-      },
-      { ...error, error: { ...error.error, extra: true } },
-      { ...error, extra: true },
-      { ...error, unavailable: {} },
-      { ...JSON.parse(catalog), error: {} },
-    ];
-    for (const [envelope, status] of [
-      ...malformed.map((value) => [value, 0] as const),
-      ...malformed.map((value) => [value, 1] as const),
-      [unavailable, 1] as const,
-      [error, 0] as const,
-      [error, 2] as const,
-    ]) {
-      const calls: unknown[][] = [];
-      const client = createProcessClient({
-        path: "/tools",
-        exists: () => true,
-        runner: runner(calls, () =>
-          calls.length === 1
-            ? child(stream("1.18.4\n"))
-            : child(stream(JSON.stringify(envelope)), stream(), status),
-        ),
-      });
-      await expect(client.list("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
-    }
-  });
-
-  test("recognizes a typed v1 error on a nonzero child without trusting arbitrary stdout", async () => {
-    const error = JSON.stringify({
-      protocolVersion: 1,
-      type: "error",
-      operation: "list",
-      error: { code: "CONFIG_INVALID", message: "bad", diagnostics: [] },
-    });
-    for (const [stdout, code, status] of [
-      [error, "CATALOG_ERROR", 1],
-      ["not a protocol envelope", "PROTOCOL", undefined],
-    ] as const) {
-      const calls: unknown[][] = [];
-      const client = createProcessClient({
-        path: "/tools",
-        exists: () => true,
-        runner: runner(calls, () =>
-          calls.length === 1
-            ? child(stream("1.18.4\n"))
-            : child(stream(stdout), stream("token=secret"), 1),
-        ),
-      });
-      await expect(client.list("/project")).rejects.toMatchObject({ code, status });
-    }
-  });
-
-  test("requires the OpenCode identity and exact success envelope fields", async () => {
-    const valid = JSON.parse(catalog) as Record<string, unknown>;
-    const result = valid.result as Record<string, unknown>;
-    const agent = result.agent as Record<string, unknown>;
+  test("strictly validates clean skills and references", async () => {
     for (const output of [
-      { ...valid, result: { ...result, agent: { ...agent, id: "other" } } },
-      { ...valid, result: { ...result, agent: { ...agent, version: "1.18.3" } } },
-      { ...valid, result: { ...result, agent: { id: "opencode" } } },
-    ]) {
-      const calls: unknown[][] = [];
-      const client = createProcessClient({
-        path: "/tools",
-        exists: () => true,
-        runner: runner(calls, () =>
-          calls.length === 1 ? child(stream("1.18.4\n")) : child(stream(JSON.stringify(output))),
-        ),
-      });
-      await expect(client.list("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
-    }
-    for (const output of [
-      { ...valid, type: "error" },
-      { ...valid, extension: true },
-      { ...valid, result: { ...result, extension: true } },
+      {
+        skills: [{ selector: "team:deploy", name: "deploy", description: "safe", extra: true }],
+        references: [],
+      },
+      {
+        skills: [{ selector: "team:deploy", name: "deploy", description: "safe" }],
+        references: [{ name: "x", description: "x" }],
+      },
+      {
+        skills: [
+          { selector: "team:deploy", name: "deploy", description: "safe" },
+          { selector: "team:deploy", name: "again", description: "safe" },
+        ],
+        references: [],
+      },
+      { unavailable: true, extra: true },
     ]) {
       const calls: unknown[][] = [];
       const client = createProcessClient({

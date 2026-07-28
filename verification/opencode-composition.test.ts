@@ -152,7 +152,7 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
     const project = join(root, "project");
     const selector = "engineering:review";
     const token = crypto.randomUUID();
-    const loadCommand = `skill-cli agent load ${selector} --json --protocol 1`;
+    const loadCommand = `skill-cli agent load ${selector}`;
     await Promise.all([
       fs.mkdir(bin),
       fs.mkdir(audit),
@@ -250,7 +250,7 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
     expect(systemPrompts).toEqual(
       expect.arrayContaining([
         expect.stringContaining(`"selector":"${selector}"`),
-        expect.stringContaining("skill-cli agent load <selector> --json --protocol 1"),
+        expect.stringContaining("skill-cli agent load <selector>"),
       ]),
     );
     const toolOutput = llm.requests[1]?.messages?.find(({ role }) => role === "tool")?.content;
@@ -261,8 +261,8 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
     );
     expect(records).toEqual(
       expect.arrayContaining([
-        [project, "agent", "list", "--json", "--protocol", "1", ""].join("\0"),
-        [project, "agent", "load", selector, "--json", "--protocol", "1", ""].join("\0"),
+        [project, "agent", "list", ""].join("\0"),
+        [project, "agent", "load", selector, ""].join("\0"),
       ]),
     );
   } catch (error) {

@@ -440,9 +440,8 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
           `configuration command failed: ${argv.join(" ")} (${result.exitCode})\n${text(result.stdout)}${text(result.stderr)}`,
         );
       }
-      const agent = ["--json", "--protocol", "1"];
       const list = await invoke(
-        [options.artifact, "--project", project, "agent", "list", ...agent],
+        [options.artifact, "--project", project, "agent", "list"],
         project,
         options.outputRoot,
       );
@@ -450,27 +449,18 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
       assert(
         list.exitCode === 0 &&
           list.stderr.length === 0 &&
-          listBody.ok === true &&
-          listBody.result.entries[0].selector === "fixture-collection:fixture",
+          listBody.skills[0].selector === "fixture-collection:fixture",
         "agent list differs",
       );
       const load = await invoke(
-        [
-          options.artifact,
-          "--project",
-          project,
-          "agent",
-          "load",
-          "fixture-collection:fixture",
-          ...agent,
-        ],
+        [options.artifact, "--project", project, "agent", "load", "fixture-collection:fixture"],
         project,
         options.outputRoot,
       );
       assert(
         load.exitCode === 0 &&
           load.stderr.length === 0 &&
-          JSON.parse(text(load.stdout)).result.text === skillBytes,
+          JSON.parse(text(load.stdout)).text === skillBytes,
         "agent load bytes differ",
       );
       const read = await invoke(
@@ -482,7 +472,6 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
           "read",
           "fixture-collection:fixture",
           "run.ts",
-          ...agent,
         ],
         project,
         options.outputRoot,
@@ -490,7 +479,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
       assert(
         read.exitCode === 0 &&
           read.stderr.length === 0 &&
-          JSON.parse(text(read.stdout)).result.text.includes(marker),
+          JSON.parse(text(read.stdout)).text.includes(marker),
         "agent read bytes differ",
       );
     });
@@ -503,9 +492,6 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
           "agent",
           "run",
           "fixture-collection:fixture",
-          "--json",
-          "--protocol",
-          "1",
           "--",
           process.execPath,
           "run.ts",
@@ -518,7 +504,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
         result.exitCode === 0 &&
           result.stderr.length === 0 &&
           text(result.stdout).includes(marker) &&
-          (finalJson(result.stdout).result as { exitCode: number }).exitCode === 7,
+          (finalJson(result.stdout) as { exitCode: number }).exitCode === 7,
         `agent run did not preserve cwd, marker, or status: ${JSON.stringify(text(result.stdout))}`,
       );
     });
@@ -535,16 +521,13 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
           "assets/payload.bin",
           "--output",
           output,
-          "--json",
-          "--protocol",
-          "1",
         ],
         project,
         options.outputRoot,
       );
       assert(
         result.exitCode === 0 &&
-          JSON.parse(text(result.stdout)).result.bytesWritten === payload.length &&
+          JSON.parse(text(result.stdout)).bytesWritten === payload.length &&
           result.stderr.length === 0,
         "agent download channels differ",
       );
@@ -564,9 +547,6 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
           "assets/payload.bin",
           "--output",
           outputLink,
-          "--json",
-          "--protocol",
-          "1",
         ],
         project,
         options.outputRoot,
@@ -591,16 +571,13 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
             "--output",
             output,
             "--force",
-            "--json",
-            "--protocol",
-            "1",
           ],
           project,
           options.outputRoot,
         );
         assert(
           forced.exitCode === 0 &&
-            JSON.parse(text(forced.stdout)).result.bytesWritten === replacement.length &&
+            JSON.parse(text(forced.stdout)).bytesWritten === replacement.length &&
             forced.stderr.length === 0,
           "forced download failed with an open destination",
         );
