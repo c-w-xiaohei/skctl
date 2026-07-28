@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Generated output
+build/
+coverage/
+dist/
+out/
+
+# Existing design and task evidence are not workspace source inputs.
+CONTEXT.md
+DESIGN.md
+docs/
+tmp/

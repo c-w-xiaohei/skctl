@@ -1,0 +1,13 @@
+{
+  "ignorePatterns": [
+    "**/build/**",
+    "**/coverage/**",
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/out/**"
+  ],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  }
+}

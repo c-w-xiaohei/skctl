@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Check source and configuration
+        run: bun run check
+      - name: Run unit tests
+        run: bun run test:unit
+      - name: Run provider tests
+        run: bun run test:providers
+      - name: Run integration tests
+        run: bun run test:integration
+      - name: Run interface tests
+        run: bun run test:interfaces
+  native:
+    needs: static
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            artifact: skill-cli-linux-x64
+          - runner: macos-14
+            artifact: skill-cli-darwin-arm64
+          - runner: windows-latest
+            artifact: skill-cli-windows-x64.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Build native artifact
+        run: bun run build:native
+      - name: Package plugin
+        run: bun run pack:plugin
+      - name: Test packaged orchestration
+        run: bun run test:packaged
+      - name: Run packaged smoke checks
+        run: bun run smoke:packaged -- --artifact ${{ github.workspace }}/dist/${{ matrix.artifact }} --output-root ${{ runner.temp }}/skill-cli-packaged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}
+            dist/opencode-adapter.tgz
+            dist/SHA256SUMS
+            dist/release-metadata.json

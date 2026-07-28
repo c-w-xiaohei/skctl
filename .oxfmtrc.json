@@ -1,0 +1,14 @@
+{
+  "ignorePatterns": [
+    "**/build/**",
+    "**/coverage/**",
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/out/**"
+  ],
+  "indentWidth": 2,
+  "lineWidth": 100,
+  "quoteStyle": "double",
+  "semicolons": true,
+  "trailingComma": "all"
+}
