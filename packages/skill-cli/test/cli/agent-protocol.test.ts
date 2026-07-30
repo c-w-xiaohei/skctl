@@ -78,6 +78,44 @@ test("agent list progressively discloses root members and references", async () 
   }
 });
 
+test("agent list uses a global catalog outside a project", async () => {
+  const previousState = process.env.SKILL_CLI_STATE_DIR;
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-global-"));
+  const state = join(root, "state");
+  const global = join(root, "global.jsonc");
+  const outside = join(root, "outside");
+  process.env.SKILL_CLI_STATE_DIR = state;
+  try {
+    const skill = join(root, "skills", "router");
+    await mkdir(skill, { recursive: true });
+    await mkdir(outside);
+    await writeFile(join(skill, "SKILL.md"), "---\nname: router\ndescription: router skill\n---\n");
+    await writeFile(
+      global,
+      JSON.stringify({
+        agents: { opencode: "managed" },
+        sources: { source: { kind: "local", path: "./skills", root: "" } },
+        collections: { catalog: { members: { router: { source: "source", path: "router" } } } },
+        use: ["catalog"],
+      }),
+    );
+    await new StateCoordinator(state).installLocal("source", "router", skill);
+
+    const result = await command(outside, global, ["list"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({
+      skills: [{ selector: "catalog:router", name: "router", description: "router skill" }],
+      references: [],
+    });
+  } finally {
+    if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
+    else process.env.SKILL_CLI_STATE_DIR = previousState;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("agent list and load permit a reference-reachable category but reject an inaccessible collection", async () => {
   const previousState = process.env.SKILL_CLI_STATE_DIR;
   const { root, global } = await fixture();

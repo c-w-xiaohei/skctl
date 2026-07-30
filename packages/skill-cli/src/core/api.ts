@@ -222,7 +222,7 @@ export type InstalledSkillSelectorViews =
 export interface ManagementProjection {
   readonly project: {
     readonly root: string;
-    readonly resolution: "explicit" | "nearest-config" | "git-root";
+    readonly resolution: "explicit" | "nearest-config" | "git-root" | "global-only";
   };
   readonly configs: readonly ConfigLevelView[];
   readonly effective:

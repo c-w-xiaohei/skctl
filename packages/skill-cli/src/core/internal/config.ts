@@ -554,7 +554,13 @@ export async function readWorkspaceUnlocked(
   },
 ): Promise<OperationResult<WorkspaceView>> {
   const state = await coordinator.read();
-  const project = await resolveProjectRoot(options.cwd, options.project, options.signal);
+  const project = await resolveProjectRoot(options.cwd, options.project, options.signal).catch(
+    (error) => {
+      if (!options.project && error instanceof SkillCliError && error.code === "PROJECT_NOT_FOUND")
+        return { root: resolve(options.cwd), resolution: "global-only" as const };
+      throw error;
+    },
+  );
   const user =
     options.userConfigPath ??
     join(
@@ -564,8 +570,12 @@ export async function readWorkspaceUnlocked(
     );
   const inputs = [
     { level: "global" as const, file: user },
-    { level: "project" as const, file: join(project.root, "skill-cli.jsonc") },
-    { level: "local" as const, file: join(project.root, "skill-cli.local.jsonc") },
+    ...(project.resolution === "global-only"
+      ? []
+      : [
+          { level: "project" as const, file: join(project.root, "skill-cli.jsonc") },
+          { level: "local" as const, file: join(project.root, "skill-cli.local.jsonc") },
+        ]),
   ];
   const configs: WorkspaceView["configs"][number][] = [];
   const sources = new Map<string, InternalSourceBinding>();
@@ -1200,11 +1210,16 @@ export async function resolveEffectiveCollections(
       "config.jsonc",
     );
   const declarations: CollectionContribution[] = [];
-  for (const { level, file } of [
+  const files = [
     { level: "global" as const, file: user },
-    { level: "project" as const, file: join(workspace.project.root, "skill-cli.jsonc") },
-    { level: "local" as const, file: join(workspace.project.root, "skill-cli.local.jsonc") },
-  ]) {
+    ...(workspace.project.resolution === "global-only"
+      ? []
+      : [
+          { level: "project" as const, file: join(workspace.project.root, "skill-cli.jsonc") },
+          { level: "local" as const, file: join(workspace.project.root, "skill-cli.local.jsonc") },
+        ]),
+  ];
+  for (const { level, file } of files) {
     const host = override?.file === file ? override.value : await document(file);
     for (const [id, declaration] of Object.entries(host.collections ?? {})) {
       declarations.push({
