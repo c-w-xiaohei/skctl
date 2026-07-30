@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runHumanCommand } from "../../src/cli/human";
@@ -11,7 +11,10 @@ function core(calls: unknown[]): SkillCliCore {
     configuration: {
       change: async (change) => {
         calls.push(change);
-        return { value: { changed: true } as never, diagnostics: [] };
+        return {
+          value: { changed: true, level: change.level, file: `/tmp/${change.level}.jsonc` },
+          diagnostics: [],
+        };
       },
       previewAddToCollection: async () => ({ value: {} as never, diagnostics: [] }),
       previewMembershipRemoval: async () => ({ value: {} as never, diagnostics: [] }),
@@ -65,7 +68,10 @@ function core(calls: unknown[]): SkillCliCore {
       },
       install: async (request) => {
         calls.push(["install", request]);
-        return { value: [], diagnostics: [] };
+        return {
+          value: [{ path: "review", name: "review", description: "Review" }],
+          diagnostics: [],
+        };
       },
       uninstall: async (request) => {
         calls.push(["uninstall", request]);
@@ -105,14 +111,31 @@ function core(calls: unknown[]): SkillCliCore {
       readInstalled: async () => ({ value: {} as never, diagnostics: [] }),
       load: async (request) => {
         calls.push(["load", request]);
-        return { value: {} as never, diagnostics: [] };
+        return {
+          value: {
+            selector: request.selector,
+            name: "review",
+            description: "Review a change",
+            path: "SKILL.md",
+            text: "# Review\n",
+            provenance: {
+              source: "workspace",
+              origin: "local",
+              stability: "mutable-local",
+            },
+          },
+          diagnostics: [],
+        };
       },
       listResources: async () => ({ value: [], diagnostics: [] }),
       read: async () => ({ value: {} as never, diagnostics: [] }),
       download: async () => ({ value: {} as never, diagnostics: [] }),
       run: async (request) => {
         calls.push(["run", request]);
-        return { value: {} as never, diagnostics: [] };
+        return {
+          value: { selector: request.selector, exitCode: 1, signal: null, cancelled: false },
+          diagnostics: [],
+        };
       },
     },
   };
@@ -336,4 +359,277 @@ test("MGMT-034 rejects malformed exact revisions before any apply Core call", as
   ])
     expect(await runHumanCommand(argv, options)).toBe(2);
   expect(calls).toEqual([]);
+});
+
+test("human help is written to stdout and succeeds without an error", async () => {
+  for (const argv of [["--help"], ["help"], ["help", "source"], ["source", "register", "--help"]]) {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    expect(
+      await runHumanCommand(argv, {
+        cwd: "/tmp",
+        stdout: { write: (value) => stdout.push(String(value)) },
+        stderr: { write: (value) => stderr.push(String(value)) },
+      }),
+    ).toBe(0);
+    expect(stdout.join("")).toContain("Usage:");
+    if (argv.join(" ") === "source register --help") {
+      expect(stdout.join("")).toContain("global writes the user config");
+      expect(stdout.join("")).toMatch(/defaults to the\s+origin root/u);
+    }
+    expect(stderr.join("")).toBe("");
+  }
+});
+
+test("human mutations describe their completed action, level, target file, and installed skills", async () => {
+  const calls: unknown[] = [];
+  const output: string[] = [];
+  const options = {
+    cwd: "/tmp",
+    createCore: () => core(calls),
+    stdout: { write: (value: string) => output.push(value) },
+    stderr: { write() {} },
+  };
+
+  expect(
+    await runHumanCommand(
+      ["source", "register", "local", "workspace", "./skills", "--level", "local"],
+      options,
+    ),
+  ).toBe(0);
+  expect(
+    await runHumanCommand(
+      ["collection", "member", "add", "engineering", "review", "workspace", "review"],
+      options,
+    ),
+  ).toBe(0);
+  expect(await runHumanCommand(["use", "set", "engineering"], options)).toBe(0);
+  expect(await runHumanCommand(["managed", "set"], options)).toBe(0);
+  expect(
+    await runHumanCommand(
+      ["install", "workspace", "review", "--revision", "a".repeat(40)],
+      options,
+    ),
+  ).toBe(0);
+
+  expect(output.join("")).toContain(
+    'Registered source "workspace" at local level in /tmp/local.jsonc.',
+  );
+  expect(output.join("")).toContain(
+    'Added member "review" to collection "engineering" at project level in /tmp/project.jsonc.',
+  );
+  expect(output.join("")).toContain(
+    'Set collection use to "engineering" at project level in /tmp/project.jsonc.',
+  );
+  expect(output.join("")).toContain(
+    "Enabled managed OpenCode at project level in /tmp/project.jsonc.",
+  );
+  expect(output.join("")).toContain(
+    `Installed 1 skills from source "workspace" at revision ${"a".repeat(40)}: review.`,
+  );
+  expect(output.join("")).not.toContain("source.register\n");
+  expect(output.join("")).not.toContain("management.install\n");
+});
+
+test("human mutations report no-op configuration changes and affected update paths", async () => {
+  const calls: unknown[] = [];
+  const output: string[] = [];
+  const fake = core(calls);
+  fake.configuration.change = async (change) => ({
+    value: { changed: false, level: change.level, file: "/tmp/project.jsonc" },
+    diagnostics: [],
+  });
+  const options = {
+    cwd: "/tmp",
+    createCore: () => fake,
+    stdout: { write: (value: string) => output.push(value) },
+    stderr: { write() {} },
+  };
+
+  expect(await runHumanCommand(["managed", "set"], options)).toBe(0);
+  expect(
+    await runHumanCommand(
+      ["update", "apply", "workspace", "review", "docs", "--remove", "old", "legacy"],
+      options,
+    ),
+  ).toBe(0);
+
+  expect(output.join("")).toContain(
+    "No configuration changes were needed at project level in /tmp/project.jsonc.",
+  );
+  expect(output.join("")).toContain(
+    'Updated skills from source "workspace": review, docs; removed: old, legacy.',
+  );
+});
+
+test("human init, repair, and content commands report actual results", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-human-output-"));
+  const calls: unknown[] = [];
+  const output: string[] = [];
+  const options = {
+    cwd: root,
+    createCore: () => core(calls),
+    stdout: { write: (value: string) => output.push(value) },
+    stderr: { write() {} },
+  };
+  try {
+    expect(await runHumanCommand(["init", "nested", "--host", "local"], options)).toBe(0);
+    expect(await runHumanCommand(["repair"], options)).toBe(0);
+    expect(await runHumanCommand(["content", "load", "engineering:review"], options)).toBe(0);
+    expect(
+      await runHumanCommand(["content", "run", "engineering:review", "--", "false"], options),
+    ).toBe(0);
+
+    expect(output.join("")).toContain(
+      `Initialized configuration at ${join(root, "nested", "skill-cli.local.jsonc")}.`,
+    );
+    expect(output.join("")).toContain("Checked workspace state.");
+    expect(output.join("")).not.toContain("Repaired workspace state.");
+    expect(output.join("")).toContain(
+      "selector engineering:review\nname review\ndescription Review a change\npath SKILL.md\nsource workspace\n---\n# Review\n",
+    );
+    expect(output.join("")).toContain('Skill "engineering:review" exited with code 1.');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("init reports an existing configuration without claiming to validate or change it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-human-init-existing-"));
+  const file = join(root, "skill-cli.jsonc");
+  const contents = "this is not valid JSONC\n";
+  const output: string[] = [];
+  try {
+    await writeFile(file, contents);
+    expect(
+      await runHumanCommand(["init", "--host", "project"], {
+        cwd: root,
+        stdout: { write: (value) => output.push(String(value)) },
+        stderr: { write() {} },
+      }),
+    ).toBe(0);
+    expect(output.join("")).toBe(
+      `Configuration file already exists at ${file}; contents were not changed or validated.\n`,
+    );
+    expect(await readFile(file, "utf8")).toBe(contents);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("init rejects directories and symlinks without changing their targets", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-human-init-non-file-"));
+  const file = join(root, "skill-cli.jsonc");
+  const target = join(root, "target.jsonc");
+  try {
+    await mkdir(file);
+    const directoryOutput: string[] = [];
+    const directoryErrors: string[] = [];
+    expect(
+      await runHumanCommand(["init", "--host", "project"], {
+        cwd: root,
+        stdout: { write: (value) => directoryOutput.push(String(value)) },
+        stderr: { write: (value) => directoryErrors.push(String(value)) },
+      }),
+    ).toBe(2);
+    expect(directoryOutput.join("")).toBe("");
+    expect(directoryErrors.join("")).toBe(
+      `INVALID_ARGUMENT: Configuration path is not an ordinary file: ${file}\n`,
+    );
+
+    await rm(file, { recursive: true });
+    await writeFile(target, "unvalidated\n");
+    await symlink(target, file);
+    const symlinkOutput: string[] = [];
+    const symlinkErrors: string[] = [];
+    expect(
+      await runHumanCommand(["init", "--host", "project"], {
+        cwd: root,
+        stdout: { write: (value) => symlinkOutput.push(String(value)) },
+        stderr: { write: (value) => symlinkErrors.push(String(value)) },
+      }),
+    ).toBe(2);
+    expect(symlinkOutput.join("")).toBe("");
+    expect(symlinkErrors.join("")).toBe(
+      `CONFIG_SYMLINK: Configuration file is a symlink: ${file}\n`,
+    );
+    expect(await readFile(target, "utf8")).toBe("unvalidated\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("human errors do not treat application errors as Commander help", async () => {
+  for (const error of [
+    { code: "commander.help", exitCode: 0, message: "application failure" },
+    { code: "commander.helpDisplayed", exitCode: 0, message: "application failure" },
+  ]) {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const fake = core([]);
+    fake.configuration.change = async () => {
+      throw error;
+    };
+    expect(
+      await runHumanCommand(["managed", "set"], {
+        cwd: "/tmp",
+        createCore: () => fake,
+        stdout: { write: (value) => stdout.push(String(value)) },
+        stderr: { write: (value) => stderr.push(String(value)) },
+      }),
+    ).toBe(2);
+    expect(stdout.join("")).toBe("");
+    expect(stderr.join("")).toStartWith("INVALID_ARGUMENT:");
+  }
+});
+
+test("content load preserves its body exactly after a metadata separator", async () => {
+  const output: string[] = [];
+  const fake = core([]);
+  const text = "line one  \nline two\n\n  ";
+  fake.content.load = async (request) => ({
+    value: {
+      selector: request.selector,
+      name: "review",
+      description: "Review a change",
+      path: "SKILL.md",
+      text,
+      provenance: { source: "workspace", origin: "local", stability: "mutable-local" },
+    },
+    diagnostics: [],
+  });
+  expect(
+    await runHumanCommand(["content", "load", "engineering:review"], {
+      cwd: "/tmp",
+      createCore: () => fake,
+      stdout: { write: (value) => output.push(String(value)) },
+      stderr: { write() {} },
+    }),
+  ).toBe(0);
+  expect(output.join("")).toContain("source workspace\n---\n");
+  expect(output.join("")).toEndWith(text);
+});
+
+test("content run reports signal and cancellation results", async () => {
+  const output: string[] = [];
+  const fake = core([]);
+  const results = [
+    { selector: "engineering:review", exitCode: null, signal: "SIGTERM", cancelled: false },
+    { selector: "engineering:review", exitCode: null, signal: null, cancelled: true },
+  ];
+  fake.content.run = async () => ({ value: results.shift()!, diagnostics: [] });
+  const options = {
+    cwd: "/tmp",
+    createCore: () => fake,
+    stdout: { write: (value: string) => output.push(value) },
+    stderr: { write() {} },
+  };
+  expect(
+    await runHumanCommand(["content", "run", "engineering:review", "--", "true"], options),
+  ).toBe(0);
+  expect(
+    await runHumanCommand(["content", "run", "engineering:review", "--", "true"], options),
+  ).toBe(0);
+  expect(output.join("")).toContain('Skill "engineering:review" was terminated by signal SIGTERM.');
+  expect(output.join("")).toContain('Skill "engineering:review" was cancelled.');
 });

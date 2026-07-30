@@ -1,11 +1,14 @@
-import { expect, test } from "bun:test";
+import { expect, test as bunTest } from "bun:test";
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { changeConfiguration } from "../../src/core/configuration";
 import { createSkillCliCore } from "../../src/core/create-core";
+import { StateCoordinator } from "../../src/core/internal/state";
 import { getWorkspace } from "../../src/core/workspace";
+
+const test = bunTest.serial;
 
 test("MGMT-001 creates only the selected Global Project or Local Source target with exact bindings", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-source-targets-"));
@@ -65,6 +68,238 @@ test("MGMT-001 creates only the selected Global Project or Local Source target w
           expect(await readFile(candidate.file, "utf8")).toBe(before[index]);
     }
     expect(await lstat(global)).toMatchObject({});
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("global mutations work without a project but project targets remain strict", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-global-only-edit-"));
+  const cwd = join(root, "outside-project");
+  const global = join(root, "global", "config.jsonc");
+  try {
+    await mkdir(cwd);
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+
+    await changeConfiguration(
+      { cwd, userConfigPath: global },
+      {
+        type: "collection.create",
+        level: "global",
+        collection: "team",
+      },
+    );
+    expect(JSON.parse(await readFile(global, "utf8")).collections.team).toEqual({});
+
+    await expect(
+      changeConfiguration(
+        { cwd, userConfigPath: global },
+        { type: "collection.create", level: "project", collection: "project-team" },
+      ),
+    ).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
+    await expect(
+      changeConfiguration(
+        { cwd, project: join(root, "missing"), userConfigPath: global },
+        { type: "collection.create", level: "global", collection: "other-team" },
+      ),
+    ).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("global mutations without an explicit project do not start Git", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-global-no-git-"));
+  const cwd = join(root, "outside-project");
+  const global = join(root, "global", "config.jsonc");
+  const bin = join(root, "bin");
+  const gitCalled = join(root, "git-called");
+  const previousPath = process.env.PATH;
+  try {
+    await mkdir(cwd);
+    await mkdir(bin);
+    await writeFile(join(bin, "git"), `#!/bin/sh\n: > "${gitCalled}"\nexit 1\n`, {
+      mode: 0o755,
+    });
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    process.env.PATH = `${bin}:${previousPath}`;
+
+    await changeConfiguration(
+      { cwd, userConfigPath: global },
+      { type: "collection.create", level: "global", collection: "team" },
+    );
+
+    expect(await lstat(gitCalled).catch(() => undefined)).toBeUndefined();
+    expect(JSON.parse(await readFile(global, "utf8")).collections.team).toEqual({});
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("global mutations ignore an invalid project config", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-global-only-project-config-"));
+  const global = join(root, "global", "config.jsonc");
+  try {
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    await writeFile(join(root, "skill-cli.jsonc"), '{ "unknown": true }\n');
+
+    await changeConfiguration(
+      { cwd: root, userConfigPath: global },
+      { type: "collection.create", level: "global", collection: "team" },
+    );
+
+    expect(JSON.parse(await readFile(global, "utf8")).collections.team).toEqual({});
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("collection declaration errors identify the collection, scope, and target config", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-collection-declaration-error-"));
+  const global = join(root, "global", "config.jsonc");
+  try {
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    await expect(
+      changeConfiguration(
+        { cwd: root, userConfigPath: global },
+        {
+          type: "collection.member.set",
+          level: "global",
+          collection: "team",
+          name: "review",
+          address: { source: "source", path: "review" },
+        },
+      ),
+    ).rejects.toThrow(`Collection "team" is not directly declared at global scope in ${global}`);
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("member removal distinguishes a missing Collection from a missing membership", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-member-removal-error-"));
+  const global = join(root, "global", "config.jsonc");
+  try {
+    await mkdir(join(root, "global"));
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    await writeFile(global, '{ "collections": { "team": {} } }\n');
+    await expect(
+      changeConfiguration(
+        { cwd: root, userConfigPath: global },
+        {
+          type: "collection.member.remove",
+          level: "global",
+          collection: "missing",
+          name: "review",
+        },
+      ),
+    ).rejects.toThrow(`Collection "missing" is not directly declared at global scope in ${global}`);
+    await expect(
+      changeConfiguration(
+        { cwd: root, userConfigPath: global },
+        { type: "collection.member.remove", level: "global", collection: "team", name: "review" },
+      ),
+    ).rejects.toThrow(
+      `Membership "review" is not directly declared in Collection "team" at global scope in ${global}`,
+    );
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("local mutations remain strict without a project", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-local-no-project-"));
+  const cwd = join(root, "outside-project");
+  try {
+    await mkdir(cwd);
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    await expect(
+      changeConfiguration(
+        { cwd },
+        { type: "collection.create", level: "local", collection: "team" },
+      ),
+    ).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("global mutations respect global Config Source contributions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-global-contribution-owner-"));
+  const cwd = join(root, "outside-project");
+  const global = join(root, "global", "config.jsonc");
+  const module = join(root, "module");
+  try {
+    await mkdir(cwd);
+    await mkdir(module);
+    await mkdir(join(root, "global"));
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    await writeFile(
+      join(module, "config.jsonc"),
+      '{ "sources": { "core": { "kind": "local", "path": "./skills", "root": "" } } }\n',
+    );
+    await writeFile(
+      global,
+      '{ "configSources": { "team": { "kind": "local", "path": "../module", "root": "" } } }\n',
+    );
+    await expect(
+      changeConfiguration(
+        { cwd, userConfigPath: global },
+        {
+          type: "source.register",
+          level: "global",
+          id: "team/core",
+          binding: { kind: "local", path: "./other", root: "" },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("global mutations respect adopted Remote Config Source contributions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-global-remote-contribution-owner-"));
+  const cwd = join(root, "outside-project");
+  const global = join(root, "global", "config.jsonc");
+  const state = join(root, "state");
+  try {
+    await mkdir(cwd);
+    await mkdir(join(root, "global"));
+    process.env.SKILL_CLI_STATE_DIR = state;
+    await writeFile(
+      global,
+      '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config.git", "root": "", "ref": "main" } } }\n',
+    );
+    await new StateCoordinator(state).publishRemoteConfig(
+      "remote",
+      "a".repeat(40),
+      Buffer.from(
+        '{ "sources": { "core": { "kind": "local", "path": "./skills", "root": "" } } }\n',
+      ),
+    );
+
+    await expect(
+      changeConfiguration(
+        { cwd, userConfigPath: global },
+        {
+          type: "source.register",
+          level: "global",
+          id: "remote/core",
+          binding: { kind: "local", path: "./other", root: "" },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });

@@ -545,7 +545,7 @@ export async function readWorkspace(
   return coordinator.withLock(() => readWorkspaceUnlocked(options, coordinator));
 }
 export async function readWorkspaceUnlocked(
-  options: ReadWorkspaceOptions,
+  options: ReadWorkspaceOptions & { readonly globalOnly?: boolean },
   coordinator = new StateCoordinator(),
   remoteConfigOverride?: {
     readonly id: string;
@@ -554,13 +554,17 @@ export async function readWorkspaceUnlocked(
   },
 ): Promise<OperationResult<WorkspaceView>> {
   const state = await coordinator.read();
-  const project = await resolveProjectRoot(options.cwd, options.project, options.signal).catch(
-    (error) => {
-      if (!options.project && error instanceof SkillCliError && error.code === "PROJECT_NOT_FOUND")
-        return { root: resolve(options.cwd), resolution: "global-only" as const };
-      throw error;
-    },
-  );
+  const project = options.globalOnly
+    ? { root: resolve(options.cwd), resolution: "global-only" as const }
+    : await resolveProjectRoot(options.cwd, options.project, options.signal).catch((error) => {
+        if (
+          !options.project &&
+          error instanceof SkillCliError &&
+          error.code === "PROJECT_NOT_FOUND"
+        )
+          return { root: resolve(options.cwd), resolution: "global-only" as const };
+        throw error;
+      });
   const user =
     options.userConfigPath ??
     join(
@@ -1458,7 +1462,7 @@ async function cachedConfig(
   ) as Promise<ReusableConfigDocument>;
 }
 async function contributionIds(
-  project: string,
+  project: string | undefined,
   options: ReadWorkspaceOptions,
   state: Awaited<ReturnType<StateCoordinator["read"]>>,
   coordinator: StateCoordinator,
@@ -1470,7 +1474,10 @@ async function contributionIds(
       "skill-cli",
       "config.jsonc",
     );
-  const inputs = [user, join(project, "skill-cli.jsonc"), join(project, "skill-cli.local.jsonc")];
+  const inputs = [
+    user,
+    ...(project ? [join(project, "skill-cli.jsonc"), join(project, "skill-cli.local.jsonc")] : []),
+  ];
   const ids = new Set<string>();
   for (const file of inputs) {
     const host = await document(file);
@@ -1504,14 +1511,21 @@ export async function mutateConfiguration(
 ): Promise<OperationResult<ConfigurationChangeResult>> {
   if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
   return new StateCoordinator().withLock(async () => {
-    const project = await resolveProjectRoot(options.cwd, options.project, options.signal);
+    const project =
+      change.level === "global" && !options.project
+        ? { root: resolve(options.cwd), resolution: "global-only" as const }
+        : await resolveProjectRoot(options.cwd, options.project, options.signal);
     const coordinator = new StateCoordinator();
     const immutableContributions = await contributionIds(
-      project.root,
+      change.level === "global" ? undefined : project.root,
       options,
       await coordinator.read(),
       coordinator,
     );
+    const workspaceOptions =
+      change.level === "global"
+        ? { ...options, globalOnly: true }
+        : { ...options, project: project.root };
     const file =
       change.level === "global"
         ? (options.userConfigPath ??
@@ -1531,6 +1545,11 @@ export async function mutateConfiguration(
         `Configuration file is not an ordinary file: ${file}`,
       );
     const original = stat ? decodeConfig(await readFile(file), file) : "{}\n";
+    const directlyDeclaredCollectionError = (collection: string) =>
+      new SkillCliError(
+        "INVALID_ARGUMENT",
+        `Collection "${collection}" is not directly declared at ${change.level} scope in ${file}`,
+      );
     let next = original;
     if (change.type === "source.register" || change.type === "config-source.register") {
       parseQualifiedName(change.id);
@@ -1554,10 +1573,7 @@ export async function mutateConfiguration(
       next = edit(next, ["collections", change.collection], {});
     } else if (change.type === "collection.remove") {
       parseQualifiedName(change.collection);
-      const workspace = await readWorkspaceUnlocked(
-        { ...options, project: project.root },
-        coordinator,
-      );
+      const workspace = await readWorkspaceUnlocked(workspaceOptions, coordinator);
       if (workspace.value.effective.status !== "complete")
         throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
       const collection = workspace.value.effective.collectionsView.find(
@@ -1566,8 +1582,7 @@ export async function mutateConfiguration(
       const direct = workspace.value.configs
         .find((item) => item.level === change.level)
         ?.direct.collections.find((item) => item.id === change.collection);
-      if (!direct)
-        throw new SkillCliError("INVALID_ARGUMENT", "Collection is not directly declared here");
+      if (!direct) throw directlyDeclaredCollectionError(change.collection);
       const outgoing = (await document(file)).collections?.[change.collection]?.links ?? [];
       const dependent =
         outgoing.length > 0 ||
@@ -1586,8 +1601,7 @@ export async function mutateConfiguration(
       parseQualifiedName(change.collection);
       parseNameSegment(change.name);
       const collection = (await document(file)).collections?.[change.collection];
-      if (!collection)
-        throw new SkillCliError("INVALID_ARGUMENT", "Collection is not directly declared here");
+      if (!collection) throw directlyDeclaredCollectionError(change.collection);
       const current = collection.members?.[change.name];
       if (
         current &&
@@ -1598,11 +1612,14 @@ export async function mutateConfiguration(
     } else if (change.type === "collection.member.remove") {
       parseQualifiedName(change.collection);
       parseNameSegment(change.name);
-      const member = (await document(file)).collections?.[change.collection]?.members?.[
-        change.name
-      ];
+      const collection = (await document(file)).collections?.[change.collection];
+      if (!collection) throw directlyDeclaredCollectionError(change.collection);
+      const member = collection.members?.[change.name];
       if (!member)
-        throw new SkillCliError("INVALID_ARGUMENT", "Membership is not directly declared here");
+        throw new SkillCliError(
+          "INVALID_ARGUMENT",
+          `Membership "${change.name}" is not directly declared in Collection "${change.collection}" at ${change.level} scope in ${file}`,
+        );
       if (
         change.expectedAddress &&
         (member.source !== change.expectedAddress.source ||
@@ -1613,7 +1630,7 @@ export async function mutateConfiguration(
     } else if (change.type === "collection.import") {
       parseQualifiedName(change.from);
       parseQualifiedName(change.into);
-      const workspace = await readWorkspaceUnlocked({ ...options, project: project.root });
+      const workspace = await readWorkspaceUnlocked(workspaceOptions);
       const state = await coordinator.read();
       const resolved = await resolveEffectiveCollections(
         options,
@@ -1625,8 +1642,7 @@ export async function mutateConfiguration(
       if (!source)
         throw new SkillCliError("REFERENCE_NOT_FOUND", `Collection not found: ${change.from}`);
       const targetDeclaration = (await document(file)).collections?.[change.into];
-      if (!targetDeclaration)
-        throw new SkillCliError("INVALID_ARGUMENT", "Collection is not directly declared here");
+      if (!targetDeclaration) throw directlyDeclaredCollectionError(change.into);
       const target = (targetDeclaration.members ?? {}) as Record<string, SkillAddress>;
       for (const [name, address] of source) {
         const current = target[name];
@@ -1637,10 +1653,7 @@ export async function mutateConfiguration(
         if (!target[name])
           next = edit(next, ["collections", change.into, "members", name], address);
     } else if (change.type === "use.set") {
-      const workspace = await readWorkspaceUnlocked(
-        { ...options, project: project.root },
-        coordinator,
-      );
+      const workspace = await readWorkspaceUnlocked(workspaceOptions, coordinator);
       const effective = workspace.value.effective;
       if (effective.status !== "complete")
         throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
@@ -1670,8 +1683,7 @@ export async function mutateConfiguration(
       parseQualifiedName(change.target);
       parseNameSegment(change.name);
       const declaration = (await document(file)).collections?.[change.collection];
-      if (!declaration)
-        throw new SkillCliError("INVALID_ARGUMENT", "Collection is not directly declared here");
+      if (!declaration) throw directlyDeclaredCollectionError(change.collection);
       if (declaration.references?.[change.name])
         throw new SkillCliError("CONFIG_CONFLICT", "Reference name already exists");
       next = edit(next, ["collections", change.collection, "references", change.name], {
@@ -1682,7 +1694,7 @@ export async function mutateConfiguration(
       parseQualifiedName(change.collection);
       parseNameSegment(change.name);
       if (!(await document(file)).collections?.[change.collection])
-        throw new SkillCliError("INVALID_ARGUMENT", "Collection is not directly declared here");
+        throw directlyDeclaredCollectionError(change.collection);
       const reference = (await document(file)).collections?.[change.collection]?.references?.[
         change.name
       ];
@@ -1698,8 +1710,7 @@ export async function mutateConfiguration(
       parseQualifiedName(change.collection);
       parseQualifiedName(change.target);
       const declaration = (await document(file)).collections?.[change.collection];
-      if (!declaration)
-        throw new SkillCliError("INVALID_ARGUMENT", "Collection is not directly declared here");
+      if (!declaration) throw directlyDeclaredCollectionError(change.collection);
       const existing = (declaration.links ?? []).indexOf(change.target);
       if ((change.linked && existing >= 0) || (!change.linked && existing < 0))
         throw new SkillCliError(
@@ -1720,13 +1731,13 @@ export async function mutateConfiguration(
       throw new SkillCliError("CONFIG_INVALID", "Invalid declaration edit");
     await resolveEffectiveCollections(
       options,
-      (await readWorkspaceUnlocked({ ...options, project: project.root })).value,
+      (await readWorkspaceUnlocked(workspaceOptions)).value,
       await coordinator.read(),
       coordinator,
       { file, value: proposed as ConfigDocument },
     );
     if (next !== original) await new StateCoordinator().publish([{ target: file, bytes: next }]);
-    const workspace = await readWorkspaceUnlocked({ ...options, project: project.root });
+    const workspace = await readWorkspaceUnlocked(workspaceOptions);
     return {
       value: { level: change.level, file, changed: next !== original },
       diagnostics: workspace.diagnostics,

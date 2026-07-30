@@ -96,9 +96,11 @@ function normalizeEntry(
 }
 
 function tokenFor(host: string): string | undefined {
-  return host === "github.com"
-    ? (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN)
-    : process.env.GH_TOKEN;
+  const tokens =
+    host === "github.com"
+      ? [process.env.GITHUB_TOKEN, process.env.GH_TOKEN]
+      : [process.env.GH_TOKEN];
+  return tokens.find((token) => token?.trim());
 }
 
 async function ghToken(host: string, signal?: AbortSignal): Promise<string | undefined> {
@@ -122,10 +124,11 @@ export async function resolveGitHubApi(
 ): Promise<GitHubApi | undefined> {
   const parsed = new URL(url);
   const host = parsed.host;
-  if (host === "github.com")
-    return { baseUrl: testBaseUrl ?? "https://api.github.com", token: tokenFor(host) };
-  if (testBaseUrl && parseGitHubRepository(url, true))
-    return { baseUrl: testBaseUrl, token: tokenFor(host) };
+  if (testBaseUrl && parseGitHubRepository(url, true)) return { baseUrl: testBaseUrl };
+  if (host === "github.com") {
+    const token = tokenFor(host);
+    return { baseUrl: "https://api.github.com", token: token ?? (await ghToken(host, signal)) };
+  }
   if (!parseGitHubRepository(url, true)) return undefined;
   const token = await ghToken(host, signal);
   if (!token) return undefined;
@@ -157,11 +160,10 @@ export async function openGitHubSource(
   const repository = parseGitHubRepository(url, api.baseUrl !== "https://api.github.com");
   if (!repository) throw new SkillCliError("INVALID_ARGUMENT", "Invalid GitHub repository URL");
   const { owner, repo } = repository;
-  const host = new URL(url).host;
   const timeout = AbortSignal.timeout(api.timeout ?? 10_000);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const client = new Octokit({
-    auth: api.token ?? tokenFor(host),
+    auth: api.token,
     baseUrl: api.baseUrl,
     request: { signal: requestSignal },
   });
