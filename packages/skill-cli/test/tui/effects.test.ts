@@ -1,7 +1,144 @@
 import { expect, test } from "bun:test";
 import { SkillCliError } from "../../src/core/api";
 import { createTuiEffects } from "../../src/tui/effects";
-import { directOwner, directSourceCore, workspaceProjection } from "./direct-source.fixture";
+import { createOperationState } from "../../src/tui/operation-state";
+import {
+  activeReader,
+  beginReaderRequest,
+  createReaderState,
+  reduceReaderState,
+  type ReaderEvent,
+} from "../../src/tui/reader/state";
+import {
+  directOwner,
+  directSourceCore,
+  testEffects,
+  testProjection,
+  workspaceProjection,
+} from "./direct-source.fixture";
+
+test("refresh applies only the current initial projection after a replacement refresh aborts its stale request", async () => {
+  const requests: {
+    readonly resolve: (value: {
+      readonly value: ReturnType<typeof workspaceProjection>;
+      readonly diagnostics: [];
+    }) => void;
+    readonly signal?: AbortSignal;
+  }[] = [];
+  const { projection, operation } = testProjection();
+  const accepted = workspaceProjection();
+  const effects = createTuiEffects(
+    directSourceCore(workspaceProjection(), {
+      get: (options) =>
+        new Promise((resolve) => {
+          requests.push({ resolve, signal: options?.signal });
+        }),
+    }),
+    operation,
+    projection.outcomes,
+  );
+
+  const stale = effects.refresh();
+  const current = effects.refresh();
+  expect(requests).toHaveLength(2);
+  expect(requests[0]!.signal?.aborted).toBe(true);
+
+  requests[0]!.resolve({
+    value: workspaceProjection({ includeDirect: false }),
+    diagnostics: [],
+  });
+  requests[1]!.resolve({ value: accepted, diagnostics: [] });
+  await Promise.all([stale, current]);
+
+  expect(projection.workspace()).toBe(accepted);
+});
+
+test("refresh failure reports stale diagnostics without applying a snapshot", async () => {
+  const { projection, operation } = testProjection();
+  const effects = createTuiEffects(
+    directSourceCore(workspaceProjection(), {
+      get: async () => {
+        throw new SkillCliError("PROVIDER_UNAVAILABLE", "offline");
+      },
+    }),
+    operation,
+    projection.outcomes,
+  );
+
+  await effects.refresh();
+
+  expect(projection.workspace()).toBeUndefined();
+  expect(projection.refresh()).toBe("stale");
+  expect(operation.problem()?.message).toBe("offline");
+});
+
+test("Reader effects retain an inactive aborted request's accepted cache update without changing active B", async () => {
+  let resolveAlpha:
+    | ((value: {
+        readonly value: {
+          readonly address: { readonly source: string; readonly path: string };
+          readonly name: string;
+          readonly description: string;
+          readonly markdownText: string;
+          readonly rawText: string;
+        };
+        readonly diagnostics: [];
+      }) => void)
+    | undefined;
+  let state = createReaderState();
+  const dispatch = (event: ReaderEvent) => {
+    state = reduceReaderState(state, event);
+  };
+  const core = directSourceCore(workspaceProjection(), {
+    loadInstalled: (request) =>
+      request.address.path === "alpha"
+        ? new Promise((resolve) => {
+            resolveAlpha = resolve;
+          })
+        : Promise.resolve({
+            value: {
+              address: request.address,
+              name: "beta",
+              description: "beta",
+              markdownText: "beta",
+              rawText: "beta raw",
+            },
+            diagnostics: [],
+          }),
+  });
+  const effects = createTuiEffects(
+    core,
+    createOperationState(),
+    testProjection().projection.outcomes,
+    dispatch,
+    (address, request) => {
+      const begun = beginReaderRequest(state, address, request);
+      state = begun.state;
+      return begun.event;
+    },
+  );
+  const alpha = { source: "team-main", path: "alpha" };
+  const beta = { source: "team-main", path: "beta" };
+
+  dispatch({ type: "select", address: alpha });
+  const first = effects.loadReader(alpha);
+  dispatch({ type: "select", address: beta });
+  await effects.loadReader(beta);
+  resolveAlpha!({
+    value: {
+      address: alpha,
+      name: "alpha",
+      description: "alpha",
+      markdownText: "alpha",
+      rawText: "alpha raw",
+    },
+    diagnostics: [],
+  });
+  await first;
+
+  expect(activeReader(state)).toMatchObject({ address: beta, text: "beta" });
+  expect(state.cache["team-main/alpha"]).toMatchObject({ text: "alpha", loading: false });
+});
 
 test("MGMT-006 discovers once and installs selected observed paths at the exact revision before one refresh", async () => {
   const calls: unknown[] = [];
@@ -27,7 +164,7 @@ test("MGMT-006 discovers once and installs selected observed paths at the exact 
       return { value: workspaceProjection(), diagnostics: [] };
     },
   });
-  const effects = createTuiEffects(core);
+  const effects = testEffects(core);
   const observation = await effects.discover({
     kind: "source-discovery",
     source: "team-main",
@@ -68,7 +205,7 @@ test("MGMT-007/008 only applies selected changed paths and never installs added 
       return { value: undefined, diagnostics: [] };
     },
   });
-  const effects = createTuiEffects(core);
+  const effects = testEffects(core);
   const observation = await effects.checkUpdate({
     kind: "source-update",
     source: "team-main",
@@ -86,7 +223,7 @@ test("MGMT-007/008 only applies selected changed paths and never installs added 
 
 test("Installed Skill update applies only its selected changed root", async () => {
   const calls: unknown[] = [];
-  const effects = createTuiEffects(
+  const effects = testEffects(
     directSourceCore(workspaceProjection(), {
       checkUpdate: async () => ({
         value: {
@@ -120,7 +257,7 @@ test("Installed Skill update applies only its selected changed root", async () =
 
 test("Installed Skill Rebind passes the explicit replacement root through preview and execution", async () => {
   const calls: unknown[] = [];
-  const effects = createTuiEffects(
+  const effects = testEffects(
     directSourceCore(workspaceProjection(), {
       previewRebind: async (request) => {
         calls.push(["preview", request]);
@@ -191,7 +328,7 @@ test("STATE-013/018 previews once, consumes review once, removes once, and refre
       };
     },
   });
-  const effects = createTuiEffects(core);
+  const effects = testEffects(core);
   const review = await effects.review({
     kind: "source-removal",
     source: "team-main",
@@ -208,7 +345,6 @@ test("STATE-013/018 previews once, consumes review once, removes once, and refre
 
 test("STATE-016/017 preview cancellation and exact failure remain local without execution", async () => {
   let aborted = 0;
-  const events: unknown[] = [];
   const core = directSourceCore(workspaceProjection(), {
     preview: async (_options) =>
       new Promise((_, reject) => {
@@ -218,7 +354,7 @@ test("STATE-016/017 preview cancellation and exact failure remain local without 
         });
       }),
   });
-  const effects = createTuiEffects(core, (event) => events.push(event));
+  const effects = testEffects(core);
   const pending = effects.review({
     kind: "source-removal",
     source: "team-main",
@@ -226,7 +362,7 @@ test("STATE-016/017 preview cancellation and exact failure remain local without 
   });
   effects.cancel();
   await expect(pending).resolves.toBeUndefined();
-  expect(events).toEqual([]);
+  expect(effects.operation.problem()).toBeUndefined();
   expect(aborted).toBe(1);
 });
 
@@ -260,7 +396,7 @@ test("MGMT-003 never executes a blocked impact", async () => {
       return { value: undefined, diagnostics: [] };
     },
   });
-  const effects = createTuiEffects(core);
+  const effects = testEffects(core);
   const review = await effects.review({
     kind: "source-removal",
     source: "team-main",
@@ -272,7 +408,6 @@ test("MGMT-003 never executes a blocked impact", async () => {
 
 test("STATE-017 preserves failed review and permits a retry with the exact error", async () => {
   let attempts = 0;
-  const events: unknown[] = [];
   const core = directSourceCore(workspaceProjection(), {
     remove: async () => {
       attempts++;
@@ -280,26 +415,24 @@ test("STATE-017 preserves failed review and permits a retry with the exact error
       return { value: undefined, diagnostics: [] };
     },
   });
-  const effects = createTuiEffects(core, (event) => events.push(event));
+  const effects = testEffects(core);
   const review = await effects.review({
     kind: "source-removal",
     source: "team-main",
     owner: directOwner,
   });
   expect(await effects.confirm(review!)).toBe(false);
+  expect(effects.operation.problem()).toEqual({
+    code: "WRITE_FAILED",
+    severity: "warning",
+    message: "disk full",
+  });
   expect(await effects.confirm(review!)).toBe(true);
   expect(attempts).toBe(2);
-  expect(events).toContainEqual({
-    type: "task.settle",
-    id: "2",
-    status: "disk full",
-    error: { code: "WRITE_FAILED", severity: "warning", message: "disk full" },
-  });
 });
 
 test("STATE-016 cancelled execution preserves review and permits a retry", async () => {
   let attempts = 0;
-  const events: unknown[] = [];
   const core = directSourceCore(workspaceProjection(), {
     remove: async (options) => {
       attempts++;
@@ -312,7 +445,7 @@ test("STATE-016 cancelled execution preserves review and permits a retry", async
       return { value: undefined, diagnostics: [] };
     },
   });
-  const effects = createTuiEffects(core, (event) => events.push(event));
+  const effects = testEffects(core);
   const review = await effects.review({
     kind: "source-removal",
     source: "team-main",
@@ -321,22 +454,16 @@ test("STATE-016 cancelled execution preserves review and permits a retry", async
   const first = effects.confirm(review!);
   effects.cancel();
   expect(await first).toBe(false);
+  expect(effects.operation.problem()).toEqual({
+    code: "CANCELLED",
+    severity: "warning",
+    message: "cancelled by user",
+  });
   expect(await effects.confirm(review!)).toBe(true);
   expect(attempts).toBe(2);
-  expect(events).toContainEqual({
-    type: "task.settle",
-    id: "2",
-    status: "Operation cancelled",
-    error: {
-      code: "CANCELLED",
-      severity: "warning",
-      message: "cancelled by user",
-    },
-  });
 });
 
 test("STATE-023 rejects a preview with a missing or mismatched owner", async () => {
-  const events: unknown[] = [];
   const core = directSourceCore(workspaceProjection(), {
     preview: async () => ({
       value: {
@@ -350,19 +477,17 @@ test("STATE-023 rejects a preview with a missing or mismatched owner", async () 
       diagnostics: [],
     }),
   });
-  const review = await createTuiEffects(core, (event) => events.push(event)).review({
+  const effects = testEffects(core);
+  const review = await effects.review({
     kind: "source-removal",
     source: "team-main",
     owner: directOwner,
   });
   expect(review).toBeUndefined();
-  expect(events).toContainEqual({
-    type: "operation.failure",
-    diagnostic: {
-      code: "TRANSACTION_CONFLICT",
-      severity: "warning",
-      message: "Source removal preview no longer matches the selected declaration",
-    },
+  expect(effects.operation.problem()).toEqual({
+    code: "TRANSACTION_CONFLICT",
+    severity: "warning",
+    message: "Source removal preview no longer matches the selected declaration",
   });
 });
 
@@ -378,7 +503,6 @@ test("STATE-016 observation success after abort wins while its request remains c
       }) => void)
     | undefined;
   let aborted = 0;
-  const events: unknown[] = [];
   const core = directSourceCore(workspaceProjection(), {
     discover: (_request, options) =>
       new Promise((resolve) => {
@@ -386,7 +510,7 @@ test("STATE-016 observation success after abort wins while its request remains c
         options?.signal?.addEventListener("abort", () => aborted++);
       }),
   });
-  const effects = createTuiEffects(core, (event) => events.push(event));
+  const effects = testEffects(core);
   const pending = effects.discover({
     kind: "source-discovery",
     source: "team-main",
@@ -398,20 +522,10 @@ test("STATE-016 observation success after abort wins while its request remains c
   });
   expect((await pending)?.observation.source).toBe("team-main");
   expect(aborted).toBe(1);
-  expect(events).toContainEqual({
-    type: "task.start",
-    task: {
-      id: "1",
-      title: "Observing Source",
-      cancellationRequested: false,
-      semanticOwner: "team-main",
-    },
-  });
-  expect(events).toContainEqual({ type: "task.cancel.request", id: "1" });
+  expect(effects.operation.notice()).toBe("Observation ready");
 });
 
 test("STATE-016 observation cancellation settles with Core's exact CANCELLED diagnostic", async () => {
-  const events: unknown[] = [];
   const core = directSourceCore(workspaceProjection(), {
     discover: (_request, options) =>
       new Promise((_, reject) =>
@@ -420,15 +534,14 @@ test("STATE-016 observation cancellation settles with Core's exact CANCELLED dia
         ),
       ),
   });
-  const effects = createTuiEffects(core, (event) => events.push(event));
+  const effects = testEffects(core);
   const pending = effects.discover({ kind: "source-discovery", source: "team-main" });
   effects.cancel();
   expect(await pending).toBeUndefined();
-  expect(events).toContainEqual({
-    type: "task.settle",
-    id: "1",
-    status: "Observation cancelled",
-    error: { code: "CANCELLED", severity: "warning", message: "provider stopped" },
+  expect(effects.operation.problem()).toEqual({
+    code: "CANCELLED",
+    severity: "warning",
+    message: "provider stopped",
   });
 });
 
@@ -448,7 +561,7 @@ test("STATE-013/017 source apply rejects fabricated reviews and preserves a real
       throw new SkillCliError("WRITE_FAILED", "disk full");
     },
   });
-  const effects = createTuiEffects(core);
+  const effects = testEffects(core);
   const review = await effects.discover({
     kind: "source-discovery",
     source: "team-main",
@@ -462,8 +575,7 @@ test("STATE-013/017 source apply rejects fabricated reviews and preserves a real
 
 test("STATE-017 mismatched observation retains the operation surface for a retry", async () => {
   let attempts = 0;
-  const events: unknown[] = [];
-  const effects = createTuiEffects(
+  const effects = testEffects(
     directSourceCore(workspaceProjection(), {
       discover: async () => ({
         value: {
@@ -474,18 +586,12 @@ test("STATE-017 mismatched observation retains the operation surface for a retry
         diagnostics: [],
       }),
     }),
-    (event) => events.push(event),
   );
   expect(await effects.discover({ kind: "source-discovery", source: "team-main" })).toBeUndefined();
-  expect(events).toContainEqual({
-    type: "task.settle",
-    id: "1",
-    status: "Observed Source no longer matches the selected Source",
-    error: {
-      code: "TRANSACTION_CONFLICT",
-      severity: "warning",
-      message: "Observed Source no longer matches the selected Source",
-    },
+  expect(effects.operation.problem()).toEqual({
+    code: "TRANSACTION_CONFLICT",
+    severity: "warning",
+    message: "Observed Source no longer matches the selected Source",
   });
   expect(
     (await effects.discover({ kind: "source-discovery", source: "team-main" }))?.observation.source,
@@ -496,8 +602,7 @@ test("STATE-016/018 successful install after abort wins and refresh failure rema
   let resolveInstall:
     | ((value: { readonly value: readonly never[]; readonly diagnostics: [] }) => void)
     | undefined;
-  const events: unknown[] = [];
-  const effects = createTuiEffects(
+  const effects = testEffects(
     directSourceCore(workspaceProjection(), {
       discover: async () => ({
         value: {
@@ -513,26 +618,20 @@ test("STATE-016/018 successful install after abort wins and refresh failure rema
         throw new SkillCliError("PROVIDER_UNAVAILABLE", "refresh unavailable");
       },
     }),
-    (event) => events.push(event),
   );
   const review = await effects.discover({ kind: "source-discovery", source: "team-main" });
   const applying = effects.install(review!, ["review"]);
   effects.cancel();
   resolveInstall!({ value: [], diagnostics: [] });
   expect(await applying).toBe(true);
-  expect(events).toContainEqual({
-    type: "task.settle",
-    id: "2",
-    status: "Skills installed; Workspace is stale",
-  });
+  expect(effects.operation.notice()).toBe("Skills installed; Workspace is stale");
 });
 
 test("STATE-016/018 cancelled install retains its observed review and retries without rediscovery", async () => {
   let discovers = 0;
   let installs = 0;
   let refreshes = 0;
-  const events: unknown[] = [];
-  const effects = createTuiEffects(
+  const effects = testEffects(
     directSourceCore(workspaceProjection(), {
       discover: async () => {
         discovers++;
@@ -561,18 +660,16 @@ test("STATE-016/018 cancelled install retains its observed review and retries wi
         return { value: workspaceProjection(), diagnostics: [] };
       },
     }),
-    (event) => events.push(event),
   );
   const review = await effects.discover({ kind: "source-discovery", source: "team-main" });
   const selectedPaths = ["review"] as const;
   const cancelled = effects.install(review!, selectedPaths);
   effects.cancel();
   expect(await cancelled).toBe(false);
-  expect(events).toContainEqual({
-    type: "task.settle",
-    id: "2",
-    status: "Operation cancelled",
-    error: { code: "CANCELLED", severity: "warning", message: "install cancelled" },
+  expect(effects.operation.problem()).toEqual({
+    code: "CANCELLED",
+    severity: "warning",
+    message: "install cancelled",
   });
   expect(await effects.install(review!, selectedPaths)).toBe(true);
   expect({ discovers, installs, refreshes }).toEqual({ discovers: 1, installs: 2, refreshes: 1 });

@@ -1,4 +1,4 @@
-import type { InstalledSkill } from "./model";
+import type { InstalledSkill } from "./types";
 
 export interface SkillsFilterState {
   readonly query?: string;

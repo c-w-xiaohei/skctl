@@ -29,6 +29,8 @@
         "@opentui/core": "0.4.5",
         "@opentui/solid": "0.4.5",
         "@sinclair/typebox": "0.34.52",
+        "@tuiparts/core": "0.0.5",
+        "@tuiparts/solid": "0.0.5",
         "ajv": "8.20.0",
         "commander": "15.0.0",
         "jsonc-parser": "3.3.1",
@@ -249,6 +251,10 @@
     "@skill-cli/opencode-adapter": ["@skill-cli/opencode-adapter@workspace:packages/opencode-adapter"],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
+
+    "@tuiparts/core": ["@tuiparts/core@0.0.5", "", { "peerDependencies": { "@opentui/core": "^0.4.3" } }, "sha512-l84Y+tRAfxduoRW7nhaqiKDlMx8e9TTL+nn5V7guMGtEnSvFe3+kjP1ty7v97YZ68KCI/wC2miJdCB0JRv6XnA=="],
+
+    "@tuiparts/solid": ["@tuiparts/solid@0.0.5", "", { "dependencies": { "@tuiparts/core": "^0.0.5" }, "peerDependencies": { "@opentui/core": "^0.4.3", "@opentui/solid": "^0.4.3", "solid-js": "1.9.12" } }, "sha512-aQDVpMGrsgzxIDEYq0EfKmWavoNOzPLSBqg+mAaA5NRmw+ODbiMAwjoJ4a6spcZeu3/CMuv0tg7NSsUuya0y/A=="],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

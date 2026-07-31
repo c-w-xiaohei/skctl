@@ -88,6 +88,69 @@ describe("packaged release orchestration", () => {
     expect(terminalControllerSource("win32")).toContain("WriteFile(inputWrite");
   });
 
+  test("keeps the Linux controller aligned with the refactored TUI acceptance paths", () => {
+    const controller = terminalControllerSource("linux");
+
+    expect(controller).toContain('cold = !strcmp(argv[4], "cold")');
+    expect(controller).toContain('checkpoint("cold-start", "Add your first Skill")');
+    expect(controller).toContain('checkpoint("cold-action", "Add a Source")');
+    expect(controller).toContain('checkpoint("cold-instructions", "Discover")');
+    expect(controller).toContain("PTY cold-start Enter mutated project config");
+    expect(controller).toContain('checkpoint("source-palette", "Global")');
+    expect(controller).toContain('checkpoint("source-config", "Config")');
+    expect(controller).toContain(
+      'checkpoint("source-actions", "Add Source"); send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\r")',
+    );
+    expect(controller).toContain(
+      'checkpoint("add-source", "Add Source"); send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\r")',
+    );
+    expect(controller).toContain('send_bytes(master, "\\033[C")');
+    expect(controller).toContain("resize_pty(master, child, 80, 24)");
+    expect(controller).toContain("resize_pty(master, child, 43, 24)");
+    expect(controller).toContain('checkpoint("reader-tabs", "SKILL.md")');
+    expect(controller).toContain('checkpoint("reader-details", "Details")');
+    expect(controller).toContain('send_bytes(master, "\\033[C\\033[C")');
+    expect(controller).toContain('checkpoint("reader-actions", "Actions")');
+    expect(controller).toContain('checkpoint("global-collections-empty", "No Collections yet")');
+    expect(controller).toContain('checkpoint("new-collection-action", "Create Collection")');
+    expect(controller).toContain(
+      'checkpoint("restored-form", "Create Collection"); send_bytes(master, "pty-created")',
+    );
+    expect(controller).toContain('send_bytes(master, "\\t")');
+    expect(controller).toContain('send_bytes(master, "\\033[B\\r")');
+    expect(controller).toContain('checkpoint("created", "pty-created")');
+    expect(controller).toContain('send_bytes(master, "\\020")');
+    expect(controller).toContain('checkpoint("collection-actions", "Add Link")');
+    expect(controller).toContain('checkpoint("collection-remove-action", "Remove Collection")');
+    expect(controller).toContain('checkpoint("remove-review", "Remove Collection")');
+    expect(controller).toContain(
+      'send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B")',
+    );
+    expect(controller).toContain(
+      'send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B")',
+    );
+    expect(controller).toContain('checkpoint("collection-actions-repeat", "Add Link")');
+    expect(controller).toContain('checkpoint("global destination", "Global Config")');
+    expect(controller).toContain(
+      'checkpoint("startup", "Workspace") || !checkpoint("skills", "Installed Skills") || !checkpoint("fixture", "fixture"); send_bytes(master, "\\033"); step++;',
+    );
+    expect(controller).toContain(
+      'step == 1 && elapsed - alternateAt >= 2200) { send_bytes(master, "\\033"); step++; }',
+    );
+    expect(controller).toContain(
+      'checkpoint("global selected", "Global Config") || !checkpoint("global destination", "Global Config"); send_bytes(master, "\\t"); step++;',
+    );
+    expect(controller).toContain(
+      'checkpoint("global-sections", "Sources"); send_bytes(master, "\\033[C\\033[C"); step++;',
+    );
+    expect(controller).toContain('send_bytes(master, "\\t")');
+    expect(controller).toContain('level_has(argv[2], "global", "pty-created")');
+    expect(controller).toContain('checkpoint("mouse-overlay-dimensions", "Search dimensions")');
+    expect(controller).toContain('locate("Search dimensions", &column, &row) || ++row > height');
+    expect(controller).toContain("if (c >= 0x20 && c <= 0x3f) return");
+    expect(controller).toContain("c == '\\\\' ? 0 : 3");
+  });
+
   test("makes the Windows ConPTY helper close and boundedly drain every owned resource", () => {
     const controller = terminalControllerSource("win32");
 

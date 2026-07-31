@@ -62,8 +62,17 @@ test("Workspace Collection create selects a level, blocks duplicate submit, and 
   });
   try {
     await setup.waitForFrame((frame) => frame.includes("Installed Skills"));
-    setup.renderer.root.findDescendantById("workspace-section-browser")?.focus();
-    setup.mockInput.pressArrow("down");
+    for (let attempts = 0; attempts < 6; attempts++) {
+      if (setup.renderer.currentFocusedRenderable?.id?.startsWith("workspace-section-browser-tab-"))
+        break;
+      setup.mockInput.pressKey("TAB");
+      await setup.renderOnce();
+    }
+    expect(
+      setup.renderer.currentFocusedRenderable?.id?.startsWith("workspace-section-browser-tab-"),
+    ).toBe(true);
+    setup.mockInput.pressArrow("right");
+    await setup.renderOnce();
     setup.mockInput.pressEnter();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
     setup.mockInput.pressKey("P", { ctrl: true });

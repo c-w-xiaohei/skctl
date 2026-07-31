@@ -8,6 +8,52 @@ import type {
   ResourceDescriptor,
 } from "../../src/core/api";
 import type { TuiCore } from "../../src/tui/effects";
+import { createTuiEffects } from "../../src/tui/effects";
+import { createOperationState } from "../../src/tui/operation-state";
+import { createProjection } from "../../src/tui/projection";
+import { createWorkspaceState } from "../../src/tui/workspace/state";
+import { createCollectionsState } from "../../src/tui/collections/state";
+import { createConfigState } from "../../src/tui/config/state";
+import {
+  beginReaderRequest,
+  createReaderState,
+  reduceReaderState,
+  type ReaderOwnerState,
+} from "../../src/tui/reader/state";
+
+export function testProjection() {
+  const operation = createOperationState();
+  const projection = createProjection(operation, {
+    workspace: createWorkspaceState(),
+    collections: createCollectionsState(),
+    config: createConfigState(),
+  });
+  return { projection, operation };
+}
+
+export function testEffects(
+  core: TuiCore,
+  dispatchReader: (event: import("../../src/tui/reader/state").ReaderEvent) => void = () => {},
+) {
+  const { projection, operation } = testProjection();
+  let reader: ReaderOwnerState = createReaderState();
+  const effects = createTuiEffects(
+    core,
+    operation,
+    projection.outcomes,
+    (event) => {
+      reader = reduceReaderState(reader, event);
+      dispatchReader(event);
+    },
+    (address, request, path) => {
+      const begun = beginReaderRequest(reader, address, request, path);
+      reader = begun.state;
+      dispatchReader(begun.event);
+      return begun.event;
+    },
+  );
+  return { ...effects, operation };
+}
 
 export const directOwner = {
   level: "project" as const,

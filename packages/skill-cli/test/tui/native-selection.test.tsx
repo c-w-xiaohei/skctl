@@ -19,8 +19,16 @@ test("RENDER native Raw Reader exposes mouse-dragged selected text through the r
   try {
     await setup.renderOnce();
     await setup.waitForFrame((frame) => frame.includes("Installed Skills 2/2"));
-    setup.mockInput.pressKeys(["TAB", "TAB", "TAB", "TAB", "TAB", "TAB"]);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-raw");
+    const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
+    expect(browser).toBeDefined();
+    await setup.mockMouse.click(browser!.screenX, browser!.screenY);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
+    setup.mockInput.pressEnter();
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-raw"));
+    const raw = setup.renderer.root.findDescendantById("reader-raw");
+    expect(raw).toBeDefined();
+    await setup.mockMouse.click(raw!.screenX, raw!.screenY);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === raw);
     setup.mockInput.pressEnter();
     await setup.waitForFrame((frame) => frame.includes("title: Guide"));
     const reader = setup.renderer.root.findDescendantById("reader-scrollbox");

@@ -1,5 +1,5 @@
 import type { ActionDescriptor } from "./actions";
-import type { Destination } from "./model";
+import type { Destination } from "./types";
 import type { SourceRemovalReview } from "./effects";
 import type { DiscoveryReview, UpdateReview } from "./effects";
 import type { InstalledSkillReview } from "./effects";
@@ -45,7 +45,13 @@ export function InstalledSkillPreviewOverlay(props: {
           }}
           focused={true}
           showDescription={false}
-          options={[{ name: "Cancel", description: "Return to Details", value: "cancel" }]}
+          options={[
+            {
+              name: "Cancel",
+              description: "Return to Details",
+              value: "cancel",
+            },
+          ]}
           onSelect={props.onCancel}
         />
         <text>Escape Cancel</text>
@@ -86,8 +92,16 @@ export function InstalledSkillPreviewFailureOverlay(props: {
                   },
                 ]
               : [
-                  { name: "Cancel", description: "Return to Details", value: "cancel" },
-                  { name: "Retry", description: "Repeat this exact preview", value: "retry" },
+                  {
+                    name: "Cancel",
+                    description: "Return to Details",
+                    value: "cancel",
+                  },
+                  {
+                    name: "Retry",
+                    description: "Repeat this exact preview",
+                    value: "retry",
+                  },
                 ]
           }
           onSelect={(_index, option) => {
@@ -155,11 +169,25 @@ export function InstalledSkillReviewOverlay(props: {
                       description: `Open ${owner.file} without changing it automatically`,
                       value: `resolve:${index}`,
                     })),
-                    { name: "Cancel", description: "Return to Details", value: "cancel" },
+                    {
+                      name: "Cancel",
+                      description: "Return to Details",
+                      value: "cancel",
+                    },
                   ]
-                : [{ name: "Cancel", description: "Return to Details", value: "cancel" }]
+                : [
+                    {
+                      name: "Cancel",
+                      description: "Return to Details",
+                      value: "cancel",
+                    },
+                  ]
               : [
-                  { name: "Cancel", description: "Keep this Installed Skill", value: "cancel" },
+                  {
+                    name: "Cancel",
+                    description: "Keep this Installed Skill",
+                    value: "cancel",
+                  },
                   {
                     name: props.pending
                       ? "Applying"
@@ -318,7 +346,11 @@ export function RebindSourceOverlay(props: {
           }}
           focused={focus() === "review"}
           options={[
-            { name: "Review Rebind", description: "Preview identity proof", value: "review" },
+            {
+              name: "Review Rebind",
+              description: "Preview identity proof",
+              value: "review",
+            },
           ]}
           showDescription={false}
           onSelect={() => {
@@ -332,7 +364,13 @@ export function RebindSourceOverlay(props: {
             cancel = value;
           }}
           focused={focus() === "cancel"}
-          options={[{ name: "Cancel", description: "Return to Details", value: "cancel" }]}
+          options={[
+            {
+              name: "Cancel",
+              description: "Return to Details",
+              value: "cancel",
+            },
+          ]}
           showDescription={false}
           onSelect={props.onClose}
         />
@@ -362,7 +400,11 @@ export function CollectionHandoffOverlay(props: {
           focused={true}
           showDescription
           options={[
-            { name: "Cancel", description: "Return to Details", value: "cancel" },
+            {
+              name: "Cancel",
+              description: "Return to Details",
+              value: "cancel",
+            },
             ...props.choices.map((choice, index) => ({
               name: `${choice.collection}${choice.level ? ` (${choice.level})` : ""}`,
               description: choice.level
@@ -403,7 +445,11 @@ export function InstalledSkillChooserOverlay(props: {
           focused={true}
           height={10}
           options={[
-            { name: "Cancel", description: "Return to Collection", value: "cancel" },
+            {
+              name: "Cancel",
+              description: "Return to Collection",
+              value: "cancel",
+            },
             ...props.skills.map((skill, index) => ({
               name: `${skill.name}  ${skill.address.source}/${skill.address.path}`,
               description: skill.description,
@@ -522,7 +568,10 @@ export function CollectionCreateOverlay(
           onSelect={(_index, option) => {
             if (option?.value === "cancel") props.onCancel();
             else if (!props.pending && collection().trim())
-              props.onSubmit({ level: level()!, collection: collection().trim() });
+              props.onSubmit({
+                level: level()!,
+                collection: collection().trim(),
+              });
           }}
         />
         <text>Cancel is selected by default</text>
@@ -755,9 +804,21 @@ export function SourceRegistrationOverlay(props: {
           ref={trackRef(setKindChoice)}
           focused={focus() === "kind"}
           options={[
-            { name: "Local", description: "Configured local path", value: "local" },
-            { name: "Remote Git", description: "Canonical URL and tracked ref", value: "git" },
-            { name: "GitHub", description: "Owner, repository, and tracked ref", value: "github" },
+            {
+              name: "Local",
+              description: "Configured local path",
+              value: "local",
+            },
+            {
+              name: "Remote Git",
+              description: "Canonical URL and tracked ref",
+              value: "git",
+            },
+            {
+              name: "GitHub",
+              description: "Owner, repository, and tracked ref",
+              value: "github",
+            },
           ]}
           showDescription
           onSelect={(_index, option) =>
@@ -867,7 +928,11 @@ export function SourceRegistrationOverlay(props: {
                           ref: ref().trim(),
                           root: root().trim(),
                         }
-                      : { kind: "local", path: origin().trim(), root: root().trim() },
+                      : {
+                          kind: "local",
+                          path: origin().trim(),
+                          root: root().trim(),
+                        },
               });
           }}
         />
@@ -1346,14 +1411,24 @@ export function CollectionReviewOverlay(props: {
           options={
             impact.allowed
               ? [
-                  { name: "Cancel", description: "Keep current configuration", value: "cancel" },
+                  {
+                    name: "Cancel",
+                    description: "Keep current configuration",
+                    value: "cancel",
+                  },
                   {
                     name: props.pending ? `${verb}...` : props.error ? `Retry ${verb}` : verb,
                     description: `Apply reviewed ${verb.toLowerCase()}`,
                     value: "confirm",
                   },
                 ]
-              : [{ name: "Cancel", description: "Return without mutation", value: "cancel" }]
+              : [
+                  {
+                    name: "Cancel",
+                    description: "Return without mutation",
+                    value: "cancel",
+                  },
+                ]
           }
           onSelect={(_index, option) => {
             if (option?.value === "cancel") props.onCancel();
@@ -1391,7 +1466,7 @@ export function ActionOverlay(props: {
         <select
           id={props.title === "Palette" ? "palette-menu" : "source-action-menu"}
           focused={true}
-          height={10}
+          height={props.title === "Palette" ? 10 : Math.min(props.actions.length * 2, 14)}
           options={[
             ...(props.title === "Palette"
               ? (["workspace", "global", "project", "local"] as const).map((destination) => ({
@@ -1525,14 +1600,14 @@ export function SourceSelectionOverlay(props: {
 }
 
 export function SourceObservationOverlay(props: {
-  readonly title: "Discovering Skills" | "Checking Updates";
+  readonly title: "Discovering Skills" | "Checking Updates" | "Observing Config";
   readonly source: string;
   readonly cancelling: boolean;
   readonly error?: { readonly code: string; readonly message: string };
   readonly onRetry: () => void;
   readonly onClose: () => void;
 }) {
-  const failed = !!props.error;
+  const failed = () => !!props.error;
   return (
     <box
       id="source-observation-overlay"
@@ -1549,7 +1624,7 @@ export function SourceObservationOverlay(props: {
         <text>
           {props.cancelling
             ? "Cancelling observation"
-            : failed
+            : failed()
               ? "Observation failed"
               : "Observing"}
         </text>
@@ -1559,12 +1634,26 @@ export function SourceObservationOverlay(props: {
           focused={true}
           height={3}
           options={
-            failed
+            failed() && !props.cancelling
               ? [
-                  { name: "Retry", description: "Observe this Source again", value: "retry" },
-                  { name: "Close", description: "Return to the selected Source", value: "close" },
+                  {
+                    name: "Retry",
+                    description: "Observe this Source again",
+                    value: "retry",
+                  },
+                  {
+                    name: "Close",
+                    description: "Return to the selected Source",
+                    value: "close",
+                  },
                 ]
-              : [{ name: "Cancel", description: "Request cancellation", value: "cancel" }]
+              : [
+                  {
+                    name: "Cancel",
+                    description: "Request cancellation",
+                    value: "cancel",
+                  },
+                ]
           }
           showDescription
           onSelect={(_index, option) => {

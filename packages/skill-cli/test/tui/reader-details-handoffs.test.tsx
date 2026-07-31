@@ -10,6 +10,12 @@ import type {
   OperationResult,
 } from "../../src/core/api";
 import { directSourceCore } from "./direct-source.fixture";
+import {
+  readerContent,
+  readerProjection,
+  readerSecondAddress,
+  readerSecondContent,
+} from "./installed-reader.fixture";
 
 const address = { source: "team-main", path: "guide" };
 const projectOwner = {
@@ -453,17 +459,19 @@ function localContributedProjection(): ManagementProjection {
 async function openDetailsActions(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.renderOnce();
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-tabs"));
+  await setup.waitFor(
+    () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+  );
   setup.mockInput.pressEnter();
   await setup.renderOnce();
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
   setup.mockInput.pressKey("TAB", { shift: true });
   await setup.renderOnce();
-  setup.mockInput.pressKey("ARROW_RIGHT");
-  setup.mockInput.pressEnter();
-  await setup.renderOnce();
-  setup.mockInput.pressKey("TAB", { shift: true });
+  setup.mockInput.pressKey("TAB");
   await setup.renderOnce();
   setup.mockInput.pressKey("ARROW_RIGHT");
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey("ARROW_RIGHT");
+  setup.mockInput.pressKey("TAB");
   await setup.renderOnce();
   setup.mockInput.pressKey("TAB");
   await setup.renderOnce();
@@ -552,7 +560,7 @@ test("Details Add to collection previews Core-authorized membership and commits 
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "membership-add-name",
     );
-    await setup.waitForFrame((frame) => frame.includes("Add Membership"));
+    expect(setup.renderer.root.findDescendantById("membership-add-choice")).toBeDefined();
     expect(previews).toEqual([
       { level: "global", collection: "engineering", address, name: "guide" },
     ]);
@@ -565,9 +573,12 @@ test("Details Add to collection previews Core-authorized membership and commits 
     setup.mockInput.pressKey("ARROW_DOWN");
     setup.mockInput.pressEnter();
     await setup.renderOnce();
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-review-choice",
+    await setup.waitFor(() =>
+      ["collection-review-choice", "membership-add-choice"].includes(
+        setup.renderer.currentFocusedRenderable?.id ?? "",
+      ),
     );
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-review-choice");
     expect(changes).toEqual([]);
     setup.mockInput.pressKey("ARROW_DOWN");
     setup.mockInput.pressEnter();
@@ -622,7 +633,7 @@ test("Details Add to collection previews and commits the second same-ID direct o
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "membership-add-name",
     );
-    await setup.waitForFrame((frame) => frame.includes("Add Membership"));
+    expect(setup.renderer.root.findDescendantById("membership-add-choice")).toBeDefined();
     expect(previews).toEqual([
       { level: "project", collection: "engineering", address, name: "guide" },
     ]);
@@ -933,6 +944,99 @@ test("Details contributed Source relationship mounts the exact Source ID", async
     if (!browser) throw new Error("Source browser was not mounted");
     expect(setup.renderer.currentFocusedRenderable).toBe(browser);
     expect(setup.captureCharFrame()).toContain("team-config/lark");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("For agents repository selector route lands its distinct Installed Skill in Workspace, Reader, and Details", async () => {
+  const loads: string[] = [];
+  const base = readerProjection();
+  const projection = {
+    ...base,
+    installedSkills: base.installedSkills.map((skill) =>
+      skill.address.path === "guide"
+        ? {
+            ...skill,
+            selectorViews: {
+              status: "complete" as const,
+              values: [
+                {
+                  selector: "engineering:guide",
+                  collection: "engineering",
+                  entry: "guide",
+                  paths: [
+                    {
+                      kind: "repository-derived" as const,
+                      repository: "acme/main",
+                      source: readerSecondAddress.source,
+                      path: readerSecondAddress.path,
+                    },
+                  ],
+                  useOwners: [],
+                },
+              ],
+            },
+          }
+        : skill,
+    ),
+  };
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(projection, {
+          loadInstalled: async (request) => {
+            loads.push(request.address.path);
+            return {
+              value:
+                request.address.path === readerSecondAddress.path
+                  ? readerSecondContent
+                  : readerContent,
+              diagnostics: [],
+            };
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await setup.waitForFrame((frame) => frame.includes("const needle = true;"));
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("reader-details-relationships"),
+    );
+    const relationships = setup.renderer.root.findDescendantById("reader-details-relationships");
+    relationships!.focus();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === relationships);
+    setup.mockInput.pressKey("ARROW_DOWN");
+    setup.mockInput.pressKey("ARROW_DOWN");
+    setup.mockInput.pressEnter();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "agent-path-choice");
+    setup.mockInput.pressEnter();
+    await setup.waitFor(
+      () =>
+        (
+          setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable
+        )?.getSelectedOption()?.value === "team-main/reference" &&
+        setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser" &&
+        setup.captureCharFrame().includes("other needle"),
+    );
+    expect(loads).toEqual(["guide", "reference"]);
+    expect(setup.renderer.root.findDescendantById("agent-path-choice")).toBeUndefined();
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    await setup.waitFor(() => setup.captureCharFrame().includes("Address  team-main/reference"));
+    expect(setup.renderer.root.findDescendantById("reader-details-actions")).toBeDefined();
   } finally {
     setup.renderer.destroy();
   }

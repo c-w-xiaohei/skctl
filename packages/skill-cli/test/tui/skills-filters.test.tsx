@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { InputRenderable } from "@opentui/core";
+import { InputRenderable, TabSelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../../src/tui/app";
 import { directSourceCore } from "./direct-source.fixture";
@@ -10,7 +10,10 @@ test("RENDER Skills browser owns slash query and updates its local result count"
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+          loadInstalled: async () => ({
+            value: readerContent,
+            diagnostics: [],
+          }),
         })}
         exit={() => {}}
       />
@@ -34,7 +37,7 @@ test("RENDER Skills browser owns slash query and updates its local result count"
   }
 });
 
-test("RENDER filtering selected A reconciles Reader and Actions to visible B", async () => {
+test("RENDER filtering selected A reconciles Reader and Details Actions to visible B", async () => {
   const loads: string[] = [];
   const setup = await testRender(
     () => (
@@ -61,20 +64,23 @@ test("RENDER filtering selected A reconciles Reader and Actions to visible B", a
     }
     await setup.waitForFrame((frame) => frame.includes("Installed Skills 1/2"));
     expect(loads.at(-1)).toBe("reference");
-    const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
-    browser?.focus();
-    setup.mockInput.pressEnter();
-    await setup.renderOnce();
-    setup.mockInput.pressKey("TAB", { shift: true });
-    await setup.renderOnce();
+    expect(setup.renderer.root.findDescendantById("reader-tabs")).toBeDefined();
+    setup.renderer.root.findDescendantById("installed-skill-browser")?.focus();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
     setup.mockInput.pressKey("ARROW_RIGHT");
-    setup.mockInput.pressEnter();
-    await setup.renderOnce();
-    setup.mockInput.pressKey("TAB", { shift: true });
-    await setup.renderOnce();
     setup.mockInput.pressKey("ARROW_RIGHT");
-    setup.mockInput.pressEnter();
-    await setup.waitForFrame((frame) => frame.includes("Address  team-main/reference"));
+    await setup.waitFor(
+      () =>
+        (
+          setup.renderer.root.findDescendantById("reader-tabs") as TabSelectRenderable
+        ).getSelectedIndex() === 2,
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
     setup.mockInput.pressKey("TAB");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "reader-details-actions",

@@ -1,17 +1,36 @@
-import { SelectRenderable } from "@opentui/core";
-import { createEffect } from "solid-js";
-import type { ConfigLevelView } from "../core/api";
+import { SelectRenderable, type BaseRenderable } from "@opentui/core";
+import { onCleanup, Show } from "solid-js";
+import type { ConfigLevelView, ManagementProjection } from "../core/api";
 import type { ActionDescriptor } from "./actions";
-import type { ConfigSection, Destination, TuiState } from "./model";
+import type { ConfigSection, Destination, RouteHandoff } from "./types";
+import type { ConfigReadonly } from "./config/state";
 import type { ConfigDeclarationOwner, SourceBindingView } from "../core/api";
+import { SectionTabs } from "./components/section-tabs";
+import { EmptyState } from "./presentation";
+import type { FocusRegistry, FocusTarget } from "./focus";
+
+type ConfigActionId =
+  | "add-source"
+  | "add-config-source"
+  | "new-collection"
+  | "set-collection-use"
+  | "enable-managed-opencode"
+  | "disable-managed-opencode";
 
 export function ConfigPage(props: {
-  readonly state: TuiState;
+  readonly config: ConfigReadonly;
+  readonly overlay?: () => boolean;
+  readonly narrow?: boolean;
+  readonly handoff?: RouteHandoff;
+  readonly projection: () => ManagementProjection | undefined;
+  readonly focusRegistry?: FocusRegistry;
   readonly destination: Exclude<Destination, "workspace">;
   readonly actions: readonly ActionDescriptor[];
   readonly onSelect: (source: string) => void;
   readonly onActions: () => void;
+  readonly onAction: (id: ConfigActionId) => void;
   readonly onSection: (section: ConfigSection) => void;
+  readonly onLocalNavFocus?: () => void;
   readonly onContribution: (
     value:
       | {
@@ -27,19 +46,20 @@ export function ConfigPage(props: {
   ) => void;
 }) {
   const config = (): ConfigLevelView | undefined =>
-    props.state.workspace?.configs.find((item) => item.level === props.destination);
-  const section = () => props.state.memory[props.destination].section;
+    props.projection()?.configs.find((item) => item.level === props.destination);
+  const section = () => props.config.section(props.destination);
   const value = () => config();
-  const selection = () => props.state.memory[props.destination].selection[section()];
+  const selection = () => props.config.selection(props.destination, section() as ConfigSection);
   const handoffText = () => {
-    const handoff = props.state.handoff;
+    const handoff = props.handoff;
     if (!handoff || handoff.kind === "agent-producer" || handoff.owner.level !== props.destination)
       return undefined;
     const owner = `${handoff.owner.file} ${handoff.owner.pointer}`;
     const configSourceOwner = handoff.owner.contribution?.configSource ?? handoff.owner;
     const configSource = () =>
-      props.state.workspace?.configs
-        .find((config) => config.level === configSourceOwner.level)
+      props
+        .projection()
+        ?.configs.find((config) => config.level === configSourceOwner.level)
         ?.direct.configSources.find(
           (item) =>
             item.owner.file === configSourceOwner.file &&
@@ -89,7 +109,7 @@ export function ConfigPage(props: {
         : undefined;
     }
     if (section() === "config-sources") {
-      if (props.state.handoff?.kind === "source-contribution") return undefined;
+      if (props.handoff?.kind === "source-contribution") return undefined;
       const source = value()?.direct.configSources.find(
         (item) => item.owner.pointer === selection(),
       );
@@ -106,93 +126,89 @@ export function ConfigPage(props: {
     }
     return undefined;
   };
-  let configSourceBrowser: SelectRenderable | undefined;
-  let collectionBrowser: SelectRenderable | undefined;
-  let agentUseBrowser: SelectRenderable | undefined;
-  let sectionBrowser: SelectRenderable | undefined;
-  let sourceBrowser: SelectRenderable | undefined;
-  let contributionBrowser: SelectRenderable | undefined;
-  createEffect(() => {
-    if (section() !== "sources" || selection()) return;
-    const first = [...(value()?.direct.sources ?? []), ...(value()?.contributed.sources ?? [])][0];
-    if (first) props.onSelect(first.id);
-  });
-  createEffect(() => {
-    if (props.state.overlay) return;
-    if (
-      props.state.focus === "local-nav" ||
-      (props.state.focus === "browser" && section() === "integrations")
-    )
-      sectionBrowser?.focus();
-    else if (props.state.focus === "browser" && section() === "sources") sourceBrowser?.focus();
-    else if (props.state.focus === "browser" && section() === "config-sources")
-      configSourceBrowser?.focus();
-    else if (props.state.focus === "config-source-contributions") contributionBrowser?.focus();
-    else if (props.state.focus === "browser" && section() === "collections")
-      collectionBrowser?.focus();
-    else if (props.state.focus === "browser" && section() === "for-agents")
-      agentUseBrowser?.focus();
-  });
+  const bindings = new Map<string, () => void>();
+  const bind = (
+    owner: Parameters<FocusRegistry["register"]>[0],
+    target: FocusTarget & Pick<BaseRenderable, "once" | "off">,
+  ) => {
+    bindings.get(owner)?.();
+    if (!props.focusRegistry) return;
+    const dispose = props.focusRegistry.register(owner, target);
+    const release = () => dispose();
+    target.once("destroyed", release);
+    bindings.set(owner, () => {
+      target.off("destroyed", release);
+      dispose();
+    });
+  };
+  onCleanup(() => bindings.forEach((dispose) => dispose()));
   const selectedConfigSource = () =>
     value()?.direct.configSources.find((item) => item.owner.pointer === selection());
+  const sectionIntro = () => {
+    if (section() === "sources")
+      return "Sources declared at this level. Skills are discovered and installed from Sources.";
+    if (section() === "config-sources")
+      return "Config Sources are reusable Configs adopted at this level; they contribute read-only Sources and Collections.";
+    if (section() === "collections")
+      return "Collections group Skills for reuse and agent disclosure at this level.";
+    if (section() === "for-agents")
+      return "For agents selects the Collections this Config discloses to agent hosts.";
+    return "Integrations connect this Config to agent hosts.";
+  };
   return (
     <box flexDirection="column" flexGrow={1} paddingLeft={1}>
       <text>
         {value()?.file.file ?? "Config"} {value()?.file.status ?? "missing"}
       </text>
-      {!props.state.overlay && (
-        <select
+      <Show when={!props.overlay?.()}>
+        <SectionTabs
           id="config-section-browser"
-          ref={(item: SelectRenderable) => {
-            sectionBrowser = item;
-          }}
-          focused
-          height={1}
           options={[
-            { name: "Sources", description: "Browse Sources", value: "sources" },
+            { label: "Sources", value: "sources" },
             {
-              name: "Config Sources",
-              description: "Browse Config Sources",
+              label: "Config Sources",
               value: "config-sources",
             },
-            { name: "Collections", description: "Browse Collections", value: "collections" },
-            { name: "For agents", description: "Browse Collection Use", value: "for-agents" },
-            { name: "Integrations", description: "Browse integrations", value: "integrations" },
+            { label: "Collections", value: "collections" },
+            { label: "For agents", value: "for-agents" },
+            { label: "Integrations", value: "integrations" },
           ]}
-          selectedIndex={[
-            "sources",
-            "config-sources",
-            "collections",
-            "for-agents",
-            "integrations",
-          ].indexOf(section())}
-          showDescription={false}
-          onSelect={(_index, option) => {
-            const value = option?.value;
-            if (
-              value === "sources" ||
-              value === "config-sources" ||
-              value === "collections" ||
-              value === "for-agents" ||
-              value === "integrations"
-            )
-              props.onSection(value);
-          }}
+          value={section() as ConfigSection}
+          owner="local-nav"
+          focusRegistry={props.focusRegistry}
+          compact={props.narrow === true}
+          onPrimaryPointerEntry={props.onLocalNavFocus}
+          onNavigate={props.onSection}
         />
+      </Show>
+      {handoffText() && (
+        <box flexDirection="column" paddingTop={1}>
+          {handoffText()
+            ?.split("\n")
+            .map((line) => (
+              <text height={1} selectable>
+                {line}
+              </text>
+            ))}
+        </box>
       )}
-      <text>{`Section: ${section()}`}</text>
-      {handoffText() && <text selectable>{handoffText()}</text>}
-      {!handoffText() && sourceText() && <text selectable>{sourceText()}</text>}
+      {!handoffText() &&
+        sourceText()
+          ?.split("\n")
+          .map((line) => (
+            <text height={1} selectable>
+              {line}
+            </text>
+          ))}
       <scrollbox flexGrow={1}>
+        <text height={1}>{sectionIntro()}</text>
         {section() === "sources" && (
           <>
             <select
               id="config-source-browser"
               ref={(item: SelectRenderable) => {
-                sourceBrowser = item;
-                if (!props.state.overlay && props.state.focus === "browser") item.focus();
+                bind("browser", item);
               }}
-              focused={!props.state.overlay && props.state.focus === "browser"}
               height={10}
               options={[
                 ...(value()?.direct.sources ?? []).map((item) => ({
@@ -206,13 +222,14 @@ export function ConfigPage(props: {
                   value: item.id,
                 })),
               ]}
-              selectedIndex={Math.max(
-                0,
-                [
-                  ...(value()?.direct.sources ?? []),
-                  ...(value()?.contributed.sources ?? []),
-                ].findIndex((item) => item.id === selection()),
-              )}
+              selectedIndex={
+                selection()
+                  ? [
+                      ...(value()?.direct.sources ?? []),
+                      ...(value()?.contributed.sources ?? []),
+                    ].findIndex((item) => item.id === selection())
+                  : undefined
+              }
               showDescription={false}
               onChange={(index) => {
                 const items = [
@@ -221,19 +238,28 @@ export function ConfigPage(props: {
                 ];
                 props.onSelect(items[index]!.id);
               }}
-              onSelect={() => props.onActions()}
+              onSelect={(index) => {
+                const items = [
+                  ...(value()?.direct.sources ?? []),
+                  ...(value()?.contributed.sources ?? []),
+                ];
+                props.onSelect(items[index]!.id);
+                props.onActions();
+              }}
             />
             {!value()?.direct.sources.length && !value()?.contributed.sources.length && (
-              <box flexDirection="column" paddingTop={1}>
-                <text>No Sources yet</text>
-                <text>Add a Source, then Discover and Install Skills.</text>
-                <select
-                  focused={!props.state.overlay && props.state.focus === "browser"}
-                  options={[{ name: "Add Source", description: "Register a Source", value: "add" }]}
-                  showDescription={false}
-                  onSelect={props.onActions}
-                />
-              </box>
+              <EmptyState
+                title="No Sources yet"
+                lines={["Add a Source at this level, then Discover and Install Skills."]}
+                action={{
+                  id: "config-empty-add-source",
+                  name: "Add Source",
+                  description: "Register a Source at this level",
+                  registerRef: (item) => item && bind("browser", item),
+                  onSelect: () => props.onAction("add-source"),
+                }}
+                hint="Enter Actions → Add Source"
+              />
             )}
           </>
         )}
@@ -245,22 +271,21 @@ export function ConfigPage(props: {
             <select
               id="config-config-source-browser"
               ref={(item: SelectRenderable) => {
-                configSourceBrowser = item;
-                if (!props.state.overlay && props.state.focus === "browser") item.focus();
+                bind("browser", item);
               }}
-              focused={!props.state.overlay && props.state.focus === "browser"}
               height={10}
               options={(value()?.direct.configSources ?? []).map((item) => ({
                 name: item.id,
                 description: `${item.owner.file} ${item.owner.pointer}`,
                 value: item.owner.pointer,
               }))}
-              selectedIndex={Math.max(
-                0,
-                (value()?.direct.configSources ?? []).findIndex(
-                  (item) => item.owner.pointer === selection(),
-                ),
-              )}
+              selectedIndex={
+                selection()
+                  ? (value()?.direct.configSources ?? []).findIndex(
+                      (item) => item.owner.pointer === selection(),
+                    )
+                  : undefined
+              }
               showDescription
               onChange={(index) => {
                 const item = value()?.direct.configSources[index];
@@ -268,32 +293,25 @@ export function ConfigPage(props: {
               }}
             />
             {!value()?.direct.configSources.length && (
-              <box flexDirection="column" paddingTop={1}>
-                <text>No Config Sources yet</text>
-                <text>Register a reusable Config Source for this level.</text>
-                <select
-                  focused={!props.state.overlay && props.state.focus === "browser"}
-                  options={[
-                    {
-                      name: "Add Config Source",
-                      description: "Register a Config Source",
-                      value: "add",
-                    },
-                  ]}
-                  showDescription={false}
-                  onSelect={props.onActions}
-                />
-              </box>
+              <EmptyState
+                title="No Config Sources yet"
+                lines={["Register a reusable Config Source for this level."]}
+                action={{
+                  id: "config-empty-add-config-source",
+                  name: "Add Config Source",
+                  description: "Register a Config Source",
+                  registerRef: (item) => item && bind("browser", item),
+                  onSelect: () => props.onAction("add-config-source"),
+                }}
+                hint="Enter Actions → Add Config Source"
+              />
             )}
             {selectedConfigSource() && (
               <select
                 id="config-source-contributions"
                 ref={(item: SelectRenderable) => {
-                  contributionBrowser = item;
+                  bind("config-source-contributions", item);
                 }}
-                focused={
-                  !props.state.overlay && props.state.focus === "config-source-contributions"
-                }
                 height={10}
                 options={[
                   ...selectedConfigSource()!.contributed.sources.map((source, index) => ({
@@ -315,7 +333,11 @@ export function ConfigPage(props: {
                   if (kind === "source") {
                     const source = current.contributed.sources[Number(index)];
                     if (source)
-                      props.onContribution({ kind: "source", source, owner: current.owner });
+                      props.onContribution({
+                        kind: "source",
+                        source,
+                        owner: current.owner,
+                      });
                   } else {
                     const collection = current.contributed.collections[Number(index)];
                     if (collection)
@@ -330,16 +352,13 @@ export function ConfigPage(props: {
             )}
           </>
         )}
-        {section() === "sources" && <text>Enter Actions</text>}
         {section() === "collections" && (
           <>
             <select
               id="config-collection-browser"
               ref={(item: SelectRenderable) => {
-                collectionBrowser = item;
-                if (!props.state.overlay && props.state.focus === "browser") item.focus();
+                bind("browser", item);
               }}
-              focused={!props.state.overlay && props.state.focus === "browser"}
               height={10}
               options={[
                 ...(value()?.direct.collections ?? []).map((item) => ({
@@ -353,13 +372,14 @@ export function ConfigPage(props: {
                   value: item,
                 })),
               ]}
-              selectedIndex={Math.max(
-                0,
-                [
-                  ...(value()?.direct.collections ?? []).map((item) => item.id),
-                  ...(value()?.contributed.collections ?? []),
-                ].indexOf(selection() ?? ""),
-              )}
+              selectedIndex={
+                selection()
+                  ? [
+                      ...(value()?.direct.collections ?? []).map((item) => item.id),
+                      ...(value()?.contributed.collections ?? []),
+                    ].indexOf(selection()!)
+                  : undefined
+              }
               showDescription
               onChange={(index) => {
                 const collections = [
@@ -372,43 +392,41 @@ export function ConfigPage(props: {
               onSelect={() => props.onActions()}
             />
             {!value()?.direct.collections.length && !value()?.contributed.collections.length && (
-              <box flexDirection="column" paddingTop={1}>
-                <text>No Collections yet</text>
-                <text>Collections group Skills for reuse and agent disclosure.</text>
-                <select
-                  focused={!props.state.overlay && props.state.focus === "browser"}
-                  options={[
-                    { name: "New Collection", description: "Create a Collection", value: "new" },
-                  ]}
-                  showDescription={false}
-                  onSelect={props.onActions}
-                />
-              </box>
+              <EmptyState
+                title="No Collections yet"
+                lines={["Collections group Skills for reuse and agent disclosure."]}
+                action={{
+                  id: "config-empty-new-collection",
+                  name: "New Collection",
+                  description: "Create a Collection",
+                  registerRef: (item) => item && bind("browser", item),
+                  onSelect: () => props.onAction("new-collection"),
+                }}
+                hint="Enter Actions → New Collection"
+              />
             )}
           </>
         )}
         {section() === "for-agents" && (
           <box flexDirection="column">
-            <text>For agents exposes selected Collections to Managed OpenCode.</text>
             <select
               id="config-agent-use-browser"
               ref={(item: SelectRenderable) => {
-                agentUseBrowser = item;
-                if (!props.state.overlay && props.state.focus === "browser") item.focus();
+                bind("browser", item);
               }}
-              focused={!props.state.overlay && props.state.focus === "browser"}
               height={10}
               options={(value()?.direct.collectionUse ?? []).map((item) => ({
                 name: item.collection,
                 description: `${item.owner.file} ${item.owner.pointer}`,
                 value: item.collection,
               }))}
-              selectedIndex={Math.max(
-                0,
-                (value()?.direct.collectionUse ?? []).findIndex(
-                  (item) => item.collection === selection(),
-                ),
-              )}
+              selectedIndex={
+                selection()
+                  ? (value()?.direct.collectionUse ?? []).findIndex(
+                      (item) => item.collection === selection(),
+                    )
+                  : undefined
+              }
               showDescription
               onChange={(index) => {
                 const item = value()?.direct.collectionUse[index];
@@ -416,31 +434,94 @@ export function ConfigPage(props: {
               }}
               onSelect={() => props.onActions()}
             />
+            {!value()?.direct.collectionUse.length && (
+              <EmptyState
+                title="No Collections exposed yet"
+                lines={[
+                  "Collection Use selects which Collections agents can see.",
+                  ...(!value()?.direct.collections.length &&
+                  !value()?.contributed.collections.length
+                    ? ["Create a Collection first (Collections section)."]
+                    : []),
+                ]}
+                action={
+                  value()?.direct.collections.length || value()?.contributed.collections.length
+                    ? {
+                        id: "config-empty-set-collection-use",
+                        name: "Set Collection Use",
+                        description: "Choose the Collections this Config discloses",
+                        registerRef: (item) => item && bind("browser", item),
+                        onSelect: () => props.onAction("set-collection-use"),
+                      }
+                    : undefined
+                }
+                hint={
+                  value()?.direct.collections.length || value()?.contributed.collections.length
+                    ? "Enter Actions → Set Collection Use"
+                    : undefined
+                }
+              />
+            )}
           </box>
         )}
         {section() === "for-agents" && (
           <text selectable>
-            {props.state.workspace?.effective.status === "complete" &&
-            props.state.workspace.effective.agent.status === "available"
-              ? `Complete disclosure. Managed OpenCode: ${props.state.workspace.effective.managed ? "enabled" : "disabled"}`
-              : `Unavailable: ${(props.state.workspace?.effective.agent.reasons ?? []).map((item) => item.message).join("; ") || "Collection Use is incomplete or managed OpenCode is not enabled"}`}
+            {(() => {
+              const workspace = props.projection();
+              return workspace?.effective.status === "complete" &&
+                workspace.effective.agent.status === "available"
+                ? `Complete disclosure. Managed OpenCode: ${workspace.effective.managed ? "enabled" : "disabled"}`
+                : `Unavailable: ${(workspace?.effective.agent.reasons ?? []).map((item) => item.message).join("; ") || "Collection Use is incomplete or managed OpenCode is not enabled"}`;
+            })()}
           </text>
         )}
         {section() === "integrations" && (
           <>
-            <text>Integrations connect this Config to agent hosts.</text>
             {(value()?.direct.integrations ?? []).map((integration) => (
               <text
                 selectable
               >{`Managed OpenCode  ${integration.owner.file} ${integration.owner.pointer}`}</text>
             ))}
             <text selectable>
-              {props.state.workspace?.effective.status === "complete" &&
-              props.state.workspace.effective.agent.status === "available"
-                ? `Managed OpenCode catalog: ${props.state.workspace.effective.agent.catalog.map((item) => `${item.selector}${item.aliases.length ? ` (${item.aliases.join(", ")})` : ""}`).join(", ") || "empty"}`
-                : `Managed OpenCode unavailable: ${(props.state.workspace?.effective.agent.reasons ?? []).map((item) => item.message).join("; ") || "no complete Collection Use"}`}
+              {props.projection()?.effective.status === "complete" &&
+              props.projection()!.effective.agent.status === "available"
+                ? `Managed OpenCode catalog: ${
+                    props
+                      .projection()!
+                      .effective.agent.catalog.map((item) => item.selector)
+                      .join(", ") || "empty"
+                  }`
+                : `Managed OpenCode unavailable: ${(props.projection()?.effective.agent.reasons ?? []).map((item) => item.message).join("; ") || "no complete Collection Use"}`}
             </text>
-            {!value()?.direct.integrations.length && <text>Enter Enable Managed OpenCode</text>}
+            <select
+              id="config-integrations-actions"
+              ref={(item: SelectRenderable) => {
+                bind("browser", item);
+              }}
+              height={1}
+              options={[
+                {
+                  name: "Actions",
+                  description: "Enable or disable managed OpenCode",
+                  value: "actions",
+                },
+              ]}
+              showDescription={false}
+              onSelect={() => {
+                const action = props.actions.find(
+                  (
+                    item,
+                  ): item is ActionDescriptor & {
+                    readonly id: "enable-managed-opencode" | "disable-managed-opencode";
+                  } =>
+                    item.id === "enable-managed-opencode" || item.id === "disable-managed-opencode",
+                );
+                if (action) props.onAction(action.id);
+              }}
+            />
+            {!value()?.direct.integrations.length && (
+              <text>No integrations yet. Enter Actions → Enable Managed OpenCode.</text>
+            )}
           </>
         )}
       </scrollbox>

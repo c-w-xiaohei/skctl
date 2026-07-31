@@ -17,12 +17,61 @@ async function awaitParsedEscape(setup: Awaited<ReturnType<typeof testRender>>) 
 }
 
 async function navigateToSources(setup: Awaited<ReturnType<typeof testRender>>) {
-  if (setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser") {
-    setup.mockInput.pressKey("TAB", { shift: true });
+  await setup.waitForFrame((frame) => frame.includes("Workspace › Skills"));
+  await setup.waitFor(
+    () => !!setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills"),
+  );
+  const skills = setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills");
+  if (!skills) throw new Error("Workspace Skills trigger disappeared before it could be focused");
+  skills.focus();
+  await setup.waitFor(
+    () => setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-skills",
+  );
+  setup.mockInput.pressArrow("right");
+  await setup.waitForFrame((frame) => frame.includes("Workspace › Collections"));
+  await setup.waitFor(
+    () =>
+      setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-collections",
+  );
+  setup.mockInput.pressArrow("right");
+  await setup.waitForFrame((frame) => frame.includes("Workspace › Sources"));
+  await setup.waitFor(
+    () => setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-sources",
+  );
+  setup.mockInput.pressEnter();
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
+}
+
+test("RENDER Sources replaces the Collection browser native target", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(workspaceProjection())} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("workspace-section-browser");
-  } else expect(setup.renderer.currentFocusedRenderable?.id).toBe("workspace-section-browser");
-  setup.mockInput.pressKeys(["ARROW_DOWN", "ARROW_DOWN"]);
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills"),
+    );
+    setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills")!.focus();
+    setup.mockInput.pressArrow("right");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
+    const collections = setup.renderer.root.findDescendantById("collection-browser")!;
+    setup.mockInput.pressArrow("right");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-sources",
+    );
+    setup.mockInput.pressEnter();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
+    expect(setup.renderer.root.findDescendantById("source-browser")).not.toBe(collections);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+async function openPaletteAddSkills(setup: Awaited<ReturnType<typeof testRender>>) {
+  setup.mockInput.pressKey("P", { ctrl: true });
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-menu");
+  setup.mockInput.pressKeys(["ARROW_DOWN", "ARROW_DOWN", "ARROW_DOWN", "ARROW_DOWN"]);
   setup.mockInput.pressEnter();
 }
 
@@ -44,7 +93,9 @@ test("RENDER narrow Source browser shows one level and preserves selection throu
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-browser");
     setup.mockInput.pressEnter();
     await setup.waitForFrame((frame) => frame.includes("Origin  https://github.com/acme/main"));
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-actions");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe(
+      "workspace-section-browser-tab-sources",
+    );
     await awaitParsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-browser");
@@ -68,7 +119,6 @@ test("RENDER 43x30 narrow detail returns to the retained Source browser on Escap
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-browser");
     setup.mockInput.pressEnter();
     await setup.waitForFrame((frame) => frame.includes("Origin  https://github.com/acme/main"));
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-actions");
     await awaitParsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-browser");
@@ -101,9 +151,7 @@ test("RENDER narrow observation progress remains bounded at 79x24 and 43x30", as
       await setup.waitForFrame((frame) => frame.includes("team-main"));
       setup.mockInput.pressEnter();
       await setup.waitForFrame((frame) => frame.includes("Origin  https://github.com/acme/main"));
-      setup.mockInput.pressEnter();
-      await setup.waitForFrame((frame) => frame.includes("Add Skills"));
-      setup.mockInput.pressEnter();
+      await openPaletteAddSkills(setup);
       await setup.waitForFrame(
         (frame) => frame.includes("Discovering Skills") && frame.includes("Observing"),
       );
@@ -171,9 +219,7 @@ test("RENDER narrow selection remains bounded through resize at 79x24 and 43x30"
       await setup.waitForFrame((frame) => frame.includes("team-main"));
       setup.mockInput.pressEnter();
       await setup.waitForFrame((frame) => frame.includes("Origin  https://github.com/acme/main"));
-      setup.mockInput.pressEnter();
-      await setup.waitForFrame((frame) => frame.includes("Add Skills"));
-      setup.mockInput.pressEnter();
+      await openPaletteAddSkills(setup);
       await setup.waitForFrame((frame) => frame.includes("[ ] Available review"));
       const selection = setup.renderer.root.findDescendantById("source-operation-selection");
       expect(selection).toBeDefined();

@@ -102,10 +102,10 @@ function filterProjection(
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
-async function key(setup: Setup, name: string) {
+async function key(setup: Setup, name: string, shift = false) {
   if (name === "ENTER") setup.mockInput.pressEnter();
   else if (name === "ARROW_DOWN") setup.mockInput.pressArrow("down");
-  else setup.mockInput.pressKey(name);
+  else setup.mockInput.pressKey(name, shift ? { shift: true } : undefined);
   await setup.renderOnce();
 }
 
@@ -114,8 +114,11 @@ async function type(setup: Setup, value: string) {
 }
 
 async function openFilter(setup: Setup) {
+  while (setup.renderer.currentFocusedRenderable?.id !== "installed-skill-browser") {
+    await key(setup, "TAB", true);
+  }
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
-  await key(setup, "TAB");
+  await key(setup, "/");
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-query");
   await key(setup, "TAB");
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("open-skills-filter");

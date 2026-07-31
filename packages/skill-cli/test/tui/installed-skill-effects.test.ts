@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { SkillCliError } from "../../src/core/api";
-import { createTuiEffects } from "../../src/tui/effects";
-import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
+import {
+  directSourceCore,
+  testEffects as createTuiEffects,
+  workspaceProjection,
+} from "./direct-source.fixture";
 
 const address = { source: "team-main", path: "guide" };
 
@@ -36,7 +39,6 @@ test("Rebind rejects absolute and traversal replacement paths before previewing 
 });
 
 test("Rebind rejects a stale preview whose structural request no longer matches", async () => {
-  const events: unknown[] = [];
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
       previewRebind: async () => ({
@@ -51,7 +53,6 @@ test("Rebind rejects a stale preview whose structural request no longer matches"
         diagnostics: [],
       }),
     }),
-    (event) => events.push(event),
   );
 
   expect(
@@ -62,18 +63,14 @@ test("Rebind rejects a stale preview whose structural request no longer matches"
       ownerPath: "alternate/guide",
     }),
   ).toBeUndefined();
-  expect(events).toContainEqual({
-    type: "operation.failure",
-    diagnostic: {
-      code: "TRANSACTION_CONFLICT",
-      severity: "warning",
-      message: "Rebind preview no longer matches the selected structural address",
-    },
+  expect(effects.operation.problem()).toEqual({
+    code: "TRANSACTION_CONFLICT",
+    severity: "warning",
+    message: "Rebind preview no longer matches the selected structural address",
   });
 });
 
 test("Uninstall rejects a stale preview whose installed structural address differs", async () => {
-  const events: unknown[] = [];
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
       previewUninstall: async () => ({
@@ -89,24 +86,19 @@ test("Uninstall rejects a stale preview whose installed structural address diffe
         diagnostics: [],
       }),
     }),
-    (event) => events.push(event),
   );
 
   expect(await effects.reviewInstalled({ kind: "uninstall", address })).toBeUndefined();
-  expect(events).toContainEqual({
-    type: "operation.failure",
-    diagnostic: {
-      code: "TRANSACTION_CONFLICT",
-      severity: "warning",
-      message: "Uninstall preview no longer matches the selected structural address",
-    },
+  expect(effects.operation.problem()).toEqual({
+    code: "TRANSACTION_CONFLICT",
+    severity: "warning",
+    message: "Uninstall preview no longer matches the selected structural address",
   });
 });
 
 test("Installed Skill execution is duplicate-safe and cancellation settles the current review", async () => {
   let aborts = 0;
   let executions = 0;
-  const events: unknown[] = [];
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
       uninstall: async (_request, options) =>
@@ -118,7 +110,6 @@ test("Installed Skill execution is duplicate-safe and cancellation settles the c
           });
         }),
     }),
-    (event) => events.push(event),
   );
   const review = await effects.reviewInstalled({ kind: "uninstall", address });
   expect(review).toBeDefined();
@@ -128,17 +119,14 @@ test("Installed Skill execution is duplicate-safe and cancellation settles the c
   expect(await pending).toBe(false);
   expect(executions).toBe(1);
   expect(aborts).toBe(1);
-  expect(events).toContainEqual({ type: "task.cancel.request", id: "2" });
-  expect(events).toContainEqual({
-    type: "task.settle",
-    id: "2",
-    status: "Operation cancelled",
-    error: { code: "CANCELLED", severity: "warning", message: "uninstall cancelled" },
+  expect(effects.operation.problem()).toEqual({
+    code: "CANCELLED",
+    severity: "warning",
+    message: "uninstall cancelled",
   });
 });
 
-test("Rebind reselects its exact new owner only after the one coherent refresh succeeds", async () => {
-  const events: unknown[] = [];
+test("Rebind settles only after the one coherent refresh succeeds", async () => {
   const rebound = workspaceProjection({ includeDirect: false, includeContribution: false });
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
@@ -155,7 +143,6 @@ test("Rebind reselects its exact new owner only after the one coherent refresh s
         diagnostics: [],
       }),
     }),
-    (event) => events.push(event),
   );
   const review = await effects.reviewInstalled({
     kind: "rebind",
@@ -164,11 +151,7 @@ test("Rebind reselects its exact new owner only after the one coherent refresh s
     ownerPath: "alternate/guide",
   });
   expect(await effects.confirmInstalled(review!)).toBe(true);
-  expect(events).toContainEqual({
-    type: "selection.set",
-    key: "skills",
-    value: "replacement/alternate/guide",
-  });
+  expect(effects.operation.notice()).toBe("Skill rebound");
 });
 
 test("Rebind preview retry repeats one exact structural request after a failure", async () => {

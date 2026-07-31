@@ -1,15 +1,16 @@
-import { createCliRenderer, InputRenderable, type TabSelectRenderable } from "@opentui/core";
+import { createCliRenderer, InputRenderable } from "@opentui/core";
 import { onResize, render, useKeyboard, useRenderer } from "@opentui/solid";
-import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { TabsTabRenderable } from "@tuiparts/core/tabs";
+import { batch, createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type {
   ConfigSourceObservation,
   ConfigSourceImpact,
   InstalledSkillSelectorViews,
   SkillCliCore,
 } from "../core/api";
+import type { SkillAddress } from "../core/collections";
 import {
   actionIntent,
-  arbitrateKey,
   installedSkillContext,
   reachableActions,
   sourceRouteIntent,
@@ -26,14 +27,13 @@ import {
   type TuiCore,
 } from "./effects";
 import {
-  createTuiState,
   destinations,
-  findLiteralMatches,
-  reduceTui,
+  focusOwners,
+  readerOwnsFocus,
   type Destination,
   type FocusOwner,
   type Section,
-} from "./model";
+} from "./types";
 import {
   ActionOverlay,
   SourceRemovalOverlay,
@@ -58,14 +58,35 @@ import {
 } from "./operations";
 import { WorkspacePage } from "./workspace-page";
 import { ConfigPage } from "./config-page";
-import { filterDimensions } from "./model";
+import { filterDimensions } from "./types";
 import { filterSkills, filterValues } from "./skills-filter";
-import { filterCollections } from "./collections-filter";
 import type { CollectionRelationshipIntent } from "./collections-page";
+import { createFocus } from "./focus";
+import { createLayout } from "./layout";
+import { createProjection } from "./projection";
+import { createWorkspaceState } from "./workspace/state";
+import { createCollectionsState } from "./collections/state";
+import { createConfigState } from "./config/state";
+import { createOperationState } from "./operation-state";
+import {
+  activeReader,
+  beginReaderRequest,
+  createReaderState,
+  reduceReaderEvent,
+  reduceReaderState,
+} from "./reader/state";
+import { SectionTabs } from "./components/section-tabs";
+import { parseNavKey, resolve } from "./navigation";
+import { createRoute, type RelationshipTarget, type RouteTarget } from "./route";
+import {
+  createOverlaySession,
+  reduceOverlaySession,
+  sessionMatches as sessionMatchesOverlay,
+} from "./overlays/session";
+import { theme } from "./ui/theme";
 
 const topOptions = destinations.map((value) => ({
-  name: value === "workspace" ? "Workspace" : value[0]!.toUpperCase() + value.slice(1),
-  description: "",
+  label: value === "workspace" ? "Workspace" : value[0]!.toUpperCase() + value.slice(1),
   value,
 }));
 const isDestination = (value: ActionId | Destination): value is Destination =>
@@ -73,120 +94,386 @@ const isDestination = (value: ActionId | Destination): value is Destination =>
 const configBindingLine = (binding: ConfigSourceImpact["binding"]) =>
   `${binding.kind} ${binding.kind === "local" ? binding.path : binding.origin} ${binding.root}`;
 
-export function App(props: { readonly core: TuiCore; readonly exit: () => void }) {
-  const [state, setState] = createSignal(createTuiState());
-  const [review, setReview] = createSignal<SourceRemovalReview>();
-  const [sourceReview, setSourceReview] = createSignal<DiscoveryReview | UpdateReview>();
-  const [selectedPaths, setSelectedPaths] = createSignal<readonly string[]>([]);
-  const [observationIntent, setObservationIntent] =
-    createSignal<ReturnType<typeof sourceOperationIntent>>();
-  const [repair, setRepair] = createSignal<{
-    readonly action: "rebind" | "uninstall";
-    readonly source: string;
-    readonly path: string;
-  }>();
-  const [installedReview, setInstalledReview] = createSignal<InstalledSkillReview>();
-  const [installedPreviewFailure, setInstalledPreviewFailure] =
-    createSignal<InstalledSkillPreviewRequest>();
-  const [installedPreview, setInstalledPreview] = createSignal<InstalledSkillPreviewRequest>();
-  const [installedPreviewRetrying, setInstalledPreviewRetrying] = createSignal(false);
-  const [installedPreviewCancelling, setInstalledPreviewCancelling] = createSignal(false);
-  const [agentViews, setAgentViews] = createSignal<InstalledSkillSelectorViews>();
-  const [rebindSources, setRebindSources] = createSignal<readonly string[]>();
-  const [collectionChoices, setCollectionChoices] = createSignal<
-    readonly {
-      readonly collection: string;
+type CollectionReview = import("./effects").CollectionReview;
+type CollectionDraft = Extract<
+  import("./effects").CollectionIntent,
+  {
+    readonly kind: "collection-import" | "reference" | "link-change" | "collection-use";
+  }
+>;
+
+type AppOverlayPayload =
+  | { readonly family: "source-removal"; readonly review?: SourceRemovalReview }
+  | {
+      readonly family: "source-observation";
+      readonly intent: ReturnType<typeof sourceOperationIntent>;
+    }
+  | { readonly family: "config-observation"; readonly id: string }
+  | {
+      readonly family: "source-selection";
+      readonly review: DiscoveryReview | UpdateReview;
+      readonly selectedPaths: readonly string[];
+    }
+  | {
+      readonly family: "installed-preview";
+      readonly request: InstalledSkillPreviewRequest;
+      readonly failed?: boolean;
+      readonly review?: InstalledSkillReview;
+      readonly sourceRemoval?: SourceRemovalReview;
+    }
+  | {
+      readonly family: "installed-rebind";
+      readonly sources: readonly string[];
+      readonly address: { readonly source: string; readonly path: string };
+      readonly sourceRemoval?: SourceRemovalReview;
+    }
+  | {
+      readonly family: "installed-agent-views";
+      readonly views: InstalledSkillSelectorViews;
+    }
+  | { readonly family: "palette" }
+  | {
+      readonly family: "skills-filter";
+      readonly dimension?: string;
+      readonly search: string;
+    }
+  | {
+      readonly family: "collection-choices";
+      readonly choices: readonly {
+        readonly collection: string;
+        readonly level?: "global" | "project" | "local";
+      }[];
+    }
+  | {
+      readonly family: "collection-create";
       readonly level?: "global" | "project" | "local";
-    }[]
-  >();
-  const [collectionCreate, setCollectionCreate] = createSignal<{
-    readonly level?: "global" | "project" | "local";
-    readonly allowedLevels?: readonly ("global" | "project" | "local")[];
-    readonly afterCreate?: {
+      readonly allowedLevels?: readonly ("global" | "project" | "local")[];
+      readonly afterCreate?: {
+        readonly collection: string;
+        readonly address: { readonly source: string; readonly path: string };
+      };
+    }
+  | {
+      readonly family: "membership-chooser";
+      readonly level: "global" | "project" | "local";
+      readonly collection: string;
+    }
+  | {
+      readonly family: "membership-draft";
+      readonly level: "global" | "project" | "local";
       readonly collection: string;
       readonly address: { readonly source: string; readonly path: string };
+      readonly initialName: string;
+      readonly review?: CollectionReview;
+    }
+  | { readonly family: "collection-draft"; readonly draft: CollectionDraft }
+  | { readonly family: "collection-review"; readonly review?: CollectionReview }
+  | {
+      readonly family: "config-operation";
+      readonly kind: "adopt" | "forget" | "remove" | "managed";
+      readonly id?: string;
+      readonly observation?: ConfigSourceObservation;
+      readonly impact?: ConfigSourceImpact;
+      readonly level?: "global" | "project" | "local";
+      readonly enabled?: boolean;
+    }
+  | {
+      readonly family: "source-registration";
+      readonly kind: "source" | "config-source";
+      readonly level?: "global" | "project" | "local";
     };
-  }>();
-  const [membershipDraft, setMembershipDraft] = createSignal<{
-    readonly level: "global" | "project" | "local";
-    readonly collection: string;
-    readonly address: { readonly source: string; readonly path: string };
-    readonly initialName: string;
-  }>();
-  const [membershipChooser, setMembershipChooser] = createSignal<{
-    readonly level: "global" | "project" | "local";
-    readonly collection: string;
-  }>();
-  const [collectionReview, setCollectionReview] =
-    createSignal<import("./effects").CollectionReview>();
-  const [collectionDraft, setCollectionDraft] = createSignal<
-    | Extract<
-        import("./effects").CollectionIntent,
-        { readonly kind: "collection-import" | "reference" | "link-change" | "collection-use" }
-      >
-    | undefined
-  >();
-  const [configOperation, setConfigOperation] = createSignal<{
-    readonly kind: "adopt" | "forget" | "remove" | "managed";
-    readonly id?: string;
-    readonly observation?: ConfigSourceObservation;
-    readonly impact?: ConfigSourceImpact;
-    readonly level?: "global" | "project" | "local";
-    readonly enabled?: boolean;
-  }>();
-  const [sourceRegistration, setSourceRegistration] = createSignal<{
-    readonly kind: "source" | "config-source";
-    readonly level?: "global" | "project" | "local";
-  }>();
-  const [filterDimension, setFilterDimension] = createSignal<string>();
-  const [filterSearch, setFilterSearch] = createSignal("");
-  const renderer = useRenderer();
-  const [size, setSize] = createSignal({
-    width: renderer.width,
-    height: renderer.height,
+
+export function App(props: { readonly core: TuiCore; readonly exit: () => void }) {
+  const operation = createOperationState();
+  const [overlaySession, setOverlaySession] = createSignal(createOverlaySession());
+  const overlayKind = () => overlaySession().kind;
+  const [readerState, setReaderState] = createSignal(createReaderState());
+  const reader = () => activeReader(readerState());
+  const readerDispatch = (event: Parameters<typeof reduceReaderState>[1]) => {
+    let accepted = false;
+    let activeFailure = false;
+    setReaderState((current) => {
+      const reduced = reduceReaderEvent(current, event);
+      accepted = reduced.accepted;
+      activeFailure =
+        event.type === "failure" &&
+        reduced.state.activeKey === `${event.address.source}/${event.address.path}` &&
+        activeReader(reduced.state)?.resourceLevel === "content";
+      return reduced.state;
+    });
+    if (accepted && activeFailure) requestFocus("reader-tabs");
+  };
+  const workspaceState = createWorkspaceState((selected) => {
+    const address = projection
+      .workspace()
+      ?.installedSkills.find(
+        (item) => `${item.address.source}/${item.address.path}` === selected,
+      )?.address;
+    if (address) selectReaderSkill(address, true);
   });
-  const effects = createTuiEffects(props.core, (event) =>
-    setState((current) => reduceTui(current, event)),
+  const collectionsState = createCollectionsState();
+  const configState = createConfigState();
+  const renderer = useRenderer();
+  const stopThemeFollow = theme.follow(renderer);
+  const focus = createFocus("browser");
+  const focusRegistry = focus.registry;
+  const layout = createLayout();
+  const [focusVersion, setFocusVersion] = createSignal(focusRegistry.version());
+  const [readerFocusUnblocked, setReaderFocusUnblocked] = createSignal(0);
+  const stopFocusSubscription = focusRegistry.subscribe(setFocusVersion);
+  const focusOwner = focus.desired;
+  let readerFocusWasBlocked = false;
+  const registeredFocus = (fallback: FocusOwner): FocusOwner =>
+    focusOwners.find(
+      (owner) => focusRegistry.target(owner) === renderer.currentFocusedRenderable,
+    ) ?? fallback;
+  const syncPhysicalFocus = () => {
+    if (!physicalFocusBridgeReady || !appliedFocusOwner) return;
+    const observed = registeredFocus(focus.desired() ?? "browser");
+    const routeSnapshot = route.snapshot();
+    if (
+      routeSnapshot.destination === "workspace" &&
+      workspaceState.section() === "skills" &&
+      !!reader()?.address &&
+      readerOwnsFocus(observed) &&
+      observed !== focus.desired()
+    )
+      requestFocus(observed);
+  };
+  renderer.on("focused_renderable", syncPhysicalFocus);
+  let route: ReturnType<typeof createRoute>;
+  const requestFocus = (owner: FocusOwner) => {
+    if (
+      route.snapshot().destination === "workspace" &&
+      workspaceState.section() === "skills" &&
+      reader()?.address &&
+      readerOwnsFocus(owner)
+    ) {
+      readerDispatch({ type: "patch", value: { focus: owner } });
+    }
+    focus.request(owner);
+  };
+  route = createRoute(
+    { workspace: workspaceState, config: configState },
+    requestFocus,
+    () => closeSession(),
+    reader,
+    (address, surface) => readerDispatch({ type: "select", address, surface }),
+    (selection) => {
+      const address = projection
+        .workspace()
+        ?.installedSkills.find(
+          (skill) => `${skill.address.source}/${skill.address.path}` === selection,
+        )?.address;
+      batch(() => {
+        workspaceState.land("skills", selection);
+        if (address) selectReaderSkill(address);
+      });
+    },
   );
-  const reconcileSkills = (current: ReturnType<typeof state>) => {
-    const workspace = current.workspace;
-    if (!workspace) return current;
-    const memory = current.memory.workspace;
-    const values = filterSkills(workspace.installedSkills, {
-      query: memory.query.skills,
-      filters: memory.filters.skills,
-      source: current.sourceFilter,
-      agentStatus: workspace.effective.agent.status,
-    }).map((skill) => `${skill.address.source}/${skill.address.path}`);
-    return reduceTui(current, {
-      type: "selection.reconcile",
-      key: "skills",
-      values,
-      previous: workspace.installedSkills.map(
-        (skill) => `${skill.address.source}/${skill.address.path}`,
-      ),
+  createEffect(() => {
+    const blocked = !!overlaySession().kind || !!operation.task();
+    if (readerFocusWasBlocked && !blocked && focusOwner() && readerOwnsFocus(focusOwner()!))
+      setReaderFocusUnblocked((value) => value + 1);
+    readerFocusWasBlocked = blocked;
+  });
+  const routeSource = (target: RouteTarget) => route.source(target);
+  const routeRelationship = (target: RelationshipTarget) => route.relationship(target);
+  const projection = createProjection(operation, {
+    workspace: workspaceState,
+    collections: collectionsState,
+    config: configState,
+  });
+  const effects = createTuiEffects(
+    props.core,
+    operation,
+    projection.outcomes,
+    readerDispatch,
+    (address, request, path) => {
+      let start: ReturnType<typeof beginReaderRequest>["event"] | undefined;
+      setReaderState((current) => {
+        const begun = beginReaderRequest(current, address, request, path);
+        start = begun.event;
+        return begun.state;
+      });
+      return start!;
+    },
+  );
+  const sessionPayload = () => overlaySession().payload as AppOverlayPayload | undefined;
+  const payload = <Family extends AppOverlayPayload["family"]>(family: Family) => {
+    const value = sessionPayload();
+    return value?.family === family
+      ? (value as Extract<AppOverlayPayload, { readonly family: Family }>)
+      : undefined;
+  };
+  const skillsFilterPayload = () => payload("skills-filter");
+  const collectionChoicesPayload = () => payload("collection-choices");
+  const collectionCreatePayload = () => payload("collection-create");
+  const membershipChooserPayload = () => payload("membership-chooser");
+  const membershipDraftPayload = () => payload("membership-draft");
+  const collectionDraftPayload = () => payload("collection-draft");
+  const collectionReviewPayload = () => payload("collection-review");
+  const configOperationPayload = () => payload("config-operation");
+  const sourceRegistrationPayload = () => payload("source-registration");
+  const collectionChoices = () => collectionChoicesPayload()?.choices;
+  const collectionCreate = collectionCreatePayload;
+  const membershipChooser = membershipChooserPayload;
+  const membershipDraft = membershipDraftPayload;
+  const collectionDraft = () => collectionDraftPayload()?.draft;
+  const collectionReview = () => collectionReviewPayload()?.review;
+  const configOperation = configOperationPayload;
+  const sourceRegistration = sourceRegistrationPayload;
+  const filterDimension = () => skillsFilterPayload()?.dimension;
+  const filterSearch = () => skillsFilterPayload()?.search ?? "";
+  const sourceRemovalPayload = () => {
+    const value = sessionPayload();
+    return value?.family === "source-removal" ? value : undefined;
+  };
+  const sourceObservationPayload = () => {
+    const value = sessionPayload();
+    return value?.family === "source-observation" ? value : undefined;
+  };
+  const configObservationPayload = () => payload("config-observation");
+  const sourceSelectionPayload = () => {
+    const value = sessionPayload();
+    return value?.family === "source-selection" ? value : undefined;
+  };
+  const installedPreviewPayload = () => {
+    const value = sessionPayload();
+    return value?.family === "installed-preview" ? value : undefined;
+  };
+  const installedRebindPayload = () => {
+    const value = sessionPayload();
+    return value?.family === "installed-rebind" ? value : undefined;
+  };
+  const installedAgentViewsPayload = () => {
+    const value = sessionPayload();
+    return value?.family === "installed-agent-views" ? value : undefined;
+  };
+  const openSession = (
+    overlay: import("./types").Overlay,
+    payload: AppOverlayPayload,
+    phase: "review" | "preview" | "observing" | "executing" = "review",
+  ) =>
+    batch(() => {
+      setOverlaySession((current) =>
+        reduceOverlaySession(current, {
+          type: "open",
+          kind: overlay,
+          payload,
+          phase,
+          restoreFocus: focus.desired() ?? registeredFocus("browser"),
+        }),
+      );
+    });
+  const replaceSession = (
+    revision: number,
+    payload: AppOverlayPayload,
+    phase?: "review" | "preview" | "observing" | "executing" | "cancelling",
+  ) =>
+    setOverlaySession((current) =>
+      reduceOverlaySession(current, {
+        type: "replace",
+        revision,
+        payload,
+        phase,
+      }),
+    );
+  const beginSession = (revision: number, phase: "preview" | "observing" | "executing") => {
+    let begun = overlaySession();
+    setOverlaySession((current) => {
+      begun = reduceOverlaySession(current, { type: "begin", revision, phase });
+      return begun;
+    });
+    return begun;
+  };
+  const settleSession = (
+    revision: number,
+    requestEpoch: number,
+    phase: "review" | "preview" | "observing" | "executing" | "cancelling",
+    next?: AppOverlayPayload,
+  ) =>
+    setOverlaySession((current) =>
+      reduceOverlaySession(current, {
+        type: "settle",
+        revision,
+        requestEpoch,
+        phase,
+        payload: next,
+      }),
+    );
+  const sessionMatches = (
+    begun: ReturnType<typeof beginSession>,
+    kind: import("./types").Overlay,
+    family: AppOverlayPayload["family"],
+  ) => sessionMatchesOverlay(overlaySession(), begun, kind, family);
+  const closeSession = (revision = overlaySession().revision) => {
+    const current = overlaySession();
+    if (!current.kind || current.revision !== revision) return;
+    const restoreFocus = current.restoreFocus;
+    // A close's captured owner is only valid until another semantic focus request wins.
+    const focusRevision = focus.revision();
+    setOverlaySession((session) => reduceOverlaySession(session, { type: "close", revision }));
+    queueMicrotask(() => {
+      if (focus.revision() === focusRevision && restoreFocus) requestFocus(restoreFocus);
     });
   };
-  const updateSkills = (event: Parameters<typeof reduceTui>[1]) =>
-    setState((current) => reconcileSkills(reduceTui(current, event)));
-  const reconcileCollections = (current: ReturnType<typeof state>) => {
-    if (current.workspace?.effective.status !== "complete") return current;
-    const memory = current.memory.workspace;
-    const values = filterCollections(current.workspace.effective.collectionsView, {
-      query: memory.query.collections,
-      filters: memory.filters.collections ?? {},
-      agentUse: current.workspace.effective.use,
-      installedSkills: current.workspace.installedSkills,
-    }).map((collection) => collection.id);
-    return reduceTui(current, {
-      type: "selection.reconcile",
-      key: "collections",
-      values,
-      previous: current.workspace.effective.collectionsView.map((collection) => collection.id),
-    });
+  const settleFailedExecution = (begun: ReturnType<typeof beginSession>) => {
+    const current = overlaySession();
+    if (current.revision !== begun.revision || current.requestEpoch !== begun.requestEpoch) return;
+    if (current.dismissed) closeSession(begun.revision);
+    else settleSession(begun.revision, begun.requestEpoch, "review");
   };
-  const updateCollections = (event: Parameters<typeof reduceTui>[1]) =>
-    setState((current) => reconcileCollections(reduceTui(current, event)));
+  const setSessionPayload = (next: AppOverlayPayload) =>
+    replaceSession(overlaySession().revision, next);
+  const selectReaderSkill = (address: SkillAddress, preserveSurface = false) => {
+    const current = reader();
+    if (current?.address?.source === address.source && current.address?.path === address.path)
+      return;
+    readerDispatch({ type: "select", address });
+    if (preserveSurface && current)
+      readerDispatch({
+        type: "patch",
+        value: { tab: current.tab, focus: current.focus },
+      });
+    void effects.loadReader(address);
+  };
+  const selectReaderTab = (tab: import("./types").ReaderState["tab"]) => {
+    readerDispatch({
+      type: "patch",
+      value: {
+        tab,
+        resource: undefined,
+        resourceLevel: "list",
+        resourceLoading: false,
+        error: undefined,
+      },
+    });
+    if (tab === "resources") ensureResources();
+  };
+  const ensureResources = () => {
+    const current = reader();
+    if (current?.address && !current.resourcesLoaded && !current.resourceLoading && !current.error)
+      void effects.listResources(current.address);
+  };
+  const openReaderSkill = (address: SkillAddress) => {
+    batch(() => {
+      workspaceState.selectSkill(`${address.source}/${address.path}`);
+      selectReaderSkill(address);
+    });
+    const selected = reader();
+    const readerFocus: FocusOwner =
+      selected?.focus ??
+      (selected?.tab === "resources"
+        ? selected.resourceLevel === "content"
+          ? "reader-resource-content"
+          : "reader-resource-list"
+        : selected?.tab === "details"
+          ? "inspector"
+          : "reader");
+    workspaceState.openDetail();
+    requestFocus(readerFocus);
+  };
   const FilterSearch = () => {
     let input: InputRenderable | undefined;
     onMount(() => queueMicrotask(() => input?.focus()));
@@ -197,380 +484,325 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
           input = value;
         }}
         focused
-        placeholder={filterDimension() ? "Search values" : "Search dimensions"}
-        value={filterSearch()}
-        onInput={setFilterSearch}
+        placeholder={skillsFilterPayload()?.dimension ? "Search values" : "Search dimensions"}
+        value={skillsFilterPayload()?.search ?? ""}
+        onInput={(search) => {
+          const current = skillsFilterPayload();
+          if (current) setSessionPayload({ ...current, search });
+        }}
       />
     );
   };
   const selectFilterDimension = (dimension: string) => {
-    setFilterDimension(dimension);
-    setFilterSearch("");
+    const current = skillsFilterPayload();
+    if (current) setSessionPayload({ ...current, dimension, search: "" });
   };
   const selectFilterValue = (dimension: string, value: string) => {
-    updateSkills({
-      type: "filter.set",
-      key: "skills",
-      dimension,
-      value: value || undefined,
-    });
-    setFilterDimension(undefined);
-    setFilterSearch("");
-    setState((value) =>
-      reduceTui(reduceTui(value, { type: "overlay.close" }), {
-        type: "focus.set",
-        focus: "browser",
-      }),
-    );
-    queueMicrotask(() => renderer.root.findDescendantById("installed-skill-browser")?.focus());
+    workspaceState.setFilter(dimension, value || undefined);
+    const workspace = projection.workspace();
+    if (workspace) workspaceState.reconcile(workspace, workspace);
+    const current = skillsFilterPayload();
+    if (current) setSessionPayload({ ...current, dimension: undefined, search: "" });
+    closeSession();
+    requestFocus("browser");
   };
-  let commitReaderFind = () => {};
-  let topNavigation: TabSelectRenderable | undefined;
-  const flushReaderFind = () => commitReaderFind();
-  let previewRequest = 0;
-  let installedPreviewRequest = 0;
+  let appliedFocusOwner: FocusOwner | undefined;
+  let appliedFocusTarget: unknown;
+  let physicalFocusBridgeReady = false;
+  let focusReconciliationRevision = 0;
+  let configFocusRevision = 0;
+  let pendingConfigFocus:
+    | {
+        readonly revision: number;
+        readonly destination: Exclude<Destination, "workspace">;
+        readonly section: Section;
+        readonly listener: () => void;
+      }
+    | undefined;
   const currentInstalledPreview = (request: InstalledSkillPreviewRequest) => {
-    const projection = state().workspace;
-    const selected = state().memory.workspace.selection.skills;
+    const workspace = projection.workspace();
+    const selected = workspaceState.selectedSkill();
     const selectedAddress = `${request.address.source}/${request.address.path}`;
     return !!(
-      projection &&
+      workspace &&
       selected === selectedAddress &&
-      projection.installedSkills.some(
+      workspace.installedSkills.some(
         (skill) =>
           skill.address.source === request.address.source &&
           skill.address.path === request.address.path,
       ) &&
       (request.kind === "uninstall" ||
-        projection.effective.sources.some(
+        workspace.effective.sources.some(
           (source) => source.id === request.owner && source.id !== request.address.source,
         ))
     );
   };
-  const previewInstalled = async (request: InstalledSkillPreviewRequest) => {
-    if (effects.pending()) return;
+  const previewInstalled = async (
+    request: InstalledSkillPreviewRequest,
+    sourceRemoval?: SourceRemovalReview,
+  ) => {
+    if (overlaySession().phase === "preview" || overlaySession().phase === "executing") return;
     if (!currentInstalledPreview(request)) {
-      setState((value) =>
-        reduceTui(value, {
-          type: "operation.failure",
-          diagnostic: {
-            code: "TRANSACTION_CONFLICT",
-            severity: "warning",
-            message: "Installed Skill preview no longer matches the current selection",
-          },
-        }),
-      );
+      operation.report({
+        code: "TRANSACTION_CONFLICT",
+        severity: "warning",
+        message: "Installed Skill preview no longer matches the current selection",
+      });
       return;
     }
-    const sequence = ++installedPreviewRequest;
-    setInstalledPreview(request);
-    setInstalledPreviewFailure(undefined);
-    setInstalledPreviewRetrying(true);
-    setInstalledPreviewCancelling(false);
-    setState((value) => reduceTui(value, { type: "operation.failure.clear" }));
+    const removal = sessionPayload();
+    const parent =
+      sourceRemoval ?? (removal?.family === "source-removal" ? removal.review : undefined);
+    openSession(
+      "confirm",
+      {
+        family: "installed-preview",
+        request,
+        sourceRemoval: parent,
+      },
+      "preview",
+    );
+    const begun = beginSession(overlaySession().revision, "preview");
+    const { revision, requestEpoch } = begun;
+    operation.clearProblem();
     const next = await effects.reviewInstalled(request);
-    if (sequence === installedPreviewRequest && state().overlay === "confirm") {
-      if (installedPreviewCancelling()) {
-        setInstalledPreview(undefined);
-        setState((value) => reduceTui(value, { type: "overlay.close" }));
-      } else if (next) {
-        setInstalledPreview(undefined);
-        setInstalledPreviewFailure(undefined);
-        setInstalledReview(next);
-      } else {
-        setInstalledPreview(undefined);
-        setInstalledPreviewFailure(request);
-      }
-    }
-    if (sequence === installedPreviewRequest) {
-      setInstalledPreviewRetrying(false);
-      setInstalledPreviewCancelling(false);
-    }
+    if (!sessionMatches(begun, "confirm", "installed-preview")) return;
+    if (overlaySession().dismissed) return closeSession(revision);
+    settleSession(revision, requestEpoch, "review", {
+      family: "installed-preview",
+      request,
+      ...(next ? { review: next } : { failed: true }),
+      sourceRemoval: parent,
+    });
   };
   const closeOverlay = () => {
-    flushReaderFind();
-    const current = review();
-    if (installedPreview()) {
-      if (effects.pendingKind() === "preview") {
-        effects.cancel();
-        setInstalledPreviewCancelling(true);
-        return;
-      }
-    } else if (installedPreviewFailure()) {
-      if (effects.pendingKind() === "preview") {
-        effects.cancel();
-        setInstalledPreviewCancelling(true);
-        return;
-      }
-      installedPreviewRequest++;
-      setInstalledPreviewFailure(undefined);
-      setInstalledPreviewRetrying(false);
-      setInstalledPreviewCancelling(false);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (effects.pendingKind() === "preview") {
-      previewRequest++;
-      effects.cancel();
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (state().overlay === "selection" && effects.pendingKind() === "observe") {
+    const payload = sessionPayload();
+    const revision = overlaySession().revision;
+    let dismissed = overlaySession();
+    setOverlaySession((current) => {
+      dismissed = reduceOverlaySession(current, {
+        type: "requestDismiss",
+        revision,
+      });
+      return dismissed;
+    });
+    if (dismissed.cancelRequested) {
       effects.cancel();
       return;
-    } else if (state().task) effects.cancel();
-    else if (sourceReview()) {
-      const active = sourceReview()!;
-      if (effects.pendingKind() === "execute") {
-        effects.cancel();
-        return;
-      }
-      if (effects.pendingKind() === "observe") effects.cancel();
-      else if (active.kind === "discovery") effects.discardDiscovery(active);
-      else effects.discardUpdate(active);
-      setSourceReview(undefined);
-      setSelectedPaths([]);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (installedReview()) {
-      effects.discardInstalledReview(installedReview()!);
-      setInstalledReview(undefined);
-      if (!repair()) setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (agentViews()) {
-      setAgentViews(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (rebindSources()) {
-      setRebindSources(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (collectionChoices()) {
-      setCollectionChoices(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (repair()) {
-      setRepair(undefined);
-    } else if (configOperation()) {
-      setConfigOperation(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (sourceRegistration()) {
-      setSourceRegistration(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (collectionCreate()) {
-      if (effects.pendingKind() === "execute") {
-        effects.cancel();
-        return;
-      }
-      setCollectionCreate(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (membershipDraft()) {
-      if (effects.pendingKind() === "preview") {
-        effects.cancel();
-        return;
-      }
-      setMembershipDraft(undefined);
-      if (collectionReview()) effects.discardCollectionReview(collectionReview()!);
-      setCollectionReview(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (collectionDraft()) {
-      if (effects.pendingKind() === "preview" || effects.pendingKind() === "execute") {
-        effects.cancel();
-        return;
-      }
-      setCollectionDraft(undefined);
-      if (collectionReview()) effects.discardCollectionReview(collectionReview()!);
-      setCollectionReview(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (collectionReview()) {
-      if (effects.pendingKind() === "execute") {
-        effects.cancel();
-        return;
-      }
-      effects.discardCollectionReview(collectionReview()!);
-      setCollectionReview(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    } else if (!state().overlay && state().sourceFilter)
-      setState((value) =>
-        reduceTui(reduceTui(value, { type: "source.filter.set", source: undefined }), {
-          type: "section.select",
-          section: "sources",
-        }),
-      );
-    else if (
-      !state().overlay &&
-      state().reader.tab === "resources" &&
-      state().reader.resourceLevel === "content"
-    )
-      setState((value) =>
-        reduceTui(value, {
-          type: "reader.patch",
-          value: { resourceLevel: "list", resource: undefined, loading: false, error: undefined },
-        }),
-      );
-    else if (
-      !state().overlay &&
-      state().destination === "workspace" &&
-      state().memory.workspace.section === "skills" &&
-      [
-        "reader",
-        "reader-tabs",
-        "input",
-        "reader-raw",
-        "reader-find-previous",
-        "reader-find-next",
-        "open-match-raw",
-      ].includes(state().focus)
-    )
-      setState((value) =>
-        reduceTui(reduceTui(value, { type: "narrow.level", level: "list" }), {
-          type: "focus.set",
-          focus: "browser",
-        }),
-      );
-    else if (!state().overlay && size().width < 80 && state().narrowLevel !== "list")
-      setState((value) =>
-        reduceTui(reduceTui(value, { type: "narrow.level", level: "list" }), {
-          type: "focus.set",
-          focus: "browser",
-        }),
-      );
-    else {
-      if (current) effects.discardReview(current);
-      setReview(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
     }
+    if (payload?.family === "installed-preview") {
+      if (payload.review) effects.discardInstalledReview(payload.review);
+      closeSession();
+      return;
+    } else if (payload?.family === "source-removal") {
+      if (payload.review) effects.discardReview(payload.review);
+      closeSession();
+      return;
+    } else if (
+      payload?.family === "source-observation" ||
+      payload?.family === "config-observation"
+    ) {
+      closeSession();
+      return;
+    } else if (payload?.family === "source-selection") {
+      if (payload.review.kind === "discovery") effects.discardDiscovery(payload.review);
+      else effects.discardUpdate(payload.review);
+      closeSession();
+      return;
+    } else if (
+      payload?.family === "installed-rebind" ||
+      payload?.family === "installed-agent-views"
+    ) {
+      closeSession();
+      return;
+    } else if (payload?.family === "collection-review" && payload.review) {
+      effects.discardCollectionReview(payload.review);
+      closeSession(revision);
+    } else closeSession();
+  };
+  const observeConfig = async (
+    id: string,
+    observed: ReturnType<typeof beginSession>,
+  ): Promise<void> => {
+    const observation = await effects.observeConfig(id);
+    if (!sessionMatches(observed, "selection", "config-observation") || overlaySession().dismissed)
+      return closeSession(observed.revision);
+    if (!observation?.exactRevision) {
+      settleSession(observed.revision, observed.requestEpoch, "review");
+      return;
+    }
+    const preview = beginSession(observed.revision, "preview");
+    const impact = await effects.previewConfig({ kind: "adopt", id, observation });
+    if (
+      !sessionMatches(preview, "selection", "config-observation") ||
+      overlaySession().dismissed ||
+      !impact
+    )
+      return closeSession(preview.revision);
+    settleSession(preview.revision, preview.requestEpoch, "review", {
+      family: "config-operation",
+      kind: "adopt",
+      id,
+      observation,
+      impact,
+    });
+  };
+  const beginConfigObservation = (id: string) => {
+    openSession("selection", { family: "config-observation", id }, "observing");
+    void observeConfig(id, beginSession(overlaySession().revision, "observing"));
   };
   const dispatchAction = async (id: ActionId) => {
-    const projection = state().workspace;
-    if (!projection) return;
+    const workspace = projection.workspace();
+    if (!workspace) return;
+    const pageFacts = {
+      workspace: workspaceState.snapshot(),
+      collections: collectionsState.snapshot(),
+      config: (destination: Exclude<Destination, "workspace">) => configState.snapshot(destination),
+    };
     if (id === "open-actions" || id === "open-palette") {
-      setState((value) =>
-        reduceTui(value, {
-          type: "overlay.open",
-          overlay: id === "open-actions" ? "actions" : "palette",
-        }),
-      );
+      openSession(id === "open-actions" ? "actions" : "palette", {
+        family: "palette",
+      });
       return;
     }
-    const descriptor = reachableActions(state(), projection).find((action) => action.id === id);
-    if (!descriptor?.enabled) {
+    const descriptor = reachableActions(route.snapshot().destination, workspace, pageFacts).find(
+      (action) => action.id === id,
+    );
+    // The cold-start primary action reaches the same Source registration form before actions exist.
+    const coldStartAddSource =
+      id === "add-source" &&
+      route.snapshot().destination === "workspace" &&
+      workspaceState.section() === "skills" &&
+      !workspaceState.sourceFilter() &&
+      workspace.installedSkills.length === 0;
+    if (!descriptor?.enabled && !coldStartAddSource) {
       if (descriptor?.reason)
-        setState((value) =>
-          reduceTui(value, {
-            type: "operation.failure",
-            diagnostic: {
-              code: "INVALID_ARGUMENT",
-              severity: "warning",
-              message: descriptor.reason!,
-            },
-          }),
-        );
+        operation.report({
+          code: "INVALID_ARGUMENT",
+          severity: "warning",
+          message: descriptor.reason!,
+        });
       return;
     }
     if (id === "remove-source") {
-      const request = ++previewRequest;
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "confirm" }));
-      const next = await effects.review(actionIntent(id, state(), projection));
-      if (next && request === previewRequest && state().overlay === "confirm") {
-        setReview(next);
-        setRepair(undefined);
-        setState((value) => reduceTui(value, { type: "overlay.open", overlay: "confirm" }));
-      } else if (request === previewRequest && state().overlay === "confirm" && !review())
-        setState((value) => reduceTui(value, { type: "overlay.close" }));
+      openSession("confirm", { family: "source-removal" }, "preview");
+      const begun = beginSession(overlaySession().revision, "preview");
+      const { revision, requestEpoch } = begun;
+      const next = await effects.review(
+        actionIntent(id, route.snapshot().destination, workspace, pageFacts),
+      );
+      if (!sessionMatches(begun, "confirm", "source-removal")) return;
+      if (overlaySession().dismissed || !next) return closeSession(revision);
+      settleSession(revision, requestEpoch, "review", {
+        family: "source-removal",
+        review: next,
+      });
       return;
     }
     if (id === "new-collection") {
-      const destination = state().destination;
-      setCollectionCreate(
-        destination === "workspace"
-          ? { allowedLevels: ["global", "project", "local"] }
-          : { level: destination },
-      );
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "form" }));
+      const destination = route.snapshot().destination;
+      openSession("form", {
+        family: "collection-create",
+        ...(destination === "workspace"
+          ? { allowedLevels: ["global", "project", "local"] as const }
+          : { level: destination }),
+      });
       return;
     }
     if (id === "add-source" || id === "add-config-source") {
-      const destination = state().destination;
-      setSourceRegistration({
+      const destination = route.snapshot().destination;
+      openSession("form", {
+        family: "source-registration",
         kind: id === "add-source" ? "source" : "config-source",
         ...(destination === "workspace" ? {} : { level: destination }),
       });
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "form" }));
       return;
     }
     if (id === "config-observe") {
-      const config = projection.configs.find((item) => item.level === state().destination);
+      const config = workspace.configs.find((item) => item.level === route.snapshot().destination);
       const source = config?.direct.configSources.find(
         (item) =>
-          item.owner.pointer === state().memory[state().destination].selection["config-sources"],
+          item.owner.pointer === configState.selection(configDestination(), "config-sources"),
       );
       if (!source) return;
-      const observation = await effects.observeConfig(source.id);
-      if (observation?.exactRevision) {
-        const impact = await effects.previewConfig({ kind: "adopt", id: source.id, observation });
-        if (!impact) return;
-        setConfigOperation({ kind: "adopt", id: source.id, observation, impact });
-        setState((value) => reduceTui(value, { type: "overlay.open", overlay: "confirm" }));
-      }
+      beginConfigObservation(source.id);
       return;
     }
     if (id === "config-adopt" || id === "config-forget" || id === "config-remove") {
-      const config = projection.configs.find((item) => item.level === state().destination);
+      const config = workspace.configs.find((item) => item.level === route.snapshot().destination);
       const source = config?.direct.configSources.find(
         (item) =>
-          item.owner.pointer === state().memory[state().destination].selection["config-sources"],
+          item.owner.pointer === configState.selection(configDestination(), "config-sources"),
       );
       if (!source) return;
       if (id === "config-adopt") {
-        const observation = await effects.observeConfig(source.id);
-        if (!observation?.exactRevision) return;
-        const impact = await effects.previewConfig({ kind: "adopt", id: source.id, observation });
-        if (!impact) return;
-        setConfigOperation({ kind: "adopt", id: source.id, observation, impact });
+        beginConfigObservation(source.id);
       } else {
         const kind = id === "config-forget" ? "forget" : "remove";
+        openSession("confirm", { family: "config-operation", kind, id: source.id }, "preview");
+        const begun = beginSession(overlaySession().revision, "preview");
         const impact = await effects.previewConfig({ kind, id: source.id });
-        if (!impact) return;
-        setConfigOperation({ kind, id: source.id, impact });
+        if (
+          !sessionMatches(begun, "confirm", "config-operation") ||
+          overlaySession().dismissed ||
+          !impact
+        )
+          return closeSession(begun.revision);
+        settleSession(begun.revision, begun.requestEpoch, "review", {
+          family: "config-operation",
+          kind,
+          id: source.id,
+          impact,
+        });
       }
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "confirm" }));
       return;
     }
     if (id === "enable-managed-opencode" || id === "disable-managed-opencode") {
-      const destination = state().destination;
+      const destination = route.snapshot().destination;
       if (destination === "workspace") return;
-      setConfigOperation({
+      openSession("confirm", {
+        family: "config-operation",
         kind: "managed",
         level: destination,
         enabled: id === "enable-managed-opencode",
       });
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "confirm" }));
       return;
     }
     if (id === "add-membership") {
       const collectionId =
-        state().destination === "workspace"
-          ? state().memory.workspace.selection.collections
-          : state().memory[state().destination].selection.collections;
+        route.snapshot().destination === "workspace"
+          ? collectionsState.selected()
+          : configState.selection(configDestination(), "collections");
       const collection =
-        projection.effective.status === "complete"
-          ? projection.effective.collectionsView.find((item) => item.id === collectionId)
+        workspace.effective.status === "complete"
+          ? workspace.effective.collectionsView.find((item) => item.id === collectionId)
           : undefined;
       const owner =
-        state().destination === "workspace"
+        route.snapshot().destination === "workspace"
           ? (collection?.declared.find((item) => !item.contribution && item.level === "project") ??
             collection?.declared.find((item) => !item.contribution))
           : collection?.declared.find(
-              (item) => !item.contribution && item.level === state().destination,
+              (item) => !item.contribution && item.level === route.snapshot().destination,
             );
       if (!collection || !owner) return;
-      setMembershipChooser({ level: owner.level, collection: collection.id });
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "form" }));
+      openSession("form", {
+        family: "membership-chooser",
+        level: owner.level,
+        collection: collection.id,
+      });
       return;
     }
     const selectedCollection = () => {
-      if (state().destination === "workspace")
-        return projection.effective.status === "complete"
-          ? projection.effective.collectionsView
-              .find((item) => item.id === state().memory.workspace.selection.collections)
+      if (route.snapshot().destination === "workspace")
+        return workspace.effective.status === "complete"
+          ? workspace.effective.collectionsView
+              .find((item) => item.id === collectionsState.selected())
               ?.declared.find((owner) => !owner.contribution)
           : undefined;
-      return projection.configs
-        .find((item) => item.level === state().destination)
+      return workspace.configs
+        .find((item) => item.level === route.snapshot().destination)
         ?.direct.collections.find(
-          (item) => item.id === state().memory[state().destination].selection.collections,
+          (item) => item.id === configState.selection(configDestination(), "collections"),
         )?.owner;
     };
     if (
@@ -581,53 +813,78 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     ) {
       const owner = selectedCollection();
       if (!owner) return;
-      const collection = state().memory[state().destination].selection.collections;
+      const collection =
+        route.snapshot().destination === "workspace"
+          ? collectionsState.selected()
+          : configState.selection(configDestination(), "collections");
       if (!collection) return;
       if (id === "remove-collection") {
-        setState((value) => reduceTui(value, { type: "overlay.open", overlay: "confirm" }));
+        openSession("confirm", { family: "collection-review" });
+        const begun = beginSession(overlaySession().revision, "preview");
         const next = await effects.previewCollectionRemoval({
           kind: "collection-removal",
           level: owner.level,
           collection,
         });
-        if (next?.kind === "collection-removal" && state().overlay === "confirm")
-          setCollectionReview(next);
+        if (!sessionMatches(begun, "confirm", "collection-review")) return;
+        if (overlaySession().dismissed) return closeSession(begun.revision);
+        if (next?.kind === "collection-removal")
+          settleSession(begun.revision, begun.requestEpoch, "review", {
+            family: "collection-review",
+            review: next,
+          });
+        else closeSession(begun.revision);
         return;
       }
-      setCollectionDraft(
-        id === "import-collection"
-          ? { kind: "collection-import", level: owner.level, from: "", into: collection }
-          : id === "add-reference"
+      openSession("form", {
+        family: "collection-draft",
+        draft:
+          id === "import-collection"
             ? {
-                kind: "reference",
+                kind: "collection-import",
                 level: owner.level,
-                collection,
-                name: "",
-                target: "",
-                description: "",
+                from: "",
+                into: collection,
               }
-            : { kind: "link-change", level: owner.level, collection, target: "", linked: true },
-      );
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "form" }));
+            : id === "add-reference"
+              ? {
+                  kind: "reference",
+                  level: owner.level,
+                  collection,
+                  name: "",
+                  target: "",
+                  description: "",
+                }
+              : {
+                  kind: "link-change",
+                  level: owner.level,
+                  collection,
+                  target: "",
+                  linked: true,
+                },
+      });
       return;
     }
     if (id === "set-collection-use") {
-      const config = projection.configs.find((item) => item.level === state().destination);
-      const destination = state().destination;
+      const destination = route.snapshot().destination;
+      const config = workspace.configs.find((item) => item.level === destination);
       if (!config || destination === "workspace") return;
-      setCollectionDraft({
-        kind: "collection-use",
-        level: destination,
-        collections: config.direct.collectionUse.map((item) => item.collection),
+      openSession("form", {
+        family: "collection-draft",
+        draft: {
+          kind: "collection-use",
+          level: destination,
+          collections: config.direct.collectionUse.map((item) => item.collection),
+        },
       });
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "form" }));
       return;
     }
     if (id === "add-skills" || id === "check-updates") {
-      const intent = sourceOperationIntent(id, state(), projection);
-      setObservationIntent(intent);
-      setState((value) => reduceTui(value, { type: "operation.failure.clear" }));
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "selection" }));
+      const intent = sourceOperationIntent(id, route.snapshot().destination, workspace, pageFacts);
+      operation.clearProblem();
+      openSession("selection", { family: "source-observation", intent }, "observing");
+      const begun = beginSession(overlaySession().revision, "observing");
+      const { revision, requestEpoch } = begun;
       const next =
         id === "add-skills"
           ? await effects.discover({
@@ -638,189 +895,234 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               kind: "source-update",
               source: intent.source,
             });
-      if (next && state().overlay === "selection") {
-        setSourceReview(next);
-        setSelectedPaths([]);
-      }
+      if (
+        next &&
+        sessionMatches(begun, "selection", "source-observation") &&
+        !overlaySession().dismissed
+      )
+        settleSession(revision, requestEpoch, "review", {
+          family: "source-selection",
+          review: next,
+          selectedPaths: [],
+        });
+      else if (
+        sessionMatches(begun, "selection", "source-observation") &&
+        overlaySession().dismissed
+      )
+        closeSession(revision);
+      else if (sessionMatches(begun, "selection", "source-observation"))
+        settleSession(revision, requestEpoch, "review");
       return;
     }
     if (id === "view-installed-skills") {
-      const source = sourceOperationIntent("add-skills", state(), projection).source;
-      const first = state().workspace?.installedSkills.find(
-        (skill) => skill.address.source === source,
-      );
-      setState((value) =>
-        reduceTui(
-          reduceTui(reduceTui(value, { type: "destination.select", destination: "workspace" }), {
-            type: "section.select",
-            section: "skills",
-          }),
-          {
-            type: "selection.set",
-            key: "skills",
-            value: first ? `${first.address.source}/${first.address.path}` : undefined,
-          },
-        ),
-      );
-      setState((value) =>
-        reduceTui(value, { type: "selection.set", key: "sources", value: source }),
-      );
-      setState((value) => reduceTui(value, { type: "source.filter.set", source }));
+      const destination = route.snapshot().destination;
+      const source = sourceOperationIntent("add-skills", destination, workspace, pageFacts).source;
+      const first = projection
+        .workspace()
+        ?.installedSkills.find((skill) => skill.address.source === source);
+      const target = {
+        destination: "workspace" as const,
+        section: "skills" as const,
+        selection: first ? `${first.address.source}/${first.address.path}` : undefined,
+      };
+      if (destination === "workspace") routeSource(target);
+      else
+        route.contribution(target, {
+          destination,
+          section: configState.section(destination),
+          selection: configState.selection(destination),
+        });
+      batch(() => {
+        workspaceState.selectSource(source);
+        workspaceState.showInstalledSkillsFromSource(source);
+      });
       return;
     }
     if (id === "open-config") {
-      const route = sourceRouteIntent(id, state(), projection);
-      setState((value) =>
-        reduceTui(value, {
-          type: "route.source",
-          destination: route.owner.level,
-          section: "sources",
-          selection: route.source,
-        }),
-      );
+      const target = sourceRouteIntent(id, route.snapshot().destination, workspace, pageFacts);
+      routeSource({
+        destination: target.owner.level,
+        section: "sources",
+        selection: target.source,
+      });
       return;
     }
     if (id === "open-config-source") {
-      const route = sourceRouteIntent(id, state(), projection);
-      setState((value) =>
-        reduceTui(value, {
-          type: "route.source",
-          destination: route.contribution.configSource.level,
-          section: "config-sources",
-          selection: route.contribution.configSource.pointer,
-        }),
-      );
+      const target = sourceRouteIntent(id, route.snapshot().destination, workspace, pageFacts);
+      routeSource({
+        destination: target.contribution.configSource.level,
+        section: "config-sources",
+        selection: target.contribution.configSource.pointer,
+      });
       return;
     }
     if (id === "skill-add-to-collection") {
-      const skill = installedSkillContext(state(), projection)?.skill;
+      const skill = installedSkillContext(
+        route.snapshot().destination,
+        workspace,
+        pageFacts,
+      )?.skill;
       const choices =
-        projection.effective.status === "complete"
-          ? projection.effective.collectionsView.flatMap((item) =>
+        workspace.effective.status === "complete"
+          ? workspace.effective.collectionsView.flatMap((item) =>
               item.declared.some((owner) => !owner.contribution)
                 ? item.declared
                     .filter((owner) => !owner.contribution)
-                    .map((owner) => ({ collection: item.id, level: owner.level }))
+                    .map((owner) => ({
+                      collection: item.id,
+                      level: owner.level,
+                    }))
                 : item.repository.derived
                   ? [{ collection: item.id }]
                   : [],
             )
           : [];
       if (!skill || choices.length === 0) {
-        setState((value) =>
-          reduceTui(value, {
-            type: "operation.failure",
-            diagnostic: {
-              code: "INVALID_ARGUMENT",
-              severity: "warning",
-              message: "No direct Collection is available for this Installed Skill",
-            },
-          }),
-        );
+        operation.report({
+          code: "INVALID_ARGUMENT",
+          severity: "warning",
+          message: "No direct Collection is available for this Installed Skill",
+        });
         return;
       }
-      setCollectionChoices(choices);
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "selection" }));
+      openSession("selection", { family: "collection-choices", choices });
       return;
     }
     if (id === "skill-for-agents") {
-      const skill = installedSkillContext(state(), projection)?.skill;
+      const skill = installedSkillContext(
+        route.snapshot().destination,
+        workspace,
+        pageFacts,
+      )?.skill;
       if (skill?.selectorViews.status === "complete") {
-        setAgentViews(skill.selectorViews);
-        setState((value) => reduceTui(value, { type: "overlay.open", overlay: "selection" }));
+        openSession("selection", {
+          family: "installed-agent-views",
+          views: skill.selectorViews,
+        });
       }
       return;
     }
     if (id === "skill-uninstall") {
-      const skill = installedSkillContext(state(), projection)?.skill;
+      const skill = installedSkillContext(
+        route.snapshot().destination,
+        workspace,
+        pageFacts,
+      )?.skill;
       if (!skill) return;
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "confirm" }));
       void previewInstalled({ kind: "uninstall", address: skill.address });
       return;
     }
     if (id === "skill-rebind") {
-      const skill = installedSkillContext(state(), projection)?.skill;
-      const sources = projection.effective.sources
+      const skill = installedSkillContext(
+        route.snapshot().destination,
+        workspace,
+        pageFacts,
+      )?.skill;
+      const sources = workspace.effective.sources
         .filter((source) => source.id !== skill?.owner.source)
         .map((source) => source.id);
       if (!skill || sources.length === 0) {
-        setState((value) =>
-          reduceTui(value, {
-            type: "operation.failure",
-            diagnostic: {
-              code: "SOURCE_NOT_FOUND",
-              severity: "warning",
-              message: "No alternative Source is available for Rebind",
-            },
-          }),
-        );
+        operation.report({
+          code: "SOURCE_NOT_FOUND",
+          severity: "warning",
+          message: "No alternative Source is available for Rebind",
+        });
         return;
       }
-      setRebindSources(sources);
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "selection" }));
+      openSession("selection", {
+        family: "installed-rebind",
+        sources,
+        address: skill.address,
+      });
       return;
     }
     if (id === "skill-check-updates") {
-      const skill = projection.installedSkills.find(
-        (item) =>
-          `${item.address.source}/${item.address.path}` ===
-          state().memory.workspace.selection.skills,
+      const skill = workspace.installedSkills.find(
+        (item) => `${item.address.source}/${item.address.path}` === workspaceState.selectedSkill(),
       );
       if (skill) {
-        const intent = skillSourceIntent(state(), projection);
-        setObservationIntent(intent);
-        setState((value) => reduceTui(value, { type: "overlay.open", overlay: "selection" }));
+        const intent = skillSourceIntent(route.snapshot().destination, workspace, pageFacts);
+        openSession("selection", { family: "source-observation", intent }, "observing");
+        const begun = beginSession(overlaySession().revision, "observing");
+        const { revision, requestEpoch } = begun;
         const next = await effects.checkUpdate({
           kind: intent.kind,
           source: intent.source,
           selectedPath: intent.path,
         });
-        if (next && state().overlay === "selection") setSourceReview(next);
+        if (
+          next &&
+          sessionMatches(begun, "selection", "source-observation") &&
+          !overlaySession().dismissed
+        )
+          settleSession(revision, requestEpoch, "review", {
+            family: "source-selection",
+            review: next,
+            selectedPaths: [],
+          });
+        else if (
+          sessionMatches(begun, "selection", "source-observation") &&
+          overlaySession().dismissed
+        )
+          closeSession(revision);
       }
       return;
     }
     if (id === "skill-open-source") {
-      const skill = installedSkillContext(state(), projection)?.skill;
+      const skill = installedSkillContext(
+        route.snapshot().destination,
+        workspace,
+        pageFacts,
+      )?.skill;
       if (skill)
-        setState((value) =>
-          reduceTui(value, {
-            type: "route.source",
-            destination: "workspace",
-            section: "sources",
-            selection: skill.owner.source,
-          }),
-        );
+        routeSource({
+          destination: "workspace",
+          section: "sources",
+          selection: skill.owner.source,
+        });
     }
   };
-  const previewMembership = async (intent: import("./effects").AddMembershipPreviewRequest) => {
+  const previewMembership = async (
+    intent: import("./effects").AddMembershipPreviewRequest,
+    origin: "confirm" | "form" = "confirm",
+  ) => {
+    const begun = beginSession(overlaySession().revision, "preview");
     const next = await effects.previewAddToCollection(intent);
-    if (state().overlay !== "confirm" || next?.kind !== "add-to-collection") return;
+    if (
+      !sessionMatches(begun, origin, origin === "form" ? "membership-draft" : "collection-review")
+    )
+      return;
+    if (overlaySession().dismissed) return closeSession(begun.revision);
+    if (next?.kind !== "add-to-collection")
+      return settleSession(begun.revision, begun.requestEpoch, "review");
     if (next.authorized) {
-      setCollectionReview(next);
-      setMembershipDraft({
-        level: next.authorized.level,
-        collection: next.authorized.collection,
-        address: next.authorized.address,
-        initialName: next.authorized.name,
-      });
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "form" }));
+      if (origin === "form") openSession("confirm", { family: "collection-review", review: next });
+      else
+        openSession("form", {
+          family: "membership-draft",
+          level: next.authorized.level,
+          collection: next.authorized.collection,
+          address: next.authorized.address,
+          initialName: next.authorized.name,
+          review: next,
+        });
       return;
     }
     if (next.nextStep) {
-      setCollectionReview(undefined);
       effects.discardCollectionReview(next);
-      setCollectionCreate({
+      openSession("form", {
+        family: "collection-create",
         allowedLevels: next.nextStep.eligibleLevels,
         afterCreate: { collection: intent.collection, address: intent.address },
       });
-      setState((value) => reduceTui(value, { type: "overlay.open", overlay: "form" }));
       return;
     }
-    setCollectionReview(next);
+    setSessionPayload({ family: "collection-review", review: next });
   };
   const applyCollectionReview = async () => {
-    const current = collectionReview();
+    const current = collectionReviewPayload()?.review;
     if (!current) return;
+    const begun = beginSession(overlaySession().revision, "executing");
     const complete =
       current.kind === "membership-removal"
         ? await effects.removeMembership(current)
@@ -835,226 +1137,303 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                 : current.kind === "collection-removal"
                   ? await effects.removeCollection(current)
                   : false;
-    if (complete) {
+    if (complete && sessionMatches(begun, "confirm", "collection-review")) {
       const collection =
         current.kind === "collection-import"
           ? current.intent.into
           : current.kind === "collection-use"
             ? undefined
             : current.intent.collection;
-      setCollectionReview(undefined);
-      setMembershipDraft(undefined);
-      setCollectionDraft(undefined);
-      setState((value) =>
-        reduceTui(reduceTui(value, { type: "overlay.close" }), {
-          type: "selection.set",
-          key: "collections",
-          value: collection,
-        }),
-      );
-    }
+      if (collection) collectionsState.select(collection);
+      closeSession();
+    } else if (sessionMatches(begun, "confirm", "collection-review") && overlaySession().dismissed)
+      closeSession(begun.revision);
+    else settleFailedExecution(begun);
   };
   const applyMembership = async () => {
-    const current = collectionReview();
+    const current = collectionReviewPayload()?.review;
     if (current?.kind !== "add-to-collection" || !current.authorized) return;
+    const begun = beginSession(overlaySession().revision, "executing");
     const complete = await effects.addToCollection(current);
-    if (complete) {
+    if (complete && sessionMatches(begun, "confirm", "collection-review")) {
       const collection = current.authorized.collection;
-      setMembershipDraft(undefined);
-      setCollectionReview(undefined);
-      setState((value) =>
-        reduceTui(reduceTui(value, { type: "overlay.close" }), {
-          type: "selection.set",
-          key: "collections",
-          value: collection,
-        }),
-      );
-    }
+      collectionsState.select(collection);
+      closeSession();
+    } else if (sessionMatches(begun, "confirm", "collection-review") && overlaySession().dismissed)
+      closeSession(begun.revision);
+    else settleFailedExecution(begun);
   };
   const previewMembershipRemoval = async (
     intent: Extract<import("./effects").CollectionIntent, { readonly kind: "membership-removal" }>,
   ) => {
-    setState((value) => reduceTui(value, { type: "overlay.open", overlay: "confirm" }));
+    openSession("confirm", { family: "collection-review" });
+    const begun = beginSession(overlaySession().revision, "preview");
     const next = await effects.previewMembershipRemoval(intent);
-    if (next?.kind === "membership-removal" && state().overlay === "confirm")
-      setCollectionReview(next);
+    if (!sessionMatches(begun, "confirm", "collection-review")) return;
+    if (overlaySession().dismissed || next?.kind !== "membership-removal")
+      return closeSession(begun.revision);
+    else
+      settleSession(begun.revision, begun.requestEpoch, "review", {
+        family: "collection-review",
+        review: next,
+      });
+  };
+  const previewCollectionDraft = async (
+    run: () => Promise<CollectionReview | undefined>,
+    kind: CollectionReview["kind"],
+  ) => {
+    const begun = beginSession(overlaySession().revision, "preview");
+    const review = await run();
+    if (!sessionMatches(begun, "form", "collection-draft")) return;
+    if (overlaySession().dismissed) return closeSession(begun.revision);
+    if (!review || review.kind !== kind)
+      return settleSession(begun.revision, begun.requestEpoch, "review");
+    openSession("confirm", { family: "collection-review", review });
   };
   const confirm = async () => {
-    const current = review();
+    const current = sourceRemovalPayload()?.review;
     if (!current) return;
+    const begun = beginSession(overlaySession().revision, "executing");
     const complete = await effects.confirm(current);
-    if (complete) {
-      setReview(undefined);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    }
+    if (
+      complete &&
+      overlaySession().revision === begun.revision &&
+      overlaySession().requestEpoch === begun.requestEpoch
+    ) {
+      closeSession();
+    } else if (
+      overlaySession().revision === begun.revision &&
+      overlaySession().requestEpoch === begun.requestEpoch &&
+      overlaySession().dismissed
+    )
+      closeSession(begun.revision);
+    else settleFailedExecution(begun);
   };
   const previewRepairInstalled = async (
     request: InstalledSkillPreviewRequest,
     sourceReview: SourceRemovalReview,
   ) => {
+    openSession(
+      "confirm",
+      { family: "installed-preview", request, sourceRemoval: sourceReview },
+      "preview",
+    );
+    const begun = beginSession(overlaySession().revision, "preview");
     const next = await effects.reviewInstalled(request);
-    if (next && review() === sourceReview && repair()) setInstalledReview(next);
+    if (
+      next &&
+      sessionMatches(begun, "confirm", "installed-preview") &&
+      !overlaySession().dismissed &&
+      installedPreviewPayload()?.sourceRemoval === sourceReview
+    )
+      settleSession(begun.revision, begun.requestEpoch, "review", {
+        ...installedPreviewPayload()!,
+        review: next,
+      });
+    else if (sessionMatches(begun, "confirm", "installed-preview") && overlaySession().dismissed)
+      closeSession(begun.revision);
+    else if (sessionMatches(begun, "confirm", "installed-preview"))
+      settleSession(begun.revision, begun.requestEpoch, "review", {
+        family: "source-removal",
+        review: sourceReview,
+      });
   };
   const confirmRepairInstalled = async () => {
-    const current = installedReview();
-    const sourceReview = review();
-    if (!current || !sourceReview || !repair()) return;
+    const surface = installedPreviewPayload();
+    const current = surface?.review;
+    const sourceReview = surface?.sourceRemoval;
+    if (!current || !sourceReview) return;
+    const begun = beginSession(overlaySession().revision, "executing");
     const complete = await effects.confirmInstalled(current);
-    if (!complete) return;
-    setInstalledReview(undefined);
-    setRepair(undefined);
+    if (!complete) {
+      if (
+        overlaySession().revision === begun.revision &&
+        overlaySession().requestEpoch === begun.requestEpoch &&
+        overlaySession().dismissed
+      )
+        closeSession(begun.revision);
+      else if (
+        overlaySession().revision === begun.revision &&
+        overlaySession().requestEpoch === begun.requestEpoch
+      )
+        settleSession(begun.revision, begun.requestEpoch, "review");
+      return;
+    }
+    if (!sessionMatches(begun, "confirm", "installed-preview")) return;
+    const rereview = beginSession(begun.revision, "preview");
     const next = await effects.review(sourceReview.intent);
-    if (next) setReview(next);
+    if (
+      next &&
+      sessionMatches(rereview, "confirm", "installed-preview") &&
+      !overlaySession().dismissed
+    )
+      settleSession(rereview.revision, rereview.requestEpoch, "review", {
+        family: "source-removal",
+        review: next,
+      });
+    else if (sessionMatches(rereview, "confirm", "installed-preview"))
+      closeSession(rereview.revision);
   };
   const applySourceSelection = async () => {
-    const current = sourceReview();
-    if (!current) return;
+    const surface = sourceSelectionPayload();
+    if (!surface) return;
+    const current = surface.review;
+    const begun = beginSession(overlaySession().revision, "executing");
     const complete =
       current.kind === "discovery"
-        ? await effects.install(current, selectedPaths())
-        : await effects.update(current, selectedPaths());
-    if (complete) {
-      setSourceReview(undefined);
-      setSelectedPaths([]);
-      setState((value) => reduceTui(value, { type: "overlay.close" }));
-    }
+        ? await effects.install(current, surface.selectedPaths)
+        : await effects.update(current, surface.selectedPaths);
+    if (
+      complete &&
+      overlaySession().revision === begun.revision &&
+      overlaySession().requestEpoch === begun.requestEpoch
+    ) {
+      closeSession();
+    } else if (
+      overlaySession().revision === begun.revision &&
+      overlaySession().requestEpoch === begun.requestEpoch &&
+      overlaySession().dismissed
+    )
+      closeSession(begun.revision);
+    else settleFailedExecution(begun);
   };
   let exitRequested = false;
-  const interceptModalKey = (event: {
+  const navigationFacts = () => {
+    const workspace = projection.workspace();
+    const visibleReader = filterSkills(workspace?.installedSkills ?? [], {
+      query: workspaceState.query(),
+      filters: workspaceState.filters(),
+      source: workspaceState.sourceFilter(),
+      agentStatus: workspace?.effective.agent.status,
+    }).find(
+      (skill) => `${skill.address.source}/${skill.address.path}` === workspaceState.selectedSkill(),
+    );
+    const collectionFilter = collectionsState.filter();
+    return {
+      destination: route.snapshot().destination,
+      section:
+        route.snapshot().destination === "workspace"
+          ? workspaceState.section()
+          : configState.section(configDestination()),
+      focus: registeredFocus(focus.desired() ?? "browser"),
+      overlay: overlayKind(),
+      task: !!operation.task(),
+      narrow: layout.narrow(),
+      narrowLevel: workspaceState.narrowLevel(),
+      sourceFilter: !!workspaceState.sourceFilter(),
+      canReturn: route.canReturn(),
+      emptyWorkspaceAction: renderer.currentFocusedRenderable?.id === "empty-workspace-action",
+      nativeInput: renderer.currentFocusedRenderable instanceof InputRenderable,
+      tabsPart: renderer.currentFocusedRenderable instanceof TabsTabRenderable,
+      readerActive:
+        route.snapshot().destination === "workspace" &&
+        workspaceState.section() === "skills" &&
+        !!visibleReader &&
+        !!reader()?.address &&
+        `${reader()!.address!.source}/${reader()!.address!.path}` ===
+          `${visibleReader.address.source}/${visibleReader.address.path}`,
+      readerTab: reader()?.tab ?? "skill",
+      readerRetry: !!reader()?.error,
+      readerResourceLevel: reader()?.resourceLevel,
+      collectionFilterOpen: collectionFilter.open,
+      collectionFilterDimension: !!collectionFilter.dimension,
+      skillsFilterAvailable: !!renderer.root.findDescendantById("open-skills-filter"),
+      collectionsFilterAvailable: !!focusRegistry.target("collections-filter-open"),
+    } as const;
+  };
+  const applyNavigation = (decision: ReturnType<typeof resolve>) => {
+    if (!decision) return false;
+    if (decision.kind === "events") {
+      batch(() => {
+        for (const event of decision.events) {
+          if (event.type === "route.back") route.back();
+          else if (event.type === "destination.select") selectDestination(event.destination);
+          else if (event.type === "collections.filter.back")
+            collectionsState.chooseFilterDimension();
+          else if (event.type === "collections.filter.close") collectionsState.closeFilter();
+          else if (event.type === "workspace.source-filter.clear")
+            workspaceState.clearSourceFilter();
+          else if (event.type === "palette.open") openSession("palette", { family: "palette" });
+          else if (event.type === "reader.patch") {
+            if (event.value.tab) selectReaderTab(event.value.tab);
+            else readerDispatch({ type: "patch", value: event.value });
+          } else if (event.type === "focus.request") requestFocus(event.focus);
+          else if (event.type === "narrow.open-detail") workspaceState.openDetail();
+          else if (event.type === "narrow.show-list") workspaceState.showList();
+        }
+      });
+    } else if (decision.effect === "exit" && !exitRequested) {
+      exitRequested = true;
+      props.exit();
+    } else if (decision.effect === "close-surface" || decision.effect === "cancel-operation")
+      closeOverlay();
+    return true;
+  };
+  const interceptPriorityKey = (event: {
     readonly name: string;
     readonly ctrl: boolean;
+    readonly shift: boolean;
     preventDefault: () => void;
     stopPropagation: () => void;
   }) => {
     const name = event.name.toLowerCase();
+    if (event.ctrl && name === "p" && overlaySession().dismissed) {
+      openSession("palette", { family: "palette" });
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (
-      (state().overlay || state().task) &&
+      (overlayKind() || operation.task()) &&
       (name === "escape" || name === "esc" || (event.ctrl && name === "c"))
     ) {
-      if (state().overlay === "filter" && filterDimension()) {
-        setFilterDimension(undefined);
-        setFilterSearch("");
+      if (overlayKind() === "filter" && skillsFilterPayload()?.dimension) {
+        setSessionPayload({ family: "skills-filter", search: "" });
       } else closeOverlay();
       event.preventDefault();
       event.stopPropagation();
+      return;
+    }
+    const focused = renderer.currentFocusedRenderable;
+    const interceptTabs = focused instanceof TabsTabRenderable;
+    const interceptColdStart = focused?.id === "empty-workspace-action";
+    if (
+      !overlayKind() &&
+      !operation.task() &&
+      ((name === "tab" && (interceptTabs || interceptColdStart)) ||
+        ((name === "enter" || name === "return") && interceptTabs))
+    ) {
+      if (applyNavigation(resolve(navigationFacts(), parseNavKey(event)))) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     }
   };
-  renderer.keyInput.prependListener("keypress", interceptModalKey);
+  renderer.keyInput.prependListener("keypress", interceptPriorityKey);
   useKeyboard((event) => {
-    const current = state();
+    if (event.defaultPrevented) return;
+    physicalFocusBridgeReady = true;
+    const observedFocus = registeredFocus(focus.desired() ?? "browser");
+    if (observedFocus !== focus.desired()) requestFocus(observedFocus);
     const key = event.name.toLowerCase();
-    const focusedId = renderer.currentFocusedRenderable?.id;
     const emptyWorkspace =
-      !current.overlay &&
-      !current.task &&
-      current.destination === "workspace" &&
-      current.memory.workspace.section === "skills" &&
-      (current.workspace?.installedSkills.length ?? 0) === 0 &&
-      !current.sourceFilter;
+      !overlayKind() &&
+      !operation.task() &&
+      route.snapshot().destination === "workspace" &&
+      workspaceState.section() === "skills" &&
+      (projection.workspace()?.installedSkills.length ?? 0) === 0 &&
+      !workspaceState.sourceFilter() &&
+      renderer.currentFocusedRenderable?.id === "empty-workspace-action";
     if (emptyWorkspace && (key === "enter" || key === "return")) {
       void dispatchAction("add-source");
       event.preventDefault();
       event.stopPropagation();
       return;
     }
-    if (emptyWorkspace && key === "tab" && current.focus === "browser") {
-      setState((value) => reduceTui(value, { type: "focus.set", focus: "top-nav" }));
-      queueMicrotask(() => topNavigation?.focus());
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (
-      !current.overlay &&
-      !current.task &&
-      ["arrowleft", "left", "arrowright", "right"].includes(key)
-    ) {
-      const step = key === "arrowleft" || key === "left" ? -1 : 1;
-      if (
-        current.focus === "top-nav" ||
-        focusedId === "top-navigation" ||
-        focusedId === "empty-workspace-action"
-      ) {
-        const index = destinations.indexOf(current.destination);
-        selectDestination(
-          destinations[(index + step + destinations.length) % destinations.length]!,
-        );
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      if (
-        current.focus === "local-nav" ||
-        focusedId === "workspace-section-browser" ||
-        focusedId === "config-section-browser"
-      ) {
-        const sections =
-          current.destination === "workspace"
-            ? (["skills", "collections", "sources"] as const)
-            : (["sources", "config-sources", "collections", "for-agents", "integrations"] as const);
-        const sectionDestination =
-          current.destination === "workspace" ? "workspace" : current.destination;
-        const currentSection = current.memory[sectionDestination].section;
-        const index = sections.findIndex((section) => section === currentSection);
-        const section = sections[(index + step + sections.length) % sections.length]!;
-        setState((value) =>
-          reduceTui(value, { type: "section.select", section: section as Section }),
-        );
-        queueMicrotask(() =>
-          renderer.root
-            .findDescendantById(
-              current.destination === "workspace"
-                ? "workspace-section-browser"
-                : "config-section-browser",
-            )
-            ?.focus(),
-        );
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-    }
-    if (
-      !current.overlay &&
-      !current.task &&
-      key === "tab" &&
-      focusedId === "workspace-section-browser"
-    ) {
-      setState((value) => reduceTui(value, { type: "focus.set", focus: "top-nav" }));
-      queueMicrotask(() => topNavigation?.focus());
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (
-      !current.overlay &&
-      !current.task &&
-      key === "tab" &&
-      focusedId === "empty-workspace-action"
-    ) {
-      setState((value) => reduceTui(value, { type: "focus.set", focus: "top-nav" }));
-      queueMicrotask(() => topNavigation?.focus());
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (!current.overlay && !current.task && key === "tab" && focusedId === "top-navigation") {
-      setState((value) => reduceTui(value, { type: "focus.set", focus: "local-nav" }));
-      queueMicrotask(() => {
-        const id =
-          current.destination === "workspace"
-            ? "workspace-section-browser"
-            : "config-section-browser";
-        renderer.root.findDescendantById(id)?.focus();
-      });
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    // Native Inputs own a literal slash; other modal and escape precedence remains intact.
-    if (event.name === "/" && renderer.currentFocusedRenderable instanceof InputRenderable) return;
-    if (current.overlay === "filter" && ["enter", "return"].includes(event.name.toLowerCase())) {
-      const target = filterDimension() ? "skills-filter-values" : "skills-filter-dimensions";
+    if (overlayKind() === "filter" && ["enter", "return"].includes(event.name.toLowerCase())) {
+      const target = skillsFilterPayload()?.dimension
+        ? "skills-filter-values"
+        : "skills-filter-dimensions";
       if (renderer.currentFocusedRenderable?.id === "skills-filter-search") {
         renderer.root.findDescendantById(target)?.focus();
         event.preventDefault();
@@ -1062,10 +1441,10 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         return;
       }
     }
-    if (current.overlay === "filter" && event.name.toLowerCase() === "tab") {
+    if (overlayKind() === "filter" && event.name.toLowerCase() === "tab") {
       const order = [
         "skills-filter-search",
-        filterDimension() ? "skills-filter-values" : "skills-filter-dimensions",
+        skillsFilterPayload()?.dimension ? "skills-filter-values" : "skills-filter-dimensions",
         "skills-filter-clear-all",
       ];
       const index = order.indexOf(renderer.currentFocusedRenderable?.id ?? "");
@@ -1075,151 +1454,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       event.stopPropagation();
       return;
     }
-    if (
-      (event.name.toLowerCase() === "escape" || event.name.toLowerCase() === "esc") &&
-      current.relationshipReturn &&
-      !current.overlay &&
-      !current.task
-    ) {
-      setState((value) => reduceTui(value, { type: "route.back" }));
-      queueMicrotask(() => {
-        const focus = state().focus;
-        renderer.root
-          .findDescendantById(
-            focus === "details-relationships"
-              ? "reader-details-relationships"
-              : "reader-details-actions",
-          )
-          ?.focus();
-      });
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (
-      current.destination !== "workspace" &&
-      current.memory[current.destination].section === "config-sources" &&
-      current.focus === "config-source-contributions" &&
-      (event.name.toLowerCase() === "escape" || event.name.toLowerCase() === "esc") &&
-      !current.overlay
-    ) {
-      setState((value) => reduceTui(value, { type: "focus.set", focus: "browser" }));
-      queueMicrotask(() =>
-        renderer.root.findDescendantById("config-config-source-browser")?.focus(),
-      );
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (
-      current.destination !== "workspace" &&
-      current.memory[current.destination].section === "config-sources" &&
-      event.name.toLowerCase() === "tab" &&
-      !current.overlay
-    ) {
-      const hasContributions = !!renderer.root.findDescendantById("config-source-contributions");
-      const order: FocusOwner[] = hasContributions
-        ? ["browser", "config-source-contributions"]
-        : ["browser"];
-      const index = order.indexOf(current.focus);
-      const next = order[(index + (event.shift ? -1 : 1) + order.length) % order.length]!;
-      setState((value) => reduceTui(value, { type: "focus.set", focus: next }));
-      queueMicrotask(() =>
-        renderer.root
-          .findDescendantById(
-            next === "config-source-contributions"
-              ? "config-source-contributions"
-              : "config-config-source-browser",
-          )
-          ?.focus(),
-      );
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    const visibleReader = filterSkills(current.workspace?.installedSkills ?? [], {
-      query: current.memory.workspace.query.skills,
-      filters: current.memory.workspace.filters.skills,
-      source: current.sourceFilter,
-      agentStatus: current.workspace?.effective.agent.status,
-    }).find(
-      (skill) =>
-        `${skill.address.source}/${skill.address.path}` ===
-        current.memory.workspace.selection.skills,
-    );
-    const readerActive =
-      current.destination === "workspace" &&
-      current.memory.workspace.section === "skills" &&
-      !!visibleReader &&
-      !!current.reader.address &&
-      `${current.reader.address.source}/${current.reader.address.path}` ===
-        `${visibleReader.address.source}/${visibleReader.address.path}`;
-    if (
-      (event.name.toLowerCase() === "escape" || event.name.toLowerCase() === "esc") &&
-      current.focus === "skills-query" &&
-      !current.overlay
-    ) {
-      setState((value) => reduceTui(value, { type: "focus.set", focus: "browser" }));
-      queueMicrotask(() => renderer.root.findDescendantById("installed-skill-browser")?.focus());
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (
-      current.destination !== "workspace" &&
-      !current.overlay &&
-      !current.task &&
-      event.name.toLowerCase() === "tab"
-    ) {
-      const next =
-        current.focus === "local-nav"
-          ? "browser"
-          : event.shift && current.focus === "browser"
-            ? "local-nav"
-            : undefined;
-      if (next) {
-        setState((value) => reduceTui(value, { type: "focus.set", focus: next }));
-        queueMicrotask(() =>
-          renderer.root
-            .findDescendantById(next === "local-nav" ? "config-section-browser" : configBrowserId())
-            ?.focus(),
-        );
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-    }
+    const facts = { ...navigationFacts(), focus: observedFocus };
+    const readerActive = facts.readerActive;
     const collectionsActive =
-      current.destination === "workspace" && current.memory.workspace.section === "collections";
-    const collectionFilter = current.memory.workspace.collectionFilter;
-    if (collectionsActive && collectionFilter?.open) {
-      const escape = event.name.toLowerCase() === "escape" || event.name.toLowerCase() === "esc";
-      if (escape) {
-        const nextFocus: FocusOwner = collectionFilter.dimension
-          ? "collections-filter-search"
-          : "browser";
-        setState((value) =>
-          reduceTui(
-            reduceTui(
-              value,
-              collectionFilter.dimension
-                ? { type: "collection.filter.dimension" }
-                : { type: "collection.filter.close" },
-            ),
-            { type: "focus.set", focus: nextFocus },
-          ),
-        );
-        queueMicrotask(() =>
-          renderer.root
-            .findDescendantById(
-              collectionFilter.dimension ? "collections-filter-search" : "collection-browser",
-            )
-            ?.focus(),
-        );
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
+      route.snapshot().destination === "workspace" && workspaceState.section() === "collections";
+    const collectionFilter = collectionsState.filter();
+    if (collectionsActive && collectionFilter.open) {
       const select = collectionFilter.dimension
         ? "collections-filter-values"
         : "collections-filter-dimensions";
@@ -1227,18 +1467,13 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         const order = ["collections-filter-search", select];
         const index = order.indexOf(renderer.currentFocusedRenderable?.id ?? "");
         const next = order[(index + (event.shift ? -1 : 1) + order.length) % order.length]!;
-        setState((value) =>
-          reduceTui(value, {
-            type: "focus.set",
-            focus:
-              next === "collections-filter-search"
-                ? "collections-filter-search"
-                : collectionFilter.dimension
-                  ? "collections-filter-values"
-                  : "collections-filter-dimensions",
-          }),
+        requestFocus(
+          next === "collections-filter-search"
+            ? "collections-filter-search"
+            : collectionFilter.dimension
+              ? "collections-filter-values"
+              : "collections-filter-dimensions",
         );
-        queueMicrotask(() => renderer.root.findDescendantById(next)?.focus());
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -1247,686 +1482,429 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         ["enter", "return"].includes(event.name.toLowerCase()) &&
         renderer.currentFocusedRenderable?.id === "collections-filter-search"
       ) {
-        setState((value) =>
-          reduceTui(value, {
-            type: "focus.set",
-            focus: collectionFilter.dimension
-              ? "collections-filter-values"
-              : "collections-filter-dimensions",
-          }),
+        requestFocus(
+          collectionFilter.dimension
+            ? "collections-filter-values"
+            : "collections-filter-dimensions",
         );
-        queueMicrotask(() => renderer.root.findDescendantById(select)?.focus());
         event.preventDefault();
         event.stopPropagation();
         return;
       }
     }
     if (
-      (event.name.toLowerCase() === "escape" || event.name.toLowerCase() === "esc") &&
-      collectionsActive &&
-      ["collections-query", "inspector", "collection-relationships"].includes(current.focus) &&
-      !current.overlay
-    ) {
-      setState((value) =>
-        reduceTui(
-          value.narrow ? reduceTui(value, { type: "narrow.level", level: "list" }) : value,
-          { type: "focus.set", focus: "browser" },
-        ),
-      );
-      queueMicrotask(() => renderer.root.findDescendantById("collection-browser")?.focus());
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (collectionsActive && event.name.toLowerCase() === "tab" && !current.overlay) {
-      const clearDimensions = Object.keys(current.memory.workspace.filters.collections ?? {});
-      const listOrder: FocusOwner[] = [
-        "browser",
-        "collections-query",
-        "collections-filter-open",
-        ...(clearDimensions.length ? (["collections-filter-clear"] as const) : []),
-        ...(current.memory.workspace.query.collections || clearDimensions.length
-          ? (["collections-filter-clear-all"] as const)
-          : []),
-      ];
-      const order: FocusOwner[] = current.narrow
-        ? current.narrowLevel === "list"
-          ? listOrder
-          : ["inspector", "collection-relationships"]
-        : [...listOrder, "inspector", "collection-relationships"];
-      const index = order.indexOf(current.focus);
-      const next = order[(index + (event.shift ? -1 : 1) + order.length) % order.length]!;
-      setState((value) => reduceTui(value, { type: "focus.set", focus: next }));
-      queueMicrotask(() =>
-        renderer.root
-          .findDescendantById(
-            next === "browser"
-              ? "collection-browser"
-              : next === "collections-query"
-                ? "collections-query"
-                : next === "collections-filter-open"
-                  ? "collections-filter"
-                  : next === "collections-filter-clear"
-                    ? `clear-collections-filter-${clearDimensions[0]}`
-                    : next === "collections-filter-clear-all"
-                      ? "clear-all-collections-filters"
-                      : next === "inspector"
-                        ? "collection-tabs"
-                        : "collection-relationships",
-          )
-          ?.focus(),
-      );
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (event.name === "/" && collectionsActive && !current.overlay && !current.task) {
-      setState((value) => reduceTui(value, { type: "focus.set", focus: "collections-query" }));
-      queueMicrotask(() => renderer.root.findDescendantById("collections-query")?.focus());
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (event.name.toLowerCase() === "/" && readerActive && !current.overlay && !current.task) {
-      if (renderer.currentFocusedRenderable?.id === "installed-skill-browser") {
-        setState((value) => reduceTui(value, { type: "focus.set", focus: "skills-query" }));
-        renderer.root.findDescendantById("skills-query")?.focus();
-      } else if (state().overlay === "filter") {
-        setState((value) =>
-          reduceTui(reduceTui(value, { type: "overlay.close" }), {
-            type: "focus.set",
-            focus: "browser",
-          }),
-        );
-      } else {
-        setState((value) => reduceTui(value, { type: "focus.set", focus: "input" }));
-        renderer.root.findDescendantById("reader-find")?.focus();
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (
       readerActive &&
-      event.name.toLowerCase() === "tab" &&
-      event.shift &&
-      current.focus === "browser" &&
-      !current.sourceFilter
-    ) {
-      setState((value) => reduceTui(value, { type: "focus.set", focus: "local-nav" }));
-      renderer.root.findDescendantById("workspace-section-browser")?.focus();
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (readerActive && event.name.toLowerCase() === "tab" && !current.overlay && !current.task) {
-      const reader = current.reader;
-      const source =
-        reader.resource?.kind === "text"
-          ? reader.resource.text
-          : reader.raw
-            ? (reader.rawText ?? "")
-            : (reader.text ?? "");
-      const hasMatch = !!reader.find && findLiteralMatches(source, reader.find).length > 0;
-      const order: FocusOwner[] = [];
-      if (!current.narrow) order.push("browser");
-      if (current.memory.workspace.section === "skills") {
-        order.push("skills-query", "skills-filter-open");
-        if (Object.keys(current.memory.workspace.filters.skills ?? {}).length > 0)
-          order.push("skills-filter-clear");
-        if (
-          current.memory.workspace.query.skills ||
-          Object.keys(current.memory.workspace.filters.skills ?? {}).length > 0
-        )
-          order.push("skills-filter-clear-all");
-      }
-      order.push("reader-tabs");
-      if (reader.tab === "resources") {
-        if (!current.narrow || reader.resourceLevel !== "content")
-          order.push("reader-resource-list");
-        if (reader.resourceLevel === "content" && reader.resource && !reader.loading)
-          order.push("reader-resource-content");
-        if (reader.error) order.push("reader-resource-retry");
-      } else {
-        order.push("reader");
-      }
-      if (reader.tab === "details") order.push("inspector");
-      if (
-        reader.tab === "details" &&
-        renderer.root.findDescendantById("reader-details-relationships")
-      )
-        order.push("details-relationships");
-      if (reader.tab === "skill") order.push("input", "reader-raw");
-      if (reader.tab === "skill" && hasMatch)
-        order.push("reader-find-previous", "reader-find-next");
-      if (reader.tab === "skill" && !reader.raw && reader.resource?.kind !== "text" && hasMatch)
-        order.push("open-match-raw");
-      const currentIndex = order.indexOf(current.focus);
-      const step = event.shift ? -1 : 1;
-      const next = order[(currentIndex + step + order.length) % order.length]!;
-      flushReaderFind();
-      setState((value) => reduceTui(value, { type: "focus.set", focus: next }));
-      renderer.root
-        .findDescendantById(
-          next === "reader-tabs"
-            ? "reader-tabs"
-            : next === "reader"
-              ? current.reader.tab === "details"
-                ? "reader-details"
-                : "reader-scrollbox"
-              : next === "reader-resource-list"
-                ? "resource-browser"
-                : next === "reader-resource-content"
-                  ? "resource-content"
-                  : next === "reader-resource-retry"
-                    ? "resource-retry"
-                    : next === "input"
-                      ? "reader-find"
-                      : next === "details-relationships"
-                        ? "reader-details-relationships"
-                        : next === "browser"
-                          ? "installed-skill-browser"
-                          : next === "skills-query"
-                            ? "skills-query"
-                            : next === "skills-filter-open"
-                              ? "open-skills-filter"
-                              : next === "skills-filter-clear"
-                                ? `clear-skills-filter-${Object.keys(current.memory.workspace.filters.skills ?? {})[0]}`
-                                : next === "skills-filter-clear-all"
-                                  ? "clear-all-skills-filters"
-                                  : next,
-        )
-        ?.focus();
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (
-      (event.name.toLowerCase() === "escape" || event.name.toLowerCase() === "esc") &&
-      readerActive &&
-      [
-        "input",
-        "reader",
-        "reader-tabs",
-        "reader-raw",
-        "reader-find-previous",
-        "reader-find-next",
-        "open-match-raw",
-        "reader-resource-list",
-        "reader-resource-content",
-        "reader-resource-retry",
-        "inspector",
-        "details-relationships",
-      ].includes(current.focus)
-    ) {
-      flushReaderFind();
-      if (current.reader.tab === "resources" && current.reader.resourceLevel === "content") {
-        setState((value) =>
-          reduceTui(
-            reduceTui(value, {
-              type: "reader.patch",
-              value: {
-                resourceLevel: "list",
-                resource: undefined,
-                loading: false,
-                error: undefined,
-              },
-            }),
-            { type: "focus.set", focus: "reader-resource-list" },
-          ),
-        );
-        queueMicrotask(() => renderer.root.findDescendantById("resource-browser")?.focus());
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      setState((value) =>
-        reduceTui(
-          value.narrow ? reduceTui(value, { type: "narrow.level", level: "list" }) : value,
-          { type: "focus.set", focus: "browser" },
-        ),
-      );
-      queueMicrotask(() => renderer.root.findDescendantById("installed-skill-browser")?.focus());
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    if (
-      readerActive &&
-      current.focus === "reader" &&
+      focus.desired() === "reader" &&
       ["pageup", "pagedown", "home", "end"].includes(event.name.toLowerCase())
     )
       queueMicrotask(() => {
         const scrollbox = renderer.root.findDescendantById(
-          current.reader.tab === "details" ? "reader-details" : "reader-scrollbox",
+          reader()?.tab === "details" ? "reader-details" : "reader-scrollbox",
         );
         if (scrollbox && "scrollTop" in scrollbox && Number(scrollbox.scrollTop) > 0)
-          setState((value) =>
-            reduceTui(value, {
-              type: "reader.patch",
-              value:
-                current.reader.tab === "details"
-                  ? { detailsScroll: Number(scrollbox.scrollTop) }
-                  : { scroll: Number(scrollbox.scrollTop) },
-            }),
-          );
+          readerDispatch({
+            type: "patch",
+            value:
+              reader()?.tab === "details"
+                ? { detailsScroll: Number(scrollbox.scrollTop) }
+                : { scroll: Number(scrollbox.scrollTop) },
+          });
       });
-    const action = arbitrateKey(event, current);
-    if (action === "none") return;
-    if (action === "palette") void dispatchAction("open-palette");
-    else if (action === "exit" && !exitRequested) {
-      exitRequested = true;
-      props.exit();
-    } else if (action === "close" || action === "cancel") closeOverlay();
+    if (!applyNavigation(resolve(facts, parseNavKey(event)))) return;
     event.preventDefault();
     event.stopPropagation();
   });
   onMount(() => {
-    setSize({ width: renderer.width, height: renderer.height });
-    setState((current) =>
-      reduceTui(current, {
-        type: "resize",
-        width: renderer.width,
-        height: renderer.height,
-      }),
-    );
-    void effects.refresh();
+    resize(renderer.width, renderer.height);
+    void effects.refresh().then(() => {
+      const selected = workspaceState.selectedSkill();
+      const address = projection
+        .workspace()
+        ?.installedSkills.find(
+          (item) => `${item.address.source}/${item.address.path}` === selected,
+        )?.address;
+      if (address) selectReaderSkill(address);
+    });
   });
   createEffect(() => {
-    const index = destinations.indexOf(state().destination);
-    if (topNavigation?.getSelectedIndex() !== index) topNavigation?.setSelectedIndex(index);
+    focusVersion();
+    readerFocusUnblocked();
+    const owner = focusOwner();
+    const revision = ++focusReconciliationRevision;
+    if (appliedFocusOwner !== owner) {
+      appliedFocusOwner = undefined;
+      appliedFocusTarget = undefined;
+    }
+    if (
+      !overlayKind() &&
+      !operation.task() &&
+      owner === "browser" &&
+      !renderer.currentFocusedRenderable
+    ) {
+      const target = focusRegistry.target(owner);
+      if (
+        target &&
+        !(
+          appliedFocusOwner === owner &&
+          appliedFocusTarget === target &&
+          renderer.currentFocusedRenderable === target
+        )
+      ) {
+        target.focus();
+        appliedFocusOwner = owner;
+        appliedFocusTarget = target;
+      }
+      return;
+    }
+    queueMicrotask(() => {
+      if (focusReconciliationRevision !== revision) return;
+      if (focus.desired() !== owner) return;
+      if (overlayKind() || operation.task()) return;
+      if (!owner) return;
+      const target = focusRegistry.target(owner);
+      if (
+        !target ||
+        (appliedFocusOwner === owner &&
+          appliedFocusTarget === target &&
+          renderer.currentFocusedRenderable === target)
+      )
+        return;
+      target.focus();
+      appliedFocusOwner = owner;
+      appliedFocusTarget = target;
+    });
   });
   createEffect(() => {
-    if (installedReview())
+    if (installedPreviewPayload()?.review)
       queueMicrotask(() => renderer.root.findDescendantById("installed-skill-review")?.focus());
-    else if (collectionReview())
+    else if (collectionReviewPayload())
       queueMicrotask(() => renderer.root.findDescendantById("collection-review-choice")?.focus());
-    else if (installedPreviewFailure())
+    else if (installedPreviewPayload()?.failed)
       queueMicrotask(() =>
         renderer.root.findDescendantById("installed-skill-preview-failure")?.focus(),
       );
-    else if (installedPreview())
+    else if (installedPreviewPayload())
       queueMicrotask(() =>
         renderer.root.findDescendantById("installed-skill-preview-progress")?.focus(),
       );
   });
-  createEffect(() => {
-    const current = state();
-    const selected = current.memory.workspace.selection.skills;
-    const skill = filterSkills(current.workspace?.installedSkills ?? [], {
-      query: current.memory.workspace.query.skills,
-      filters: current.memory.workspace.filters.skills,
-      source: current.sourceFilter,
-      agentStatus: current.workspace?.effective.agent.status,
-    }).find((item) => `${item.address.source}/${item.address.path}` === selected);
-    if (
-      current.destination === "workspace" &&
-      current.memory.workspace.section === "skills" &&
-      skill &&
-      `${current.reader.address?.source}/${current.reader.address?.path}` !==
-        `${skill.address.source}/${skill.address.path}`
-    ) {
-      const surface =
-        current.reader.tab === "details" &&
-        (current.focus === "reader" ||
-          current.focus === "inspector" ||
-          (current.focus === "task" && current.restoreFocus === "inspector"))
-          ? "details"
-          : undefined;
-      setState((value) =>
-        reduceTui(value, { type: "reader.activate", address: skill.address, surface }),
-      );
-      void effects.loadReader(skill.address);
-    }
-  });
-  onResize((width, height) => {
-    flushReaderFind();
-    setSize({ width, height });
-    setState((current) => reduceTui(current, { type: "resize", width, height }));
-  });
+  const resize = (width: number, height: number) =>
+    layout.resize(width, height, (wasNarrow) => {
+      const desired = focus.desired() ?? "browser";
+      const readerFocus =
+        route.snapshot().destination === "workspace" &&
+        workspaceState.section() === "skills" &&
+        readerOwnsFocus(desired);
+      const remountReader =
+        wasNarrow &&
+        !layout.narrow() &&
+        route.snapshot().destination === "workspace" &&
+        workspaceState.section() === "skills" &&
+        readerOwnsFocus(reader()?.focus ?? "reader-tabs");
+      if (layout.narrow() && readerFocus) {
+        workspaceState.showList();
+        requestFocus("browser");
+      } else if (remountReader) requestFocus(reader()?.focus ?? "reader-tabs");
+    });
+  onResize(resize);
   onCleanup(() => {
-    renderer.keyInput.off("keypress", interceptModalKey);
+    focusReconciliationRevision += 1;
+    configFocusRevision += 1;
+    if (pendingConfigFocus) renderer.off("frame", pendingConfigFocus.listener);
+    pendingConfigFocus = undefined;
+    renderer.off("focused_renderable", syncPhysicalFocus);
+    renderer.keyInput.off("keypress", interceptPriorityKey);
+    stopThemeFollow();
+    stopFocusSubscription();
     effects.teardown();
   });
-  const actions = () => reachableActions(state(), state().workspace);
-  const selectDestination = (destination: Destination) => {
-    if (state().destination === destination) return;
-    flushReaderFind();
-    setState((current) =>
-      reduceTui(reduceTui(current, { type: "destination.select", destination }), {
-        type: "focus.set",
-        focus: "top-nav",
-      }),
+  const actions = () =>
+    reachableActions(route.snapshot().destination, projection.workspace(), {
+      workspace: workspaceState.snapshot(),
+      collections: collectionsState.snapshot(),
+      config: (destination) => configState.snapshot(destination),
+    });
+  const sectionTitle = (section: Section): string =>
+    section === "config-sources"
+      ? "Config Sources"
+      : section === "for-agents"
+        ? "For agents"
+        : section[0]!.toUpperCase() + section.slice(1);
+  const contextLine = () => {
+    const destination = route.snapshot().destination;
+    const title = sectionTitle(
+      destination === "workspace" ? workspaceState.section() : configState.section(destination),
     );
+    const context =
+      destination === "workspace"
+        ? `Workspace › ${title}`
+        : `${destination[0]!.toUpperCase()}${destination.slice(1)} Config › ${title}`;
+    return layout.narrow()
+      ? context
+      : `${context} · ${projection.workspace()?.project.root ?? "Loading"}`;
   };
-  const modal = () => state().overlay;
-  const workspaceState = () => ({
-    ...state(),
-    narrow: size().width < 80,
-    tooSmall: size().width < 43 || size().height < 12,
-  });
+  const helpLine = () =>
+    layout.narrow()
+      ? "←/→ nav Tab focus Enter open Ctrl+P Esc"
+      : "←/→ sections · Tab focus · Enter open · Ctrl+P palette · Esc back";
+  const selectDestination = (destination: Destination, focus?: FocusOwner) => {
+    route.destinationSelect(destination, focus);
+  };
   const configDestination = () => {
-    const destination = state().destination;
+    const destination = route.snapshot().destination;
     return destination === "workspace" ? "global" : destination;
-  };
-  const configBrowserId = () => {
-    const section = state().memory[configDestination()].section;
-    return section === "config-sources"
-      ? "config-config-source-browser"
-      : section === "collections"
-        ? "config-collection-browser"
-        : section === "for-agents"
-          ? "config-agent-use-browser"
-          : "config-source-browser";
   };
   return (
     <box flexDirection="column" width="100%" height="100%">
-      <box flexDirection="row">
-        <text>skill-cli </text>
-        <tab_select
+      <box flexDirection="row" height={1}>
+        {!layout.narrow() && <text>skill-cli </text>}
+        <SectionTabs
           id="top-navigation"
-          ref={(value: TabSelectRenderable) => {
-            topNavigation = value;
-          }}
-          width="52%"
           options={topOptions}
-          showDescription={false}
-          showUnderline={false}
-          wrapSelection={false}
-          focused={state().focus === "top-nav"}
-          onChange={(index) => selectDestination(destinations[index]!)}
+          value={route.snapshot().destination}
+          owner="top-nav"
+          focusRegistry={focusRegistry}
+          compact={layout.narrow()}
+          onPrimaryPointerEntry={() => requestFocus("top-nav")}
+          onNavigate={(destination) => selectDestination(destination, "top-nav")}
         />
-        <box flexGrow={1}>
-          <text>{state().workspace?.project.root ?? "Loading"}</text>
-        </box>
       </box>
-      <text>←/→ navigate Tab sections Enter select Ctrl+P actions Esc back</text>
-      <Show
-        when={
-          state().destination !== "workspace" || state().memory.workspace.section !== "collections"
-        }
-      >
-        <text>
-          {state().destination === "workspace"
-            ? state().memory.workspace.section
-            : state().memory[state().destination].section}
-        </text>
-      </Show>
+      <text height={1}>{contextLine()}</text>
       <box flexGrow={1}>
-        {size().width < 43 || size().height < 12 ? (
-          <text>{`Terminal ${size().width}x${size().height} is too small.`}</text>
+        {layout.tooSmall() ? (
+          <text>Terminal is too small.</text>
         ) : (
           <Show
-            when={state().destination === "workspace"}
+            when={route.snapshot().destination === "workspace"}
             fallback={
               <ConfigPage
-                state={state()}
+                config={configState}
+                overlay={() => !!overlayKind()}
+                narrow={layout.narrow()}
+                handoff={route.snapshot().handoff}
+                projection={projection.workspace}
+                focusRegistry={focusRegistry}
                 destination={configDestination()}
                 actions={actions()}
-                onSelect={(source) =>
-                  setState((value) =>
-                    reduceTui(value, {
-                      type: "selection.set",
-                      key: value.memory[value.destination].section,
-                      value: source,
-                    }),
-                  )
-                }
+                onSelect={(source) => configState.select(configDestination(), source)}
                 onActions={() => {
-                  if (!modal()) void dispatchAction("open-actions");
+                  if (!overlayKind()) void dispatchAction("open-actions");
                 }}
+                onAction={(id) => void dispatchAction(id)}
                 onSection={(section) => {
-                  setState((value) =>
-                    reduceTui(reduceTui(value, { type: "section.select", section }), {
-                      type: "focus.set",
-                      focus: "browser",
-                    }),
-                  );
+                  const destination = configDestination();
+                  configFocusRevision += 1;
+                  if (pendingConfigFocus) renderer.off("frame", pendingConfigFocus.listener);
+                  configState.selectSection(destination, section);
+                  requestFocus("local-nav");
+                  const revision = configFocusRevision;
+                  const listener = () => {
+                    if (pendingConfigFocus?.revision !== revision) return;
+                    pendingConfigFocus = undefined;
+                    if (
+                      route.snapshot().destination !== destination ||
+                      configState.section(destination) !== section ||
+                      focus.desired() !== "local-nav"
+                    )
+                      return;
+                    focusRegistry.applyFocus("local-nav");
+                  };
+                  pendingConfigFocus = {
+                    revision,
+                    destination,
+                    section,
+                    listener,
+                  };
+                  renderer.once("frame", listener);
                 }}
+                onLocalNavFocus={() => requestFocus("local-nav")}
                 onContribution={(contribution) => {
                   if (contribution.kind === "source")
-                    setState((value) =>
-                      reduceTui(
-                        reduceTui(value, {
-                          type: "handoff.set",
-                          handoff: {
-                            kind: "source-contribution",
-                            source: contribution.source,
-                            owner: contribution.owner,
-                          },
-                        }),
-                        {
-                          type: "route.relationship",
-                          destination: contribution.owner.level,
-                          section: "sources",
-                          selection: contribution.source.id,
-                          returnFocus: "inspector",
+                    route.contribution(
+                      {
+                        destination: contribution.owner.level,
+                        section: "sources",
+                        selection: contribution.source.id,
+                        handoff: {
+                          kind: "source-contribution",
+                          source: contribution.source,
+                          owner: contribution.owner,
                         },
-                      ),
+                      },
+                      {
+                        destination: configDestination(),
+                        section: "config-sources",
+                        selection: contribution.owner.pointer,
+                      },
                     );
                   else
-                    setState((value) =>
-                      reduceTui(reduceTui(value, { type: "handoff.set", handoff: undefined }), {
-                        type: "route.relationship",
+                    route.contribution(
+                      {
                         destination: contribution.owner.level,
                         section: "collections",
                         selection: contribution.collection,
-                        returnFocus: "inspector",
-                      }),
+                      },
+                      {
+                        destination: configDestination(),
+                        section: "config-sources",
+                        selection: configState.selection(configDestination(), "config-sources"),
+                      },
                     );
                 }}
               />
             }
           >
             <WorkspacePage
-              state={workspaceState()}
+              workspace={workspaceState}
+              collections={collectionsState}
+              reader={() =>
+                reader() ?? {
+                  tab: "skill",
+                  raw: false,
+                  find: "",
+                  match: 0,
+                  scroll: 0,
+                  detailsScroll: 0,
+                  resources: [],
+                }
+              }
+              overlay={() => !!overlayKind()}
+              narrow={layout.narrow()}
+              narrowLevel={workspaceState.narrowLevel()}
+              handoff={route.snapshot().handoff}
+              projection={projection.workspace}
+              focusRegistry={focusRegistry}
               actions={actions()}
               onSelectSource={(source) => {
-                if (!modal())
-                  setState((value) =>
-                    reduceTui(value, {
-                      type: "selection.set",
-                      key: "sources",
-                      value: source,
-                    }),
-                  );
+                if (!overlayKind()) workspaceState.selectSource(source);
               }}
-              onSelectSkill={(skill) => {
-                flushReaderFind();
-                setState((value) =>
-                  reduceTui(value, { type: "selection.set", key: "skills", value: skill }),
-                );
-                const selected = state().workspace?.installedSkills.find(
-                  (item) => `${item.address.source}/${item.address.path}` === skill,
-                );
-                if (selected) {
-                  setState((value) =>
-                    reduceTui(value, { type: "reader.activate", address: selected.address }),
-                  );
-                  void effects.loadReader(selected.address);
-                }
+              onSkill={(address, intent) => {
+                if (intent === "open") openReaderSkill(address);
+                else
+                  batch(() => {
+                    workspaceState.selectSkill(`${address.source}/${address.path}`);
+                    selectReaderSkill(address);
+                  });
               }}
               onActions={() => {
-                if (!modal()) void dispatchAction("open-actions");
+                if (!overlayKind()) void dispatchAction("open-actions");
               }}
               onFirstSkill={() => void dispatchAction("add-source")}
-              onDetail={() =>
-                setState((value) =>
-                  reduceTui(reduceTui(value, { type: "narrow.level", level: "detail" }), {
-                    type: "focus.set",
-                    focus:
-                      value.reader.tab === "resources"
-                        ? value.reader.resourceLevel === "content"
-                          ? "reader-resource-content"
-                          : "reader-resource-list"
-                        : value.reader.tab === "details" &&
-                            (value.reader.focus === "inspector" ||
-                              value.reader.focus === "details-relationships")
-                          ? value.reader.focus
-                          : "reader",
-                  }),
-                )
-              }
-              onClearSourceFilter={() => {
-                flushReaderFind();
-                setState((value) =>
-                  reduceTui(reduceTui(value, { type: "source.filter.set", source: undefined }), {
-                    type: "section.select",
-                    section: "sources",
-                  }),
+              onDetail={() => {
+                const value = reader();
+                workspaceState.openDetail();
+                requestFocus(
+                  workspaceState.section() === "sources"
+                    ? "local-nav"
+                    : value?.tab === "resources"
+                      ? value.resourceLevel === "content"
+                        ? "reader-resource-content"
+                        : "reader-resource-list"
+                      : value?.tab === "details" &&
+                          (value.focus === "inspector" || value.focus === "details-relationships")
+                        ? value.focus
+                        : "reader",
                 );
               }}
-              onQuery={(query) => updateSkills({ type: "query.set", key: "skills", value: query })}
-              onOpenFilter={() => {
-                setFilterDimension(undefined);
-                setFilterSearch("");
-                setState((value) => reduceTui(value, { type: "overlay.open", overlay: "filter" }));
+              onClearSourceFilter={() => {
+                workspaceState.clearSourceFilter();
               }}
-              onClearFilter={(dimension) =>
-                setState((current) => {
-                  const remaining = Object.keys(
-                    current.memory.workspace.filters.skills ?? {},
-                  ).filter((item) => item !== dimension);
-                  const focus: FocusOwner = remaining.length
-                    ? "skills-filter-clear"
-                    : current.memory.workspace.query.skills
-                      ? "skills-filter-clear-all"
-                      : "browser";
-                  return reduceTui(
-                    reconcileSkills(
-                      reduceTui(current, { type: "filter.clear", key: "skills", dimension }),
-                    ),
-                    { type: "focus.set", focus },
-                  );
-                })
-              }
-              onClearAllFilters={() =>
-                setState((current) =>
-                  reduceTui(
-                    reconcileSkills(
-                      reduceTui(current, { type: "filter.clear-all", key: "skills" }),
-                    ),
-                    { type: "focus.set", focus: "browser" },
-                  ),
-                )
-              }
-              onSelectCollection={(collection) =>
-                setState((value) =>
-                  reduceTui(value, {
-                    type: "selection.set",
-                    key: "collections",
-                    value: collection,
-                  }),
-                )
-              }
-              onCollectionQuery={(query) =>
-                updateCollections({ type: "query.set", key: "collections", value: query })
-              }
-              onCollectionFilter={(dimension, value) =>
-                updateCollections({ type: "filter.set", key: "collections", dimension, value })
-              }
+              onQuery={(query) => {
+                workspaceState.setQuery(query);
+                const workspace = projection.workspace();
+                if (workspace) workspaceState.reconcile(workspace, workspace);
+              }}
+              onOpenFilter={() => {
+                openSession("filter", { family: "skills-filter", search: "" });
+              }}
+              onClearFilter={(dimension) => {
+                workspaceState.clearFilter(dimension);
+                const workspace = projection.workspace();
+                if (workspace) workspaceState.reconcile(workspace, workspace);
+                const remaining = Object.keys(workspaceState.filters()).filter(
+                  (item) => item !== dimension,
+                );
+                const focus: FocusOwner = remaining.length
+                  ? "skills-filter-clear"
+                  : workspaceState.query()
+                    ? "skills-filter-clear-all"
+                    : "browser";
+                requestFocus(focus);
+              }}
+              onClearAllFilters={() => {
+                workspaceState.clearFilters();
+                if (projection.workspace())
+                  workspaceState.reconcile(projection.workspace()!, projection.workspace()!);
+                requestFocus("browser");
+              }}
+              onSelectCollection={(collection) => {
+                collectionsState.select(collection);
+              }}
+              onCollectionQuery={(query) => {
+                collectionsState.setQuery(query);
+                const workspace = projection.workspace();
+                if (workspace) collectionsState.reconcile(workspace, workspace);
+              }}
+              onCollectionFilter={(dimension, value) => {
+                collectionsState.setFilter(dimension, value);
+                const workspace = projection.workspace();
+                if (workspace) collectionsState.reconcile(workspace, workspace);
+              }}
               onClearCollectionFilter={(dimension) => {
                 let focus: FocusOwner = "browser";
-                setState((current) => {
-                  const remaining = Object.keys(
-                    current.memory.workspace.filters.collections ?? {},
-                  ).filter((item) => item !== dimension);
-                  focus = remaining.length
-                    ? "collections-filter-clear"
-                    : current.memory.workspace.query.collections
-                      ? "collections-filter-clear-all"
-                      : "browser";
-                  return reduceTui(
-                    reconcileCollections(
-                      reduceTui(current, { type: "filter.clear", key: "collections", dimension }),
-                    ),
-                    {
-                      type: "focus.set",
-                      focus,
-                    },
-                  );
-                });
-                queueMicrotask(() =>
-                  renderer.root
-                    .findDescendantById(
-                      focus === "collections-filter-clear"
-                        ? `clear-collections-filter-${Object.keys(state().memory.workspace.filters.collections ?? {})[0]}`
-                        : focus === "collections-filter-clear-all"
-                          ? "clear-all-collections-filters"
-                          : "collection-browser",
-                    )
-                    ?.focus(),
+                collectionsState.clearFilter(dimension);
+                const workspace = projection.workspace();
+                if (workspace) collectionsState.reconcile(workspace, workspace);
+                const remaining = Object.keys(collectionsState.filters()).filter(
+                  (item) => item !== dimension,
                 );
+                focus = remaining.length
+                  ? "collections-filter-clear"
+                  : collectionsState.query()
+                    ? "collections-filter-clear-all"
+                    : "browser";
+                requestFocus(focus);
               }}
               onClearAllCollectionFilters={() => {
-                setState((current) =>
-                  reduceTui(
-                    reconcileCollections(
-                      reduceTui(current, { type: "filter.clear-all", key: "collections" }),
-                    ),
-                    { type: "focus.set", focus: "browser" },
-                  ),
-                );
-                queueMicrotask(() =>
-                  renderer.root.findDescendantById("collection-browser")?.focus(),
-                );
+                collectionsState.clearFilters();
+                if (projection.workspace())
+                  collectionsState.reconcile(projection.workspace()!, projection.workspace()!);
+                requestFocus("browser");
               }}
-              onCollectionFilterOpen={() =>
-                setState((value) =>
-                  reduceTui(reduceTui(value, { type: "collection.filter.open" }), {
-                    type: "focus.set",
-                    focus: "collections-filter-search",
-                  }),
-                )
-              }
-              onCollectionFilterDimension={(dimension) =>
-                setState((value) =>
-                  reduceTui(reduceTui(value, { type: "collection.filter.dimension", dimension }), {
-                    type: "focus.set",
-                    focus: "collections-filter-search",
-                  }),
-                )
-              }
-              onCollectionFilterSearch={(value) =>
-                setState((state) => reduceTui(state, { type: "collection.filter.search", value }))
-              }
-              onCollectionFilterClose={() =>
-                setState((value) =>
-                  reduceTui(reduceTui(value, { type: "collection.filter.close" }), {
-                    type: "focus.set",
-                    focus: "browser",
-                  }),
-                )
-              }
-              onCollectionTab={(collection, tab) =>
-                setState((value) =>
-                  reduceTui(value, { type: "collection.tab.set", collection, tab }),
-                )
-              }
-              onCollectionDetail={() =>
-                setState((value) =>
-                  reduceTui(reduceTui(value, { type: "narrow.level", level: "detail" }), {
-                    type: "focus.set",
-                    focus: "inspector",
-                  }),
-                )
-              }
+              onCollectionFilterOpen={() => {
+                collectionsState.openFilter();
+                requestFocus("collections-filter-search");
+              }}
+              onCollectionFilterDimension={(dimension) => {
+                collectionsState.chooseFilterDimension(dimension);
+                requestFocus("collections-filter-search");
+              }}
+              onCollectionFilterSearch={(value) => {
+                collectionsState.searchFilter(value);
+              }}
+              onCollectionFilterClose={() => {
+                collectionsState.closeFilter();
+                requestFocus("browser");
+              }}
+              onCollectionTab={(collection, tab) => {
+                collectionsState.selectTab(collection, tab);
+                requestFocus("inspector");
+              }}
+              onCollectionDetail={() => {
+                workspaceState.openDetail();
+                requestFocus("inspector");
+              }}
               onCollectionRelationship={(intent: CollectionRelationshipIntent) => {
                 if (intent.kind === "collection-producer") {
-                  setState((value) =>
-                    reduceTui(
-                      reduceTui(value, {
-                        type: "handoff.set",
-                        handoff: { kind: "agent-producer", address: intent.address },
-                      }),
-                      {
-                        type: "route.source",
-                        destination: "workspace",
-                        section: "skills",
-                        selection: `${intent.address.source}/${intent.address.path}`,
-                      },
-                    ),
-                  );
+                  routeSource({
+                    destination: "workspace",
+                    section: "skills",
+                    selection: `${intent.address.source}/${intent.address.path}`,
+                    handoff: {
+                      kind: "agent-producer",
+                      address: intent.address,
+                    },
+                  });
                   return;
                 }
                 if (intent.kind === "collection-direct") {
@@ -1940,27 +1918,31 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                   return;
                 }
                 if (intent.kind === "collection-reference" && !intent.owner.contribution) {
-                  setCollectionDraft({
-                    kind: "reference",
-                    level: intent.owner.level,
-                    collection: intent.collection,
-                    name: intent.name,
-                    target: intent.target,
-                    description: intent.description,
-                    remove: true,
+                  openSession("form", {
+                    family: "collection-draft",
+                    draft: {
+                      kind: "reference",
+                      level: intent.owner.level,
+                      collection: intent.collection,
+                      name: intent.name,
+                      target: intent.target,
+                      description: intent.description,
+                      remove: true,
+                    },
                   });
-                  setState((value) => reduceTui(value, { type: "overlay.open", overlay: "form" }));
                   return;
                 }
                 if (intent.kind === "collection-link" && !intent.owner.contribution) {
-                  setCollectionDraft({
-                    kind: "link-change",
-                    level: intent.owner.level,
-                    collection: intent.collection,
-                    target: intent.target,
-                    linked: false,
+                  openSession("form", {
+                    family: "collection-draft",
+                    draft: {
+                      kind: "link-change",
+                      level: intent.owner.level,
+                      collection: intent.collection,
+                      target: intent.target,
+                      linked: false,
+                    },
                   });
-                  setState((value) => reduceTui(value, { type: "overlay.open", overlay: "form" }));
                   return;
                 }
                 const handoff =
@@ -1985,93 +1967,77 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                           collection: intent.collection,
                           owner: intent.owner,
                         };
-                setState((value) =>
-                  reduceTui(reduceTui(value, { type: "handoff.set", handoff }), {
-                    type: "route.source",
-                    destination: intent.owner.level,
-                    section: intent.owner.contribution ? "config-sources" : "collections",
-                    selection: intent.owner.contribution
-                      ? intent.owner.contribution.configSource.pointer
-                      : intent.collection,
-                  }),
-                );
+                routeSource({
+                  destination: intent.owner.level,
+                  section: intent.owner.contribution ? "config-sources" : "collections",
+                  selection: intent.owner.contribution
+                    ? intent.owner.contribution.configSource.pointer
+                    : intent.collection,
+                  handoff,
+                });
               }}
               onSection={(section) => {
-                flushReaderFind();
-                setState((value) =>
-                  reduceTui(reduceTui(value, { type: "section.select", section }), {
-                    type: "focus.set",
-                    focus: "browser",
-                  }),
-                );
+                workspaceState.selectSection(section);
+                requestFocus("local-nav");
               }}
-              onReaderPatch={(reader) =>
-                setState((value) => {
-                  const patched = reduceTui(value, { type: "reader.patch", value: reader });
-                  if (reader.tab === "resources")
-                    return reduceTui(patched, {
-                      type: "focus.set",
-                      focus: "reader-resource-list",
-                    });
-                  if (reader.tab === "details")
-                    return reduceTui(patched, { type: "focus.set", focus: "reader" });
-                  return reader.raw && reader.scroll !== undefined
-                    ? reduceTui(patched, { type: "focus.set", focus: "reader" })
-                    : patched;
-                })
-              }
+              onLocalNavFocus={() => requestFocus("local-nav")}
+              onInspectorFocus={() => requestFocus("inspector")}
+              onReaderPatch={(reader) => {
+                if (reader.raw === true) requestFocus("reader-raw");
+                if (reader.tab) selectReaderTab(reader.tab);
+                else readerDispatch({ type: "patch", value: reader });
+              }}
               onReaderFindCommit={(value) => {
-                setState((current) =>
-                  reduceTui(current, {
-                    type: "reader.patch",
-                    value: {
-                      find: value,
-                      match: current.reader.find === value ? current.reader.match : 0,
-                    },
-                  }),
-                );
+                const current = reader();
+                readerDispatch({
+                  type: "patch",
+                  value: {
+                    find: value,
+                    match: current?.find === value ? current.match : 0,
+                  },
+                });
               }}
-              onRegisterReaderFindCommit={(commit) => {
-                commitReaderFind = commit;
-              }}
-              onResources={(address) => void effects.listResources(address)}
+              onResources={() => ensureResources()}
               onReadResource={(address, path) => {
-                setState((value) =>
-                  reduceTui(value, { type: "focus.set", focus: "reader-resource-content" }),
-                );
+                requestFocus("reader-resource-content");
                 void effects.readResource(address, path);
               }}
               onRetryResource={(address) => {
-                const reader = state().reader;
-                if (reader.resourceLevel === "content" && reader.selectedResource)
-                  void effects.readResource(address, reader.selectedResource);
-                else void effects.listResources(address);
+                const current = reader();
+                if (current?.resourceLevel === "content" && current.selectedResource) {
+                  requestFocus("reader-resource-content");
+                  void effects.readResource(address, current.selectedResource);
+                } else {
+                  requestFocus("reader-resource-list");
+                  void effects.listResources(address);
+                }
               }}
-              onResourceBack={() =>
-                setState((value) =>
-                  reduceTui(
-                    reduceTui(value, {
-                      type: "reader.patch",
-                      value: {
-                        resourceLevel: "list",
-                        resource: undefined,
-                        loading: false,
-                        error: undefined,
-                      },
-                    }),
-                    { type: "focus.set", focus: "reader-resource-list" },
-                  ),
-                )
-              }
+              onResourceBack={() => (
+                requestFocus("reader-resource-list"),
+                readerDispatch({
+                  type: "patch",
+                  value: {
+                    resourceLevel: "list",
+                    resource: undefined,
+                    resourceLoading: false,
+                    error: undefined,
+                  },
+                })
+              )}
               onDetailsActions={() => {
-                if (!modal()) void dispatchAction("open-actions");
+                if (!overlayKind()) void dispatchAction("open-actions");
               }}
               onDetailsRelationship={(relationship) => {
-                const skill = installedSkillContext(state(), state().workspace)?.skill;
+                const workspace = projection.workspace();
+                const skill = installedSkillContext(route.snapshot().destination, workspace, {
+                  workspace: workspaceState.snapshot(),
+                  collections: collectionsState.snapshot(),
+                  config: (destination) => configState.snapshot(destination),
+                })?.skill;
                 if (!skill?.source) return;
                 if (relationship === "source") {
-                  const owner = state()
-                    .workspace?.configs.flatMap((config) => config.direct.sources)
+                  const owner = workspace?.configs
+                    .flatMap((config) => config.direct.sources)
                     .find((source) => source.id === skill.source!.id)?.ref.owner;
                   const handoff = skill.source.contribution
                     ? {
@@ -2080,58 +2046,48 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         owner: skill.source.contribution.configSource,
                       }
                     : owner
-                      ? { kind: "source-declaration" as const, source: skill.source, owner }
+                      ? {
+                          kind: "source-declaration" as const,
+                          source: skill.source,
+                          owner,
+                        }
                       : undefined;
                   if (handoff)
-                    setState((value) =>
-                      reduceTui(reduceTui(value, { type: "handoff.set", handoff }), {
-                        type: "route.relationship",
-                        destination: "workspace",
-                        section: "sources",
-                        selection: skill.owner.source,
-                        returnFocus: "details-relationships",
-                      }),
-                    );
+                    routeRelationship({
+                      destination: "workspace",
+                      section: "sources",
+                      selection: skill.owner.source,
+                      returnFocus: "details-relationships",
+                      handoff,
+                    });
                 } else if (relationship === "config") {
-                  const owner = state()
-                    .workspace?.configs.flatMap((config) => config.direct.sources)
+                  const owner = workspace?.configs
+                    .flatMap((config) => config.direct.sources)
                     .find((source) => source.id === skill.owner.source)?.ref.owner;
                   if (owner)
-                    setState((value) =>
-                      reduceTui(
-                        reduceTui(value, {
-                          type: "handoff.set",
-                          handoff: { kind: "source-declaration", source: skill.source!, owner },
-                        }),
-                        {
-                          type: "route.relationship",
-                          destination: owner.level,
-                          section: "sources",
-                          selection: skill.owner.source,
-                          returnFocus: "details-relationships",
-                        },
-                      ),
-                    );
-                } else if (relationship === "config-source" && skill.source.contribution)
-                  setState((value) =>
-                    reduceTui(
-                      reduceTui(value, {
-                        type: "handoff.set",
-                        handoff: {
-                          kind: "source-contribution",
-                          source: skill.source!,
-                          owner: skill.source!.contribution!.configSource,
-                        },
-                      }),
-                      {
-                        type: "route.relationship",
-                        destination: skill.source!.contribution!.configSource.level,
-                        section: "config-sources",
-                        selection: skill.source!.contribution!.configSource.pointer,
-                        returnFocus: "details-relationships",
+                    routeRelationship({
+                      destination: owner.level,
+                      section: "sources",
+                      selection: skill.owner.source,
+                      returnFocus: "details-relationships",
+                      handoff: {
+                        kind: "source-declaration",
+                        source: skill.source!,
+                        owner,
                       },
-                    ),
-                  );
+                    });
+                } else if (relationship === "config-source" && skill.source.contribution)
+                  routeRelationship({
+                    destination: skill.source!.contribution!.configSource.level,
+                    section: "config-sources",
+                    selection: skill.source!.contribution!.configSource.pointer,
+                    returnFocus: "details-relationships",
+                    handoff: {
+                      kind: "source-contribution",
+                      source: skill.source!,
+                      owner: skill.source!.contribution!.configSource,
+                    },
+                  });
                 else if (relationship.startsWith("collection:")) {
                   const collection = relationship.slice("collection:".length);
                   const direct = skill.collections
@@ -2139,39 +2095,42 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                     ?.paths.find((path) => path.kind === "direct");
                   const owner = direct?.kind === "direct" ? direct.owner : undefined;
                   if (owner)
-                    setState((value) =>
-                      reduceTui(value, {
-                        type: "route.relationship",
-                        destination: owner.contribution
-                          ? owner.contribution.configSource.level
-                          : owner.level,
-                        section: owner.contribution ? "config-sources" : "collections",
-                        selection: owner.contribution
-                          ? owner.contribution.configSource.pointer
-                          : collection,
-                        returnFocus: "details-relationships",
-                      }),
-                    );
+                    routeRelationship({
+                      destination: owner.contribution
+                        ? owner.contribution.configSource.level
+                        : owner.level,
+                      section: owner.contribution ? "config-sources" : "collections",
+                      selection: owner.contribution
+                        ? owner.contribution.configSource.pointer
+                        : collection,
+                      returnFocus: "details-relationships",
+                    });
                 } else if (relationship === "selectors") void dispatchAction("skill-for-agents");
               }}
               onDetailsScroll={(scroll) =>
-                setState((value) =>
-                  reduceTui(value, { type: "reader.patch", value: { detailsScroll: scroll } }),
-                )
+                readerDispatch({
+                  type: "patch",
+                  value: { detailsScroll: scroll },
+                })
               }
             />
           </Show>
         )}
       </box>
-      <text>{state().task?.cancellationRequested ? "Cancelling operation" : state().status}</text>
-      {(modal() === "actions" || modal() === "palette") && (
+      <text height={1}>{helpLine()}</text>
+      <text height={1}>
+        {operation.task()?.cancellationRequested
+          ? "Cancelling operation"
+          : (operation.notice() ?? "Loading workspace")}
+      </text>
+      {(overlayKind() === "actions" || overlayKind() === "palette") && (
         <ActionOverlay
-          title={modal() === "actions" ? "Actions" : "Palette"}
+          title={overlayKind() === "actions" ? "Actions" : "Palette"}
           actions={actions()}
           onSelect={(id) => {
             if (isDestination(id)) {
               selectDestination(id);
-              setState((value) => reduceTui(value, { type: "overlay.close" }));
+              closeSession();
               return;
             }
             if (id === "open-actions" || id === "open-palette") return;
@@ -2180,7 +2139,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
           onClose={closeOverlay}
         />
       )}
-      {modal() === "filter" && (
+      {overlayKind() === "filter" && (
         <>
           <box
             id="skills-filter-underlay"
@@ -2220,7 +2179,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         dimension.toLocaleLowerCase().includes(filterSearch().toLocaleLowerCase()),
                       )
                       .map((dimension) => ({
-                        name: `${dimension}  ${state().memory.workspace.filters.skills?.[dimension] ?? "Any"}`,
+                        name: `${dimension}  ${workspaceState.filters()[dimension] ?? "Any"}`,
                         description: "Choose filter value",
                         value: dimension,
                       }))}
@@ -2258,16 +2217,24 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                     id="skills-filter-values"
                     focused={false}
                     options={[
-                      { name: "Any", description: "Clear this filter", value: "" },
+                      {
+                        name: "Any",
+                        description: "Clear this filter",
+                        value: "",
+                      },
                       ...filterValues(
-                        state().workspace?.installedSkills ?? [],
+                        projection.workspace()?.installedSkills ?? [],
                         filterDimension()!,
-                        state().workspace?.effective.agent.status,
+                        projection.workspace()?.effective.agent.status,
                       )
                         .filter((value) =>
                           value.toLocaleLowerCase().includes(filterSearch().toLocaleLowerCase()),
                         )
-                        .map((value) => ({ name: value, description: "Filter value", value })),
+                        .map((value) => ({
+                          name: value,
+                          description: "Filter value",
+                          value,
+                        })),
                     ]}
                     showDescription={false}
                     onSelect={(_index, option) => {
@@ -2279,9 +2246,9 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                   {[
                     "",
                     ...filterValues(
-                      state().workspace?.installedSkills ?? [],
+                      projection.workspace()?.installedSkills ?? [],
                       filterDimension()!,
-                      state().workspace?.effective.agent.status,
+                      projection.workspace()?.effective.agent.status,
                     ).filter((value) =>
                       value.toLocaleLowerCase().includes(filterSearch().toLocaleLowerCase()),
                     ),
@@ -2310,24 +2277,28 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               id="skills-filter-clear-all"
               focused={false}
               options={[
-                { name: "Clear all", description: "Clear query and local filters", value: "clear" },
+                {
+                  name: "Clear all",
+                  description: "Clear query and local filters",
+                  value: "clear",
+                },
               ]}
               showDescription={false}
               onSelect={() => {
-                setFilterDimension(undefined);
-                updateSkills({ type: "filter.clear-all", key: "skills" });
+                setSessionPayload({ family: "skills-filter", search: "" });
+                workspaceState.clearFilters();
               }}
             />
           </box>
         </>
       )}
-      {agentViews() && (
+      {installedAgentViewsPayload() && (
         <AgentPathsOverlay
-          views={agentViews()!}
+          views={installedAgentViewsPayload()!.views}
           onClose={closeOverlay}
           onSelect={(value) => {
             const [kind, selectorIndex, pathIndex, linkIndex] = value.split(":");
-            const views = agentViews();
+            const views = installedAgentViewsPayload()?.views;
             const view =
               views?.status === "complete" ? views.values[Number(selectorIndex)] : undefined;
             if (!view) return;
@@ -2336,52 +2307,32 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               if (path?.kind === "direct") {
                 const owner = path.owner;
                 if (owner)
-                  setState((current) =>
-                    reduceTui(
-                      reduceTui(current, {
-                        type: "handoff.set",
-                        handoff: {
-                          kind: "agent-membership",
-                          collection: path.collection,
-                          entry: path.entryName,
-                          owner,
-                        },
-                      }),
-                      owner.contribution
-                        ? {
-                            type: "route.relationship",
-                            destination: owner.contribution.configSource.level,
-                            section: "config-sources",
-                            selection: owner.contribution.configSource.pointer,
-                            returnFocus: "inspector",
-                          }
-                        : {
-                            type: "route.relationship",
-                            destination: owner.level,
-                            section: "collections",
-                            selection: path.collection,
-                            returnFocus: "inspector",
-                          },
-                    ),
-                  );
-              } else if (path?.kind === "repository-derived") {
-                setState((current) =>
-                  reduceTui(
-                    reduceTui(current, {
-                      type: "handoff.set",
-                      handoff: {
-                        kind: "agent-producer",
-                        address: { source: path.source, path: path.path },
-                      },
-                    }),
-                    {
-                      type: "route.source",
-                      destination: "workspace",
-                      section: "skills",
-                      selection: `${path.source}/${path.path}`,
+                  routeRelationship({
+                    destination: owner.contribution
+                      ? owner.contribution.configSource.level
+                      : owner.level,
+                    section: owner.contribution ? "config-sources" : "collections",
+                    selection: owner.contribution
+                      ? owner.contribution.configSource.pointer
+                      : path.collection,
+                    returnFocus: "inspector",
+                    handoff: {
+                      kind: "agent-membership",
+                      collection: path.collection,
+                      entry: path.entryName,
+                      owner,
                     },
-                  ),
-                );
+                  });
+              } else if (path?.kind === "repository-derived") {
+                routeSource({
+                  destination: "workspace",
+                  section: "skills",
+                  selection: `${path.source}/${path.path}`,
+                  handoff: {
+                    kind: "agent-producer",
+                    address: { source: path.source, path: path.path },
+                  },
+                });
               }
             } else if (kind === "link") {
               const path = view.paths[Number(pathIndex)];
@@ -2389,112 +2340,109 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                 const link = path.links[Number(linkIndex)];
                 const owner = link?.owner;
                 if (owner)
-                  setState((current) =>
-                    reduceTui(
-                      reduceTui(current, {
-                        type: "handoff.set",
-                        handoff: {
-                          kind: "agent-link",
-                          collection: link.collection,
-                          linkedCollection: link.linkedCollection,
-                          owner,
-                        },
-                      }),
-                      owner.contribution
-                        ? {
-                            type: "route.relationship",
-                            destination: owner.contribution.configSource.level,
-                            section: "config-sources",
-                            selection: owner.contribution.configSource.pointer,
-                            returnFocus: "inspector",
-                          }
-                        : {
-                            type: "route.relationship",
-                            destination: owner.level,
-                            section: "collections",
-                            selection: link.collection,
-                            returnFocus: "inspector",
-                          },
-                    ),
-                  );
+                  routeRelationship({
+                    destination: owner.contribution
+                      ? owner.contribution.configSource.level
+                      : owner.level,
+                    section: owner.contribution ? "config-sources" : "collections",
+                    selection: owner.contribution
+                      ? owner.contribution.configSource.pointer
+                      : link.collection,
+                    returnFocus: "inspector",
+                    handoff: {
+                      kind: "agent-link",
+                      collection: link.collection,
+                      linkedCollection: link.linkedCollection,
+                      owner,
+                    },
+                  });
               }
             } else if (kind === "use") {
               const owner = view.useOwners[Number(pathIndex)];
               if (owner)
-                setState((current) =>
-                  reduceTui(
-                    reduceTui(current, {
-                      type: "handoff.set",
-                      handoff: {
-                        kind: "agent-use",
-                        collection: view.collection,
-                        owner,
-                      },
-                    }),
-                    {
-                      type: "route.source",
-                      destination: owner.level,
-                      section: "for-agents",
-                      selection: view.collection,
-                    },
-                  ),
-                );
+                routeSource({
+                  destination: owner.level,
+                  section: "for-agents",
+                  selection: view.collection,
+                  handoff: {
+                    kind: "agent-use",
+                    collection: view.collection,
+                    owner,
+                  },
+                });
             }
-            setAgentViews(undefined);
-            setState((current) =>
-              reduceTui(reduceTui(current, { type: "overlay.close" }), {
-                type: "focus.set",
-                focus: "browser",
-              }),
-            );
+            closeSession();
+            requestFocus("browser");
           }}
         />
       )}
-      {rebindSources() && (
+      {installedRebindPayload() && (
         <RebindSourceOverlay
-          sources={rebindSources()!}
+          sources={installedRebindPayload()!.sources}
           onClose={closeOverlay}
           onSelect={(owner, ownerPath) => {
-            const repairing = repair();
-            const skill = installedSkillContext(state(), state().workspace)?.skill;
-            const address = repairing
-              ? { source: repairing.source, path: repairing.path }
-              : skill?.address;
+            const surface = installedRebindPayload()!;
+            const skill = installedSkillContext(
+              route.snapshot().destination,
+              projection.workspace(),
+              {
+                workspace: workspaceState.snapshot(),
+                collections: collectionsState.snapshot(),
+                config: (destination) => configState.snapshot(destination),
+              },
+            )?.skill;
+            const address = surface.address ?? skill?.address;
             if (!address) return;
-            setRebindSources(undefined);
-            setState((current) => reduceTui(current, { type: "overlay.open", overlay: "confirm" }));
-            if (repair() && review())
-              void previewRepairInstalled({ kind: "rebind", address, owner, ownerPath }, review()!);
-            else void previewInstalled({ kind: "rebind", address, owner, ownerPath });
+            if (surface.sourceRemoval)
+              void previewInstalled(
+                { kind: "rebind", address, owner, ownerPath },
+                surface.sourceRemoval,
+              );
+            else
+              void previewInstalled({
+                kind: "rebind",
+                address,
+                owner,
+                ownerPath,
+              });
           }}
         />
       )}
-      {installedPreviewFailure() && (
+      {installedPreviewPayload()?.failed && (
         <InstalledSkillPreviewFailureOverlay
-          request={installedPreviewFailure()!}
-          error={state().operationProblem}
-          pending={installedPreviewRetrying()}
-          cancelling={installedPreviewCancelling()}
-          onRetry={() => void previewInstalled(installedPreviewFailure()!)}
+          request={installedPreviewPayload()!.request}
+          error={operation.problem()}
+          pending={overlaySession().phase === "preview"}
+          cancelling={overlaySession().phase === "cancelling"}
+          onRetry={() => void previewInstalled(installedPreviewPayload()!.request)}
           onCancel={closeOverlay}
         />
       )}
-      {installedPreview() && !installedPreviewFailure() && (
-        <InstalledSkillPreviewOverlay
-          request={installedPreview()!}
-          cancelling={installedPreviewCancelling()}
-          onCancel={closeOverlay}
-        />
-      )}
+      {installedPreviewPayload() &&
+        !installedPreviewPayload()?.failed &&
+        !installedPreviewPayload()?.review && (
+          <InstalledSkillPreviewOverlay
+            request={installedPreviewPayload()!.request}
+            cancelling={overlaySession().phase === "cancelling"}
+            onCancel={closeOverlay}
+          />
+        )}
       {collectionChoices() && (
         <CollectionHandoffOverlay
           choices={collectionChoices()!}
           onClose={closeOverlay}
           onSelect={(choice) => {
-            const skill = installedSkillContext(state(), state().workspace)?.skill;
+            const skill = installedSkillContext(
+              route.snapshot().destination,
+              projection.workspace(),
+              {
+                workspace: workspaceState.snapshot(),
+                collections: collectionsState.snapshot(),
+                config: (destination) => configState.snapshot(destination),
+              },
+            )?.skill;
             if (!skill) return;
-            setCollectionChoices(undefined);
-            setState((value) => reduceTui(value, { type: "overlay.open", overlay: "confirm" }));
+            openSession("confirm", { family: "collection-review" });
             void previewMembership({
               kind: "add-to-collection",
               level: choice.level ?? "project",
@@ -2505,96 +2453,101 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
           }}
         />
       )}
-      {collectionCreate() && (
-        <CollectionCreateOverlay
-          {...(collectionCreate()!.allowedLevels
-            ? { allowedLevels: collectionCreate()!.allowedLevels! }
-            : { level: collectionCreate()!.level! })}
-          collection=""
-          pending={effects.pendingKind() === "execute"}
-          error={state().operationProblem}
-          onCancel={closeOverlay}
-          onSubmit={(intent) => {
-            void effects
-              .createCollection({ kind: "collection-create", ...intent })
-              .then((complete) => {
-                if (complete) {
-                  const afterCreate = collectionCreate()?.afterCreate;
-                  setCollectionCreate(undefined);
-                  setState((value) =>
-                    reduceTui(reduceTui(value, { type: "overlay.close" }), {
-                      type: "selection.set",
-                      key: "collections",
-                      value: intent.collection,
-                    }),
-                  );
-                  if (afterCreate) {
-                    setState((value) =>
-                      reduceTui(value, { type: "overlay.open", overlay: "confirm" }),
-                    );
-                    void previewMembership({
-                      kind: "add-to-collection",
-                      level: intent.level,
-                      collection: afterCreate.collection,
-                      address: afterCreate.address,
-                      name: afterCreate.address.path.split("/").at(-1) ?? "skill",
-                    });
-                  }
-                }
-              });
-          }}
-        />
-      )}
-      {modal() === "form" && membershipChooser() && (
+      {(() => {
+        const create = collectionCreate();
+        return (
+          create && (
+            <CollectionCreateOverlay
+              {...(create.allowedLevels
+                ? { allowedLevels: create.allowedLevels }
+                : { level: create.level! })}
+              collection=""
+              pending={overlaySession().phase === "executing"}
+              error={operation.problem()}
+              onCancel={closeOverlay}
+              onSubmit={(intent) => {
+                const begun = beginSession(overlaySession().revision, "executing");
+                void effects
+                  .createCollection({ kind: "collection-create", ...intent })
+                  .then((complete) => {
+                    if (
+                      complete &&
+                      overlaySession().revision === begun.revision &&
+                      overlaySession().requestEpoch === begun.requestEpoch
+                    ) {
+                      const afterCreate = create.afterCreate;
+                      collectionsState.select(intent.collection);
+                      closeSession(begun.revision);
+                      if (afterCreate) {
+                        openSession("confirm", { family: "collection-review" });
+                        void previewMembership({
+                          kind: "add-to-collection",
+                          level: intent.level,
+                          collection: afterCreate.collection,
+                          address: afterCreate.address,
+                          name: afterCreate.address.path.split("/").at(-1) ?? "skill",
+                        });
+                      }
+                    } else if (
+                      overlaySession().revision === begun.revision &&
+                      overlaySession().requestEpoch === begun.requestEpoch &&
+                      overlaySession().dismissed
+                    )
+                      closeSession(begun.revision);
+                    else settleFailedExecution(begun);
+                  });
+              }}
+            />
+          )
+        );
+      })()}
+      {overlayKind() === "form" && membershipChooser() && (
         <InstalledSkillChooserOverlay
-          skills={(state().workspace?.installedSkills ?? []).map((skill) => ({
+          skills={(projection.workspace()?.installedSkills ?? []).map((skill) => ({
             address: skill.address,
             name: skill.name,
             description: skill.description,
           }))}
           onClose={() => {
-            setMembershipChooser(undefined);
             closeOverlay();
           }}
           onSelect={(address, name) => {
             const target = membershipChooser();
             if (!target) return;
-            setMembershipChooser(undefined);
-            setMembershipDraft({ ...target, address, initialName: name });
+            openSession("form", {
+              family: "membership-draft",
+              level: target.level,
+              collection: target.collection,
+              address,
+              initialName: name,
+            });
           }}
         />
       )}
-      {modal() === "form" &&
-        membershipDraft() &&
-        collectionReview()?.kind === "add-to-collection" && (
-          <MembershipAddOverlay
-            level={membershipDraft()!.level}
-            collection={membershipDraft()!.collection}
-            address={membershipDraft()!.address}
-            initialName={membershipDraft()!.initialName}
-            pending={effects.pendingKind() === "preview"}
-            error={state().operationProblem}
-            onCancel={closeOverlay}
-            onPreview={(intent) => {
-              setState((value) => reduceTui(value, { type: "overlay.open", overlay: "confirm" }));
-              void effects.previewAddToCollection(intent).then((next) => {
-                if (next?.kind === "add-to-collection" && state().overlay === "confirm") {
-                  setCollectionReview(next);
-                  setMembershipDraft(undefined);
-                }
-              });
-            }}
-          />
-        )}
+      {overlayKind() === "form" && membershipDraft() && (
+        <MembershipAddOverlay
+          level={membershipDraft()!.level}
+          collection={membershipDraft()!.collection}
+          address={membershipDraft()!.address}
+          initialName={membershipDraft()!.initialName}
+          pending={overlaySession().phase === "preview"}
+          error={operation.problem()}
+          onCancel={closeOverlay}
+          onPreview={(intent) => {
+            void previewMembership(intent, "form");
+          }}
+        />
+      )}
       {sourceRegistration() && (
         <SourceRegistrationOverlay
           kind={sourceRegistration()!.kind}
           level={sourceRegistration()!.level}
-          pending={effects.pendingKind() === "execute"}
-          error={state().operationProblem}
+          pending={overlaySession().phase === "executing"}
+          error={operation.problem()}
           onCancel={closeOverlay}
           onSubmit={(value) => {
             const registration = sourceRegistration()!;
+            const begun = beginSession(overlaySession().revision, "executing");
             void effects
               .registerSource({
                 type: registration.kind === "source" ? "source.register" : "config-source.register",
@@ -2603,19 +2556,28 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                 binding: value.binding,
               })
               .then((complete) => {
-                if (complete) {
+                if (
+                  complete &&
+                  overlaySession().revision === begun.revision &&
+                  overlaySession().requestEpoch === begun.requestEpoch
+                ) {
                   const section = registration.kind === "source" ? "sources" : "config-sources";
-                  setSourceRegistration(undefined);
-                  setState((current) =>
-                    reduceTui(reduceTui(current, { type: "overlay.close" }), {
-                      type: "route.source",
+                  batch(() => {
+                    closeSession(begun.revision);
+                    routeSource({
                       destination: value.level,
                       section,
                       selection:
                         registration.kind === "source" ? value.id : `/configSources/${value.id}`,
-                    }),
-                  );
-                }
+                    });
+                  });
+                } else if (
+                  overlaySession().revision === begun.revision &&
+                  overlaySession().requestEpoch === begun.requestEpoch &&
+                  overlaySession().dismissed
+                )
+                  closeSession(begun.revision);
+                else settleFailedExecution(begun);
               });
           }}
         />
@@ -2631,19 +2593,14 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               level={draft.level}
               from={draft.from}
               into={draft.into}
-              pending={effects.pendingKind() === "preview"}
-              error={state().operationProblem}
+              pending={overlaySession().phase === "preview"}
+              error={operation.problem()}
               onCancel={closeOverlay}
               onPreview={(intent) =>
-                void effects.previewImport(intent).then((review) => {
-                  if (review?.kind === "collection-import" && state().overlay === "form") {
-                    setCollectionReview(review);
-                    setCollectionDraft(undefined);
-                    setState((value) =>
-                      reduceTui(value, { type: "overlay.open", overlay: "confirm" }),
-                    );
-                  }
-                })
+                void previewCollectionDraft(
+                  () => effects.previewImport(intent),
+                  "collection-import",
+                )
               }
             />
           );
@@ -2662,19 +2619,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               target={draft.target}
               description={draft.description}
               remove={draft.remove ?? false}
-              pending={effects.pendingKind() === "preview"}
-              error={state().operationProblem}
+              pending={overlaySession().phase === "preview"}
+              error={operation.problem()}
               onCancel={closeOverlay}
               onPreview={(intent) =>
-                void effects.previewReference(intent).then((review) => {
-                  if (review?.kind === "reference" && state().overlay === "form") {
-                    setCollectionReview(review);
-                    setCollectionDraft(undefined);
-                    setState((value) =>
-                      reduceTui(value, { type: "overlay.open", overlay: "confirm" }),
-                    );
-                  }
-                })
+                void previewCollectionDraft(() => effects.previewReference(intent), "reference")
               }
             />
           );
@@ -2691,19 +2640,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               collection={draft.collection}
               target={draft.target}
               linked={draft.linked}
-              pending={effects.pendingKind() === "preview"}
-              error={state().operationProblem}
+              pending={overlaySession().phase === "preview"}
+              error={operation.problem()}
               onCancel={closeOverlay}
               onPreview={(intent) =>
-                void effects.previewLinkChange(intent).then((review) => {
-                  if (review?.kind === "link-change" && state().overlay === "form") {
-                    setCollectionReview(review);
-                    setCollectionDraft(undefined);
-                    setState((value) =>
-                      reduceTui(value, { type: "overlay.open", overlay: "confirm" }),
-                    );
-                  }
-                })
+                void previewCollectionDraft(() => effects.previewLinkChange(intent), "link-change")
               }
             />
           );
@@ -2718,28 +2659,23 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
             <CollectionUseOverlay
               level={draft.level}
               collections={draft.collections}
-              pending={effects.pendingKind() === "preview"}
-              error={state().operationProblem}
+              pending={overlaySession().phase === "preview"}
+              error={operation.problem()}
               onCancel={closeOverlay}
               onPreview={(intent) =>
-                void effects.previewCollectionUse(intent).then((review) => {
-                  if (review?.kind === "collection-use" && state().overlay === "form") {
-                    setCollectionReview(review);
-                    setCollectionDraft(undefined);
-                    setState((value) =>
-                      reduceTui(value, { type: "overlay.open", overlay: "confirm" }),
-                    );
-                  }
-                })
+                void previewCollectionDraft(
+                  () => effects.previewCollectionUse(intent),
+                  "collection-use",
+                )
               }
             />
           );
         })()}
-      {modal() === "confirm" && collectionReview() && (
+      {overlayKind() === "confirm" && collectionReview() && (
         <CollectionReviewOverlay
           review={collectionReview()!}
-          pending={effects.pendingKind() === "execute"}
-          error={state().operationProblem}
+          pending={overlaySession().phase === "executing"}
+          error={operation.problem()}
           onCancel={closeOverlay}
           onConfirm={() =>
             collectionReview()!.kind === "add-to-collection"
@@ -2820,7 +2756,13 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               showDescription={false}
               options={
                 configOperation()!.impact && !configOperation()!.impact!.allowed
-                  ? [{ name: "Cancel", description: "Return without mutation", value: "cancel" }]
+                  ? [
+                      {
+                        name: "Cancel",
+                        description: "Return without mutation",
+                        value: "cancel",
+                      },
+                    ]
                   : [
                       {
                         name: "Cancel",
@@ -2828,7 +2770,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         value: "cancel",
                       },
                       {
-                        name: effects.pendingKind() === "execute" ? "Applying" : "Confirm",
+                        name: overlaySession().phase === "executing" ? "Applying" : "Confirm",
                         description: "Apply reviewed operation",
                         value: "confirm",
                       },
@@ -2836,8 +2778,9 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               }
               onSelect={(_index, option) => {
                 if (option?.value === "cancel") closeOverlay();
-                else if (option?.value === "confirm" && effects.pendingKind() !== "execute") {
+                else if (option?.value === "confirm" && overlaySession().phase !== "executing") {
                   const operation = configOperation()!;
+                  const begun = beginSession(overlaySession().revision, "executing");
                   const execute =
                     operation.kind === "adopt"
                       ? effects.adoptConfig(
@@ -2851,10 +2794,14 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                           ? effects.removeConfig(operation.id!)
                           : effects.setManagedOpenCode(operation.level!, operation.enabled!);
                   void execute.then((complete) => {
-                    if (complete) {
-                      setConfigOperation(undefined);
-                      setState((value) => reduceTui(value, { type: "overlay.close" }));
-                    }
+                    if (complete && sessionMatches(begun, "confirm", "config-operation"))
+                      closeSession(begun.revision);
+                    else if (
+                      sessionMatches(begun, "confirm", "config-operation") &&
+                      overlaySession().dismissed
+                    )
+                      closeSession(begun.revision);
+                    else settleFailedExecution(begun);
                   });
                 }
               }}
@@ -2863,13 +2810,13 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
           </box>
         </box>
       )}
-      {installedReview() && (
+      {installedPreviewPayload()?.review && (
         <InstalledSkillReviewOverlay
-          review={installedReview()!}
-          pending={effects.pendingKind() === "execute"}
-          error={state().operationProblem}
+          review={installedPreviewPayload()!.review!}
+          pending={overlaySession().phase === "executing"}
+          error={operation.problem()}
           onResolveMembership={(owner) => {
-            const current = installedReview()!;
+            const current = installedPreviewPayload()!.review!;
             if (current.kind !== "uninstall") return;
             const selector = current.impact.disappearingSelectors.find(
               (item) =>
@@ -2884,153 +2831,199 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                 ),
             );
             if (!selector) {
-              setState((value) =>
-                reduceTui(value, {
-                  type: "operation.failure",
-                  diagnostic: {
-                    code: "INVALID_ARGUMENT",
-                    severity: "warning",
-                    message: `No disappearing selector directly matches ${owner.file} ${owner.pointer}`,
-                  },
-                }),
-              );
+              operation.report({
+                code: "INVALID_ARGUMENT",
+                severity: "warning",
+                message: `No disappearing selector directly matches ${owner.file} ${owner.pointer}`,
+              });
               return;
             }
             const [collection, entry] = selector.selector.split(":", 2);
-            setInstalledReview(undefined);
-            setState((value) =>
-              reduceTui(
-                reduceTui(value, {
-                  type: "handoff.set",
-                  handoff: {
-                    kind: "uninstall-membership",
-                    address: current.address,
-                    owner,
-                    collection,
-                    entry,
-                  },
-                }),
-                {
-                  type: "route.source",
-                  destination: owner.level,
-                  section: "collections",
-                  selection: collection,
-                },
-              ),
-            );
+            closeSession();
+            routeSource({
+              destination: owner.level,
+              section: "collections",
+              selection: collection,
+              handoff: {
+                kind: "uninstall-membership",
+                address: current.address,
+                owner,
+                collection,
+                entry,
+              },
+            });
           }}
           onCancel={closeOverlay}
           onConfirm={() => {
-            const current = installedReview()!;
-            if (repair()) {
+            const surface = installedPreviewPayload()!;
+            const current = surface.review!;
+            if (surface.sourceRemoval) {
               void confirmRepairInstalled();
               return;
             }
+            const begun = beginSession(overlaySession().revision, "executing");
             void effects.confirmInstalled(current).then((complete) => {
-              if (complete) {
-                setInstalledReview(undefined);
-                setState((value) => reduceTui(value, { type: "overlay.close" }));
-              }
+              if (
+                complete &&
+                overlaySession().revision === begun.revision &&
+                overlaySession().requestEpoch === begun.requestEpoch
+              ) {
+                if (current.kind === "rebind")
+                  workspaceState.selectSkill(`${current.impact.owner}/${current.impact.ownerPath}`);
+                closeSession(begun.revision);
+              } else if (
+                overlaySession().revision === begun.revision &&
+                overlaySession().requestEpoch === begun.requestEpoch &&
+                overlaySession().dismissed
+              )
+                closeSession(begun.revision);
+              else settleFailedExecution(begun);
             });
           }}
         />
       )}
-      {review() && !installedReview() && !rebindSources() && (
-        <SourceRemovalOverlay
-          review={review()!}
-          pending={!!state().task}
-          error={state().operationProblem}
-          onConfirm={() => {
-            void confirm();
-          }}
-          onCancel={closeOverlay}
-          onRepair={(action, address) => {
-            const current = review();
-            if (!current) return;
-            setRepair({ action, ...address });
-            if (action === "uninstall")
-              void previewRepairInstalled({ kind: "uninstall", address }, current);
-            else {
-              const sources = state()
-                .workspace?.effective.sources.filter((source) => source.id !== address.source)
-                .map((source) => source.id);
-              if (sources?.length) setRebindSources(sources);
-              else
-                setState((value) =>
-                  reduceTui(value, {
-                    type: "operation.failure",
-                    diagnostic: {
+      {sourceRemovalPayload()?.review &&
+        (() => {
+          const removal = sourceRemovalPayload()!.review!;
+          return (
+            <SourceRemovalOverlay
+              review={removal}
+              pending={overlaySession().phase === "executing"}
+              error={operation.problem()}
+              onConfirm={() => {
+                void confirm();
+              }}
+              onCancel={closeOverlay}
+              onRepair={(action, address) => {
+                const current = removal;
+                if (action === "uninstall")
+                  void previewRepairInstalled({ kind: "uninstall", address }, current);
+                else {
+                  const sources = projection
+                    .workspace()
+                    ?.effective.sources.filter((source) => source.id !== address.source)
+                    .map((source) => source.id);
+                  if (sources?.length)
+                    openSession("selection", {
+                      family: "installed-rebind",
+                      sources,
+                      address,
+                      sourceRemoval: current,
+                    });
+                  else
+                    operation.report({
                       code: "SOURCE_NOT_FOUND",
                       severity: "warning",
                       message: "No alternative Source is available for Rebind",
-                    },
-                  }),
-                );
+                    });
+                }
+              }}
+            />
+          );
+        })()}
+      <Show when={sourceSelectionPayload()}>
+        {(selection) => (
+          <SourceSelectionOverlay
+            review={selection().review}
+            installed={
+              new Set(
+                (projection.workspace()?.installedSkills ?? [])
+                  .filter((skill) => skill.address.source === selection().review.observation.source)
+                  .map((skill) => skill.address.path),
+              )
             }
+            selected={selection().selectedPaths}
+            pending={overlaySession().phase === "executing"}
+            error={operation.problem()}
+            onToggle={(path) => {
+              const current = selection();
+              replaceSession(overlaySession().revision, {
+                ...current,
+                selectedPaths: current.selectedPaths.includes(path)
+                  ? current.selectedPaths.filter((value) => value !== path)
+                  : [...current.selectedPaths, path],
+              });
+            }}
+            onSubmit={() => {
+              void applySourceSelection();
+            }}
+            onCancel={closeOverlay}
+          />
+        )}
+      </Show>
+      {overlayKind() === "selection" && configObservationPayload() && (
+        <SourceObservationOverlay
+          title="Observing Config"
+          source={configObservationPayload()!.id}
+          cancelling={overlaySession().phase === "cancelling"}
+          error={operation.problem()}
+          onRetry={() => {
+            operation.clearProblem();
+            const revision = overlaySession().revision;
+            setOverlaySession((current) =>
+              reduceOverlaySession(current, {
+                type: "retry",
+                revision,
+                phase: "observing",
+              }),
+            );
+            const attempt = overlaySession();
+            void observeConfig(configObservationPayload()!.id, attempt);
           }}
+          onClose={closeOverlay}
         />
       )}
-      {sourceReview() && (
-        <SourceSelectionOverlay
-          review={sourceReview()!}
-          installed={
-            new Set(
-              (state().workspace?.installedSkills ?? [])
-                .filter((skill) => skill.address.source === sourceReview()!.observation.source)
-                .map((skill) => skill.address.path),
-            )
-          }
-          selected={selectedPaths()}
-          pending={effects.pendingKind() === "execute"}
-          error={state().operationProblem}
-          onToggle={(path) =>
-            setSelectedPaths((paths) =>
-              paths.includes(path) ? paths.filter((value) => value !== path) : [...paths, path],
-            )
-          }
-          onSubmit={() => {
-            void applySourceSelection();
-          }}
-          onCancel={closeOverlay}
-        />
-      )}
-      {modal() === "selection" && !sourceReview() && observationIntent() && (
+      {overlayKind() === "selection" && sourceObservationPayload() && (
         <SourceObservationOverlay
           title={
-            observationIntent()!.kind === "source-discovery"
+            sourceObservationPayload()!.intent.kind === "source-discovery"
               ? "Discovering Skills"
               : "Checking Updates"
           }
-          source={observationIntent()!.source}
-          cancelling={state().task?.cancellationRequested ?? false}
-          error={state().operationProblem}
+          source={sourceObservationPayload()!.intent.source}
+          cancelling={overlaySession().phase === "cancelling"}
+          error={operation.problem()}
           onRetry={() => {
-            const intent = observationIntent()!;
-            setState((value) => reduceTui(value, { type: "operation.failure.clear" }));
+            const intent = sourceObservationPayload()!.intent;
+            operation.clearProblem();
+            const revision = overlaySession().revision;
+            setOverlaySession((current) =>
+              reduceOverlaySession(current, {
+                type: "retry",
+                revision,
+                phase: "observing",
+              }),
+            );
+            const attempt = overlaySession();
             void (
               intent.kind === "source-discovery"
                 ? effects.discover(intent)
                 : effects.checkUpdate(intent)
             ).then((next) => {
-              if (next && state().overlay === "selection") {
-                setSourceReview(next);
-                setSelectedPaths([]);
-              }
+              if (
+                next &&
+                sessionMatches(attempt, "selection", "source-observation") &&
+                !overlaySession().dismissed
+              )
+                settleSession(attempt.revision, attempt.requestEpoch, "review", {
+                  family: "source-selection",
+                  review: next,
+                  selectedPaths: [],
+                });
+              else if (
+                sessionMatches(attempt, "selection", "source-observation") &&
+                overlaySession().dismissed
+              )
+                closeSession(attempt.revision);
+              else if (sessionMatches(attempt, "selection", "source-observation"))
+                settleSession(attempt.revision, attempt.requestEpoch, "review");
             });
           }}
-          onClose={() => {
-            if (effects.pendingKind() === "observe") effects.cancel();
-            else {
-              setObservationIntent(undefined);
-              setState((value) => reduceTui(value, { type: "overlay.close" }));
-            }
-          }}
+          onClose={closeOverlay}
         />
       )}
-      {modal() === "confirm" &&
-        !review() &&
-        !installedPreview() &&
-        !installedPreviewFailure() &&
+      {overlayKind() === "confirm" &&
+        (!sessionPayload() || (sourceRemovalPayload() && !sourceRemovalPayload()?.review)) &&
         !collectionReview() &&
         !configOperation() && (
           <box
@@ -3071,5 +3064,3 @@ export async function runTui(core: SkillCliCore): Promise<void> {
   }
   await destroyed;
 }
-
-export const createTuiController = (core: TuiCore) => createTuiEffects(core);

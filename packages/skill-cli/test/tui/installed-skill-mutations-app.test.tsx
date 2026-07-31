@@ -200,6 +200,50 @@ test("App keeps an executing Installed Skill review mounted when Confirm is pres
   }
 });
 
+test("App returns an Installed Skill execution failure to its live review and can retry", async () => {
+  let executions = 0;
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(projection(), {
+          previewUninstall: async (request) =>
+            result<UninstallImpact>({
+              kind: "uninstall",
+              installed: request.paths.map((path) => ({ source: request.source, path })),
+              directMemberships: [],
+              disappearingSelectors: [],
+              retainedSelectors: [],
+              blockers: [],
+              allowed: true,
+            }),
+          uninstall: async () => {
+            executions++;
+            if (executions === 1) throw new Error("disk full");
+            return result(undefined);
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await openDetailsActions(setup);
+    await chooseAction(setup, 5);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-review",
+    );
+    setup.mockInput.pressKey("ARROW_DOWN");
+    setup.mockInput.pressEnter();
+    await setup.waitForFrame((frame) => frame.includes("INTERNAL: disk full"));
+    expect(setup.captureCharFrame()).toContain("Uninstall Skill");
+    setup.mockInput.pressEnter();
+    await setup.waitFor(() => executions === 2);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
 test("App mounts operation-specific preview surfaces and suppresses stale success after cancellation", async () => {
   const pending = deferred<OperationResult<UninstallImpact>>();
   let previews = 0;

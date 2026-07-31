@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { SkillCliError, type ConfigurationCapability } from "../../src/core/api";
-import { createTuiEffects } from "../../src/tui/effects";
-import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
+import {
+  directSourceCore,
+  testEffects as createTuiEffects,
+  workspaceProjection,
+} from "./direct-source.fixture";
 
 const configuration = (overrides: Partial<ConfigurationCapability>): ConfigurationCapability => ({
   change: async () => ({ value: { level: "project", changed: true }, diagnostics: [] }),
@@ -247,7 +250,6 @@ test("collection previews reject duplicate, cancel once, suppress late completio
 
 test("a CANCELLED collection preview leaves the exact draft intent retryable", async () => {
   let previews = 0;
-  const events: unknown[] = [];
   const intent = {
     kind: "collection-use" as const,
     level: "project" as const,
@@ -280,13 +282,12 @@ test("a CANCELLED collection preview leaves the exact draft intent retryable", a
         },
       }),
     }),
-    (event) => events.push(event),
   );
   expect(await effects.previewCollectionUse(intent)).toBeUndefined();
   const review = await effects.previewCollectionUse(intent);
   expect(review?.kind).toBe("collection-use");
   expect(previews).toBe(2);
-  expect(events).toEqual([]);
+  expect(effects.operation.problem()).toBeUndefined();
 });
 
 test("a CANCELLED collection execution retains the live review and blocks duplicate changes", async () => {
@@ -321,7 +322,6 @@ test("a CANCELLED collection execution retains the live review and blocks duplic
 });
 
 test("collection previews reject structurally mismatched impacts and refresh failure is stale mutation success", async () => {
-  const events: unknown[] = [];
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
       configuration: configuration({
@@ -344,7 +344,6 @@ test("collection previews reject structurally mismatched impacts and refresh fai
         throw new SkillCliError("PROVIDER_UNAVAILABLE", "offline");
       },
     }),
-    (event) => events.push(event),
   );
   expect(
     await effects.previewLinkChange({
@@ -355,13 +354,10 @@ test("collection previews reject structurally mismatched impacts and refresh fai
       linked: true,
     }),
   ).toBeUndefined();
-  expect(events).toContainEqual({
-    type: "operation.failure",
-    diagnostic: {
-      code: "TRANSACTION_CONFLICT",
-      severity: "warning",
-      message: "Collection preview no longer matches the selected structural intent",
-    },
+  expect(effects.operation.problem()).toEqual({
+    code: "TRANSACTION_CONFLICT",
+    severity: "warning",
+    message: "Collection preview no longer matches the selected structural intent",
   });
 });
 
@@ -950,7 +946,6 @@ test("collection execute retries after failure and a late mutation success refre
       }) => void)
     | undefined;
   let refreshes = 0;
-  const events: unknown[] = [];
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
       configuration: configuration({
@@ -972,7 +967,6 @@ test("collection execute retries after failure and a late mutation success refre
         throw new SkillCliError("PROVIDER_UNAVAILABLE", "offline");
       },
     }),
-    (event) => events.push(event),
   );
   const review = await effects.previewCollectionUse({
     kind: "collection-use",
@@ -986,9 +980,5 @@ test("collection execute retries after failure and a late mutation success refre
   resolveChange!({ value: { level: "project", changed: true }, diagnostics: [] });
   expect(await applying).toBe(true);
   expect({ attempts, refreshes }).toEqual({ attempts: 2, refreshes: 1 });
-  expect(events).toContainEqual({
-    type: "task.settle",
-    id: "3",
-    status: "Collection updated; Workspace is stale",
-  });
+  expect(effects.operation.notice()).toBe("Collection updated; Workspace is stale");
 });

@@ -1,6 +1,6 @@
-import { InputRenderable, SelectRenderable } from "@opentui/core";
-import { createEffect, createMemo, Match, Show, Switch } from "solid-js";
-import type { CollectionView, ConfigDeclarationOwner } from "../core/api";
+import { InputRenderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
+import { createMemo, Match, onCleanup, Show, Switch } from "solid-js";
+import type { CollectionView, ConfigDeclarationOwner, ManagementProjection } from "../core/api";
 import type { MemberOriginPath } from "../core/collections";
 import {
   collectionContributionText,
@@ -9,7 +9,10 @@ import {
   filterCollections,
   type CollectionFilterDimension,
 } from "./collections-filter";
-import type { CollectionTab, TuiState } from "./model";
+import type { CollectionTab, NarrowLevel } from "./types";
+import type { CollectionsReadonly } from "./collections/state";
+import { SectionTabs } from "./components/section-tabs";
+import type { FocusRegistry, FocusTarget } from "./focus";
 
 export type CollectionRelationshipIntent =
   | {
@@ -93,7 +96,11 @@ export const collectionMemberOriginIntent = (
 };
 
 export function CollectionsPage(props: {
-  readonly state: TuiState;
+  readonly collections: CollectionsReadonly;
+  readonly narrow?: boolean;
+  readonly narrowLevel: NarrowLevel;
+  readonly projection: () => ManagementProjection | undefined;
+  readonly focusRegistry?: FocusRegistry;
   readonly onSelect: (id: string) => void;
   readonly onQuery: (value: string) => void;
   readonly onFilter: (dimension: string, value?: string) => void;
@@ -104,38 +111,46 @@ export function CollectionsPage(props: {
   readonly onFilterSearch: (value: string) => void;
   readonly onFilterClose: () => void;
   readonly onTab: (collection: string, tab: CollectionTab) => void;
+  readonly onInspectorFocus: () => void;
   readonly onDetail: () => void;
   readonly onRelationship: (intent: CollectionRelationshipIntent) => void;
 }) {
-  let browser: SelectRenderable | undefined;
-  let queryInput: InputRenderable | undefined;
-  let filterInput: InputRenderable | undefined;
-  let tabs: SelectRenderable | undefined;
-  let relationships: SelectRenderable | undefined;
-  let clearAll: SelectRenderable | undefined;
-  const clearFilters = new Map<string, SelectRenderable>();
-  const effective = (): readonly CollectionView[] =>
-    props.state.workspace?.effective.status === "complete"
-      ? props.state.workspace.effective.collectionsView
-      : [];
-  const memory = () => props.state.memory.workspace;
-  const query = () => memory().query.collections ?? "";
-  const filters = () => memory().filters.collections ?? {};
-  const agentUse = () =>
-    props.state.workspace?.effective.status === "complete"
-      ? props.state.workspace.effective.use
-      : [];
+  const bindings = new Map<string, () => void>();
+  const bind = (
+    owner: Parameters<FocusRegistry["register"]>[0],
+    target: FocusTarget & Pick<BaseRenderable, "once" | "off">,
+  ) => {
+    bindings.get(owner)?.();
+    if (!props.focusRegistry) return;
+    const dispose = props.focusRegistry.register(owner, target);
+    const release = () => dispose();
+    target.once("destroyed", release);
+    bindings.set(owner, () => {
+      target.off("destroyed", release);
+      dispose();
+    });
+  };
+  onCleanup(() => bindings.forEach((dispose) => dispose()));
+  const effective = (): readonly CollectionView[] => {
+    const workspace = props.projection();
+    return workspace?.effective.status === "complete" ? workspace.effective.collectionsView : [];
+  };
+  const query = props.collections.query;
+  const filters = props.collections.filters;
+  const agentUse = () => {
+    const workspace = props.projection();
+    return workspace?.effective.status === "complete" ? workspace.effective.use : [];
+  };
   const collections = () =>
     filterCollections(effective(), {
       query: query(),
       filters: filters(),
       agentUse: agentUse(),
-      installedSkills: props.state.workspace?.installedSkills,
+      installedSkills: props.projection()?.installedSkills,
     });
-  const selected = () => collections().find((item) => item.id === memory().selection.collections);
-  const tab = (): CollectionTab =>
-    selected() ? (memory().collectionTab[selected()!.id] ?? "members") : "members";
-  const filterState = () => memory().collectionFilter ?? { open: false, search: "" };
+  const selected = () => collections().find((item) => item.id === props.collections.selected());
+  const tab = (): CollectionTab => (selected() ? props.collections.tab(selected()!.id) : "members");
+  const filterState = props.collections.filter;
   const filterDimension = () => filterState().dimension as CollectionFilterDimension | undefined;
   const filterSearch = () => filterState().search;
   const matching = (values: readonly string[]) =>
@@ -149,28 +164,6 @@ export function CollectionsPage(props: {
       value: item.id,
     })),
   );
-  createEffect(() => {
-    if (props.state.focus === "collections-query") queryInput?.focus();
-    else if (props.state.focus === "collections-filter-search") filterInput?.focus();
-    else if (!props.state.overlay && props.state.focus === "collections-filter-clear")
-      clearFilters.values().next().value?.focus();
-    else if (!props.state.overlay && props.state.focus === "collections-filter-clear-all")
-      clearAll?.focus();
-    else if (!props.state.overlay && props.state.focus === "collection-relationships")
-      relationships?.focus();
-    else if (
-      !props.state.overlay &&
-      props.state.focus === "inspector" &&
-      (!props.state.narrow || props.state.narrowLevel === "detail")
-    )
-      tabs?.focus();
-    else if (
-      !props.state.overlay &&
-      props.state.focus === "browser" &&
-      (!props.state.narrow || props.state.narrowLevel === "list")
-    )
-      browser?.focus();
-  });
   const choose = (index: number, open: boolean) => {
     const collection = collections()[index];
     if (!collection) return;
@@ -187,19 +180,17 @@ export function CollectionsPage(props: {
         <input
           id="collections-filter-search"
           ref={(value: InputRenderable) => {
-            filterInput = value;
+            bind("collections-filter-search", value);
           }}
-          focused={props.state.focus === "collections-filter-search"}
           placeholder={dimension ? "Search values" : "Search dimensions"}
           value={filterSearch()}
           onInput={props.onFilterSearch}
         />
         <select
           id={dimension ? "collections-filter-values" : "collections-filter-dimensions"}
-          focused={
-            props.state.focus === "collections-filter-dimensions" ||
-            props.state.focus === "collections-filter-values"
-          }
+          ref={(value: SelectRenderable) => {
+            bind(dimension ? "collections-filter-values" : "collections-filter-dimensions", value);
+          }}
           options={values.map((value) => ({ name: value, description: "", value }))}
           showDescription={false}
           onSelect={(index) => {
@@ -221,8 +212,17 @@ export function CollectionsPage(props: {
     const collection = selected();
     if (!collection)
       return (
-        <box flexGrow={1} paddingLeft={1}>
-          <text>No Collection Selected</text>
+        <box flexDirection="column" flexGrow={1} paddingLeft={1}>
+          {effective().length === 0 ? (
+            <>
+              <text>Collections group Skills for reuse and agent disclosure.</text>
+              <text>
+                Declared in a Config (Ctrl+P → New Collection) or derived from a repository.
+              </text>
+            </>
+          ) : (
+            <text>Select a Collection to see its Members, References, and Links.</text>
+          )}
         </box>
       );
     const selectedTab = tab();
@@ -262,28 +262,19 @@ export function CollectionsPage(props: {
     return (
       <box flexDirection="column" flexGrow={1} paddingLeft={1}>
         <text>{`${collection.id}  ${collection.members.length} Skills  ${collectionContributionText(collection)}`}</text>
-        <select
+        <SectionTabs
           id="collection-tabs"
-          ref={(value: SelectRenderable) => {
-            tabs = value;
-          }}
-          focused={
-            !props.state.overlay &&
-            props.state.focus === "inspector" &&
-            (!props.state.narrow || props.state.narrowLevel === "detail")
-          }
-          height={1}
           options={[
-            { name: "Members", description: "", value: "members" },
-            { name: "References", description: "", value: "references" },
-            { name: "Links", description: "", value: "links" },
+            { label: "Members", value: "members" },
+            { label: "References", value: "references" },
+            { label: "Links", value: "links" },
           ]}
-          selectedIndex={["members", "references", "links"].indexOf(selectedTab)}
-          showDescription={false}
-          onChange={(index) => {
-            const value = (["members", "references", "links"] as const)[index];
-            if (value) props.onTab(collection.id, value);
-          }}
+          value={selectedTab}
+          owner="inspector"
+          focusRegistry={props.focusRegistry}
+          compact={props.narrow === true}
+          onPrimaryPointerEntry={props.onInspectorFocus}
+          onNavigate={(value) => props.onTab(collection.id, value)}
         />
         <Switch>
           <Match when={selectedTab === "members"}>
@@ -308,9 +299,8 @@ export function CollectionsPage(props: {
         <select
           id="collection-relationships"
           ref={(value: SelectRenderable) => {
-            relationships = value;
+            bind("collection-relationships", value);
           }}
-          focused={!props.state.overlay && props.state.focus === "collection-relationships"}
           options={relationOptions.map(({ name, value }) => ({ name, description: "", value }))}
           showDescription={false}
           onSelect={(index) => {
@@ -325,74 +315,114 @@ export function CollectionsPage(props: {
     filterState().open ? (
       filterPanel()
     ) : (
-      <box flexDirection="column" width={props.state.narrow ? "100%" : "48%"}>
+      <box flexDirection="column" width={props.narrow === true ? "100%" : "48%"}>
         <text>{`Collections ${collections().length}/${effective().length}${Object.keys(filters()).length ? ` · ${Object.keys(filters()).length} filters` : ""}`}</text>
-        <box flexDirection="row">
-          <input
-            id="collections-query"
-            ref={(value: InputRenderable) => {
-              queryInput = value;
-            }}
-            focused={props.state.focus === "collections-query"}
-            placeholder="Search Collections"
-            value={query()}
-            onInput={props.onQuery}
-          />
-          <select
-            id="collections-filter"
-            focused={props.state.focus === "collections-filter-open"}
-            options={[{ name: "Filter", description: "", value: "filter" }]}
-            showDescription={false}
-            onSelect={props.onFilterOpen}
-          />
-        </box>
-        {Object.entries(filters()).map(([dimension, value]) => (
-          <select
-            id={`clear-collections-filter-${dimension}`}
-            ref={(value: SelectRenderable) => {
-              clearFilters.set(dimension, value);
-            }}
-            options={[{ name: `${dimension}: ${value}  Clear`, description: "", value: dimension }]}
-            showDescription={false}
-            onSelect={() => props.onClear(dimension)}
-          />
-        ))}
-        <Show when={Boolean(query()) || Object.keys(filters()).length > 0}>
-          <select
-            id="clear-all-collections-filters"
-            ref={(value: SelectRenderable) => {
-              clearAll = value;
-            }}
-            options={[{ name: "Clear all", description: "", value: "clear" }]}
-            showDescription={false}
-            onSelect={props.onClearAll}
-          />
+        <Show when={effective().length > 0}>
+          <box flexDirection="row">
+            <input
+              id="collections-query"
+              ref={(value: InputRenderable) => {
+                bind("collections-query", value);
+              }}
+              placeholder="Search Collections"
+              value={query()}
+              onInput={props.onQuery}
+            />
+            <select
+              id="collections-filter"
+              ref={(value: SelectRenderable) => {
+                bind("collections-filter-open", value);
+              }}
+              height={1}
+              options={[{ name: "Filter", description: "", value: "filter" }]}
+              showDescription={false}
+              onSelect={props.onFilterOpen}
+            />
+          </box>
+          {Object.entries(filters()).map(([dimension, value]) => {
+            const clear = () => props.onClear(dimension);
+            const id = `clear-collections-filter-${dimension}`;
+            return (
+              <box
+                id={id}
+                onMouseDown={(event) => {
+                  event.stopPropagation();
+                  clear();
+                }}
+              >
+                <select
+                  id={`${id}-keyboard`}
+                  ref={(value: SelectRenderable) => {
+                    bind("collections-filter-clear", value);
+                  }}
+                  height={1}
+                  options={[
+                    { name: `${dimension}: ${value}  Clear`, description: "", value: dimension },
+                  ]}
+                  showDescription={false}
+                  onSelect={clear}
+                />
+              </box>
+            );
+          })}
+          <Show when={Boolean(query()) || Object.keys(filters()).length > 0}>
+            <box
+              id="clear-all-collections-filters"
+              onMouseDown={(event) => {
+                event.stopPropagation();
+                props.onClearAll();
+              }}
+            >
+              <select
+                id="clear-all-collections-filters-keyboard"
+                ref={(value: SelectRenderable) => {
+                  bind("collections-filter-clear-all", value);
+                }}
+                height={1}
+                options={[{ name: "Clear all", description: "", value: "clear" }]}
+                showDescription={false}
+                onSelect={props.onClearAll}
+              />
+            </box>
+          </Show>
+          <text>NAME SKILLS FROM</text>
         </Show>
-        <text>NAME SKILLS FROM</text>
         <select
           id="collection-browser"
           ref={(value: SelectRenderable) => {
-            browser = value;
+            bind("browser", value);
           }}
-          focused={!props.state.overlay && props.state.focus === "browser"}
           options={options()}
           height={10}
           selectedIndex={Math.max(
             0,
-            options().findIndex((option) => option.value === memory().selection.collections),
+            options().findIndex((option) => option.value === props.collections.selected()),
           )}
           showDescription={false}
           onChange={(index) => choose(index, false)}
           onSelect={(index) => choose(index, true)}
         />
         <Show when={collections().length === 0}>
-          <text>No Collections</text>
+          <box flexDirection="column" paddingTop={1}>
+            {effective().length === 0 ? (
+              <>
+                <text>No Collections yet</text>
+                <text>Collections group Skills for reuse and agent disclosure.</text>
+                <text>Ctrl+P → New Collection</text>
+              </>
+            ) : (
+              <>
+                <text>No Collections match the current search or filters.</text>
+                <text>Clear the search and filters to see Collections.</text>
+              </>
+            )}
+          </box>
         </Show>
       </box>
     );
   return (
     <Show
-      when={props.state.narrow}
+      when={props.narrow === true}
       fallback={
         <box flexDirection="row" flexGrow={1}>
           {list()}
@@ -401,7 +431,7 @@ export function CollectionsPage(props: {
         </box>
       }
     >
-      <Show when={props.state.narrowLevel === "list"} fallback={detail()}>
+      <Show when={props.narrowLevel === "list"} fallback={detail()}>
         {list()}
       </Show>
     </Show>

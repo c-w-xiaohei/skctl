@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
+import { InputRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../../src/tui/app";
 import { CollectionsPage } from "../../src/tui/collections-page";
-import { createTuiState } from "../../src/tui/model";
+import { createCollectionsState } from "../../src/tui/collections/state";
+import { createFocusRegistry } from "../../src/tui/focus";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 
 async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
@@ -16,6 +18,49 @@ async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
     setup.renderer.keyInput.prependListener("keypress", onKeypress);
     setup.mockInput.pressKey("ESCAPE");
   });
+}
+
+async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender>>) {
+  await setup.waitForFrame((frame) => frame.includes("Workspace › Skills"));
+  await setup.waitFor(
+    () => !!setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills"),
+  );
+  const skills = setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills");
+  if (!skills) throw new Error("Workspace Skills trigger disappeared before it could be focused");
+  skills.focus();
+  await setup.waitFor(
+    () => setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-skills",
+  );
+  setup.mockInput.pressArrow("right");
+  await setup.waitForFrame((frame) => frame.includes("Workspace › Collections"));
+  await setup.waitFor(
+    () =>
+      setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-collections",
+  );
+  setup.mockInput.pressEnter();
+}
+
+async function click(setup: Awaited<ReturnType<typeof testRender>>, id: string) {
+  const target = setup.renderer.root.findDescendantById(id);
+  expect(target).toBeDefined();
+  await setup.mockMouse.click(target!.screenX + 1, target!.screenY);
+  await setup.renderOnce();
+}
+
+async function key(setup: Awaited<ReturnType<typeof testRender>>, name: string) {
+  if (name === "ENTER") setup.mockInput.pressEnter();
+  else setup.mockInput.pressKey(name);
+  await setup.renderOnce();
+}
+
+async function tabTo(setup: Awaited<ReturnType<typeof testRender>>, id: string) {
+  for (let attempts = 0; attempts < 12; attempts++) {
+    if (setup.renderer.currentFocusedRenderable?.id === id) return;
+    await key(setup, "TAB");
+  }
+  throw new Error(
+    `Timed out tabbing to ${id}; focused ${setup.renderer.currentFocusedRenderable?.id ?? "nothing"}`,
+  );
 }
 
 test("RENDER App routes Sources to Collections and opens a narrow Collection inspector", async () => {
@@ -40,11 +85,23 @@ test("RENDER App routes Sources to Collections and opens a narrow Collection ins
               name: "review",
               address: { source: "team-main", path: "review" },
               paths: [
-                { kind: "direct" as const, collection: "engineering", entryName: "review", owner },
+                {
+                  kind: "direct" as const,
+                  collection: "engineering",
+                  entryName: "review",
+                  owner,
+                },
               ],
             },
           ],
-          references: [{ name: "docs", collection: "docs", description: "Read docs", owner }],
+          references: [
+            {
+              name: "docs",
+              collection: "docs",
+              description: "Read docs",
+              owner,
+            },
+          ],
           links: [{ collection: "shared", owner }],
         },
       ],
@@ -55,17 +112,21 @@ test("RENDER App routes Sources to Collections and opens a narrow Collection ins
     height: 24,
   });
   try {
-    await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("Installed Skills"));
-    setup.renderer.root.findDescendantById("workspace-section-browser")?.focus();
-    await setup.renderOnce();
-    setup.mockInput.pressArrow("down");
-    setup.mockInput.pressEnter();
+    await navigateToCollections(setup);
     await setup.waitForFrame((frame) => frame.includes("engineering"));
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-browser");
     setup.mockInput.pressEnter();
     await setup.waitForFrame((frame) => frame.includes("Members"));
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-tabs");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-tabs-tab-members");
+    const members = setup.renderer.root.findDescendantById("collection-tabs-tab-members")!;
+    await setup.mockMouse.click(members.screenX + 1, members.screenY);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-members",
+    );
+    setup.mockInput.pressEnter();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+    );
   } finally {
     setup.renderer.destroy();
   }
@@ -76,7 +137,9 @@ test("RENDER Collection browser mounts an empty initial projection", async () =>
   const setup = await testRender(
     () => (
       <CollectionsPage
-        state={createTuiState()}
+        collections={createCollectionsState()}
+        narrowLevel="list"
+        projection={() => undefined}
         onSelect={noop}
         onQuery={noop}
         onFilter={noop}
@@ -87,6 +150,7 @@ test("RENDER Collection browser mounts an empty initial projection", async () =>
         onFilterSearch={noop}
         onFilterClose={noop}
         onTab={noop}
+        onInspectorFocus={noop}
         onDetail={noop}
         onRelationship={noop}
       />
@@ -104,7 +168,70 @@ test("RENDER Collection browser mounts an empty initial projection", async () =>
   }
 });
 
-test("RENDER Collection filters search, retain mounted clear focus, and clear locally", async () => {
+test("RENDER Collections filter refs replace same-owner targets without a queued ID focus", async () => {
+  const registry = createFocusRegistry();
+  const collections = createCollectionsState();
+  const base = workspaceProjection();
+  const projection = {
+    ...base,
+    effective: {
+      ...base.effective,
+      collectionsView: [
+        {
+          id: "engineering",
+          declared: [],
+          repository: { derived: false, producers: [] },
+          members: [],
+          references: [],
+          links: [],
+        },
+      ],
+    },
+  };
+  const setup = await testRender(
+    () => (
+      <CollectionsPage
+        collections={collections}
+        narrowLevel="list"
+        projection={() => projection}
+        focusRegistry={registry}
+        onSelect={() => {}}
+        onQuery={() => {}}
+        onFilter={() => {}}
+        onClear={() => {}}
+        onClearAll={() => {}}
+        onFilterOpen={() => {}}
+        onFilterDimension={() => {}}
+        onFilterSearch={() => {}}
+        onFilterClose={() => {}}
+        onTab={() => {}}
+        onInspectorFocus={() => {}}
+        onDetail={() => {}}
+        onRelationship={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await setup.renderOnce();
+    const open = setup.renderer.root.findDescendantById("collections-filter");
+    expect(registry.target("collections-filter-open")).toBe(open);
+    const first = registry.target("collections-filter-open");
+    collections.openFilter();
+    await setup.renderOnce();
+    collections.closeFilter();
+    await setup.renderOnce();
+    const reopened = registry.target("collections-filter-open");
+    expect(reopened).toBe(setup.renderer.root.findDescendantById("collections-filter"));
+    expect(reopened).not.toBe(first);
+    expect(registry.applyFocus("collections-filter-open")).toBe(true);
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collections-filter");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER Collection query filters through physical keyboard input", async () => {
   const projection = workspaceProjection();
   if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
   const owner = {
@@ -126,7 +253,12 @@ test("RENDER Collection filters search, retain mounted clear focus, and clear lo
               name: "review",
               address: { source: "team-main", path: "review" },
               paths: [
-                { kind: "direct" as const, collection: "engineering", entryName: "review", owner },
+                {
+                  kind: "direct" as const,
+                  collection: "engineering",
+                  entryName: "review",
+                  owner,
+                },
               ],
             },
           ],
@@ -141,83 +273,101 @@ test("RENDER Collection filters search, retain mounted clear focus, and clear lo
     height: 40,
   });
   try {
-    const type = (value: string) => setup.mockInput.typeText(value);
-    const applyFilter = async (dimension: string, value: string) => {
-      setup.mockInput.pressEnter();
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "collections-filter-search",
-      );
-      await type(dimension);
-      setup.mockInput.pressEnter();
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "collections-filter-dimensions",
-      );
-      setup.mockInput.pressEnter();
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "collections-filter-search",
-      );
-      await type(value);
-      setup.mockInput.pressEnter();
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "collections-filter-values",
-      );
-      setup.mockInput.pressEnter();
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "collection-browser",
-      );
-    };
-    await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("Installed Skills"));
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("workspace-section-browser");
-    setup.mockInput.pressArrow("down");
-    setup.mockInput.pressEnter();
+    await navigateToCollections(setup);
     await setup.waitForFrame((frame) => frame.includes("Collections 1/1"));
-    await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-browser");
-    setup.mockInput.pressKey("TAB");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collections-query");
-    setup.mockInput.pressKey("TAB");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collections-filter");
-    await applyFilter("For agents", "Excluded");
-    expect(
-      setup.renderer.root.findDescendantById("clear-collections-filter-For agents"),
-    ).toBeDefined();
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressKey("TAB");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collections-filter");
-    await applyFilter("Problems", "No problems");
-    expect(
-      setup.renderer.root.findDescendantById("clear-collections-filter-Problems"),
-    ).toBeDefined();
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressKey("TAB");
-    const firstClear = setup.renderer.currentFocusedRenderable?.id;
-    if (!firstClear) throw new Error("Collection clear filter was not focused");
-    expect(["clear-collections-filter-For agents", "clear-collections-filter-Problems"]).toContain(
-      firstClear,
-    );
-    setup.mockInput.pressEnter();
+    setup.mockInput.pressKey("/");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collections-query");
+    setup.mockInput.typeText("no-such-collection");
+    await setup.waitForFrame((frame) => frame.includes("Collections 0/1"));
+    expect(setup.captureCharFrame()).toContain("No Collections match the current search");
+    await parsedEscape(setup);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER Collection filter controls clear one by mouse and all by Enter", async () => {
+  const projection = workspaceProjection();
+  if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
+  const owner = {
+    level: "project" as const,
+    file: "/project.jsonc",
+    pointer: "/collections/one",
+  };
+  const complete = {
+    ...projection,
+    effective: {
+      ...projection.effective,
+      collectionsView: [
+        {
+          id: "one",
+          declared: [owner],
+          repository: { derived: false, producers: [] },
+          members: [
+            {
+              name: "guide",
+              address: { source: "team", path: "guide" },
+              paths: [],
+            },
+          ],
+          references: [],
+          links: [],
+        },
+        {
+          id: "two",
+          declared: [],
+          repository: { derived: false, producers: [] },
+          members: [],
+          references: [],
+          links: [],
+        },
+      ],
+    },
+  };
+  const setup = await testRender(() => <App core={directSourceCore(complete)} exit={() => {}} />, {
+    width: 120,
+    height: 40,
+  });
+  try {
+    await navigateToCollections(setup);
+    await setup.waitForFrame((frame) => frame.includes("Collections 2/2"));
+    setup.mockInput.pressKey("/");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collections-query");
+    setup.mockInput.typeText("one");
+    await setup.waitForFrame((frame) => frame.includes("Collections 1/2"));
+    await tabTo(setup, "collections-filter");
+    await key(setup, "ENTER");
     await setup.waitFor(
-      () =>
-        setup.renderer.currentFocusedRenderable?.id !== firstClear &&
-        ["clear-collections-filter-For agents", "clear-collections-filter-Problems"].includes(
-          setup.renderer.currentFocusedRenderable?.id ?? "",
-        ),
+      () => setup.renderer.currentFocusedRenderable?.id === "collections-filter-search",
     );
-    expect(setup.renderer.root.findDescendantById(firstClear)).toBeUndefined();
-    setup.mockInput.pressKey("TAB");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("clear-all-collections-filters");
-    await setup.renderOnce();
-    setup.mockInput.pressEnter();
-    await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-browser");
+    setup.mockInput.typeText("Config");
+    await key(setup, "TAB");
+    await key(setup, "ENTER");
+    setup.mockInput.typeText("project");
+    await key(setup, "TAB");
+    await key(setup, "ENTER");
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("clear-collections-filter-Config"),
+    );
+
+    await click(setup, "clear-collections-filter-Config");
     expect(
-      setup.renderer.root.findDescendantById("clear-collections-filter-For agents"),
+      setup.renderer.root.findDescendantById("clear-collections-filter-Config"),
     ).toBeUndefined();
     expect(
-      setup.renderer.root.findDescendantById("clear-collections-filter-Problems"),
-    ).toBeUndefined();
+      (setup.renderer.root.findDescendantById("collections-query") as InputRenderable).value,
+    ).toBe("one");
+    expect(setup.captureCharFrame()).toContain("Collections 1/2");
+
+    await tabTo(setup, "clear-all-collections-filters-keyboard");
+    await key(setup, "ENTER");
+    await setup.waitForFrame((frame) => frame.includes("Collections 2/2"));
+    expect(
+      (setup.renderer.root.findDescendantById("collections-query") as InputRenderable).value,
+    ).toBe("");
+    expect(setup.renderer.root.findDescendantById("clear-all-collections-filters")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
   }
@@ -241,7 +391,10 @@ test("RENDER Collection browser shows direct, contributed, derived, composed, an
         file: "/global.jsonc",
         pointer: "/configSources/team",
       },
-      declaration: { level: "global" as const, pointer: "/collections/contributed" },
+      declaration: {
+        level: "global" as const,
+        pointer: "/collections/contributed",
+      },
     },
   };
   const complete = {
@@ -281,7 +434,10 @@ test("RENDER Collection browser shows direct, contributed, derived, composed, an
         {
           id: "derived",
           declared: [],
-          repository: { derived: true, producers: [{ source: "repo", path: "skill" }] },
+          repository: {
+            derived: true,
+            producers: [{ source: "repo", path: "skill" }],
+          },
           members: [
             {
               name: "skill",
@@ -302,7 +458,10 @@ test("RENDER Collection browser shows direct, contributed, derived, composed, an
         {
           id: "composed",
           declared: [direct],
-          repository: { derived: true, producers: [{ source: "repo", path: "combo" }] },
+          repository: {
+            derived: true,
+            producers: [{ source: "repo", path: "combo" }],
+          },
           members: [
             {
               name: "combo",
@@ -311,15 +470,28 @@ test("RENDER Collection browser shows direct, contributed, derived, composed, an
                 {
                   kind: "via-link" as const,
                   links: [
-                    { collection: "composed", linkedCollection: "shared", owner: direct },
-                    { collection: "shared", linkedCollection: "nested", owner: direct },
+                    {
+                      collection: "composed",
+                      linkedCollection: "shared",
+                      owner: direct,
+                    },
+                    {
+                      collection: "shared",
+                      linkedCollection: "nested",
+                      owner: direct,
+                    },
                   ],
                 },
               ],
             },
           ],
           references: [
-            { name: "docs", collection: "direct", description: "zero exposure", owner: direct },
+            {
+              name: "docs",
+              collection: "direct",
+              description: "zero exposure",
+              owner: direct,
+            },
           ],
           links: [{ collection: "shared", owner: direct }],
         },
@@ -339,11 +511,7 @@ test("RENDER Collection browser shows direct, contributed, derived, composed, an
     height: 40,
   });
   try {
-    await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("Installed Skills"));
-    setup.mockInput.pressKey("TAB", { shift: true });
-    setup.mockInput.pressKey("ARROW_DOWN");
-    setup.mockInput.pressEnter();
+    await navigateToCollections(setup);
     await setup.waitForFrame((frame) =>
       [
         "direct  1  project",
@@ -362,7 +530,11 @@ test("RENDER Collection browser shows direct, contributed, derived, composed, an
 test("RENDER Collections retain selection, tab, and focus through 120 80 79 43 120", async () => {
   const projection = workspaceProjection();
   if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
-  const owner = { level: "project" as const, file: "/project.jsonc", pointer: "/collections/a" };
+  const owner = {
+    level: "project" as const,
+    file: "/project.jsonc",
+    pointer: "/collections/a",
+  };
   const complete = {
     ...projection,
     effective: {
@@ -392,13 +564,12 @@ test("RENDER Collections retain selection, tab, and focus through 120 80 79 43 1
     height: 24,
   });
   try {
-    await setup.waitForFrame((frame) => frame.includes("Installed Skills"));
-    setup.renderer.root.findDescendantById("workspace-section-browser")?.focus();
-    setup.mockInput.pressArrow("down");
-    setup.mockInput.pressEnter();
+    await navigateToCollections(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
     setup.mockInput.pressEnter();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-tabs");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-members",
+    );
     setup.mockInput.pressArrow("right");
     await setup.renderOnce();
     for (const width of [120, 80, 79, 43, 120] as const) {
@@ -423,4 +594,68 @@ test("RENDER Collections retain selection, tab, and focus through 120 80 79 43 1
   } finally {
     setup.renderer.destroy();
   }
+});
+
+test("STATE Collections refresh retains a surviving ID and selects the nearest replacement", () => {
+  const collections = createCollectionsState();
+  const base = workspaceProjection();
+  const projection = (ids: readonly string[]) => ({
+    ...base,
+    effective: {
+      ...base.effective,
+      collectionsView: ids.map((id) => ({
+        id,
+        declared: [],
+        repository: { derived: false, producers: [] },
+        members: [],
+        references: [],
+        links: [],
+      })),
+    },
+  });
+  const first = projection(["a", "b", "c"]);
+  collections.select("b");
+  collections.reconcile(first, projection(["a", "b", "d"]));
+  expect(collections.selected()).toBe("b");
+  collections.reconcile(projection(["a", "b", "d"]), projection(["a", "d"]));
+  expect(collections.selected()).toBe("d");
+});
+
+test("STATE Collections preserve independent tabs across A-B-A selection", () => {
+  const collections = createCollectionsState();
+  collections.select("a");
+  collections.selectTab("a", "references");
+  collections.select("b");
+  collections.selectTab("b", "links");
+  collections.select("a");
+  expect(collections.tab("a")).toBe("references");
+  expect(collections.tab("b")).toBe("links");
+});
+
+test("STATE filtered and empty Collection refresh clears selection", () => {
+  const collections = createCollectionsState();
+  const base = workspaceProjection();
+  const projection = (ids: readonly string[]) => ({
+    ...base,
+    effective: {
+      ...base.effective,
+      collectionsView: ids.map((id) => ({
+        id,
+        declared: [],
+        repository: { derived: false, producers: [] },
+        members: [],
+        references: [],
+        links: [],
+      })),
+    },
+  });
+  const first = projection(["a"]);
+  collections.select("a");
+  collections.setQuery("no-match");
+  collections.reconcile(first, first);
+  expect(collections.selected()).toBeUndefined();
+  collections.setQuery("");
+  collections.select("a");
+  collections.reconcile(first, projection([]));
+  expect(collections.selected()).toBeUndefined();
 });

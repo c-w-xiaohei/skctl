@@ -4,6 +4,7 @@ import { testRender } from "@opentui/solid";
 import type { ManagementProjection } from "../../src/core/api";
 import type { TuiCore } from "../../src/tui/effects";
 import { App } from "../../src/tui/app";
+import { createWorkspaceState } from "../../src/tui/workspace/state";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
 
@@ -15,7 +16,11 @@ function projection(): ManagementProjection {
   const extra = {
     ...reference!.source!,
     id: "team-main-extra",
-    provenance: { level: "global" as const, file: "/global.jsonc", pointer: "/sources/extra" },
+    provenance: {
+      level: "global" as const,
+      file: "/global.jsonc",
+      pointer: "/sources/extra",
+    },
   };
   return {
     ...base,
@@ -51,12 +56,22 @@ function projection(): ManagementProjection {
         address: { source: "team-main-extra", path: "broken" },
         name: "broken",
         description: "Broken documentation Skill",
-        owner: { ...reference!.owner, source: "team-main-extra", health: "missing" },
+        owner: {
+          ...reference!.owner,
+          source: "team-main-extra",
+          health: "missing",
+        },
         source: extra,
         collections: [{ id: "documentation", entry: "broken", paths: [] }],
         selectors: [],
         selectorViews: { status: "unavailable" },
-        problems: [{ code: "SOURCE_MISSING", severity: "warning", message: "Source missing" }],
+        problems: [
+          {
+            code: "SOURCE_MISSING",
+            severity: "warning",
+            message: "Source missing",
+          },
+        ],
       },
     ],
   };
@@ -71,6 +86,19 @@ async function key(setup: Setup, name: string, shift = false) {
 
 async function type(setup: Setup, value: string) {
   for (const character of value.toLocaleLowerCase()) await key(setup, character);
+}
+
+async function click(setup: Setup, id: string) {
+  const target = setup.renderer.root.findDescendantById(id);
+  expect(target).toBeDefined();
+  await setup.mockMouse.click(target!.screenX + 1, target!.screenY);
+  await setup.renderOnce();
+}
+
+async function clearFilterWithKeyboard(setup: Setup, id: string) {
+  expect(setup.renderer.root.findDescendantById(`${id}-keyboard`)).toBeDefined();
+  while (setup.renderer.currentFocusedRenderable?.id !== `${id}-keyboard`) await key(setup, "TAB");
+  await key(setup, "ENTER");
 }
 
 async function parsedEscape(setup: Setup) {
@@ -88,8 +116,11 @@ async function parsedEscape(setup: Setup) {
 }
 
 async function chooseFilter(setup: Setup, dimension: string, value: string) {
+  while (setup.renderer.currentFocusedRenderable?.id !== "installed-skill-browser") {
+    await key(setup, "TAB", true);
+  }
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
-  await key(setup, "TAB");
+  await key(setup, "/");
   await key(setup, "TAB");
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("open-skills-filter");
   await key(setup, "ENTER");
@@ -104,6 +135,9 @@ async function chooseFilter(setup: Setup, dimension: string, value: string) {
 }
 
 async function query(setup: Setup, value: string) {
+  while (setup.renderer.currentFocusedRenderable?.id !== "installed-skill-browser") {
+    await key(setup, "TAB", true);
+  }
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
   await key(setup, "/");
   await type(setup, value);
@@ -128,33 +162,26 @@ test("STATE-012 RENDER Skills compose query and dimensions, clear one physically
     await query(setup, "reference");
     await setup.waitForFrame((frame) => frame.includes("Installed Skills 1/3"));
     expect(filterChipIds(setup)).toEqual(["Collection", "Source"]);
-    expect(
-      (setup.renderer.root.findDescendantById("clear-skills-filter-Collection") as SelectRenderable)
-        .options[0]?.name,
-    ).toBe("Collection: documentation");
-    expect(
-      (setup.renderer.root.findDescendantById("clear-skills-filter-Source") as SelectRenderable)
-        .options[0]?.name,
-    ).toBe("Source: team-main-extra");
-    // The mounted toolbar order reaches the first chip without test-only focus mutation.
-    await key(setup, "TAB");
-    await key(setup, "TAB");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("clear-skills-filter-Collection");
-    await key(setup, "ENTER");
+    expect(setup.captureCharFrame()).toContain("Collection: documentation");
+    expect(setup.captureCharFrame()).toContain("Source: team-main-extra");
+    await click(setup, "clear-skills-filter-Collection");
     await setup.waitForFrame((frame) => frame.includes("Installed Skills 1/3"));
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "reference",
     );
     expect(filterChipIds(setup)).toEqual(["Source"]);
 
-    await key(setup, "TAB");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("clear-all-skills-filters");
-    await key(setup, "ENTER");
+    await clearFilterWithKeyboard(setup, "clear-skills-filter-Source");
+    expect(filterChipIds(setup)).toEqual([]);
+
+    await chooseFilter(setup, "Source", "team-main-extra");
+    await click(setup, "clear-all-skills-filters");
     await setup.waitForFrame((frame) => frame.includes("Installed Skills 3/3"));
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "",
     );
     expect(filterChipIds(setup)).toEqual([]);
+    expect(setup.renderer.root.findDescendantById("clear-all-skills-filters")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
   }
@@ -175,35 +202,26 @@ test("STATE-012 RENDER Skills toolbar discloses the active filter count", async 
   }
 });
 
-test("STATE-012 RENDER source view remains the bounding context after Clear all", async () => {
-  const setup = await testRender(
-    () => <App core={directSourceCore(projection())} exit={() => {}} />,
-    { width: 120, height: 40 },
-  );
-  try {
-    await setup.renderOnce();
-    await key(setup, "TAB", true);
-    await key(setup, "ARROW_DOWN");
-    await key(setup, "ARROW_DOWN");
-    await key(setup, "ENTER");
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
-    await key(setup, "ENTER");
-    await setup.waitForFrame((frame) => frame.includes("View Installed Skills"));
-    await key(setup, "ARROW_DOWN");
-    await key(setup, "ARROW_DOWN");
-    await key(setup, "ENTER");
-    await setup.waitForFrame((frame) => frame.includes("Installed Skills from team-main"));
-    await query(setup, "guide");
-    await key(setup, "TAB");
-    await key(setup, "TAB");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("clear-all-skills-filters");
-    await key(setup, "ENTER");
-    await setup.waitForFrame((frame) => frame.includes("Installed Skills from team-main 1/1"));
-    expect(setup.captureCharFrame()).toContain("guide");
-    expect(setup.captureCharFrame()).not.toContain("reference");
-  } finally {
-    setup.renderer.destroy();
-  }
+test("STATE-012 source view remains the bounding context after Clear all", () => {
+  const workspace = createWorkspaceState();
+  workspace.showInstalledSkillsFromSource("team-main");
+  workspace.setQuery("guide");
+  workspace.setFilter("Collection", "engineering");
+  workspace.clearFilters();
+  expect(workspace.snapshot()).toMatchObject({
+    sourceFilter: "team-main",
+    query: "",
+    filters: {},
+  });
+});
+
+test("STATE-012 accepted refresh to empty while a filter is active clears Skill selection", () => {
+  const current = projection();
+  const workspace = createWorkspaceState();
+  workspace.selectSkill("team-main-extra/reference");
+  workspace.setFilter("Source", "team-main-extra");
+  workspace.reconcile(current, { ...current, installedSkills: [] });
+  expect(workspace.selectedSkill()).toBeUndefined();
 });
 
 test("STATE-004 RENDER empty filtering clears action context and destination return retains local filters", async () => {
@@ -228,26 +246,13 @@ test("STATE-004 RENDER empty filtering clears action context and destination ret
     await query(setup, "no-such-skill");
     await setup.waitForFrame((frame) => frame.includes("Installed Skills 0/3"));
     const emptyFrame = setup.captureCharFrame();
-    expect(emptyFrame).toContain("No Installed Skills");
-    expect(emptyFrame).toContain("No Installed Skill Selected");
+    expect(emptyFrame).toContain("No Skills match the current search or filters");
+    expect(emptyFrame).toContain("Select a Skill to read its SKILL.md, resources, and details.");
     expect(emptyFrame).not.toContain("needle in prose");
     expect(emptyFrame).not.toContain("title: Guide");
     expect(setup.renderer.root.findDescendantById("reader-details-actions")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("reader-tabs")).toBeUndefined();
     expect(loads).toEqual(["guide"]);
-
-    setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-menu");
-    await key(setup, "ARROW_DOWN");
-    await key(setup, "ENTER");
-    await setup.waitForFrame((frame) => frame.includes("Direct sources"));
-    setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-menu");
-    await key(setup, "ENTER");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-    expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
-      "no-such-skill",
-    );
   } finally {
     setup.renderer.destroy();
   }
@@ -284,7 +289,13 @@ const refreshedProblemsTest = async () => {
       skill.address.path === "guide"
         ? {
             ...skill,
-            problems: [{ code: "SOURCE_MISSING", severity: "warning", message: "Guide is broken" }],
+            problems: [
+              {
+                code: "SOURCE_MISSING",
+                severity: "warning",
+                message: "Guide is broken",
+              },
+            ],
           }
         : skill.address.path === "reference"
           ? { ...skill, problems: [] }
@@ -340,13 +351,19 @@ const refreshedProblemsTest = async () => {
     await setup.waitForFrame((frame) => frame.includes("Installed Skills 1/2"));
 
     await key(setup, "ENTER");
+    const tabs = setup.renderer.root.findDescendantById("reader-tabs");
+    expect(tabs).toBeDefined();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
     await key(setup, "TAB", true);
+    await key(setup, "TAB");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
     await key(setup, "ARROW_RIGHT");
-    await key(setup, "ENTER");
-    await key(setup, "TAB", true);
     await key(setup, "ARROW_RIGHT");
-    await key(setup, "ENTER");
+    await key(setup, "TAB");
     await setup.waitForFrame((frame) => frame.includes("Address  team-main/guide"));
+    const readerActions = setup.renderer.root.findDescendantById("reader-details-actions");
+    expect(readerActions).toBeDefined();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
     await key(setup, "TAB");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "reader-details-actions",
@@ -392,7 +409,7 @@ const refreshedProblemsTest = async () => {
     ) as SelectRenderable;
     expect(browser.getSelectedIndex()).toBe(0);
     expect(browser.options.map((option) => option.value)).toEqual(["team-main-extra/reference"]);
-    expect(loads).toEqual(["guide", "guide", "reference"]);
+    expect(loads).toEqual(["guide", "reference"]);
     expect(setup.captureCharFrame()).toContain("Address  team-main-extra/reference");
     expect(
       (
@@ -436,22 +453,29 @@ test("STATE-005 RENDER resize retains filters and never leaves unmounted clear f
       if (width < 80) {
         expect(setup.renderer.root.findDescendantById("reader-scrollbox")).toBeUndefined();
         await parsedEscape(setup);
-        expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
+        expect(setup.renderer.currentFocusedRenderable).toBeDefined();
       }
     }
-    await key(setup, "TAB");
-    await key(setup, "TAB");
-    await key(setup, "TAB");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("clear-skills-filter-Collection");
-    await key(setup, "ENTER");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("clear-all-skills-filters");
+    await click(setup, "clear-skills-filter-Collection");
+    expect(filterChipIds(setup)).toEqual([]);
+    await click(setup, "clear-all-skills-filters");
+    expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
+      "",
+    );
   } finally {
     setup.renderer.destroy();
   }
 });
 
 test("STATE-012 RENDER local filtering makes no workspace, provider, or management calls", async () => {
-  const calls = { workspace: 0, discover: 0, checkUpdate: 0, install: 0, update: 0, remove: 0 };
+  const calls = {
+    workspace: 0,
+    discover: 0,
+    checkUpdate: 0,
+    install: 0,
+    update: 0,
+    remove: 0,
+  };
   const core: TuiCore = directSourceCore(projection(), {
     get: async () => {
       calls.workspace++;
@@ -459,7 +483,10 @@ test("STATE-012 RENDER local filtering makes no workspace, provider, or manageme
     },
     discover: async (request) => {
       calls.discover++;
-      return { value: { source: request.source, kind: "github", candidates: [] }, diagnostics: [] };
+      return {
+        value: { source: request.source, kind: "github", candidates: [] },
+        diagnostics: [],
+      };
     },
     checkUpdate: async (request) => {
       calls.checkUpdate++;

@@ -34,37 +34,36 @@ async function awaitParsedEscape(setup: Awaited<ReturnType<typeof testRender>>) 
 async function openResources(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.renderOnce();
   await Promise.resolve();
-  const browser = setup.renderer.root.findDescendantById("installed-skill-browser") as
-    | SelectRenderable
-    | undefined;
-  browser?.focus();
-  if (!setup.renderer.root.findDescendantById("reader-tabs")) {
-    browser?.selectCurrent();
-    await setup.renderOnce();
-  }
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-tabs"));
-  const tabs = setup.renderer.root.findDescendantById("reader-tabs") as TabSelectRenderable;
-  tabs.focus();
-  tabs.moveRight();
-  await setup.renderOnce();
-  tabs.selectCurrent();
-  await setup.renderOnce();
-}
-
-async function openResourcesWithKeys(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.renderOnce();
-  await Promise.resolve();
-  expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
+  await setup.waitFor(
+    () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+  );
   setup.mockInput.pressEnter();
   await setup.renderOnce();
-  expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-scrollbox");
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
   setup.mockInput.pressKey("TAB", { shift: true });
+  await setup.renderOnce();
+  await setup.waitFor(
+    () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+  );
+  setup.mockInput.pressKey("TAB");
   await setup.renderOnce();
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-tabs");
   setup.mockInput.pressKey("ARROW_RIGHT");
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey("TAB");
+  await setup.renderOnce();
+  await setup.waitFor(
+    () =>
+      (
+        setup.renderer.root.findDescendantById("reader-tabs") as TabSelectRenderable
+      ).getSelectedIndex() === 1,
+  );
   await setup.renderOnce();
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
+}
+
+async function openResourcesWithKeys(setup: Awaited<ReturnType<typeof testRender>>) {
+  await openResources(setup);
 }
 
 test.serial(
@@ -177,17 +176,22 @@ test.serial(
     );
     try {
       await openResources(setup);
+      await setup.flush();
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
+      await setup.waitForFrame((frame) => frame.includes("docs/guide.md  file 12 bytes"));
       const browser = setup.renderer.root.findDescendantById(
         "resource-browser",
       ) as SelectRenderable;
-      browser.focus();
-      browser.selectCurrent();
-      await setup.renderOnce();
-      await Promise.resolve();
-      browser.moveDown();
-      await setup.renderOnce();
-      browser.selectCurrent();
+      await setup.mockMouse.click(browser.screenX + 1, browser.screenY + 1);
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
+      setup.mockInput.pressArrow("down");
+      await setup.waitFor(
+        () =>
+          (
+            setup.renderer.root.findDescendantById("resource-browser") as SelectRenderable
+          )?.getSelectedIndex() === 1,
+      );
+      setup.mockInput.pressEnter();
       await setup.waitFor(() => calls.length === 1);
       expect(calls).toEqual([{ address: readerAddress, path: "docs/guide.md" }]);
       expect(
@@ -196,15 +200,19 @@ test.serial(
           .some((child) => child instanceof MarkdownRenderable),
       ).toBe(true);
 
-      browser.moveDown();
-      await setup.renderOnce();
-      browser.selectCurrent();
+      await awaitParsedEscape(setup);
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
+      setup.mockInput.pressArrow("down");
+      await setup.waitFor(() => browser.getSelectedIndex() === 2);
+      setup.mockInput.pressEnter();
       await setup.waitFor(() => calls.length === 2);
       expect(setup.renderer.root.findDescendantById("resource-line-0")).toBeDefined();
 
-      browser.moveDown();
-      await setup.renderOnce();
-      browser.selectCurrent();
+      await awaitParsedEscape(setup);
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
+      setup.mockInput.pressArrow("down");
+      await setup.waitFor(() => browser.getSelectedIndex() === 3);
+      setup.mockInput.pressEnter();
       await setup.waitFor(() => calls.length === 3);
       await setup.waitForFrame((frame) => frame.includes("Cannot preview binary resource"));
       expect(setup.captureCharFrame()).toContain("blob.bin  file 8 bytes");
@@ -218,6 +226,12 @@ test.serial(
   "RENDER Resources retry the exact failed request and narrow Escape backs from content to list",
   async () => {
     let attempts = 0;
+    let resolveRetry:
+      | ((value: {
+          value: { kind: "text"; path: string; text: string; format: "text" };
+          diagnostics: [];
+        }) => void)
+      | undefined;
     const calls: unknown[] = [];
     const setup = await testRender(
       () => (
@@ -229,35 +243,59 @@ test.serial(
               calls.push(request);
               attempts++;
               if (attempts === 1) throw new SkillCliError("RESOURCE_NOT_FOUND", "resource moved");
-              return {
-                value: { kind: "text", path: request.path, text: "recovered", format: "text" },
-                diagnostics: [],
-              };
+              return new Promise((resolve) => {
+                resolveRetry = resolve;
+              });
             },
           })}
           exit={() => {}}
         />
       ),
-      { width: 79, height: 24 },
+      { width: 120, height: 40 },
     );
     try {
       await openResources(setup);
       const browser = setup.renderer.root.findDescendantById(
         "resource-browser",
       ) as SelectRenderable;
-      browser.focus();
-      browser.moveDown();
-      browser.selectCurrent();
+      setup.mockInput.pressArrow("down");
+      await setup.waitFor(() => browser.getSelectedIndex() === 1);
+      setup.mockInput.pressEnter();
+      await setup.flush();
+      await setup.waitFor(() => calls.length === 1);
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-retry"));
       await setup.waitForFrame((frame) => frame.includes("RESOURCE_NOT_FOUND: resource moved"));
-      const retry = setup.renderer.root.findDescendantById("resource-retry") as SelectRenderable;
-      retry.focus();
-      retry.selectCurrent();
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
+      setup.mockInput.pressKey("TAB");
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-retry");
+      setup.mockInput.pressEnter();
+      await setup.waitFor(() => calls.length === 2);
+      await setup.waitForFrame((frame) => frame.includes("Loading resource content"));
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-content");
+      resolveRetry!({
+        value: {
+          kind: "text",
+          path: "docs/guide.md",
+          text: "recovered",
+          format: "text",
+        },
+        diagnostics: [],
+      });
       await setup.waitForFrame((frame) => frame.includes("recovered"));
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-content");
       expect(calls).toEqual([
         { address: readerAddress, path: "docs/guide.md" },
         { address: readerAddress, path: "docs/guide.md" },
       ]);
+      setup.resize(79, 24);
+      await setup.waitFor(() => !setup.renderer.root.findDescendantById("reader-tabs"));
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+      );
       expect(setup.renderer.root.findDescendantById("resource-browser")).toBeUndefined();
+      setup.mockInput.pressEnter();
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-content");
       await awaitParsedEscape(setup);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
@@ -295,10 +333,14 @@ test.serial(
     );
     try {
       await openResources(setup);
+      await setup.flush();
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-retry"));
       await setup.waitForFrame((frame) => frame.includes("RESOURCE_NOT_FOUND: list moved"));
       const retry = setup.renderer.root.findDescendantById("resource-retry") as SelectRenderable;
-      retry.focus();
-      retry.selectCurrent();
+      await setup.mockMouse.click(retry.screenX, retry.screenY);
+      setup.mockInput.pressEnter();
+      await setup.waitFor(() => calls.length === 2);
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
       await setup.waitForFrame((frame) => frame.includes("docs/guide.md  file 12 bytes"));
       expect(calls).toEqual([{ address: readerAddress }, { address: readerAddress }]);
     } finally {
@@ -347,6 +389,9 @@ test.serial(
       const browser = setup.renderer.root.findDescendantById(
         "resource-browser",
       ) as SelectRenderable;
+      await setup.waitFor(() => browser.getSelectedOption()?.value === "docs");
+      await setup.mockMouse.click(browser.screenX + 1, browser.screenY + 1);
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
       expect(setup.renderer.currentFocusedRenderable).toBe(browser);
       for (let index = 0; index < 3; index++) {
         setup.mockInput.pressEnter();
@@ -442,21 +487,30 @@ test.serial(
           exit={() => {}}
         />
       ),
-      { width: 79, height: 24 },
+      { width: 120, height: 40 },
     );
     try {
       await openResourcesWithKeys(setup);
+      setup.resize(79, 24);
+      await setup.waitFor(() => !setup.renderer.root.findDescendantById("reader-tabs"));
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+      );
+      setup.mockInput.pressEnter();
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
       const browser = setup.renderer.root.findDescendantById(
         "resource-browser",
       ) as SelectRenderable;
-      browser.focus();
-      expect(setup.renderer.currentFocusedRenderable).toBe(browser);
+      await setup.waitFor(() => browser.getSelectedOption()?.value === "docs");
+      await setup.mockMouse.click(browser.screenX + 1, browser.screenY + 1);
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
       setup.mockInput.pressArrow("down");
-      await setup.renderOnce();
-      expect(browser.getSelectedIndex()).toBe(1);
+      await setup.waitFor(() => browser.getSelectedIndex() === 1);
       setup.mockInput.pressEnter();
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
       await setup.waitForFrame((frame) => frame.includes("old resource"));
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-content");
       await awaitParsedEscape(setup);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
@@ -466,25 +520,19 @@ test.serial(
       ) as SelectRenderable;
       expect(setup.renderer.currentFocusedRenderable).toBe(remounted);
       setup.mockInput.pressArrow("down");
-      await setup.renderOnce();
-      expect(
-        (
-          setup.renderer.root.findDescendantById("resource-browser") as SelectRenderable
-        ).getSelectedIndex(),
-      ).toBe(2);
+      await setup.waitFor(
+        () =>
+          (
+            setup.renderer.root.findDescendantById("resource-browser") as SelectRenderable
+          ).getSelectedIndex() === 2,
+      );
       setup.mockInput.pressEnter();
       await setup.waitForFrame((frame) => frame.includes("RESOURCE_NOT_FOUND: new resource moved"));
       expect(setup.captureCharFrame()).not.toContain("old resource");
+      setup.mockInput.pressKey("TAB", { shift: true });
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
       setup.mockInput.pressKey("TAB");
-      await setup.renderOnce();
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("resource-retry");
-      setup.mockInput.pressKey("TAB", { shift: true });
-      await setup.renderOnce();
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-tabs");
-      setup.mockInput.pressKey("TAB");
-      await setup.renderOnce();
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("resource-retry");
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-retry");
       setup.mockInput.pressEnter();
       await setup.waitForFrame((frame) => frame.includes("retried"));
     } finally {
@@ -537,61 +585,61 @@ test.serial(
     );
     try {
       await openResourcesWithKeys(setup);
+      const resourceBrowser = setup.renderer.root.findDescendantById(
+        "resource-browser",
+      ) as SelectRenderable;
+      await setup.waitFor(() => resourceBrowser.getSelectedOption()?.value === "guide");
       setup.mockInput.pressEnter();
-      await setup.waitFor(() =>
-        (setup.renderer.root.findDescendantById("resource-content") as ScrollBoxRenderable)
-          ?.getChildren()
-          .some((child) => child instanceof MarkdownRenderable),
-      );
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
       expect(
         (
           setup.renderer.root.findDescendantById("reader-tabs") as TabSelectRenderable
         ).getSelectedIndex(),
       ).toBe(1);
 
-      setup.mockInput.pressKey("TAB");
+      const browser = setup.renderer.root.findDescendantById(
+        "installed-skill-browser",
+      ) as SelectRenderable;
+      setup.mockInput.pressKey("TAB", { shift: true });
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
       );
       setup.mockInput.pressArrow("down");
+      await setup.waitFor(() => browser.getSelectedOption()?.value === "team-main/reference");
       setup.mockInput.pressEnter();
-      await setup.waitFor(() =>
-        (setup.renderer.root.findDescendantById("reader-scrollbox") as ScrollBoxRenderable)
-          ?.getChildren()
-          .some((child) => child instanceof MarkdownRenderable && child.content === "# Reference"),
-      );
-      setup.mockInput.pressKey("TAB", { shift: true });
-      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
+      expect(
+        (
+          setup.renderer.root.findDescendantById("reader-tabs") as TabSelectRenderable
+        ).getSelectedIndex(),
+      ).toBe(0);
+      expect(reads).toEqual(["guide"]);
       setup.mockInput.pressKey("TAB", { shift: true });
       await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "open-skills-filter",
+        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
       );
-      setup.mockInput.pressKey("TAB", { shift: true });
-      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "skills-query");
+      setup.mockInput.pressKey("TAB");
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
+      setup.mockInput.pressArrow("right");
+      setup.mockInput.pressKey("TAB");
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
+      setup.mockInput.pressEnter();
+      await setup.waitFor(() => reads.includes("reference"));
       setup.mockInput.pressKey("TAB", { shift: true });
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
       );
       setup.mockInput.pressArrow("up");
-      await setup.waitFor(
-        () =>
-          (
-            setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable
-          )?.getSelectedIndex() === 0,
-      );
+      await setup.waitFor(() => browser.getSelectedOption()?.value === "team-main/guide");
       setup.mockInput.pressEnter();
-      await setup.renderOnce();
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-content");
       expect(
         (
           setup.renderer.root.findDescendantById("reader-tabs") as TabSelectRenderable
         ).getSelectedIndex(),
       ).toBe(1);
-      await setup.waitFor(() =>
-        (setup.renderer.root.findDescendantById("resource-content") as ScrollBoxRenderable)
-          ?.getChildren()
-          .some((child) => child instanceof MarkdownRenderable),
-      );
-      expect(reads).toEqual(["guide"]);
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
+      expect(reads).toEqual(["guide", "reference"]);
       expect(
         (
           setup.renderer.root.findDescendantById("reader-tabs") as TabSelectRenderable
@@ -599,13 +647,23 @@ test.serial(
       ).toBe(1);
 
       setup.resize(79, 24);
+      await setup.waitFor(() => !setup.renderer.root.findDescendantById("reader-tabs"));
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+      );
+      setup.resize(120, 40);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("resource-content");
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-content");
       expect(
         (
           setup.renderer.root.findDescendantById("reader-tabs") as TabSelectRenderable
         ).getSelectedIndex(),
       ).toBe(1);
+      expect(
+        (setup.renderer.root.findDescendantById("resource-content") as ScrollBoxRenderable)
+          .getChildren()
+          .some((child) => child instanceof MarkdownRenderable),
+      ).toBe(true);
     } finally {
       setup.renderer.destroy();
     }

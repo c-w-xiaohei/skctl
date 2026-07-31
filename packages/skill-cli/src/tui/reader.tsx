@@ -5,9 +5,12 @@ import {
   SyntaxStyle,
   TabSelectRenderable,
 } from "@opentui/core";
-import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
-import type { InstalledSkill, TuiState } from "./model";
-import { findLiteralMatches, rawLineForMarkdownMatch } from "./model";
+import type { BaseRenderable } from "@opentui/core";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import type { InstalledSkill, ReaderState } from "./types";
+import type { ManagementProjection } from "../core/api";
+import { findLiteralMatches, rawLineForMarkdownMatch } from "./types";
+import type { FocusRegistry, FocusTarget } from "./focus";
 
 const syntaxStyle = SyntaxStyle.fromStyles({});
 
@@ -25,12 +28,13 @@ function NativeMarkdown(props: { readonly content: () => string }) {
 }
 
 export function Reader(props: {
-  readonly state: TuiState;
+  readonly reader: () => ReaderState;
+  readonly projection: () => ManagementProjection | undefined;
+  readonly focusRegistry?: FocusRegistry;
   readonly skill?: InstalledSkill;
   readonly narrow: boolean;
-  readonly onPatch: (value: Partial<TuiState["reader"]>) => void;
+  readonly onPatch: (value: Partial<ReaderState>) => void;
   readonly onCommitFind: (value: string) => void;
-  readonly onRegisterFindCommit: (commit: () => void) => void;
   readonly onResources: () => void;
   readonly onReadResource: (path: string) => void;
   readonly onRetryResource: () => void;
@@ -39,31 +43,42 @@ export function Reader(props: {
   readonly onDetailsRelationship: (value: string) => void;
   readonly onDetailsScroll: (scroll: number) => void;
 }) {
-  const [find, setFind] = createSignal(props.state.reader.find);
-  let findInput: InputRenderable | undefined;
+  const [find, setFind] = createSignal(props.reader().find);
+  const [markdownFallback, setMarkdownFallback] = createSignal(false);
   let readerScrollbox: ScrollBoxRenderable | undefined;
   let readerTabs: TabSelectRenderable | undefined;
-  let readerRaw: SelectRenderable | undefined;
-  let readerFindPrevious: SelectRenderable | undefined;
-  let readerFindNext: SelectRenderable | undefined;
-  let openMatchRaw: SelectRenderable | undefined;
-  let resourceBrowser: SelectRenderable | undefined;
-  let resourceContent: ScrollBoxRenderable | undefined;
-  let resourceRetry: SelectRenderable | undefined;
-  let detailsActions: SelectRenderable | undefined;
-  let detailsRelationships: SelectRenderable | undefined;
   let synchronizingTab = false;
   let restoredAddress: string | undefined;
   let restoredScroll: number | undefined;
   let restoredDetailsAddress: string | undefined;
   let restoredDetailsScroll: number | undefined;
+  const bindings = new Map<string, () => void>();
+  const bind = (
+    owner: Parameters<FocusRegistry["register"]>[0],
+    target: FocusTarget & Pick<BaseRenderable, "once" | "off">,
+  ) => {
+    bindings.get(owner)?.();
+    if (!props.focusRegistry) return;
+    const dispose = props.focusRegistry.register(owner, target);
+    const release = () => dispose();
+    target.once("destroyed", release);
+    bindings.set(owner, () => {
+      target.off("destroyed", release);
+      dispose();
+    });
+  };
   const [scrollbox, setScrollbox] = createSignal<ScrollBoxRenderable>();
   const [detailsScrollbox, setDetailsScrollbox] = createSignal<ScrollBoxRenderable>();
-  const reader = () => props.state.reader;
+  const reader = props.reader;
   let address = reader().address;
-  const commitFind = () => props.onCommitFind(find());
-  onMount(() => props.onRegisterFindCommit(commitFind));
-  onCleanup(() => props.onRegisterFindCommit(() => {}));
+  const commitFind = () => {
+    const current = reader().address;
+    if (current?.source === address?.source && current?.path === address?.path)
+      props.onCommitFind(find());
+  };
+  onCleanup(() => {
+    bindings.forEach((dispose) => dispose());
+  });
   createEffect(() => {
     if (reader().address !== address) {
       address = reader().address;
@@ -108,7 +123,7 @@ export function Reader(props: {
     const resource = reader().resource;
     return resource?.kind === "text" ? resource : undefined;
   };
-  const descriptor = (resource: TuiState["reader"]["resources"][number]) =>
+  const descriptor = (resource: ReaderState["resources"][number]) =>
     `${resource.path}  ${resource.kind}${resource.size === undefined ? "" : ` ${resource.size} bytes`}${resource.executable === undefined ? "" : resource.executable ? " executable" : " not executable"}${resource.gitlinkCommit ? ` ${resource.gitlinkCommit}` : ""}`;
   const readerError = () => reader().error;
   const details = () => {
@@ -117,12 +132,14 @@ export function Reader(props: {
     const source = skill.source;
     const directOwner = source?.contribution
       ? undefined
-      : props.state.workspace?.configs
-          .flatMap((config) => config.direct.sources)
+      : props
+          .projection()
+          ?.configs.flatMap((config) => config.direct.sources)
           .find((item) => item.id === source?.id)?.ref.owner;
     const configSource = source?.contribution
-      ? props.state.workspace?.configs
-          .find((config) => config.level === source.contribution!.configSource.level)
+      ? props
+          .projection()
+          ?.configs.find((config) => config.level === source.contribution!.configSource.level)
           ?.direct.configSources.find((item) => {
             const owner = source.contribution!.configSource;
             return (
@@ -157,7 +174,7 @@ export function Reader(props: {
             ...view.useOwners.map((owner) => `  Collection Use  ${owner.level} (${owner.pointer})`),
           ])
         : ["For agents  Agent selector paths are unavailable"];
-    const agent = props.state.workspace?.effective.agent;
+    const agent = props.projection()?.effective.agent;
     const readiness =
       agent?.status === "available"
         ? "Available"
@@ -205,27 +222,14 @@ export function Reader(props: {
     { equals: (previous, next) => previous === next },
   );
   const showMarkdown = createMemo(
-    () => reader().tab === "skill" && !reader().raw && reader().resource?.kind !== "text",
+    () =>
+      reader().tab === "skill" &&
+      !markdownFallback() &&
+      !reader().raw &&
+      reader().resource?.kind !== "text",
     false,
     { equals: (previous, next) => previous === next },
   );
-  createEffect(() => {
-    if (props.state.focus === "input") findInput?.focus();
-    else if (props.state.focus === "reader") {
-      findInput?.blur();
-      if (reader().tab === "details") detailsScrollbox()?.focus();
-      else readerScrollbox?.focus();
-    } else if (props.state.focus === "reader-tabs") readerTabs?.focus();
-    else if (props.state.focus === "reader-raw") readerRaw?.focus();
-    else if (props.state.focus === "reader-find-previous") readerFindPrevious?.focus();
-    else if (props.state.focus === "reader-find-next") readerFindNext?.focus();
-    else if (props.state.focus === "open-match-raw") openMatchRaw?.focus();
-    else if (props.state.focus === "reader-resource-list") resourceBrowser?.focus();
-    else if (props.state.focus === "reader-resource-content") resourceContent?.focus();
-    else if (props.state.focus === "reader-resource-retry") resourceRetry?.focus();
-    else if (props.state.focus === "inspector") detailsActions?.focus();
-    else if (props.state.focus === "details-relationships") detailsRelationships?.focus();
-  });
   createEffect(() => {
     const address = reader().address;
     const tab = reader().tab;
@@ -237,14 +241,18 @@ export function Reader(props: {
       synchronizingTab = false;
     }
   });
+  createEffect(() => {
+    if (reader().tab !== "skill") setMarkdownFallback(true);
+  });
   const detailRelationships = () => {
     const skill = props.skill;
     if (!skill) return [];
     const source = skill.source;
     const directOwner = source?.contribution
       ? undefined
-      : props.state.workspace?.configs
-          .flatMap((config) => config.direct.sources)
+      : props
+          .projection()
+          ?.configs.flatMap((config) => config.direct.sources)
           .find((item) => item.id === source?.id)?.ref.owner;
     const choices: {
       readonly name: string;
@@ -309,8 +317,8 @@ export function Reader(props: {
         id="reader-tabs"
         ref={(value: TabSelectRenderable) => {
           readerTabs = value;
+          bind("reader-tabs", value);
         }}
-        focused={props.state.focus === "reader-tabs"}
         options={[
           { name: "SKILL.md", description: "", value: "skill" },
           { name: "Resources", description: "", value: "resources" },
@@ -324,27 +332,18 @@ export function Reader(props: {
           const tab = ["skill", "resources", "details"] as const;
           const next = tab[index]!;
           commitFind();
-          props.onPatch({
-            tab: next,
-            resource: undefined,
-            resourceLevel: "list",
-            loading: false,
-            error: undefined,
-          });
-          if (next === "resources" && !reader().resourcesLoaded && !reader().loading)
-            props.onResources();
+          props.onPatch({ tab: next });
         }}
       />
-      {reader().tab === "resources" ? (
+      {reader().tab === "resources" && (
         <>
           {(!props.narrow || reader().resourceLevel !== "content") && (
             <>
               <select
                 id="resource-browser"
                 ref={(value: SelectRenderable) => {
-                  resourceBrowser = value;
+                  bind("reader-resource-list", value);
                 }}
-                focused={props.state.focus === "reader-resource-list"}
                 height={8}
                 options={reader().resources.map((resource) => ({
                   name: descriptor(resource),
@@ -366,26 +365,37 @@ export function Reader(props: {
                   if (resource?.kind === "file") props.onReadResource(resource.path);
                 }}
               />
-              {reader().loading && <text>Loading resources</text>}
-              {!reader().loading && reader().resourcesLoaded && reader().resources.length === 0 && (
-                <text>No supporting resources</text>
-              )}
+              {reader().resourceLoading && <text>Loading resources</text>}
+              {!reader().resourceLoading &&
+                reader().resourcesLoaded &&
+                reader().resources.length === 0 && <text>No supporting resources</text>}
             </>
           )}
           {reader().resourceLevel === "content" && (
             <>
               <text>{reader().selectedResource ?? "Resource"}</text>
-              {reader().loading && <text>Loading resource content</text>}
-              {textResource() && !reader().loading && (
+              {reader().resourceLoading && (
                 <scrollbox
                   id="resource-content"
                   ref={(value: ScrollBoxRenderable) => {
-                    resourceContent = value;
+                    bind("reader-resource-content", value);
                   }}
                   width="100%"
                   height={8}
                   flexGrow={1}
-                  focused={props.state.focus === "reader-resource-content"}
+                >
+                  <text>Loading resource content</text>
+                </scrollbox>
+              )}
+              {textResource() && !reader().resourceLoading && (
+                <scrollbox
+                  id="resource-content"
+                  ref={(value: ScrollBoxRenderable) => {
+                    bind("reader-resource-content", value);
+                  }}
+                  width="100%"
+                  height={8}
+                  flexGrow={1}
                 >
                   {textResource()!.format === "markdown" ? (
                     <NativeMarkdown content={resourceMarkdownContent} />
@@ -400,16 +410,15 @@ export function Reader(props: {
                   )}
                 </scrollbox>
               )}
-              {reader().resource?.kind === "not-text" && !reader().loading && (
+              {reader().resource?.kind === "not-text" && !reader().resourceLoading && (
                 <scrollbox
                   id="resource-content"
                   ref={(value: ScrollBoxRenderable) => {
-                    resourceContent = value;
+                    bind("reader-resource-content", value);
                   }}
                   width="100%"
                   height={8}
                   flexGrow={1}
-                  focused={props.state.focus === "reader-resource-content"}
                 >
                   <text selectable>{content()}</text>
                 </scrollbox>
@@ -422,9 +431,8 @@ export function Reader(props: {
               <select
                 id="resource-retry"
                 ref={(value: SelectRenderable) => {
-                  resourceRetry = value;
+                  bind("reader-resource-retry", value);
                 }}
-                focused={props.state.focus === "reader-resource-retry"}
                 options={[
                   { name: "Retry", description: "Repeat this resource request", value: "retry" },
                 ]}
@@ -434,14 +442,15 @@ export function Reader(props: {
             </>
           )}
         </>
-      ) : reader().tab === "details" ? (
+      )}
+      {reader().tab === "details" && (
         <scrollbox
           id="reader-details"
           ref={(value: ScrollBoxRenderable) => {
             setDetailsScrollbox(value);
+            bind("reader", value);
           }}
           flexGrow={1}
-          focused={props.state.focus === "reader"}
           onMouseScroll={() => {
             const scroll = detailsScrollbox()?.scrollTop;
             if (scroll && scroll > 0) props.onDetailsScroll(scroll);
@@ -451,9 +460,8 @@ export function Reader(props: {
           <select
             id="reader-details-actions"
             ref={(value: SelectRenderable) => {
-              detailsActions = value;
+              bind("inspector", value);
             }}
-            focused={props.state.focus === "inspector"}
             options={[
               {
                 name: "Actions",
@@ -468,57 +476,52 @@ export function Reader(props: {
             <select
               id="reader-details-relationships"
               ref={(value: SelectRenderable) => {
-                detailsRelationships = value;
+                bind("details-relationships", value);
               }}
-              focused={props.state.focus === "details-relationships"}
               options={detailRelationships()}
               showDescription
               onSelect={(_index, option) => option && props.onDetailsRelationship(option.value)}
             />
           )}
         </scrollbox>
-      ) : (
-        <>
-          <box flexDirection="row">
-            <input
-              id="reader-find"
-              ref={(value: InputRenderable) => {
-                findInput = value;
-              }}
-              focused={props.state.focus === "input"}
-              placeholder="Find"
-              value={find()}
-              onInput={setFind}
-              onSubmit={() => commitFind()}
-            />
-            <text id="reader-find-count">
-              {find()
-                ? ` ${Math.min(reader().match + 1, matches().length)}/${matches().length}`
-                : " "}
-            </text>
-            <text>{reader().raw ? "Prose" : "Raw"}</text>
-            <select
-              id="reader-raw"
-              ref={(value: SelectRenderable) => {
-                readerRaw = value;
-              }}
-              focused={props.state.focus === "reader-raw"}
-              options={[{ name: "Toggle", description: "", value: "raw" }]}
-              showDescription={false}
-              onSelect={() => {
-                commitFind();
-                props.onPatch({ raw: !reader().raw });
-              }}
-            />
-          </box>
-          {!!find() && !!current() && (
-            <box flexDirection="row">
+      )}
+      <Show when={reader().tab === "skill"}>
+        <box flexDirection="row" height={1}>
+          <input
+            id="reader-find"
+            ref={(value: InputRenderable) => {
+              value.on("blurred", commitFind);
+              bind("input", value);
+            }}
+            placeholder="Find"
+            value={find()}
+            onInput={setFind}
+            onSubmit={() => commitFind()}
+          />
+          <text id="reader-find-count">
+            {find()
+              ? ` ${Math.min(reader().match + 1, matches().length)}/${matches().length}`
+              : " "}
+          </text>
+        </box>
+        <box height={1}>
+          <select
+            id="reader-raw"
+            ref={(value: SelectRenderable) => bind("reader-raw", value)}
+            options={[{ name: reader().raw ? "Prose" : "Raw", description: "", value: "raw" }]}
+            showDescription={false}
+            onSelect={() => {
+              commitFind();
+              props.onPatch({ raw: !reader().raw });
+            }}
+          />
+        </box>
+        {!!find() && !!current() && (
+          <>
+            <box height={1}>
               <select
                 id="reader-find-previous"
-                ref={(value: SelectRenderable) => {
-                  readerFindPrevious = value;
-                }}
-                focused={props.state.focus === "reader-find-previous"}
+                ref={(value: SelectRenderable) => bind("reader-find-previous", value)}
                 options={[{ name: "Previous", description: "", value: "previous" }]}
                 showDescription={false}
                 onSelect={() => {
@@ -530,12 +533,11 @@ export function Reader(props: {
                   queueMicrotask(() => revealCurrent(reader().raw, match?.line));
                 }}
               />
+            </box>
+            <box height={1}>
               <select
                 id="reader-find-next"
-                ref={(value: SelectRenderable) => {
-                  readerFindNext = value;
-                }}
-                focused={props.state.focus === "reader-find-next"}
+                ref={(value: SelectRenderable) => bind("reader-find-next", value)}
                 options={[{ name: "Next", description: "", value: "next" }]}
                 showDescription={false}
                 onSelect={() => {
@@ -547,13 +549,12 @@ export function Reader(props: {
                   queueMicrotask(() => revealCurrent(reader().raw, match?.line));
                 }}
               />
-              {showMarkdown() && (
+            </box>
+            {showMarkdown() && (
+              <box height={1}>
                 <select
                   id="open-match-raw"
-                  ref={(value: SelectRenderable) => {
-                    openMatchRaw = value;
-                  }}
-                  focused={props.state.focus === "open-match-raw"}
+                  ref={(value: SelectRenderable) => bind("open-match-raw", value)}
                   options={[
                     { name: "Open current match in Raw", description: "", value: "raw-match" },
                   ]}
@@ -567,45 +568,47 @@ export function Reader(props: {
                     props.onPatch({ raw: true, scroll: line });
                   }}
                 />
-              )}
-            </box>
-          )}
-          <scrollbox
-            id="reader-scrollbox"
-            ref={(value: ScrollBoxRenderable) => {
-              readerScrollbox = value;
-              setScrollbox(value);
-            }}
-            flexGrow={1}
-            focused={props.state.focus === "reader"}
-            onMouseScroll={() =>
-              queueMicrotask(() => {
-                const scroll = readerScrollbox?.scrollTop;
-                if (scroll && scroll > 0) props.onPatch({ scroll });
-              })
-            }
-          >
-            {reader().loading ? (
-              <text>Loading SKILL.md</text>
-            ) : reader().error ? (
-              <text>{`${reader().error?.code}: ${reader().error?.message}`}</text>
-            ) : (
-              <Show
-                when={showMarkdown()}
-                fallback={content()
-                  .split("\n")
-                  .map((line, index) => (
-                    <text id={`reader-line-${index}`} selectable>
-                      {line}
-                    </text>
-                  ))}
-              >
-                <NativeMarkdown content={markdownContent} />
-              </Show>
+              </box>
             )}
-          </scrollbox>
-        </>
-      )}
+          </>
+        )}
+      </Show>
+      <Show when={reader().tab === "skill"}>
+        <scrollbox
+          id="reader-scrollbox"
+          ref={(value: ScrollBoxRenderable) => {
+            readerScrollbox = value;
+            bind("reader", value);
+            setScrollbox(value);
+          }}
+          flexGrow={1}
+          onMouseScroll={() =>
+            queueMicrotask(() => {
+              const scroll = readerScrollbox?.scrollTop;
+              if (scroll && scroll > 0) props.onPatch({ scroll });
+            })
+          }
+        >
+          {reader().loading ? (
+            <text>Loading SKILL.md</text>
+          ) : reader().error ? (
+            <text>{`${reader().error?.code}: ${reader().error?.message}`}</text>
+          ) : (
+            <Show
+              when={showMarkdown()}
+              fallback={content()
+                .split("\n")
+                .map((line, index) => (
+                  <text id={`reader-line-${index}`} selectable>
+                    {line}
+                  </text>
+                ))}
+            >
+              <NativeMarkdown content={markdownContent} />
+            </Show>
+          )}
+        </scrollbox>
+      </Show>
     </box>
   );
 }

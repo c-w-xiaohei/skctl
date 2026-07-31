@@ -4,7 +4,16 @@ import type {
   ManagementProjection,
 } from "../core/api";
 import { filterSkills } from "./skills-filter";
-import type { TuiState } from "./model";
+import type { Destination } from "./types";
+import type { WorkspaceSnapshot } from "./workspace/state";
+import type { CollectionsSnapshot } from "./collections/state";
+import type { ConfigSnapshot } from "./config/state";
+
+export interface PageActionFacts {
+  readonly workspace: WorkspaceSnapshot;
+  readonly collections: CollectionsSnapshot;
+  readonly config: (destination: Exclude<Destination, "workspace">) => ConfigSnapshot;
+}
 
 export const actionIds = [
   "open-actions",
@@ -76,47 +85,51 @@ export interface SourceActionContext {
   readonly source: string;
   readonly contribution?: ConfigSourceContributionRef;
   readonly directOwner?: ConfigDeclarationOwner;
-  readonly destination: TuiState["destination"];
+  readonly destination: Destination;
 }
 
 export function installedSkillContext(
-  state: TuiState,
-  projection?: ManagementProjection,
+  destination: Destination,
+  projection: ManagementProjection | undefined,
+  pages: PageActionFacts,
 ): { readonly skill: ManagementProjection["installedSkills"][number] } | undefined {
-  if (
-    !projection ||
-    state.destination !== "workspace" ||
-    state.memory.workspace.section !== "skills"
-  )
+  const workspace = pages.workspace;
+  if (!projection || destination !== "workspace" || workspace.section !== "skills")
     return undefined;
-  const selected = state.memory.workspace.selection.skills;
+  const selected = workspace.selectedSkill;
   const skill = filterSkills(projection.installedSkills, {
-    query: state.memory.workspace.query.skills,
-    filters: state.memory.workspace.filters.skills,
-    source: state.sourceFilter,
+    query: workspace.query,
+    filters: workspace.filters,
+    source: workspace.sourceFilter,
     agentStatus: projection.effective.agent.status,
   }).find((item) => `${item.address.source}/${item.address.path}` === selected);
   return skill ? { skill } : undefined;
 }
 
 export function selectedSourceContext(
-  state: TuiState,
-  projection?: ManagementProjection,
+  destination: Destination,
+  projection: ManagementProjection | undefined,
+  pages: PageActionFacts,
 ): SourceActionContext | undefined {
-  if (!projection || state.memory[state.destination].section !== "sources") return undefined;
-  const selected = state.memory[state.destination].selection.sources;
+  const section =
+    destination === "workspace" ? pages.workspace.section : pages.config(destination).section;
+  if (!projection || section !== "sources") return undefined;
+  const selected =
+    destination === "workspace"
+      ? pages.workspace.selectedSource
+      : pages.config(destination).selection.sources;
   const sources =
-    state.destination === "workspace"
+    destination === "workspace"
       ? projection.effective.sources
       : [
-          ...(projection.configs.find((config) => config.level === state.destination)?.direct
-            .sources ?? []),
-          ...(projection.configs.find((config) => config.level === state.destination)?.contributed
+          ...(projection.configs.find((config) => config.level === destination)?.direct.sources ??
+            []),
+          ...(projection.configs.find((config) => config.level === destination)?.contributed
             .sources ?? []),
         ];
   const source = sources.find((item) => item.id === selected);
   if (!source) return undefined;
-  if (state.destination === "workspace") {
+  if (destination === "workspace") {
     const direct = projection.configs
       .flatMap((config) => config.direct.sources)
       .find((item) => item.id === source.id);
@@ -124,16 +137,16 @@ export function selectedSourceContext(
       source: source.id,
       contribution: source.contribution,
       directOwner: direct?.ref.owner,
-      destination: state.destination,
+      destination,
     };
   }
-  const config = projection.configs.find((item) => item.level === state.destination);
+  const config = projection.configs.find((item) => item.level === destination);
   const direct = config?.direct.sources.find((item) => item.id === source.id);
   return {
     source: source.id,
     contribution: source.contribution,
     directOwner: direct?.ref.owner,
-    destination: state.destination,
+    destination,
   };
 }
 
@@ -149,18 +162,21 @@ export function directSourceOwner(
 }
 
 export function reachableActions(
-  state: TuiState,
-  projection?: ManagementProjection,
+  destination: Destination,
+  projection: ManagementProjection | undefined,
+  pages: PageActionFacts,
 ): readonly ActionDescriptor[] {
-  const context = selectedSourceContext(state, projection);
+  const currentSection =
+    destination === "workspace" ? pages.workspace.section : pages.config(destination).section;
+  const context = selectedSourceContext(destination, projection, pages);
   if (
     projection &&
-    state.destination === "workspace" &&
-    state.memory.workspace.section === "collections" &&
+    destination === "workspace" &&
+    pages.workspace.section === "collections" &&
     projection.effective.status === "complete"
   ) {
     const collection = projection.effective.collectionsView.find(
-      (item) => item.id === state.memory.workspace.selection.collections,
+      (item) => item.id === pages.collections.selected,
     );
     const direct = collection?.declared.find((owner) => !owner.contribution);
     return [
@@ -218,21 +234,23 @@ export function reachableActions(
           : []),
     ];
   }
-  if (projection && state.destination !== "workspace") {
-    const config = projection.configs.find((item) => item.level === state.destination);
+  if (projection && destination !== "workspace") {
+    const config = projection.configs.find((item) => item.level === destination);
     const collection = config?.direct.collections.find(
-      (item) => item.id === state.memory[state.destination].selection.collections,
+      (item) =>
+        item.id ===
+        pages.config(destination as Exclude<Destination, "workspace">).selection.collections,
     );
-    if (state.memory[state.destination].section === "for-agents")
+    if (pages.config(destination as Exclude<Destination, "workspace">).section === "for-agents")
       return [
         {
           id: "set-collection-use",
           title: "Set Collection Use",
-          description: `Set the Collections disclosed by ${state.destination} configuration`,
+          description: `Set the Collections disclosed by ${destination} configuration`,
           enabled: true,
         },
       ];
-    if (state.memory[state.destination].section === "integrations") {
+    if (pages.config(destination as Exclude<Destination, "workspace">).section === "integrations") {
       const managed = config?.direct.integrations.some((item) => item.kind === "opencode") ?? false;
       return [
         {
@@ -245,15 +263,19 @@ export function reachableActions(
         },
       ];
     }
-    if (state.memory[state.destination].section === "config-sources") {
-      const selected = state.memory[state.destination].selection["config-sources"];
+    if (
+      pages.config(destination as Exclude<Destination, "workspace">).section === "config-sources"
+    ) {
+      const selected = pages.config(destination as Exclude<Destination, "workspace">).selection[
+        "config-sources"
+      ];
       const source = config?.direct.configSources.find((item) => item.owner.pointer === selected);
       if (!source)
         return [
           {
             id: "add-config-source",
             title: "Add Config Source",
-            description: `Register a Config Source in ${state.destination} configuration`,
+            description: `Register a Config Source in ${destination} configuration`,
             enabled: true,
           },
         ];
@@ -298,17 +320,17 @@ export function reachableActions(
         {
           id: "add-config-source",
           title: "Add Config Source",
-          description: `Register another Config Source in ${state.destination} configuration`,
+          description: `Register another Config Source in ${destination} configuration`,
           enabled: true,
         },
       ];
     }
-    if (state.memory[state.destination].section === "collections")
+    if (pages.config(destination as Exclude<Destination, "workspace">).section === "collections")
       return [
         {
           id: "new-collection",
           title: "New Collection",
-          description: `Create an empty Collection in ${state.destination} configuration`,
+          description: `Create an empty Collection in ${destination} configuration`,
           enabled: true,
         },
         ...(collection
@@ -351,7 +373,7 @@ export function reachableActions(
       ];
   }
   if (!context)
-    return projection && state.memory[state.destination].section === "sources"
+    return projection && currentSection === "sources"
       ? [
           {
             id: "add-source",
@@ -360,7 +382,7 @@ export function reachableActions(
             enabled: true,
           },
         ]
-      : selectedSkillActions(state, projection);
+      : selectedSkillActions(destination, projection, pages);
   const common = [
     {
       id: "add-skills" as const,
@@ -426,16 +448,12 @@ export function reachableActions(
 }
 
 export function selectedSkillActions(
-  state: TuiState,
-  projection?: ManagementProjection,
+  destination: Destination,
+  projection: ManagementProjection | undefined,
+  pages: PageActionFacts,
 ): readonly ActionDescriptor[] {
-  if (
-    !projection ||
-    state.destination !== "workspace" ||
-    state.memory.workspace.section !== "skills"
-  )
-    return [];
-  const context = installedSkillContext(state, projection);
+  if (!projection || destination !== "workspace" || pages.workspace.section !== "skills") return [];
+  const context = installedSkillContext(destination, projection, pages);
   if (!context) return [];
   const { skill } = context;
   const address = `${skill.address.source}/${skill.address.path}`;
@@ -485,14 +503,15 @@ export function selectedSkillActions(
 }
 
 export function skillSourceIntent(
-  state: TuiState,
+  destination: Destination,
   projection: ManagementProjection,
+  pages: PageActionFacts,
 ): {
   readonly kind: "source-update";
   readonly source: string;
   readonly path: string;
 } {
-  const context = installedSkillContext(state, projection);
+  const context = installedSkillContext(destination, projection, pages);
   if (!context) throw new Error("No Installed Skill is selected");
   return {
     kind: "source-update",
@@ -503,10 +522,11 @@ export function skillSourceIntent(
 
 export function sourceOperationIntent(
   id: "add-skills" | "check-updates",
-  state: TuiState,
+  destination: Destination,
   projection: ManagementProjection,
+  pages: PageActionFacts,
 ): SourceOperationIntent {
-  const context = selectedSourceContext(state, projection);
+  const context = selectedSourceContext(destination, projection, pages);
   if (!context) throw new Error(`${id} is not reachable for this selection`);
   return {
     kind: id === "add-skills" ? "source-discovery" : "source-update",
@@ -516,10 +536,11 @@ export function sourceOperationIntent(
 
 export function actionIntent(
   id: "remove-source",
-  state: TuiState,
+  destination: Destination,
   projection: ManagementProjection,
+  pages: PageActionFacts,
 ): DirectSourceIntent {
-  const context = selectedSourceContext(state, projection);
+  const context = selectedSourceContext(destination, projection, pages);
   const source = context?.source;
   const owner = context?.directOwner;
   if (!source || !owner) throw new Error("Remove Source is not reachable for this selection");
@@ -528,20 +549,23 @@ export function actionIntent(
 
 export function sourceRouteIntent(
   id: "open-config",
-  state: TuiState,
+  destination: Destination,
   projection: ManagementProjection,
+  pages: PageActionFacts,
 ): Extract<SourceRouteIntent, { readonly kind: "open-config" }>;
 export function sourceRouteIntent(
   id: "open-config-source",
-  state: TuiState,
+  destination: Destination,
   projection: ManagementProjection,
+  pages: PageActionFacts,
 ): Extract<SourceRouteIntent, { readonly kind: "open-config-source" }>;
 export function sourceRouteIntent(
   id: "open-config" | "open-config-source",
-  state: TuiState,
+  destination: Destination,
   projection: ManagementProjection,
+  pages: PageActionFacts,
 ): SourceRouteIntent {
-  const context = selectedSourceContext(state, projection);
+  const context = selectedSourceContext(destination, projection, pages);
   if (!context) throw new Error("No Source is selected");
   if (id === "open-config-source" && context.contribution)
     return {
@@ -552,22 +576,4 @@ export function sourceRouteIntent(
   const owner = id === "open-config" ? context.directOwner : undefined;
   if (!owner) throw new Error(`${id} is not reachable for this selection`);
   return { kind: "open-config", owner, source: context.source };
-}
-
-export type KeyAction = "palette" | "close" | "cancel" | "exit" | "none";
-export function arbitrateKey(
-  key: { readonly name: string; readonly ctrl?: boolean },
-  state: Pick<TuiState, "overlay" | "task" | "focus" | "narrow" | "narrowLevel" | "sourceFilter">,
-): KeyAction {
-  const name = key.name.toLowerCase();
-  const escape = name === "escape" || name === "esc";
-  if (state.overlay) return escape || (key.ctrl === true && name === "c") ? "close" : "none";
-  if (state.task) return escape || (key.ctrl === true && name === "c") ? "cancel" : "none";
-  if (escape && state.sourceFilter) return "close";
-  if (escape && state.narrow && state.narrowLevel !== "list") return "close";
-  if (state.focus === "input" || state.focus === "dialog" || state.focus === "palette")
-    return "none";
-  if (key.ctrl === true && name === "p") return "palette";
-  if (key.ctrl === true && name === "c") return "exit";
-  return "none";
 }

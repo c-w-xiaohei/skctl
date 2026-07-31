@@ -32,15 +32,19 @@ async function openReader(setup: Setup) {
     () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
   );
   setup.mockInput.pressEnter();
+  await setup.renderOnce();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
 }
 
 async function chooseReaderTab(setup: Setup, stepsRight: number) {
   setup.mockInput.pressKey("TAB", { shift: true });
   await setup.renderOnce();
+  expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
+  setup.mockInput.pressKey("TAB");
+  await setup.renderOnce();
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-tabs");
   for (let index = 0; index < stepsRight; index++) setup.mockInput.pressKey("ARROW_RIGHT");
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey("TAB");
   await setup.renderOnce();
 }
 
@@ -52,18 +56,7 @@ async function openResources(setup: Setup) {
 
 async function openDetails(setup: Setup) {
   await openReader(setup);
-  setup.mockInput.pressKey("TAB", { shift: true });
-  await setup.renderOnce();
-  expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-tabs");
-  setup.mockInput.pressKey("ARROW_RIGHT");
-  setup.mockInput.pressEnter();
-  await setup.renderOnce();
-  setup.mockInput.pressKey("TAB", { shift: true });
-  await setup.renderOnce();
-  expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-tabs");
-  setup.mockInput.pressKey("ARROW_RIGHT");
-  setup.mockInput.pressEnter();
-  await setup.renderOnce();
+  await chooseReaderTab(setup, 2);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
 }
 

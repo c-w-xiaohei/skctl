@@ -22,7 +22,10 @@ import {
   type ConfigDeclarationOwner,
 } from "../core/api";
 import type { DirectSourceIntent, SourceOperationIntent } from "./actions";
-import type { TuiEvent } from "./model";
+import type { OperationState } from "./operation-state";
+import type { Diagnostic } from "../core/api";
+import type { ReaderEvent, ReaderRequest } from "./reader/state";
+import type { ProjectionOutcomes } from "./projection";
 
 export interface TuiCore {
   readonly workspace: Pick<WorkspaceCapability, "get">;
@@ -218,9 +221,22 @@ const diagnostic = (error: unknown) => ({
 });
 const cancelled = (error: unknown) => error instanceof SkillCliError && error.code === "CANCELLED";
 
-export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => void = () => {}) {
+export function createTuiEffects(
+  core: TuiCore,
+  operation: OperationState,
+  projection: ProjectionOutcomes,
+  dispatchReader: (event: ReaderEvent) => void = () => {},
+  beginReader: (
+    address: { readonly source: string; readonly path: string },
+    request: ReaderRequest,
+    path?: string,
+  ) => Extract<ReaderEvent, { readonly type: `${string}.start` }> = () => {
+    throw new Error("Reader owner is required");
+  },
+) {
   let refreshController: AbortController | undefined;
-  let readerController: AbortController | undefined;
+  let readerContentController: AbortController | undefined;
+  let readerResourceController: AbortController | undefined;
   let foreground:
     | {
         readonly id: string;
@@ -236,21 +252,24 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
   let sequence = 0;
   let closed = false;
   const next = () => `${++sequence}`;
+  const report = (next: Diagnostic) => operation.report(next);
+  const start = (task: import("./types").TaskState) => operation.start(task);
+  const settle = (id: string, status: string, error?: Diagnostic) =>
+    operation.settle(id, status, error);
 
   const refresh = async () => {
     if (closed) return undefined;
     refreshController?.abort();
     const controller = new AbortController();
     refreshController = controller;
-    dispatch({ type: "workspace.loading" });
+    projection.loading();
     try {
       const result = await core.workspace.get({ signal: controller.signal });
-      if (!closed && refreshController === controller)
-        dispatch({ type: "workspace.replace", workspace: result.value });
+      if (!closed && refreshController === controller) projection.applyProjection(result.value);
       return result;
     } catch (error) {
       if (!closed && refreshController === controller && !cancelled(error))
-        dispatch({ type: "workspace.failure", diagnostic: diagnostic(error) });
+        projection.failed(diagnostic(error));
       return undefined;
     } finally {
       if (refreshController === controller) refreshController = undefined;
@@ -259,52 +278,69 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
 
   const loadReader = async (address: { readonly source: string; readonly path: string }) => {
     if (closed) return undefined;
-    readerController?.abort();
+    readerContentController?.abort();
     const controller = new AbortController();
-    readerController = controller;
-    dispatch({ type: "reader.patch", value: { address, loading: true, error: undefined } });
+    readerContentController = controller;
+    const start = beginReader(address, "content");
+    const epoch = start.epoch;
     try {
       const result = await core.content.loadInstalled({ address }, { signal: controller.signal });
-      if (!closed && readerController === controller) {
-        dispatch({ type: "reader.loaded", address, value: result.value });
+      if (!closed) {
+        dispatchReader({ type: "content.settle", address, epoch, value: result.value });
         for (const item of result.diagnostics)
-          dispatch({ type: "reader.failure", address, diagnostic: item });
+          dispatchReader({ type: "failure", address, epoch, request: "content", diagnostic: item });
       }
       return result;
     } catch (error) {
-      if (!closed && readerController === controller && !cancelled(error))
-        dispatch({ type: "reader.failure", diagnostic: diagnostic(error) });
+      if (!closed && !cancelled(error))
+        dispatchReader({
+          type: "failure",
+          address,
+          epoch,
+          request: "content",
+          diagnostic: diagnostic(error),
+        });
       return undefined;
     } finally {
-      if (readerController === controller) readerController = undefined;
+      if (readerContentController === controller) readerContentController = undefined;
     }
   };
   const listResources = async (address: { readonly source: string; readonly path: string }) => {
     if (closed) return undefined;
-    readerController?.abort();
+    readerResourceController?.abort();
     const controller = new AbortController();
-    readerController = controller;
-    dispatch({
-      type: "reader.patch",
-      value: { address, loading: true, error: undefined, resourceLevel: "list" },
-    });
+    readerResourceController = controller;
+    const start = beginReader(address, "resources");
+    const epoch = start.epoch;
     try {
       const result = await core.content.listInstalledResources(
         { address },
         { signal: controller.signal },
       );
-      if (!closed && readerController === controller) {
-        dispatch({ type: "reader.resources", address, resources: result.value });
+      if (!closed) {
+        dispatchReader({ type: "resources.settle", address, epoch, resources: result.value });
         for (const item of result.diagnostics)
-          dispatch({ type: "reader.failure", address, diagnostic: item });
+          dispatchReader({
+            type: "failure",
+            address,
+            epoch,
+            request: "resources",
+            diagnostic: item,
+          });
       }
       return result;
     } catch (error) {
-      if (!closed && readerController === controller && !cancelled(error))
-        dispatch({ type: "reader.failure", address, diagnostic: diagnostic(error) });
+      if (!closed && !cancelled(error))
+        dispatchReader({
+          type: "failure",
+          address,
+          epoch,
+          request: "resources",
+          diagnostic: diagnostic(error),
+        });
       return undefined;
     } finally {
-      if (readerController === controller) readerController = undefined;
+      if (readerResourceController === controller) readerResourceController = undefined;
     }
   };
   const readResource = async (
@@ -312,37 +348,40 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
     path: string,
   ) => {
     if (closed) return undefined;
-    readerController?.abort();
+    readerResourceController?.abort();
     const controller = new AbortController();
-    readerController = controller;
-    dispatch({
-      type: "reader.patch",
-      value: {
-        address,
-        selectedResource: path,
-        resource: undefined,
-        resourceLevel: "content",
-        loading: true,
-        error: undefined,
-      },
-    });
+    readerResourceController = controller;
+    const start = beginReader(address, "resource", path);
+    const epoch = start.epoch;
     try {
       const result = await core.content.readInstalled(
         { address, path },
         { signal: controller.signal },
       );
-      if (!closed && readerController === controller) {
-        dispatch({ type: "reader.resource.loaded", address, value: result.value });
+      if (!closed) {
+        dispatchReader({ type: "resource.settle", address, epoch, value: result.value });
         for (const item of result.diagnostics)
-          dispatch({ type: "reader.failure", address, diagnostic: item });
+          dispatchReader({
+            type: "failure",
+            address,
+            epoch,
+            request: "resource",
+            diagnostic: item,
+          });
       }
       return result;
     } catch (error) {
-      if (!closed && readerController === controller && !cancelled(error))
-        dispatch({ type: "reader.failure", address, diagnostic: diagnostic(error) });
+      if (!closed && !cancelled(error))
+        dispatchReader({
+          type: "failure",
+          address,
+          epoch,
+          request: "resource",
+          diagnostic: diagnostic(error),
+        });
       return undefined;
     } finally {
-      if (readerController === controller) readerController = undefined;
+      if (readerResourceController === controller) readerResourceController = undefined;
     }
   };
 
@@ -365,13 +404,10 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
         result.value.owner.file !== intent.owner.file ||
         result.value.owner.pointer !== intent.owner.pointer
       ) {
-        dispatch({
-          type: "operation.failure",
-          diagnostic: {
-            code: "TRANSACTION_CONFLICT",
-            severity: "warning",
-            message: "Source removal preview no longer matches the selected declaration",
-          },
+        report({
+          code: "TRANSACTION_CONFLICT",
+          severity: "warning",
+          message: "Source removal preview no longer matches the selected declaration",
         });
         return undefined;
       }
@@ -379,8 +415,7 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
       liveReview = reviewed;
       return reviewed;
     } catch (error) {
-      if (!closed && foreground?.id === id)
-        dispatch({ type: "operation.failure", diagnostic: diagnostic(error) });
+      if (!closed && foreground?.id === id) report(diagnostic(error));
       return undefined;
     } finally {
       if (foreground?.id === id) foreground = undefined;
@@ -393,14 +428,11 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
     const controller = new AbortController();
     let succeeded = false;
     foreground = { id, controller, kind: "execute" };
-    dispatch({
-      type: "task.start",
-      task: {
-        id,
-        title: "Removing Source",
-        cancellationRequested: false,
-        semanticOwner: reviewed.intent.source,
-      },
+    start({
+      id,
+      title: "Removing Source",
+      cancellationRequested: false,
+      semanticOwner: { kind: "source", id: reviewed.intent.source },
     });
     try {
       await core.management.removeSource(
@@ -409,21 +441,16 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
       );
       const refreshed = await refresh();
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
-          id,
-          status: refreshed ? "Source removed" : "Source removed; Workspace is stale",
-        });
+        settle(id, refreshed ? "Source removed" : "Source removed; Workspace is stale");
       succeeded = true;
       return true;
     } catch (error) {
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
+        settle(
           id,
-          status: cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
-          error: diagnostic(error),
-        });
+          cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
+          diagnostic(error),
+        );
       return false;
     } finally {
       if (succeeded && liveReview === reviewed) liveReview = undefined;
@@ -438,14 +465,11 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
     const id = next();
     const controller = new AbortController();
     foreground = { id, controller, kind: "observe" };
-    dispatch({
-      type: "task.start",
-      task: {
-        id,
-        title: "Observing Source",
-        cancellationRequested: false,
-        semanticOwner: intent.source,
-      },
+    start({
+      id,
+      title: "Observing Source",
+      cancellationRequested: false,
+      semanticOwner: { kind: "source", id: intent.source },
     });
     try {
       const result = await core.management.discover(
@@ -459,7 +483,7 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
             severity: "warning" as const,
             message: "Observed Source no longer matches the selected Source",
           };
-          dispatch({ type: "task.settle", id, status: error.message, error });
+          settle(id, error.message, error);
         }
         return undefined;
       }
@@ -470,16 +494,15 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
         observation: result.value,
       };
       liveDiscovery = reviewed;
-      dispatch({ type: "task.settle", id, status: "Observation ready" });
+      settle(id, "Observation ready");
       return reviewed;
     } catch (error) {
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
+        settle(
           id,
-          status: cancelled(error) ? "Observation cancelled" : diagnostic(error).message,
-          error: diagnostic(error),
-        });
+          cancelled(error) ? "Observation cancelled" : diagnostic(error).message,
+          diagnostic(error),
+        );
       return undefined;
     } finally {
       if (foreground?.id === id) foreground = undefined;
@@ -493,14 +516,11 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
     const id = next();
     const controller = new AbortController();
     foreground = { id, controller, kind: "observe" };
-    dispatch({
-      type: "task.start",
-      task: {
-        id,
-        title: "Observing Updates",
-        cancellationRequested: false,
-        semanticOwner: intent.source,
-      },
+    start({
+      id,
+      title: "Observing Updates",
+      cancellationRequested: false,
+      semanticOwner: { kind: "source", id: intent.source },
     });
     try {
       const result = await core.management.checkUpdate(
@@ -514,7 +534,7 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
             severity: "warning" as const,
             message: "Observed Source no longer matches the selected Source",
           };
-          dispatch({ type: "task.settle", id, status: error.message, error });
+          settle(id, error.message, error);
         }
         return undefined;
       }
@@ -526,16 +546,15 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
         selectedPath: intent.selectedPath,
       };
       liveUpdate = reviewed;
-      dispatch({ type: "task.settle", id, status: "Observation ready" });
+      settle(id, "Observation ready");
       return reviewed;
     } catch (error) {
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
+        settle(
           id,
-          status: cancelled(error) ? "Observation cancelled" : diagnostic(error).message,
-          error: diagnostic(error),
-        });
+          cancelled(error) ? "Observation cancelled" : diagnostic(error).message,
+          diagnostic(error),
+        );
       return undefined;
     } finally {
       if (foreground?.id === id) foreground = undefined;
@@ -552,14 +571,11 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
     const id = next();
     const controller = new AbortController();
     foreground = { id, controller, kind: "execute" };
-    dispatch({
-      type: "task.start",
-      task: {
-        id,
-        title: "Installing Skills",
-        cancellationRequested: false,
-        semanticOwner: reviewed.intent.source,
-      },
+    start({
+      id,
+      title: "Installing Skills",
+      cancellationRequested: false,
+      semanticOwner: { kind: "source", id: reviewed.intent.source },
     });
     try {
       await core.management.install(
@@ -573,20 +589,15 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
       const refreshed = await refresh();
       if (!closed && foreground?.id === id) liveDiscovery = undefined;
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
-          id,
-          status: refreshed ? "Skills installed" : "Skills installed; Workspace is stale",
-        });
+        settle(id, refreshed ? "Skills installed" : "Skills installed; Workspace is stale");
       return true;
     } catch (error) {
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
+        settle(
           id,
-          status: cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
-          error: diagnostic(error),
-        });
+          cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
+          diagnostic(error),
+        );
       return false;
     } finally {
       if (foreground?.id === id) foreground = undefined;
@@ -605,14 +616,11 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
     const id = next();
     const controller = new AbortController();
     foreground = { id, controller, kind: "execute" };
-    dispatch({
-      type: "task.start",
-      task: {
-        id,
-        title: "Updating Skills",
-        cancellationRequested: false,
-        semanticOwner: reviewed.intent.source,
-      },
+    start({
+      id,
+      title: "Updating Skills",
+      cancellationRequested: false,
+      semanticOwner: { kind: "source", id: reviewed.intent.source },
     });
     try {
       await core.management.update(
@@ -626,20 +634,15 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
       const refreshed = await refresh();
       if (!closed && foreground?.id === id) liveUpdate = undefined;
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
-          id,
-          status: refreshed ? "Skills updated" : "Skills updated; Workspace is stale",
-        });
+        settle(id, refreshed ? "Skills updated" : "Skills updated; Workspace is stale");
       return true;
     } catch (error) {
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
+        settle(
           id,
-          status: cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
-          error: diagnostic(error),
-        });
+          cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
+          diagnostic(error),
+        );
       return false;
     } finally {
       if (foreground?.id === id) foreground = undefined;
@@ -667,13 +670,10 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
         request.ownerPath.startsWith("/") ||
         request.ownerPath.split("/").some((segment) => segment === ".." || segment === ""))
     ) {
-      dispatch({
-        type: "operation.failure",
-        diagnostic: {
-          code: "INVALID_ARGUMENT",
-          severity: "warning",
-          message: "Replacement Skill path must be Source-root-relative",
-        },
+      report({
+        code: "INVALID_ARGUMENT",
+        severity: "warning",
+        message: "Replacement Skill path must be Source-root-relative",
       });
       return undefined;
     }
@@ -693,13 +693,10 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
           result.value.installed[0]?.source !== request.address.source ||
           result.value.installed[0]?.path !== request.address.path
         ) {
-          dispatch({
-            type: "operation.failure",
-            diagnostic: {
-              code: "TRANSACTION_CONFLICT",
-              severity: "warning",
-              message: "Uninstall preview no longer matches the selected structural address",
-            },
+          report({
+            code: "TRANSACTION_CONFLICT",
+            severity: "warning",
+            message: "Uninstall preview no longer matches the selected structural address",
           });
           return undefined;
         }
@@ -729,13 +726,10 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
         result.value.owner !== request.owner ||
         result.value.ownerPath !== request.ownerPath
       ) {
-        dispatch({
-          type: "operation.failure",
-          diagnostic: {
-            code: "TRANSACTION_CONFLICT",
-            severity: "warning",
-            message: "Rebind preview no longer matches the selected structural address",
-          },
+        report({
+          code: "TRANSACTION_CONFLICT",
+          severity: "warning",
+          message: "Rebind preview no longer matches the selected structural address",
         });
         return undefined;
       }
@@ -750,8 +744,7 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
       liveInstalledReview = review;
       return review;
     } catch (error) {
-      if (!closed && foreground?.id === id)
-        dispatch({ type: "operation.failure", diagnostic: diagnostic(error) });
+      if (!closed && foreground?.id === id) report(diagnostic(error));
       return undefined;
     } finally {
       if (foreground?.id === id) foreground = undefined;
@@ -853,13 +846,10 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
       intent.kind === "membership-removal" &&
       (!intent.expectedAddress.source || !intent.expectedAddress.path)
     ) {
-      dispatch({
-        type: "operation.failure",
-        diagnostic: {
-          code: "INVALID_ARGUMENT",
-          severity: "warning",
-          message: "Remove Membership requires the exact expected structural address",
-        },
+      report({
+        code: "INVALID_ARGUMENT",
+        severity: "warning",
+        message: "Remove Membership requires the exact expected structural address",
       });
       return undefined;
     }
@@ -920,13 +910,10 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
                     ));
       if (closed || foreground?.id !== id) return undefined;
       if (!collectionImpactMatches(intent, result.value)) {
-        dispatch({
-          type: "operation.failure",
-          diagnostic: {
-            code: "TRANSACTION_CONFLICT",
-            severity: "warning",
-            message: "Collection preview no longer matches the selected structural intent",
-          },
+        report({
+          code: "TRANSACTION_CONFLICT",
+          severity: "warning",
+          message: "Collection preview no longer matches the selected structural intent",
         });
         return undefined;
       }
@@ -970,21 +957,17 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
         intent.kind === "add-to-collection" &&
         !("authorized" in reviewed || "nextStep" in reviewed)
       ) {
-        dispatch({
-          type: "operation.failure",
-          diagnostic: {
-            code: "TRANSACTION_CONFLICT",
-            severity: "warning",
-            message: "Collection preview did not provide an executable membership or next step",
-          },
+        report({
+          code: "TRANSACTION_CONFLICT",
+          severity: "warning",
+          message: "Collection preview did not provide an executable membership or next step",
         });
         return undefined;
       }
       liveCollectionReview = reviewed;
       return reviewed;
     } catch (error) {
-      if (!closed && foreground?.id === id && !cancelled(error))
-        dispatch({ type: "operation.failure", diagnostic: diagnostic(error) });
+      if (!closed && foreground?.id === id && !cancelled(error)) report(diagnostic(error));
       return undefined;
     } finally {
       if (foreground?.id === id) foreground = undefined;
@@ -1083,14 +1066,11 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
     foreground = { id, controller, kind: "execute" };
     const semanticOwner =
       intent.kind === "collection-use"
-        ? intent.level
+        ? { kind: "config" as const, level: intent.level }
         : intent.kind === "collection-import"
-          ? intent.into
-          : intent.collection;
-    dispatch({
-      type: "task.start",
-      task: { id, title: "Updating Collection", cancellationRequested: false, semanticOwner },
-    });
+          ? { kind: "collection" as const, id: intent.into }
+          : { kind: "collection" as const, id: intent.collection };
+    start({ id, title: "Updating Collection", cancellationRequested: false, semanticOwner });
     try {
       const reviewedLevel =
         !creating && reviewed.impact.kind === "add-to-collection"
@@ -1109,21 +1089,16 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
       });
       const refreshed = await refresh();
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
-          id,
-          status: refreshed ? "Collection updated" : "Collection updated; Workspace is stale",
-        });
+        settle(id, refreshed ? "Collection updated" : "Collection updated; Workspace is stale");
       if (!creating && liveCollectionReview === reviewed) liveCollectionReview = undefined;
       return true;
     } catch (error) {
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
+        settle(
           id,
-          status: cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
-          error: diagnostic(error),
-        });
+          cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
+          diagnostic(error),
+        );
       return false;
     } finally {
       if (foreground?.id === id) foreground = undefined;
@@ -1136,14 +1111,11 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
     const id = next();
     const controller = new AbortController();
     foreground = { id, controller, kind: "execute" };
-    dispatch({
-      type: "task.start",
-      task: {
-        id,
-        title: review.kind === "uninstall" ? "Uninstalling Skill" : "Rebinding Skill",
-        cancellationRequested: false,
-        semanticOwner: `${review.address.source}/${review.address.path}`,
-      },
+    start({
+      id,
+      title: review.kind === "uninstall" ? "Uninstalling Skill" : "Rebinding Skill",
+      cancellationRequested: false,
+      semanticOwner: { kind: "installed-skill", address: review.address },
     });
     try {
       if (review.kind === "uninstall")
@@ -1162,34 +1134,26 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
           { signal: controller.signal },
         );
       const refreshed = await refresh();
-      if (!closed && foreground?.id === id && refreshed && review.kind === "rebind")
-        dispatch({
-          type: "selection.set",
-          key: "skills",
-          value: `${review.impact.owner}/${review.impact.ownerPath}`,
-        });
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
+        settle(
           id,
-          status: refreshed
+          refreshed
             ? review.kind === "uninstall"
               ? "Skill uninstalled"
               : "Skill rebound"
             : review.kind === "uninstall"
               ? "Skill uninstalled; Workspace is stale"
               : "Skill rebound; Workspace is stale",
-        });
+        );
       liveInstalledReview = undefined;
       return true;
     } catch (error) {
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
+        settle(
           id,
-          status: cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
-          error: diagnostic(error),
-        });
+          cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
+          diagnostic(error),
+        );
       return false;
     } finally {
       if (foreground?.id === id) foreground = undefined;
@@ -1198,35 +1162,27 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
 
   const executeConfigLifecycle = async (
     title: string,
-    owner: string,
+    owner: import("./types").ProjectionOwner,
     run: (signal: AbortSignal) => Promise<unknown>,
   ) => {
     if (closed || foreground) return false;
     const id = next();
     const controller = new AbortController();
     foreground = { id, controller, kind: "execute" };
-    dispatch({
-      type: "task.start",
-      task: { id, title, cancellationRequested: false, semanticOwner: owner },
-    });
+    start({ id, title, cancellationRequested: false, semanticOwner: owner });
     try {
       await run(controller.signal);
       const refreshed = await refresh();
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
-          id,
-          status: refreshed ? `${title} complete` : `${title} complete; Workspace is stale`,
-        });
+        settle(id, refreshed ? `${title} complete` : `${title} complete; Workspace is stale`);
       return true;
     } catch (error) {
       if (!closed && foreground?.id === id)
-        dispatch({
-          type: "task.settle",
+        settle(
           id,
-          status: cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
-          error: diagnostic(error),
-        });
+          cancelled(error) ? "Operation cancelled" : diagnostic(error).message,
+          diagnostic(error),
+        );
       return false;
     } finally {
       if (foreground?.id === id) foreground = undefined;
@@ -1255,8 +1211,7 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
         const result = await core.management.observeConfig({ id }, { signal: controller.signal });
         return foreground?.id === operation && !closed ? result.value : undefined;
       } catch (error) {
-        if (!closed && foreground?.id === operation && !cancelled(error))
-          dispatch({ type: "operation.failure", diagnostic: diagnostic(error) });
+        if (!closed && foreground?.id === operation && !cancelled(error)) report(diagnostic(error));
         return undefined;
       } finally {
         if (foreground?.id === operation) foreground = undefined;
@@ -1297,41 +1252,52 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
                 );
         return foreground?.id === operation && !closed ? result.value : undefined;
       } catch (error) {
-        if (!closed && foreground?.id === operation && !cancelled(error))
-          dispatch({ type: "operation.failure", diagnostic: diagnostic(error) });
+        if (!closed && foreground?.id === operation && !cancelled(error)) report(diagnostic(error));
         return undefined;
       } finally {
         if (foreground?.id === operation) foreground = undefined;
       }
     },
     adoptConfig: (id: string, exactRevision: string, observation: ConfigSourceObservation) =>
-      executeConfigLifecycle("Adopting Config Source", id, async (signal) => {
-        const preview = await core.management.previewAdoptConfig(
-          { id, exactRevision, observation },
-          { signal },
-        );
-        if (!preview.value.allowed)
-          throw new SkillCliError("CONFIG_CONFLICT", "Config Source adoption is blocked");
-        await core.management.adoptConfig({ id, exactRevision, observation }, { signal });
-      }),
+      executeConfigLifecycle(
+        "Adopting Config Source",
+        { kind: "config-source", id },
+        async (signal) => {
+          const preview = await core.management.previewAdoptConfig(
+            { id, exactRevision, observation },
+            { signal },
+          );
+          if (!preview.value.allowed)
+            throw new SkillCliError("CONFIG_CONFLICT", "Config Source adoption is blocked");
+          await core.management.adoptConfig({ id, exactRevision, observation }, { signal });
+        },
+      ),
     forgetConfig: (id: string) =>
-      executeConfigLifecycle("Forgetting Config Source", id, async (signal) => {
-        const preview = await core.management.previewForgetConfig({ id }, { signal });
-        if (!preview.value.allowed)
-          throw new SkillCliError("CONFIG_CONFLICT", "Config Source forget is blocked");
-        await core.management.forgetConfig({ id }, { signal });
-      }),
+      executeConfigLifecycle(
+        "Forgetting Config Source",
+        { kind: "config-source", id },
+        async (signal) => {
+          const preview = await core.management.previewForgetConfig({ id }, { signal });
+          if (!preview.value.allowed)
+            throw new SkillCliError("CONFIG_CONFLICT", "Config Source forget is blocked");
+          await core.management.forgetConfig({ id }, { signal });
+        },
+      ),
     removeConfig: (id: string) =>
-      executeConfigLifecycle("Removing Config Source", id, async (signal) => {
-        const preview = await core.management.previewRemoveConfig({ id }, { signal });
-        if (!preview.value.allowed)
-          throw new SkillCliError("CONFIG_CONFLICT", "Config Source removal is blocked");
-        await core.management.removeConfig({ id }, { signal });
-      }),
+      executeConfigLifecycle(
+        "Removing Config Source",
+        { kind: "config-source", id },
+        async (signal) => {
+          const preview = await core.management.previewRemoveConfig({ id }, { signal });
+          if (!preview.value.allowed)
+            throw new SkillCliError("CONFIG_CONFLICT", "Config Source removal is blocked");
+          await core.management.removeConfig({ id }, { signal });
+        },
+      ),
     setManagedOpenCode: (level: ConfigLevel, managed: boolean) =>
       executeConfigLifecycle(
         `${managed ? "Enabling" : "Disabling"} Managed OpenCode`,
-        level,
+        { kind: "config", level },
         (signal) =>
           core.configuration.change({ type: "agent.managed.set", level, managed }, { signal }),
       ),
@@ -1343,7 +1309,7 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
     ) =>
       executeConfigLifecycle(
         change.type === "source.register" ? "Registering Source" : "Registering Config Source",
-        change.id,
+        { kind: change.type === "source.register" ? "source" : "config-source", id: change.id },
         (signal) => core.configuration.change(change, { signal }),
       ),
     createCollection: (intent: Extract<CollectionIntent, { readonly kind: "collection-create" }>) =>
@@ -1389,7 +1355,7 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
       if (foreground && !foreground.controller.signal.aborted) {
         const current = foreground;
         if (foreground.kind === "execute" || foreground.kind === "observe")
-          dispatch({ type: "task.cancel.request", id: foreground.id });
+          operation.requestCancel(foreground.id);
         current.controller.abort();
         // A cancelled preview has no visible surface to settle; ignore a provider that
         // resolves after observing cancellation so it cannot reopen confirmation.
@@ -1415,7 +1381,8 @@ export function createTuiEffects(core: TuiCore, dispatch: (event: TuiEvent) => v
       if (!closed) {
         closed = true;
         refreshController?.abort();
-        readerController?.abort();
+        readerContentController?.abort();
+        readerResourceController?.abort();
         foreground?.controller.abort();
         liveReview = undefined;
         liveDiscovery = undefined;

@@ -119,10 +119,15 @@ static char screen[40][121], mouse_before[40][121]; static int width = 120, heig
 static void clear_screen(void) { for (int row = 0; row < 40; row++) memset(screen[row], ' ', 120); x = y = 0; }
 static int parameter(int fallback) { return count ? params[0] : fallback; }
 static void put_byte(unsigned char c) {
-  if (esc == 1) { esc = c == '[' ? 2 : 0; count = value = 0; return; }
+  if (esc == 1) { esc = c == '[' ? 2 : c == ']' ? 3 : (c >= 0x20 && c <= 0x2f) ? 5 : 0; count = value = 0; return; }
+  if (esc == 3) { if (c == 7) esc = 0; else if (c == 27) esc = 4; return; }
+  if (esc == 4) { esc = c == '\\\\' ? 0 : 3; return; }
+  if (esc == 5) { esc = 0; return; }
   if (esc == 2) {
     if (c >= '0' && c <= '9') { value = value * 10 + c - '0'; return; }
-    if (c == ';') { if (count < 8) params[count++] = value; value = 0; return; }
+    if (c == ';' || c == ':') { if (count < 8) params[count++] = value; value = 0; return; }
+    if (c >= 0x20 && c <= 0x3f) return;
+    if (c < 0x40 || c > 0x7e) return;
     if (count < 8) params[count++] = value;
     if (c == 'H' || c == 'f') { y = (params[0] ?: 1) - 1; x = (count > 1 ? params[1] : 1) - 1; }
     else if (c == 'A') y -= parameter(1); else if (c == 'B') y += parameter(1);
@@ -153,7 +158,7 @@ int main(int argc, char **argv) {
   FILE *out = fopen(argv[3], "wb"); if (!out) return 4;
   fcntl(master, F_SETFL, fcntl(master, F_GETFL) | O_NONBLOCK);
   struct timespec start, now; clock_gettime(CLOCK_MONOTONIC, &start);
-  int reader = !strcmp(argv[4], "reader"), github = !strcmp(argv[4], "github"), mouse = !strcmp(argv[4], "mouse"), source = !strncmp(argv[4], "source-", 7) || !strcmp(argv[4], "github"), mouseEnabled = 0, step = 0, status, alternate = 0, failed = 0; const char *level = github ? "global" : (source ? argv[4] + 7 : ""); long alternateAt = 0; char buffer[4096]; ssize_t count;
+  int cold = !strcmp(argv[4], "cold"), reader = !strcmp(argv[4], "reader"), github = !strcmp(argv[4], "github"), mouse = !strcmp(argv[4], "mouse"), source = !strncmp(argv[4], "source-", 7) || !strcmp(argv[4], "github"), mouseEnabled = 0, step = 0, status, alternate = 0, failed = 0; const char *level = github ? "global" : (source ? argv[4] + 7 : ""); long alternateAt = 0; char buffer[4096]; ssize_t count;
   clear_screen();
   for (;;) {
     while ((count = read(master, buffer, sizeof buffer)) > 0) {
@@ -166,68 +171,69 @@ int main(int argc, char **argv) {
     clock_gettime(CLOCK_MONOTONIC, &now);
     long elapsed = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000;
     if (alternate && !alternateAt) alternateAt = elapsed;
-    if (source && alternateAt && step == 0 && elapsed - alternateAt >= 1800) { failed |= !checkpoint("source-start", "Workspace"); send_bytes(master, "\\033[Z\\033[B\\033[B\\r"); step++; }
-    else if (source && alternateAt && step == 1 && elapsed - alternateAt >= 2400) { failed |= !checkpoint("source-browser", "fixture-source"); send_bytes(master, "\\020"); step++; }
-    else if (source && alternateAt && step >= 2 && step < 11 && elapsed - alternateAt >= 2700 + (step - 2) * 220) { send_bytes(master, "\\033[B"); step++; }
-    else if (source && alternateAt && step == 11 && elapsed - alternateAt >= 4700) { send_bytes(master, "\\r"); step++; }
-    else if (source && alternateAt && step == 12 && elapsed - alternateAt >= 5300) { failed |= !checkpoint("add-source", "Add Source"); if (!strcmp(level, "project")) send_bytes(master, "\\033[B\\r"); else if (!strcmp(level, "local")) send_bytes(master, "\\033[B\\033[B\\r"); else send_bytes(master, "\\r"); step++; }
-    else if (github && alternateAt && step == 13 && elapsed - alternateAt >= 5700) { send_bytes(master, "\\t\\033[B\\033[B\\r"); step++; }
-    else if (source && !github && alternateAt && step == 13 && elapsed - alternateAt >= 5700) { send_bytes(master, "\\t"); step++; }
-    else if (github && alternateAt && step == 14 && elapsed - alternateAt >= 6200) { send_bytes(master, "\\t"); step++; }
-    else if (github && alternateAt && step == 15 && elapsed - alternateAt >= 6500) { send_bytes(master, "github-cancel"); step++; }
-    else if (github && alternateAt && step == 16 && elapsed - alternateAt >= 6800) { send_bytes(master, "\\towner"); step++; }
-    else if (github && alternateAt && step == 17 && elapsed - alternateAt >= 7200) { send_bytes(master, "\\trepository"); step++; }
-    else if (github && alternateAt && step == 18 && elapsed - alternateAt >= 7600) { send_bytes(master, "\\tstable-ref"); step++; }
-    else if (github && alternateAt && step == 19 && elapsed - alternateAt >= 8000) { send_bytes(master, "\\tfixture"); step++; }
-    else if (github && alternateAt && step == 20 && elapsed - alternateAt >= 8400) { failed |= !checkpoint("github-owner", "owner") || !checkpoint("github-repository", "repository") || !checkpoint("github-ref", "stable-ref") || !checkpoint("github-root", "fixture") || !checkpoint("github-cancel", "Cancel"); send_bytes(master, "\\t\\r"); step++; }
-    else if (github && alternateAt && step == 21 && elapsed - alternateAt >= 9000) { if (level_has(argv[2], "global", "github-cancel")) { fprintf(stderr, "PTY github cancel mutated global config\\n"); failed = 1; } struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step++; }
-    else if (source && !github && alternateAt && step == 14 && elapsed - alternateAt >= 6000) { send_bytes(master, "\\t"); step++; }
-    else if (source && !github && alternateAt && step == 15 && elapsed - alternateAt >= 6300) { char id[64]; snprintf(id, sizeof id, "source-%s", level); send_bytes(master, id); step++; }
-    else if (source && !github && alternateAt && step == 16 && elapsed - alternateAt >= 6700) { send_bytes(master, "\\t"); step++; }
-    else if (source && !github && alternateAt && step == 17 && elapsed - alternateAt >= 7000) { char origin[4096]; const char *slash = strrchr(argv[2], '/'); snprintf(origin, sizeof origin, "%.*s/fixture-source-root", (int)(slash - argv[2]), argv[2]); send_bytes(master, origin); step++; }
-    else if (source && !github && alternateAt && step == 18 && elapsed - alternateAt >= 7400) { send_bytes(master, "\\tfixture"); step++; }
-    else if (source && !github && alternateAt && step == 19 && elapsed - alternateAt >= 7800) { send_bytes(master, "\\t"); step++; }
-    else if (source && !github && alternateAt && step == 20 && elapsed - alternateAt >= 8100) { send_bytes(master, "\\033[B"); step++; }
-    else if (source && !github && alternateAt && step == 21 && elapsed - alternateAt >= 8400) { send_bytes(master, "\\r"); step++; }
-    else if (source && !github && alternateAt && step == 22 && elapsed - alternateAt >= 9800) { char id[64]; snprintf(id, sizeof id, "source-%s", level); failed |= !checkpoint("source-created", id); if (!level_has(argv[2], level, id)) { fprintf(stderr, "PTY checkpoint %s config missing %s\\n", level, id); failed = 1; } struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step++; }
-    else if (mouse && alternateAt && step == 0 && elapsed - alternateAt >= 1800) { if (!mouseEnabled) { fprintf(stderr, "PTY mouse protocol 1006 was not enabled\\n"); failed = 1; } send_bytes(master, "\\t"); step = 100; }
-    else if (mouse && alternateAt && step == 100 && elapsed - alternateAt >= 2100) { send_bytes(master, "\\t"); step = 101; }
-    else if (mouse && alternateAt && step == 101 && elapsed - alternateAt >= 2400) { send_bytes(master, "\\r"); step = 102; }
-    else if (mouse && alternateAt && step == 102 && elapsed - alternateAt >= 2900) { int column, row; char sgr[64]; failed |= !checkpoint("mouse-overlay-dimensions", "Filter"); memcpy(mouse_before, screen, sizeof screen); if (!locate("Collecti", &column, &row)) { checkpoint("mouse collection dimension", "Collecti"); failed = 1; } else { snprintf(sgr, sizeof sgr, "\\033[<0;%d;%dM\\033[<3;%d;%dm", column, row, column, row); send_bytes(master, sgr); } step = 103; }
-    else if (mouse && alternateAt && step == 103 && elapsed - alternateAt >= 3500) { failed |= !checkpoint("mouse-overlay-values", "1/1"); if (!memcmp(mouse_before, screen, sizeof screen)) { fprintf(stderr, "PTY mouse dimension click did not change the active screen\\n"); failed = 1; } struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step++; }
-    else if (!reader && !source && !mouse && alternateAt && step == 0 && elapsed - alternateAt >= 1800) { failed |= !checkpoint("startup", "Workspace") || !checkpoint("skills", "Installed Skills") || !checkpoint("fixture", "fixture"); send_bytes(master, "\\033[Z"); step++; }
-    else if (!reader && !source && alternateAt && step == 1 && elapsed - alternateAt >= 2200) { send_bytes(master, "\\033[B"); step++; }
-    else if (!reader && !source && alternateAt && step == 2 && elapsed - alternateAt >= 2600) { send_bytes(master, "\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 3 && elapsed - alternateAt >= 3100) { failed |= !checkpoint("collections", "Collections"); send_bytes(master, "\\020\\033[B\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 4 && elapsed - alternateAt >= 3600) { failed |= !checkpoint("global destination", "Global"); send_bytes(master, "\\020\\033[B\\033[B\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 5 && elapsed - alternateAt >= 4100) { failed |= !checkpoint("project", "fixture-project/skill-cli.jsonc"); send_bytes(master, "\\020\\033[B\\033[B\\033[B\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 6 && elapsed - alternateAt >= 4600) { failed |= !checkpoint("local destination", "Local"); send_bytes(master, "\\020\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 7 && elapsed - alternateAt >= 5100) { failed |= !checkpoint("workspace-return", "Collections"); send_bytes(master, "\\020\\033[B\\033[B\\033[B\\033[B\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 8 && elapsed - alternateAt >= 5600) { failed |= !checkpoint("new-collection", "Create Collection"); resize_pty(master, child, 79, 24); step++; }
-    else if (!reader && !source && alternateAt && step == 9 && elapsed - alternateAt >= 5950) { failed |= !checkpoint("narrow-form", "Create Collection"); resize_pty(master, child, 43, 30); step++; }
-    else if (!reader && !source && alternateAt && step == 10 && elapsed - alternateAt >= 6300) { failed |= !checkpoint("compact-form", "Create Collection"); resize_pty(master, child, 120, 40); step++; }
-    else if (!reader && !source && alternateAt && step == 11 && elapsed - alternateAt >= 6700) { failed |= !checkpoint("restored-form", "Create Collection"); send_bytes(master, "\\033[B"); step++; }
-    else if (!reader && !source && alternateAt && step == 12 && elapsed - alternateAt >= 7000) { send_bytes(master, "\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 13 && elapsed - alternateAt >= 7300) { send_bytes(master, "\\t"); step++; }
-    else if (!reader && !source && alternateAt && step == 14 && elapsed - alternateAt >= 7600) { send_bytes(master, "pty-created"); step++; }
-    else if (!reader && !source && alternateAt && step == 15 && elapsed - alternateAt >= 7900) { send_bytes(master, "\\t\\033[B\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 16 && elapsed - alternateAt >= 8800) { failed |= !checkpoint("created", "pty-created"); if (!config_has(argv[2], "pty-created")) { fprintf(stderr, "PTY checkpoint project-config missing pty-created\\n"); failed = 1; } send_bytes(master, "\\020"); step++; }
-    else if (!reader && !source && alternateAt && step >= 17 && step < 26 && elapsed - alternateAt >= 9100 + (step - 17) * 180) { send_bytes(master, "\\033[B"); step++; }
-    else if (!reader && !source && alternateAt && step == 26 && elapsed - alternateAt >= 10800) { send_bytes(master, "\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 27 && elapsed - alternateAt >= 11500) { failed |= !checkpoint("remove-review", "Remove Collection"); send_bytes(master, "\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 28 && elapsed - alternateAt >= 11900) { failed |= !checkpoint("cancelled-remove", "pty-created"); send_bytes(master, "\\020"); step++; }
-    else if (!reader && !source && alternateAt && step >= 29 && step < 38 && elapsed - alternateAt >= 12200 + (step - 29) * 180) { send_bytes(master, "\\033[B"); step++; }
-    else if (!reader && !source && alternateAt && step == 38 && elapsed - alternateAt >= 13900) { send_bytes(master, "\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 39 && elapsed - alternateAt >= 14600) { failed |= !checkpoint("remove-review-repeat", "Remove Collection"); send_bytes(master, "\\033[B\\r"); step++; }
-    else if (!reader && !source && alternateAt && step == 40 && elapsed - alternateAt >= 15500) { if (config_has(argv[2], "pty-created")) { fprintf(stderr, "PTY checkpoint project-config retained pty-created after removal\\n"); failed = 1; } failed |= !checkpoint("removed", "Collections"); struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step++; }
+    if (cold && alternateAt && step == 0 && elapsed - alternateAt >= 1800) { failed |= !checkpoint("cold-start", "Add your first Skill") || !checkpoint("cold-action", "Add a Source") || !checkpoint("cold-instructions", "Discover"); send_bytes(master, "\\r"); step++; }
+    else if (cold && alternateAt && step == 1 && elapsed - alternateAt >= 2300) { failed |= !checkpoint("cold-add-source", "Add Source"); if (config_has(argv[2], "fixture-source")) { fprintf(stderr, "PTY cold-start Enter mutated project config\\n"); failed = 1; } struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step = 99; }
+    else if (source && alternateAt && step == 0 && elapsed - alternateAt >= 1800) { failed |= !checkpoint("source-start", "Workspace"); send_bytes(master, "\\020"); step++; }
+    else if (source && alternateAt && step == 1 && elapsed - alternateAt >= 2300) { failed |= !checkpoint("source-palette", "Global"); if (!strcmp(level, "project")) send_bytes(master, "\\033[B\\033[B\\r"); else if (!strcmp(level, "local")) send_bytes(master, "\\033[B\\033[B\\033[B\\r"); else send_bytes(master, "\\033[B\\r"); step++; }
+    else if (source && alternateAt && step == 2 && elapsed - alternateAt >= 2900) { failed |= !checkpoint("source-config", "Config") || !checkpoint("source-section", "Sources"); send_bytes(master, "\\r"); step++; }
+    else if (source && !strcmp(level, "project") && alternateAt && step == 3 && elapsed - alternateAt >= 3400) { failed |= !checkpoint("source-actions", "Add Source"); send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\r"); step++; }
+    else if (source && strcmp(level, "project") && alternateAt && step == 3 && elapsed - alternateAt >= 3400) { failed |= !checkpoint("add-source", "Add Source"); step++; }
+    else if (github && alternateAt && step == 4 && elapsed - alternateAt >= 3900) { failed |= !checkpoint("add-source", "Add Source"); send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\r"); step++; }
+    else if (github && alternateAt && step == 5 && elapsed - alternateAt >= 4300) { send_bytes(master, "\\t"); step++; }
+    else if (github && alternateAt && step == 6 && elapsed - alternateAt >= 4600) { send_bytes(master, "github-cancel"); step++; }
+    else if (github && alternateAt && step == 7 && elapsed - alternateAt >= 4900) { send_bytes(master, "\\t"); step++; }
+    else if (github && alternateAt && step == 8 && elapsed - alternateAt >= 5200) { send_bytes(master, "owner"); step++; }
+    else if (github && alternateAt && step == 9 && elapsed - alternateAt >= 5500) { send_bytes(master, "\\t"); step++; }
+    else if (github && alternateAt && step == 10 && elapsed - alternateAt >= 5800) { send_bytes(master, "repository"); step++; }
+    else if (github && alternateAt && step == 11 && elapsed - alternateAt >= 6200) { failed |= !checkpoint("github-owner", "owner") || !checkpoint("github-repository", "repository") || !checkpoint("github-cancel", "Cancel"); send_bytes(master, "\\033"); step++; }
+    else if (github && alternateAt && step == 12 && elapsed - alternateAt >= 6800) { if (level_has(argv[2], "global", "github-cancel")) { fprintf(stderr, "PTY github cancel mutated global config\\n"); failed = 1; } struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step++; }
+    else if (source && !github && alternateAt && step == 4 && elapsed - alternateAt >= 3900) { send_bytes(master, "\\t"); step++; }
+    else if (source && !github && alternateAt && step == 5 && elapsed - alternateAt >= 4200) { char id[64]; snprintf(id, sizeof id, "source-%s", level); send_bytes(master, id); step++; }
+    else if (source && !github && alternateAt && step == 6 && elapsed - alternateAt >= 4600) { send_bytes(master, "\\t"); step++; }
+    else if (source && !github && alternateAt && step == 7 && elapsed - alternateAt >= 4900) { char origin[4096]; const char *slash = strrchr(argv[2], '/'); snprintf(origin, sizeof origin, "%.*s/fixture-source-root", (int)(slash - argv[2]), argv[2]); send_bytes(master, origin); step++; }
+    else if (source && !github && alternateAt && step == 8 && elapsed - alternateAt >= 5300) { send_bytes(master, "\\tfixture"); step++; }
+    else if (source && !github && alternateAt && step == 9 && elapsed - alternateAt >= 5700) { send_bytes(master, "\\t"); step++; }
+    else if (source && !github && alternateAt && step == 10 && elapsed - alternateAt >= 6000) { send_bytes(master, "\\033[B\\r"); step++; }
+    else if (source && !github && alternateAt && step == 11 && elapsed - alternateAt >= 7400) { char id[64]; snprintf(id, sizeof id, "source-%s", level); failed |= !checkpoint("source-created", id); if (!level_has(argv[2], level, id)) { fprintf(stderr, "PTY checkpoint %s config missing %s\\n", level, id); failed = 1; } struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step++; }
+    else if (mouse && alternateAt && step == 0 && elapsed - alternateAt >= 1800) { if (!mouseEnabled) { fprintf(stderr, "PTY mouse protocol 1006 was not enabled\\n"); failed = 1; } send_bytes(master, "\\033"); step = 100; }
+    else if (mouse && alternateAt && step == 100 && elapsed - alternateAt >= 2200) { send_bytes(master, "\\033[C"); step = 101; }
+    else if (mouse && alternateAt && step == 101 && elapsed - alternateAt >= 2600) { failed |= !checkpoint("mouse-collections", "Collections"); send_bytes(master, "\\r"); step = 102; }
+    else if (mouse && alternateAt && step == 102 && elapsed - alternateAt >= 3000) { send_bytes(master, "\\t"); step = 103; }
+    else if (mouse && alternateAt && step == 103 && elapsed - alternateAt >= 3300) { send_bytes(master, "\\t"); step = 104; }
+    else if (mouse && alternateAt && step == 104 && elapsed - alternateAt >= 3600) { send_bytes(master, "\\r"); step = 105; }
+    else if (mouse && alternateAt && step == 105 && elapsed - alternateAt >= 4100) { int column, row; char sgr[64]; failed |= !checkpoint("mouse-overlay-dimensions", "Search dimensions"); memcpy(mouse_before, screen, sizeof screen); if (!locate("Search dimensions", &column, &row) || ++row > height) { checkpoint("mouse collection dimension", "Search dimensions"); failed = 1; } else { snprintf(sgr, sizeof sgr, "\\033[<0;%d;%dM\\033[<3;%d;%dm", column, row, column, row); send_bytes(master, sgr); } step = 106; }
+    else if (mouse && alternateAt && step == 106 && elapsed - alternateAt >= 4700) { failed |= !checkpoint("mouse-overlay-values", "1/1"); if (!memcmp(mouse_before, screen, sizeof screen)) { fprintf(stderr, "PTY mouse dimension click did not change the active screen\\n"); failed = 1; } struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step++; }
+    else if (!cold && !reader && !source && !mouse && alternateAt && step == 0 && elapsed - alternateAt >= 1800) { failed |= !checkpoint("startup", "Workspace") || !checkpoint("skills", "Installed Skills") || !checkpoint("fixture", "fixture"); send_bytes(master, "\\033"); step++; }
+    else if (!cold && !reader && !source && alternateAt && step == 1 && elapsed - alternateAt >= 2200) { send_bytes(master, "\\033"); step++; }
+    else if (!reader && !source && alternateAt && step == 2 && elapsed - alternateAt >= 2600) { send_bytes(master, "\\033[C"); step++; }
+    else if (!reader && !source && alternateAt && step == 3 && elapsed - alternateAt >= 3100) { failed |= !checkpoint("global selected", "Global Config") || !checkpoint("global destination", "Global Config"); send_bytes(master, "\\t"); step++; }
+    else if (!reader && !source && alternateAt && step == 4 && elapsed - alternateAt >= 3600) { failed |= !checkpoint("global-sections", "Sources"); send_bytes(master, "\\033[C\\033[C"); step++; }
+    else if (!reader && !source && alternateAt && step == 5 && elapsed - alternateAt >= 4100) { failed |= !checkpoint("global-collections", "Collections"); send_bytes(master, "\\r"); step++; }
+    else if (!reader && !source && alternateAt && step == 6 && elapsed - alternateAt >= 4600) { failed |= !checkpoint("global-collections-empty", "No Collections yet") || !checkpoint("global-new-collection", "New Collection"); send_bytes(master, "\\r"); step++; }
+    else if (!reader && !source && alternateAt && step == 7 && elapsed - alternateAt >= 5100) { failed |= !checkpoint("new-collection-action", "Create Collection"); resize_pty(master, child, 80, 24); step++; }
+    else if (!reader && !source && alternateAt && step == 8 && elapsed - alternateAt >= 5600) { failed |= !checkpoint("narrow-form", "Create Collection"); resize_pty(master, child, 43, 24); step++; }
+    else if (!reader && !source && alternateAt && step == 9 && elapsed - alternateAt >= 5950) { failed |= !checkpoint("compact-form", "Create Collection"); resize_pty(master, child, 120, 40); step++; }
+    else if (!reader && !source && alternateAt && step == 10 && elapsed - alternateAt >= 6300) { failed |= !checkpoint("restored-form", "Create Collection"); send_bytes(master, "pty-created"); step++; }
+    else if (!reader && !source && alternateAt && step == 11 && elapsed - alternateAt >= 6700) { send_bytes(master, "\\t"); step++; }
+    else if (!reader && !source && alternateAt && step == 12 && elapsed - alternateAt >= 7000) { send_bytes(master, "\\033[B\\r"); step++; }
+    else if (!reader && !source && alternateAt && step == 13 && elapsed - alternateAt >= 7600) { failed |= !checkpoint("created", "pty-created"); if (!level_has(argv[2], "global", "pty-created")) { fprintf(stderr, "PTY checkpoint global-config missing pty-created\\n"); failed = 1; } step++; }
+    else if (!reader && !source && alternateAt && step == 14 && elapsed - alternateAt >= 8400) { send_bytes(master, "\\020"); step++; }
+    else if (!reader && !source && alternateAt && step == 15 && elapsed - alternateAt >= 8800) { failed |= !checkpoint("collection-palette", "New Collection"); send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B"); step++; }
+    else if (!reader && !source && alternateAt && step == 16 && elapsed - alternateAt >= 9200) { failed |= !checkpoint("collection-actions", "Add Link") || !checkpoint("collection-remove-action", "Remove Collection"); send_bytes(master, "\\033[B"); step++; }
+    else if (!reader && !source && alternateAt && step == 17 && elapsed - alternateAt >= 9500) { send_bytes(master, "\\r"); step++; }
+    else if (!reader && !source && alternateAt && step == 18 && elapsed - alternateAt >= 10100) { failed |= !checkpoint("remove-review", "Remove Collection"); send_bytes(master, "\\r"); step++; }
+    else if (!reader && !source && alternateAt && step == 19 && elapsed - alternateAt >= 10500) { failed |= !checkpoint("cancelled-remove", "pty-created"); send_bytes(master, "\\020"); step++; }
+    else if (!reader && !source && alternateAt && step == 20 && elapsed - alternateAt >= 10900) { failed |= !checkpoint("collection-palette-repeat", "New Collection"); send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B"); step++; }
+    else if (!reader && !source && alternateAt && step == 21 && elapsed - alternateAt >= 11300) { failed |= !checkpoint("collection-actions-repeat", "Add Link") || !checkpoint("collection-remove-action-repeat", "Remove Collection"); send_bytes(master, "\\r"); step++; }
+    else if (!reader && !source && alternateAt && step == 22 && elapsed - alternateAt >= 11900) { failed |= !checkpoint("remove-review-repeat", "Remove Collection"); send_bytes(master, "\\033[B\\r"); step++; }
+    else if (!reader && !source && alternateAt && step == 23 && elapsed - alternateAt >= 12900) { if (level_has(argv[2], "global", "pty-created")) { fprintf(stderr, "PTY checkpoint global-config retained pty-created after removal\\n"); failed = 1; } failed |= !checkpoint("removed", "Collections"); struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step++; }
     else if (reader && alternateAt && step == 0 && elapsed - alternateAt >= 1800) { failed |= !checkpoint("reader-start", "fixture"); send_bytes(master, "\\r"); step++; }
     else if (reader && alternateAt && step == 1 && elapsed - alternateAt >= 2100) { send_bytes(master, "\\033[Z"); step++; }
-    else if (reader && alternateAt && step == 2 && elapsed - alternateAt >= 2400) { send_bytes(master, "\\033[C\\r"); step++; }
-    else if (reader && alternateAt && step == 3 && elapsed - alternateAt >= 2800) { send_bytes(master, "\\033[Z"); step++; }
-    else if (reader && alternateAt && step == 4 && elapsed - alternateAt >= 3100) { send_bytes(master, "\\033[C\\r"); step++; }
-    else if (reader && alternateAt && step == 5 && elapsed - alternateAt >= 3500) { send_bytes(master, "\\t\\r"); step++; }
-    else if (reader && alternateAt && step == 6 && elapsed - alternateAt >= 4000) { failed |= !checkpoint("reader-actions", "Actions"); send_bytes(master, "\\003"); step++; }
-    else if (reader && alternateAt && step == 7 && elapsed - alternateAt >= 4400) { struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step++; }
+    else if (reader && alternateAt && step == 2 && elapsed - alternateAt >= 2400) { send_bytes(master, "\\t"); step++; }
+    else if (reader && alternateAt && step == 3 && elapsed - alternateAt >= 2800) { failed |= !checkpoint("reader-tabs", "SKILL.md"); send_bytes(master, "\\033[C\\033[C"); step++; }
+    else if (reader && alternateAt && step == 4 && elapsed - alternateAt >= 3200) { failed |= !checkpoint("reader-details", "Details"); send_bytes(master, "\\t"); step++; }
+    else if (reader && alternateAt && step == 5 && elapsed - alternateAt >= 3600) { failed |= !checkpoint("reader-actions", "Actions"); send_bytes(master, "\\003"); step++; }
+    else if (reader && alternateAt && step == 6 && elapsed - alternateAt >= 4000) { struct termios settings; tcgetattr(master, &settings); settings.c_lflag |= ISIG; settings.c_cc[VINTR] = 3; tcsetattr(master, TCSANOW, &settings); unsigned char ctrlc = 3; write(master, &ctrlc, 1); step++; }
     if (elapsed >= 18000) { kill(child, SIGKILL); waitpid(child, &status, 0); fclose(out); return 124; }
     usleep(10000);
   }
@@ -304,6 +310,7 @@ async function tui(
   artifact: string,
   outputRoot: string,
   mode:
+    | "cold"
     | "navigation"
     | "reader"
     | "source-global"
@@ -399,6 +406,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
     );
     const payload = new Uint8Array([0, 255, 1, 2]);
     await writeFile(join(skill, "assets", "payload.bin"), payload);
+    await tui(options.artifact, options.outputRoot, "cold");
     await runPackagedCheck(packagedChecks[1].name, async () => {
       for (const argv of [
         ["source", "register", "local", "fixture-source", sourceRoot, "--level", "project"],
