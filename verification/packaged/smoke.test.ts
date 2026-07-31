@@ -38,7 +38,7 @@ describe("packaged release orchestration", () => {
     expect(packagedChecks.map((check) => check.name)).toEqual([
       "native-artifact",
       "local-register-discover-install",
-      "collection-use-managed-agent-list-load-read",
+      "collection-use-managed-agent-browse-load-read",
       "agent-run",
       "agent-download",
       "tui-start-render-input-exit",

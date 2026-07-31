@@ -74,6 +74,53 @@ test("MGMT-001 creates only the selected Global Project or Local Source target w
   }
 });
 
+test("Use changes are atomic, report their locked delta, and reject duplicate set entries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-use-changes-"));
+  const state = join(root, "state");
+  try {
+    process.env.SKILL_CLI_STATE_DIR = state;
+    await writeFile(
+      join(root, "skill-cli.jsonc"),
+      JSON.stringify({ collections: { alpha: {}, beta: {} }, use: [] }),
+    );
+    const core = createSkillCliCore({ cwd: root, userConfigPath: join(root, "global.jsonc") });
+    const [alpha, beta] = await Promise.all([
+      core.configuration.change({ type: "use.add", level: "project", collection: "alpha" }),
+      core.configuration.change({ type: "use.add", level: "project", collection: "beta" }),
+    ]);
+    expect(JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).use.sort()).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(alpha.value.use).toMatchObject({ after: expect.any(Array) });
+    expect(beta.value.use).toMatchObject({ after: expect.any(Array) });
+    const removedAlpha = await core.configuration.change({
+      type: "use.remove",
+      level: "project",
+      collection: "alpha",
+    });
+    const removedBeta = await core.configuration.change({
+      type: "use.remove",
+      level: "project",
+      collection: "beta",
+    });
+    expect([...(removedAlpha.value.use?.before ?? [])].sort()).toEqual(["alpha", "beta"]);
+    expect(removedAlpha.value.use?.after).toEqual(["beta"]);
+    expect(removedBeta.value.use).toEqual({ before: ["beta"], after: [] });
+    expect(JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).use).toEqual([]);
+    await expect(
+      core.configuration.change({
+        type: "use.set",
+        level: "project",
+        collections: ["alpha", "alpha"],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("global mutations work without a project but project targets remain strict", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-global-only-edit-"));
   const cwd = join(root, "outside-project");

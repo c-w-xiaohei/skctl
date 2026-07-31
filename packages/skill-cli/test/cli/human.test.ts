@@ -12,7 +12,26 @@ function core(calls: unknown[]): SkillCliCore {
       change: async (change) => {
         calls.push(change);
         return {
-          value: { changed: true, level: change.level, file: `/tmp/${change.level}.jsonc` },
+          value: {
+            changed: true,
+            level: change.level,
+            file: `/tmp/${change.level}.jsonc`,
+            ...(change.type === "use.set" ||
+            change.type === "use.add" ||
+            change.type === "use.remove"
+              ? {
+                  use: {
+                    before: [],
+                    after:
+                      change.type === "use.set"
+                        ? change.collections
+                        : change.type === "use.add"
+                          ? [change.collection]
+                          : [],
+                  },
+                }
+              : {}),
+          },
           diagnostics: [],
         };
       },
@@ -102,7 +121,7 @@ function core(calls: unknown[]): SkillCliCore {
       },
     },
     catalog: {
-      list: async () => ({ value: {} as never, diagnostics: [] }),
+      browse: async () => ({ value: {} as never, diagnostics: [] }),
       search: async () => ({ value: {} as never, diagnostics: [] }),
     },
     content: {
@@ -202,6 +221,9 @@ test("CLI-001 maps collection, use, managed, and content commands without legacy
     ["collection", "member", "remove", "engineering", "review"],
     ["collection", "import", "source", "target"],
     ["collection", "reference", "add", "engineering", "docs", "other", "Documentation"],
+    ["collection", "reference", "remove", "engineering", "docs"],
+    ["collection", "create", "new", "--level", "local"],
+    ["collection", "remove", "new", "--level", "local"],
     ["collection", "link", "add", "engineering", "other"],
     ["use", "set", "engineering"],
     ["managed", "set"],
@@ -215,6 +237,14 @@ test("CLI-001 maps collection, use, managed, and content commands without legacy
     collection: "engineering",
     name: "review",
   });
+  expect(calls).toContainEqual({
+    type: "collection.reference.remove",
+    level: "project",
+    collection: "engineering",
+    name: "docs",
+  });
+  expect(calls).toContainEqual({ type: "collection.create", level: "local", collection: "new" });
+  expect(calls).toContainEqual({ type: "collection.remove", level: "local", collection: "new" });
   expect(calls).toContainEqual({
     type: "collection.reference.set",
     level: "project",
@@ -418,9 +448,8 @@ test("human mutations describe their completed action, level, target file, and i
   expect(output.join("")).toContain(
     'Added member "review" to collection "engineering" at project level in /tmp/project.jsonc.',
   );
-  expect(output.join("")).toContain(
-    'Set collection use to "engineering" at project level in /tmp/project.jsonc.',
-  );
+  expect(output.join("")).toContain("Added: engineering. Retained: none. Removed: none.");
+  expect(output.join("")).not.toContain("Set collection use");
   expect(output.join("")).toContain(
     "Enabled managed OpenCode at project level in /tmp/project.jsonc.",
   );
@@ -429,6 +458,63 @@ test("human mutations describe their completed action, level, target file, and i
   );
   expect(output.join("")).not.toContain("source.register\n");
   expect(output.join("")).not.toContain("management.install\n");
+});
+
+test("collection inspect labels configuration preview separately from disclosure", async () => {
+  const output: string[] = [];
+  const fake = core([]);
+  fake.workspace.get = async () => ({
+    value: {
+      effective: {
+        status: "complete",
+        use: ["root"],
+        agent: { status: "available" },
+        collectionsView: [
+          {
+            id: "root",
+            declared: [],
+            repository: { derived: false, producers: [] },
+            members: [],
+            references: [
+              {
+                name: "child",
+                collection: "child",
+                description: "Child",
+                owner: {
+                  level: "project",
+                  file: "/tmp/project.jsonc",
+                  pointer: "/collections/root/references/child",
+                },
+              },
+            ],
+            links: [],
+          },
+          {
+            id: "child",
+            declared: [],
+            repository: { derived: false, producers: [] },
+            members: [],
+            references: [],
+            links: [],
+          },
+        ],
+      },
+      installedSkills: [],
+    } as never,
+    diagnostics: [],
+  });
+  expect(
+    await runHumanCommand(["collection", "inspect", "child", "--json"], {
+      cwd: "/tmp",
+      createCore: () => fake,
+      stdout: { write: (value) => output.push(String(value)) },
+      stderr: { write() {} },
+    }),
+  ).toBe(0);
+  const result = JSON.parse(output.join(""));
+  expect(result.catalogPreview).toEqual({ skills: 0, linkedSkills: 0, collections: 0 });
+  expect(result.disclosure).toEqual({ available: true, useRoot: false, referenceReachable: true });
+  expect(result).not.toHaveProperty("agentProjection");
 });
 
 test("human mutations report no-op configuration changes and affected update paths", async () => {

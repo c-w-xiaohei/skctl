@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("CLI-002 process agent list writes clean direct catalog JSON", async () => {
+test("CLI-002 process agent browse writes clean root catalog JSON", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-process-"));
   const state = join(root, "state");
   const configHome = join(root, "config");
@@ -35,7 +35,7 @@ test("CLI-002 process agent list writes clean direct catalog JSON", async () => 
     });
     expect(await setup.exited).toBe(0);
     const command = Bun.spawn({
-      cmd: [process.execPath, join(import.meta.dir, "../../src/main.ts"), "agent", "list"],
+      cmd: [process.execPath, join(import.meta.dir, "../../src/main.ts"), "agent", "browse"],
       cwd: root,
       env: {
         ...process.env,
@@ -49,21 +49,21 @@ test("CLI-002 process agent list writes clean direct catalog JSON", async () => 
     expect(await command.exited).toBe(0);
     expect(await new Response(command.stderr).text()).toBe("");
     expect(JSON.parse(await new Response(command.stdout).text())).toEqual({
-      skills: [{ selector: "c:review", name: "review", description: "Review" }],
-      references: [],
+      scope: { kind: "root" },
+      items: [{ kind: "collection", id: "c", name: "c" }],
     });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("CLI-002 process agent list rejects an inapplicable output option without an error envelope", async () => {
+test("CLI-002 process agent browse rejects an inapplicable output option without an error envelope", async () => {
   const command = Bun.spawn({
     cmd: [
       process.execPath,
       join(import.meta.dir, "../../src/main.ts"),
       "agent",
-      "list",
+      "browse",
       "--output",
       "/tmp/out",
     ],

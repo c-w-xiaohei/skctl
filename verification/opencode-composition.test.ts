@@ -45,7 +45,7 @@ function completion(delta: object, finishReason: "stop" | "tool_calls" = "stop")
   );
 }
 
-function createLlmServer(loadCommand: string, project: string) {
+function createLlmServer(browseCommand: string, loadCommand: string, project: string) {
   const requests: ChatRequest[] = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -65,7 +65,7 @@ function createLlmServer(loadCommand: string, project: string) {
         return completion({ content: "E2E" });
 
       requests.push(body);
-      if (requests.length === 1) {
+      if (requests.length <= 2) {
         return completion(
           {
             tool_calls: [
@@ -75,7 +75,10 @@ function createLlmServer(loadCommand: string, project: string) {
                 type: "function",
                 function: {
                   name: "bash",
-                  arguments: JSON.stringify({ command: loadCommand, workdir: project }),
+                  arguments: JSON.stringify({
+                    command: requests.length === 1 ? browseCommand : loadCommand,
+                    workdir: project,
+                  }),
                 },
               },
             ],
@@ -83,7 +86,7 @@ function createLlmServer(loadCommand: string, project: string) {
           "tool_calls",
         );
       }
-      if (requests.length === 2) return completion({ content: "loaded" });
+      if (requests.length === 3) return completion({ content: "loaded" });
       return new Response("Unexpected model request", { status: 500 });
     },
   });
@@ -152,6 +155,7 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
     const project = join(root, "project");
     const selector = "engineering:review";
     const token = crypto.randomUUID();
+    const browseCommand = "skill-cli agent browse engineering";
     const loadCommand = `skill-cli agent load ${selector}`;
     await Promise.all([
       fs.mkdir(bin),
@@ -195,7 +199,7 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
     ])
       await command([skillCli, ...args], project, env);
 
-    llm = createLlmServer(loadCommand, project);
+    llm = createLlmServer(browseCommand, loadCommand, project);
     host = await startOpenCode(project, envOverrides, {
       hostname: "127.0.0.1",
       port: 0,
@@ -243,25 +247,33 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
         .map((part) => part.text)
         .join(""),
     ).toBe("loaded");
-    expect(llm.requests).toHaveLength(2);
+    expect(llm.requests).toHaveLength(3);
     const systemPrompts = llm.requests[0]?.messages
       ?.filter(({ role, content }) => role === "system" && typeof content === "string")
       .map(({ content }) => content);
     expect(systemPrompts).toEqual(
       expect.arrayContaining([
-        expect.stringContaining(`"selector":"${selector}"`),
+        expect.stringContaining('"kind":"collection"'),
+        expect.stringContaining('"id":"engineering"'),
+        expect.stringContaining("skill-cli agent browse <collection-id>"),
         expect.stringContaining("skill-cli agent load <selector>"),
       ]),
     );
-    const toolOutput = llm.requests[1]?.messages?.find(({ role }) => role === "tool")?.content;
-    expect(toolOutput).toEqual(expect.stringContaining(token));
+    expect(systemPrompts?.join("\n")).not.toContain(`"selector":"${selector}"`);
+    const browseOutput = llm.requests[1]?.messages?.find(({ role }) => role === "tool")?.content;
+    expect(browseOutput).toEqual(expect.stringContaining(`"selector":"${selector}"`));
+    const loadOutput = llm.requests[2]?.messages
+      ?.filter(({ role }) => role === "tool")
+      .at(-1)?.content;
+    expect(loadOutput).toEqual(expect.stringContaining(token));
 
     const records = await Promise.all(
       (await fs.readdir(audit)).map((file) => fs.readFile(join(audit, file), "utf8")),
     );
     expect(records).toEqual(
       expect.arrayContaining([
-        [project, "agent", "list", ""].join("\0"),
+        [project, "agent", "browse", ""].join("\0"),
+        [project, "agent", "browse", "engineering", ""].join("\0"),
         [project, "agent", "load", selector, ""].join("\0"),
       ]),
     );

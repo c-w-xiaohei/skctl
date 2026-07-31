@@ -31,19 +31,23 @@ function input(directory: string): PluginInput {
 }
 
 describe("OpenCode plugin", () => {
-  test("renders direct skills and category references from the clean catalog", async () => {
+  test("renders root Collection nodes from the clean catalog", async () => {
     const root = await fixture({
-      skills: [{ selector: "gingiris:router", name: "router", description: "Route requests" }],
-      references: [
-        { name: "engineering", description: "Engineering skills", collection: "engineering" },
+      scope: { kind: "root" },
+      items: [
+        {
+          kind: "collection",
+          id: "engineering",
+          name: "engineering",
+          description: "Engineering skills",
+        },
       ],
     });
     const hooks = await plugin(input(root));
     const output = { system: [] as string[] };
     await hooks["experimental.chat.system.transform"]!({ model: {} as never }, output);
-    expect(output.system[0]).toContain('"selector":"gingiris:router"');
-    expect(output.system[0]).toContain('"collection":"engineering"');
-    expect(output.system[0]).toContain("skill-cli agent list <collection>");
+    expect(output.system[0]).toContain('"id":"engineering"');
+    expect(output.system[0]).toContain("skill-cli agent browse <collection-id>");
   });
 
   test("fails open without exposing malformed catalog output", async () => {

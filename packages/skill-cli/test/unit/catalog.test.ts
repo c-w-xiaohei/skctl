@@ -16,8 +16,8 @@ test("PROJ-016 reports managed catalog unavailable for absent, empty, or incompl
       JSON.stringify({ agents: { opencode: "managed" }, use: [] }),
     );
     const core = createSkillCliCore({ cwd: root });
-    await expect(core.catalog.list({})).resolves.toMatchObject({
-      value: { status: "unavailable", catalog: [] },
+    await expect(core.catalog.browse({})).resolves.toMatchObject({
+      value: { status: "unavailable", reason: expect.any(String) },
     });
     await writeFile(
       join(root, "skill-cli.jsonc"),
@@ -27,8 +27,8 @@ test("PROJ-016 reports managed catalog unavailable for absent, empty, or incompl
         use: ["c"],
       }),
     );
-    await expect(core.catalog.list({})).resolves.toMatchObject({
-      value: { status: "unavailable", catalog: [] },
+    await expect(core.catalog.browse({})).resolves.toMatchObject({
+      value: { status: "unavailable", reason: expect.any(String) },
     });
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
@@ -36,7 +36,7 @@ test("PROJ-016 reports managed catalog unavailable for absent, empty, or incompl
   }
 });
 
-test("PROJ-015/016 projects direct Collection members and References without aliases", async () => {
+test("PROJ-015/016 projects root and collection nodes without aliases or graph terms", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-catalog-records-"));
   const state = join(root, "state");
   const global = join(root, "global.jsonc");
@@ -63,17 +63,21 @@ test("PROJ-015/016 projects direct Collection members and References without ali
     await writeFile(global, "{}\n");
     await new StateCoordinator(state).installLocal("source", "review", skill);
     const core = createSkillCliCore({ cwd: root, userConfigPath: global });
-    const catalog = await core.catalog.list({});
+    const catalog = await core.catalog.browse({});
     expect(catalog.value).toEqual(
       expect.objectContaining({
         status: "available",
-        catalog: [{ selector: "alpha:review", name: "review", description: "Review", aliases: [] }],
-        references: [{ name: "docs", collection: "zeta", description: "Documentation" }],
+        scope: { kind: "root" },
+        items: [{ kind: "collection", id: "alpha", name: "alpha" }],
       }),
     );
-    await expect(core.catalog.list({ collection: "zeta" })).resolves.toMatchObject({
+    await expect(core.catalog.browse({ collection: "alpha" })).resolves.toMatchObject({
       value: {
-        catalog: [{ selector: "zeta:again", name: "review", description: "Review", aliases: [] }],
+        scope: { kind: "collection", id: "alpha" },
+        items: [
+          { kind: "skill", selector: "alpha:review", name: "review", description: "Review" },
+          { kind: "collection", id: "zeta", name: "docs", description: "Documentation" },
+        ],
       },
     });
   } finally {

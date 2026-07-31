@@ -96,6 +96,7 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
       writeErr: (value) => void stderr.write(value),
     })
     .option("--project <path>")
+    .addHelpText("after", "\nAgent access: skill-cli agent --help\n")
     .hook("preAction", (current) => {
       project = current.opts().project;
     });
@@ -338,6 +339,103 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
     );
 
   const collection = command.command("collection");
+  collection
+    .command("create <id>")
+    .option("--level <level>", levelDescription, "project")
+    .action((collectionId, flags) =>
+      change({
+        type: "collection.create",
+        level: level(String(flagsOf(flags).level ?? "project")),
+        collection: collectionId,
+      }),
+    );
+  collection
+    .command("remove <id>")
+    .option("--level <level>", levelDescription, "project")
+    .action((collectionId, flags) =>
+      change({
+        type: "collection.remove",
+        level: level(String(flagsOf(flags).level ?? "project")),
+        collection: collectionId,
+      }),
+    );
+  collection
+    .command("inspect <id>")
+    .option("--level <level>", levelDescription)
+    .option("--json")
+    .action(async (collectionId, flags) => {
+      const options = flagsOf(flags);
+      const selectedLevel = options.level === undefined ? undefined : level(String(options.level));
+      const workspace = await core().workspace.get();
+      const effective = workspace.value.effective;
+      if (effective.status !== "complete")
+        throw new SkillCliError("REFERENCE_NOT_FOUND", `Collection not found: ${collectionId}`);
+      const view = effective.collectionsView.find((item) => item.id === collectionId);
+      if (!view)
+        throw new SkillCliError("REFERENCE_NOT_FOUND", `Collection not found: ${collectionId}`);
+      const selected = effective.use.includes(collectionId);
+      const reachable = new Set<string>();
+      const pending = [...effective.use];
+      while (pending.length) {
+        const id = pending.pop()!;
+        if (reachable.has(id)) continue;
+        reachable.add(id);
+        const current = effective.collectionsView.find((collection) => collection.id === id);
+        for (const reference of current?.references ?? []) pending.push(reference.collection);
+      }
+      const installed = new Set(
+        workspace.value.installedSkills
+          .filter((skill) => skill.owner.health === "healthy")
+          .map((skill) => `${skill.address.source}/${skill.address.path}`),
+      );
+      const healthy = view.members.filter((member) =>
+        installed.has(`${member.address.source}/${member.address.path}`),
+      );
+      const linkedSkills = healthy.filter(
+        (member) =>
+          !member.paths.some((path) => path.kind === "direct") &&
+          member.paths.some((path) => path.kind === "via-link"),
+      ).length;
+      const declared = selectedLevel
+        ? view.declared.filter((owner) => owner.level === selectedLevel)
+        : view.declared;
+      const references = selectedLevel
+        ? view.references.filter((reference) => reference.owner.level === selectedLevel)
+        : view.references;
+      const links = selectedLevel
+        ? view.links.filter((link) => link.owner.level === selectedLevel)
+        : view.links;
+      const result = {
+        id: view.id,
+        declared,
+        members: view.members,
+        references,
+        links,
+        catalogPreview: {
+          skills: healthy.length,
+          linkedSkills,
+          collections: references.length,
+        },
+        disclosure: {
+          available: effective.agent.status === "available",
+          useRoot: selected,
+          referenceReachable: reachable.has(collectionId) && !selected,
+        },
+      };
+      if (options.json) stdout.write(`${JSON.stringify(result)}\n`);
+      else
+        stdout.write(
+          [
+            `collection ${result.id}`,
+            `declared ${result.declared.map((owner) => `${owner.level}:${owner.file}`).join(", ") || "none"}`,
+            `members ${result.members.length}`,
+            `references ${result.references.length}`,
+            `links ${result.links.length}`,
+            `catalog preview ${result.catalogPreview.skills} skills; ${result.catalogPreview.linkedSkills} via links; ${result.catalogPreview.collections} child collections`,
+            `disclosure available=${result.disclosure.available} use-root=${result.disclosure.useRoot} reference-reachable=${result.disclosure.referenceReachable}`,
+          ].join("\n") + "\n",
+        );
+    });
   const member = collection.command("member");
   member
     .command("add <collection> <name> <source> <path>")
@@ -387,6 +485,17 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
         description,
       }),
     );
+  reference
+    .command("remove <collection> <name>")
+    .option("--level <level>", levelDescription, "project")
+    .action((collectionId, name, flags) =>
+      change({
+        type: "collection.reference.remove",
+        level: level(String(flagsOf(flags).level ?? "project")),
+        collection: collectionId,
+        name,
+      }),
+    );
   const link = collection.command("link");
   link
     .command("add <collection> <target>")
@@ -413,11 +522,60 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
       }),
     );
   const use = command.command("use");
+  const changeUse = async (
+    value: Extract<ConfigChange, { readonly type: "use.set" | "use.add" | "use.remove" }>,
+  ) => {
+    const result = await core().configuration.change(value);
+    const delta = result.value.use!;
+    const added = delta.after.filter((id) => !delta.before.includes(id));
+    const removed = delta.before.filter((id) => !delta.after.includes(id));
+    const retained = delta.after.filter((id) => delta.before.includes(id));
+    stdout.write(
+      `Added: ${added.join(", ") || "none"}. Retained: ${retained.join(", ") || "none"}. Removed: ${removed.join(", ") || "none"}.\n`,
+    );
+  };
+  use
+    .command("list")
+    .option("--level <level>", levelDescription, "project")
+    .option("--json")
+    .action(async (flags) => {
+      const selectedLevel = level(String(flagsOf(flags).level ?? "project"));
+      const workspace = await core().workspace.get();
+      const collections =
+        workspace.value.configs
+          ?.find((item) => item.level === selectedLevel)
+          ?.direct.collectionUse.map((item) => item.collection) ?? [];
+      stdout.write(
+        flagsOf(flags).json
+          ? `${JSON.stringify({ level: selectedLevel, collections })}\n`
+          : `${collections.join("\n")}${collections.length ? "\n" : ""}`,
+      );
+    });
+  use
+    .command("add <id>")
+    .option("--level <level>", levelDescription, "project")
+    .action((id, flags) =>
+      changeUse({
+        type: "use.add",
+        level: level(String(flagsOf(flags).level ?? "project")),
+        collection: id,
+      }),
+    );
+  use
+    .command("remove <id>")
+    .option("--level <level>", levelDescription, "project")
+    .action((id, flags) =>
+      changeUse({
+        type: "use.remove",
+        level: level(String(flagsOf(flags).level ?? "project")),
+        collection: id,
+      }),
+    );
   use
     .command("set <collection...>")
     .option("--level <level>", levelDescription, "project")
     .action((collections, flags) =>
-      change({
+      changeUse({
         type: "use.set",
         level: level(String(flagsOf(flags).level ?? "project")),
         collections,

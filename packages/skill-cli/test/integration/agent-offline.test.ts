@@ -7,6 +7,9 @@ import { bindingDigest, canonicalRemoteOrigin } from "../../src/core/internal/do
 import { StateCoordinator } from "../../src/core/internal/state";
 import { setAcquisitionTrapForTest } from "../../src/core/internal/sources";
 
+const isolatedCore = (root: string) =>
+  createSkillCliCore({ cwd: root, userConfigPath: join(root, "global.jsonc") });
+
 function remoteBindingDigest(origin: string, root = "") {
   return bindingDigest({ kind: "git", origin: canonicalRemoteOrigin(origin), root, ref: "main" });
 }
@@ -31,7 +34,7 @@ test("AGT-001/AGT-002/CNT-001 uses only exposed installed Local content across a
     await new StateCoordinator(state).installLocal("source", "review", skill);
     const previous = process.env.SKILL_CLI_STATE_DIR;
     process.env.SKILL_CLI_STATE_DIR = state;
-    const core = createSkillCliCore({ cwd: root });
+    const core = isolatedCore(root);
     const selector = "engineering:review";
     expect((await core.content.load({ selector })).value.text).toContain("body");
     expect((await core.content.listResources({ selector })).value).toContainEqual(
@@ -86,7 +89,7 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
       }),
     );
     process.env.SKILL_CLI_STATE_DIR = state;
-    const core = createSkillCliCore({ cwd: root });
+    const core = isolatedCore(root);
     await new StateCoordinator(state).installLocal("local", "local", local);
     const digest = await new StateCoordinator(state).snapshotDigest(remote);
     await new StateCoordinator(state).publishSnapshot(digest, remote);
@@ -107,7 +110,7 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
       throw new Error("network acquisition occurred");
     }) as unknown as typeof fetch;
     for (const selector of ["c:local", "c:remote"]) {
-      await core.catalog.list({});
+      await core.catalog.browse({ collection: "c" });
       await core.catalog.search({ query: selector });
       await core.content.load({ selector });
       await core.content.listResources({ selector });
@@ -148,7 +151,7 @@ test("CNT-001 rejects invalid and oversized installed text without side effects"
     await new StateCoordinator(state).installLocal("source", "review", skill);
     process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(join(skill, "large.txt"), Buffer.alloc(1_048_577, "x"));
-    const core = createSkillCliCore({ cwd: root });
+    const core = isolatedCore(root);
     await expect(
       core.content.read({ selector: "engineering:review", path: "bad.txt" }),
     ).rejects.toMatchObject({ code: "INVALID_UTF8" });
@@ -186,7 +189,7 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
       }),
     );
     process.env.SKILL_CLI_STATE_DIR = state;
-    const core = createSkillCliCore({ cwd: root });
+    const core = isolatedCore(root);
     const digest = await new StateCoordinator(state).snapshotDigest(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
     await new StateCoordinator(state).installRemoteForTest({
@@ -199,7 +202,9 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
       bindingDigest: remoteBindingDigest("https://example.test/skills"),
       adoptedRevision: "a".repeat(40),
     });
-    expect((await core.catalog.list({})).value.catalog).toHaveLength(1);
+    const browsed = (await core.catalog.browse({ collection: "engineering" })).value;
+    expect(browsed).toMatchObject({ status: "available" });
+    if (browsed.status === "available") expect(browsed.items).toHaveLength(1);
     expect((await core.catalog.search({ query: "remote" })).value.results).toHaveLength(1);
     expect((await core.content.load({ selector: "engineering:review" })).value.name).toBe("remote");
     expect(
@@ -257,7 +262,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
       }),
     );
     process.env.SKILL_CLI_STATE_DIR = state;
-    const core = createSkillCliCore({ cwd: root });
+    const core = isolatedCore(root);
     const digest = await new StateCoordinator(state).snapshotDigest(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
     await new StateCoordinator(state).installRemoteForTest({
@@ -324,7 +329,7 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
       }),
     );
     process.env.SKILL_CLI_STATE_DIR = state;
-    const core = createSkillCliCore({ cwd: root });
+    const core = isolatedCore(root);
     const digest = await new StateCoordinator(state).snapshotDigest(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
     await new StateCoordinator(state).installRemoteForTest({
@@ -341,7 +346,7 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
     const stateBefore = await Bun.file(join(state, "state.json")).text();
     const cacheBefore = await Bun.file(join(state, "configs")).exists();
     const entry = join(import.meta.dir, "../../src/core/create-core.ts");
-    const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)}}).content.load({selector:"c:remote"});`;
+    const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(join(root, "global.jsonc"))}}).content.load({selector:"c:remote"});`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
       env: {
@@ -405,7 +410,7 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
     );
     await new StateCoordinator(state).installLocal("source", "review", skill);
     process.env.SKILL_CLI_STATE_DIR = state;
-    const core = createSkillCliCore({ cwd: root });
+    const core = isolatedCore(root);
     await expect(
       core.content.read({ selector: "engineering:review", path: "../SKILL.md" }),
     ).rejects.toMatchObject({ code: "INVALID_RESOURCE_PATH" });
@@ -474,7 +479,7 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
     process.env.SKILL_CLI_STATE_DIR = state;
     await new StateCoordinator(state).installLocal("source", "review", skill);
     const controller = new AbortController();
-    const run = createSkillCliCore({ cwd: root }).content.run(
+    const run = isolatedCore(root).content.run(
       {
         selector: "c:review",
         argv: [
@@ -530,7 +535,7 @@ test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote run
       }),
     );
     process.env.SKILL_CLI_STATE_DIR = state;
-    const core = createSkillCliCore({ cwd: root });
+    const core = isolatedCore(root);
     const coordinator = new StateCoordinator(state);
     await coordinator.installLocal("local", "local", local);
     const digest = await coordinator.snapshotDigest(remote);
@@ -579,7 +584,7 @@ test("CNT-001 rejects gitlinks before Snapshot publication and Local run copying
       }),
     );
     process.env.SKILL_CLI_STATE_DIR = state;
-    const core = createSkillCliCore({ cwd: root });
+    const core = isolatedCore(root);
     const coordinator = new StateCoordinator(state);
     await coordinator.installLocal("local", "review", skill);
     const before = await Bun.file(join(state, "state.json")).text();

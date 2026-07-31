@@ -16,7 +16,7 @@ import { basename, isAbsolute, join, resolve } from "node:path";
 export const packagedChecks = [
   { name: "native-artifact" },
   { name: "local-register-discover-install" },
-  { name: "collection-use-managed-agent-list-load-read" },
+  { name: "collection-use-managed-agent-browse-load-read" },
   { name: "agent-run" },
   { name: "agent-download" },
   { name: "tui-start-render-input-exit" },
@@ -440,17 +440,31 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
           `configuration command failed: ${argv.join(" ")} (${result.exitCode})\n${text(result.stdout)}${text(result.stderr)}`,
         );
       }
-      const list = await invoke(
-        [options.artifact, "--project", project, "agent", "list"],
+      const rootBrowse = await invoke(
+        [options.artifact, "--project", project, "agent", "browse"],
         project,
         options.outputRoot,
       );
-      const listBody = JSON.parse(text(list.stdout));
+      const rootBrowseBody = JSON.parse(text(rootBrowse.stdout));
       assert(
-        list.exitCode === 0 &&
-          list.stderr.length === 0 &&
-          listBody.skills[0].selector === "fixture-collection:fixture",
-        "agent list differs",
+        rootBrowse.exitCode === 0 &&
+          rootBrowse.stderr.length === 0 &&
+          rootBrowseBody.scope.kind === "root" &&
+          rootBrowseBody.items[0].id === "fixture-collection",
+        "agent root browse differs",
+      );
+      const collectionBrowse = await invoke(
+        [options.artifact, "--project", project, "agent", "browse", "fixture-collection"],
+        project,
+        options.outputRoot,
+      );
+      const collectionBrowseBody = JSON.parse(text(collectionBrowse.stdout));
+      assert(
+        collectionBrowse.exitCode === 0 &&
+          collectionBrowse.stderr.length === 0 &&
+          collectionBrowseBody.scope.id === "fixture-collection" &&
+          collectionBrowseBody.items[0].selector === "fixture-collection:fixture",
+        "agent collection browse differs",
       );
       const load = await invoke(
         [options.artifact, "--project", project, "agent", "load", "fixture-collection:fixture"],

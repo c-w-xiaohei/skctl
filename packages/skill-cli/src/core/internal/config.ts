@@ -1168,14 +1168,20 @@ export async function resolveInstalledSelector(
   if (!collection || !name || extra)
     throw new SkillCliError("INVALID_ARGUMENT", "Invalid Skill Selector");
   const workspace = await readWorkspaceUnlocked(options);
-  if (workspace.value.effective.status !== "complete")
+  const effective = workspace.value.effective;
+  if (effective.status !== "complete")
     throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
-  if (!workspace.value.effective.managed)
+  if (!effective.managed)
     throw new SkillCliError("CONFIG_INVALID", "agents.opencode must be managed");
+  if (effective.agent.status !== "available")
+    throw new SkillCliError(
+      "CONFIG_INVALID",
+      effective.agent.reasons[0]?.message ?? "Catalog unavailable",
+    );
   const state = await coordinator.read();
   const resolved = await resolveEffectiveCollections(options, workspace.value, state, coordinator);
   const reachable = new Set<string>();
-  const pending = [...workspace.value.effective.use];
+  const pending = [...effective.use];
   while (pending.length) {
     const id = pending.pop()!;
     if (reachable.has(id)) continue;
@@ -1185,9 +1191,7 @@ export async function resolveInstalledSelector(
   }
   if (!reachable.has(collection))
     throw new SkillCliError("SKILL_NOT_FOUND", `Skill Selector is not exposed: ${selector}`);
-  const selected = resolveCollectionUse(resolved, [collection]);
-  if (!selected.complete) throw new SkillCliError("CONFIG_INVALID", "Collection Use is incomplete");
-  const address = selected.members.get(collection)?.get(name);
+  const address = resolved.members.get(collection)?.get(name);
   if (!address)
     throw new SkillCliError("SKILL_NOT_FOUND", `Installed Skill not found: ${selector}`);
   const item = state.installed.find(
@@ -1551,6 +1555,7 @@ export async function mutateConfiguration(
         `Collection "${collection}" is not directly declared at ${change.level} scope in ${file}`,
       );
     let next = original;
+    let useDelta: ConfigurationChangeResult["use"];
     if (change.type === "source.register" || change.type === "config-source.register") {
       parseQualifiedName(change.id);
       if (immutableContributions.has(change.id))
@@ -1652,17 +1657,33 @@ export async function mutateConfiguration(
       for (const [name, address] of source)
         if (!target[name])
           next = edit(next, ["collections", change.into, "members", name], address);
-    } else if (change.type === "use.set") {
+    } else if (
+      change.type === "use.set" ||
+      change.type === "use.add" ||
+      change.type === "use.remove"
+    ) {
+      const before = [...((await document(file)).use ?? [])];
+      let collections: string[];
+      if (change.type === "use.set") collections = [...change.collections];
+      else if (change.type === "use.add")
+        collections = before.includes(change.collection) ? before : [...before, change.collection];
+      else collections = before.filter((collection) => collection !== change.collection);
+      if (new Set(collections).size !== collections.length)
+        throw new SkillCliError(
+          "INVALID_ARGUMENT",
+          "Collection Use cannot contain duplicate Collection IDs",
+        );
       const workspace = await readWorkspaceUnlocked(workspaceOptions, coordinator);
       const effective = workspace.value.effective;
       if (effective.status !== "complete")
         throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
       if (
-        change.collections.some(
+        collections.some(
           (id) => !effective.collectionsView.some((collection) => collection.id === id),
         )
       )
         throw new SkillCliError("CONFIG_CONFLICT", "Collection Use is incomplete");
+      const proposedText = edit(next, ["use"], collections);
       const proposedResolved = await resolveEffectiveCollections(
         options,
         workspace.value,
@@ -1670,14 +1691,15 @@ export async function mutateConfiguration(
         coordinator,
         {
           file,
-          value: parse(edit(next, ["use"], [...change.collections]), [], {
+          value: parse(proposedText, [], {
             allowTrailingComma: true,
           }) as ConfigDocument,
         },
       );
-      if (!resolveCollectionUse(proposedResolved, change.collections).complete)
+      if (collections.length && !resolveCollectionUse(proposedResolved, collections).complete)
         throw new SkillCliError("CONFIG_CONFLICT", "Collection Use is incomplete");
-      next = edit(next, ["use"], [...change.collections]);
+      next = proposedText;
+      useDelta = { before, after: [...collections] };
     } else if (change.type === "collection.reference.set") {
       parseQualifiedName(change.collection);
       parseQualifiedName(change.target);
@@ -1739,7 +1761,12 @@ export async function mutateConfiguration(
     if (next !== original) await new StateCoordinator().publish([{ target: file, bytes: next }]);
     const workspace = await readWorkspaceUnlocked(workspaceOptions);
     return {
-      value: { level: change.level, file, changed: next !== original },
+      value: {
+        level: change.level,
+        file,
+        changed: next !== original,
+        ...(useDelta ? { use: useDelta } : {}),
+      },
       diagnostics: workspace.diagnostics,
     };
   });

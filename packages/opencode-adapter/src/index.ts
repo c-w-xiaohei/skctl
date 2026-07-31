@@ -13,8 +13,8 @@ const SkillCliOpenCodePlugin: Plugin = async (input) => {
   return {
     "experimental.chat.system.transform": async (_request, output) => {
       try {
-        const catalog = await client.list(input.directory);
-        output.system.push(renderCatalog(catalog.entries, catalog.references));
+        const catalog = await client.browse(input.directory);
+        output.system.push(renderCatalog(catalog.scope, catalog.items));
       } catch (error) {
         const isHostFailure = error instanceof AdapterProcessError && error.hostProbe;
         if (!isHostFailure || !reportedHostFailure) report(error);

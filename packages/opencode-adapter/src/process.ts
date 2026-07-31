@@ -2,16 +2,22 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { isAbsolute, join, resolve, win32 } from "node:path";
 
-export interface CatalogEntry {
-  readonly selector: string;
-  readonly name: string;
-  readonly description: string;
-}
-export interface CatalogReference {
-  readonly name: string;
-  readonly description: string;
-  readonly collection: string;
-}
+export type CatalogItem =
+  | {
+      readonly kind: "collection";
+      readonly id: string;
+      readonly name: string;
+      readonly description?: string;
+    }
+  | {
+      readonly kind: "skill";
+      readonly selector: string;
+      readonly name: string;
+      readonly description: string;
+    };
+export type CatalogScope =
+  | { readonly kind: "root" }
+  | { readonly kind: "collection"; readonly id: string };
 
 export interface ChildProcess {
   readonly stdout: ReadableStream<Uint8Array> | null;
@@ -265,31 +271,32 @@ function validText(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && Buffer.byteLength(value) <= 1_048_576;
 }
 
-function validEntry(value: unknown): value is CatalogEntry {
-  if (
-    !isObject(value) ||
-    !validSelector(value.selector) ||
-    !validText(value.name) ||
-    !validText(value.description)
-  )
-    return false;
-  return hasExactKeys(value, ["description", "name", "selector"]);
-}
-function validReference(value: unknown): value is CatalogReference {
+function validItem(value: unknown): value is CatalogItem {
+  if (!isObject(value) || !validText(value.name)) return false;
+  if (value.kind === "skill")
+    return (
+      validSelector(value.selector) &&
+      validText(value.description) &&
+      hasExactKeys(value, ["description", "kind", "name", "selector"])
+    );
   return (
-    isObject(value) &&
-    validText(value.name) &&
-    validText(value.description) &&
-    validText(value.collection) &&
-    hasExactKeys(value, ["collection", "description", "name"])
+    value.kind === "collection" &&
+    validName(value.id, true) &&
+    (value.description === undefined || validText(value.description)) &&
+    hasExactKeys(
+      value,
+      value.description === undefined
+        ? ["id", "kind", "name"]
+        : ["description", "id", "kind", "name"],
+    )
   );
 }
 
 type CatalogEnvelope =
   | {
       readonly type: "success";
-      readonly entries: readonly CatalogEntry[];
-      readonly references: readonly CatalogReference[];
+      readonly scope: CatalogScope;
+      readonly items: readonly CatalogItem[];
     }
   | { readonly type: "unavailable" }
   | { readonly type: "error" };
@@ -310,20 +317,26 @@ function parseCatalog(stdout: Uint8Array, status: number | null): CatalogEnvelop
     return { type: "unavailable" };
   if (
     !isObject(value) ||
-    !hasExactKeys(value, ["references", "skills"]) ||
-    !Array.isArray(value.skills) ||
-    !value.skills.every(validEntry) ||
-    !Array.isArray(value.references) ||
-    !value.references.every(validReference) ||
+    !hasExactKeys(value, ["items", "scope"]) ||
+    !Array.isArray(value.items) ||
+    !value.items.every(validItem) ||
+    !isObject(value.scope) ||
+    !(
+      (value.scope.kind === "root" && hasExactKeys(value.scope, ["kind"])) ||
+      (value.scope.kind === "collection" &&
+        validName(value.scope.id, true) &&
+        hasExactKeys(value.scope, ["id", "kind"]))
+    ) ||
     status !== 0
   )
     throw new AdapterProcessError("PROTOCOL");
-  const selectors = new Set<string>();
-  for (const entry of value.skills) {
-    if (selectors.has(entry.selector)) throw new AdapterProcessError("PROTOCOL");
-    selectors.add(entry.selector);
-  }
-  return { type: "success", entries: value.skills, references: value.references };
+  if (value.scope.kind !== "root" || value.items.some((item) => item.kind !== "collection"))
+    throw new AdapterProcessError("PROTOCOL");
+  return {
+    type: "success",
+    scope: value.scope as CatalogScope,
+    items: value.items as CatalogItem[],
+  };
 }
 
 const diagnosticLimit = 4096;
@@ -418,14 +431,14 @@ export function createProcessClient(options: ProcessClientOptions = {}) {
   }
 
   return {
-    async list(cwd: string): Promise<{
-      readonly entries: readonly CatalogEntry[];
-      readonly references: readonly CatalogReference[];
+    async browse(cwd: string): Promise<{
+      readonly scope: CatalogScope;
+      readonly items: readonly CatalogItem[];
     }> {
       const executable = await skillCli;
       if (!executable) throw new AdapterProcessError("SKILL_CLI_NOT_FOUND");
       const detectedVersion = await version();
-      const result = await execute(runner, [executable, "agent", "list"], {
+      const result = await execute(runner, [executable, "agent", "browse"], {
         cwd,
         env: {
           ...env,
@@ -444,7 +457,7 @@ export function createProcessClient(options: ProcessClientOptions = {}) {
       if (envelope.type === "unavailable") throw new AdapterProcessError("CATALOG_UNAVAILABLE");
       if (envelope.type === "error")
         throw new AdapterProcessError("CATALOG_ERROR", result.status, text(result.stderr));
-      return { entries: envelope.entries, references: envelope.references };
+      return { scope: envelope.scope, items: envelope.items };
     },
   };
 }

@@ -9,9 +9,10 @@ import {
 
 const encoder = new TextEncoder();
 const catalog = JSON.stringify({
-  skills: [{ selector: "team:deploy", name: "deploy", description: "Deploy safely" }],
-  references: [{ name: "release", description: "Release skills", collection: "release" }],
+  scope: { kind: "root" },
+  items: [{ kind: "collection", id: "team", name: "team", description: "Team skills" }],
 });
+const unavailable = JSON.stringify({ unavailable: true });
 
 function stream(...chunks: string[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -36,7 +37,7 @@ function runner(calls: unknown[][], next: () => ChildProcess): ProcessRunner {
 }
 
 describe("process client", () => {
-  test("resolves PATH executables, probes the candidate host, and invokes clean agent list", async () => {
+  test("resolves PATH executables, probes the candidate host, and invokes clean agent browse", async () => {
     const calls: unknown[][] = [];
     const client = createProcessClient({
       path: "/tools:/bin",
@@ -45,13 +46,13 @@ describe("process client", () => {
       env: { KEEP: "yes", PATH: "/tools:/bin", TOKEN: "ambient" },
     });
 
-    await expect(client.list("/project")).resolves.toEqual({
-      entries: [expect.objectContaining({ selector: "team:deploy" })],
-      references: [expect.objectContaining({ collection: "release" })],
+    await expect(client.browse("/project")).resolves.toEqual({
+      scope: { kind: "root" },
+      items: [expect.objectContaining({ id: "team" })],
     });
     expect(calls).toHaveLength(2);
     expect(calls[0]![0]).toEqual(["/tools/opencode", "--version"]);
-    expect(calls[1]![0]).toEqual(["/tools/skill-cli", "agent", "list"]);
+    expect(calls[1]![0]).toEqual(["/tools/skill-cli", "agent", "browse"]);
     expect(calls[1]![1]).toEqual(
       expect.objectContaining({
         cwd: "/project",
@@ -80,11 +81,31 @@ describe("process client", () => {
         })(),
       ),
     });
-    await expect(client.list("/first")).resolves.toMatchObject({ entries: expect.any(Array) });
-    await expect(client.list("/second")).resolves.toMatchObject({ entries: expect.any(Array) });
+    await expect(client.browse("/first")).resolves.toMatchObject({ items: expect.any(Array) });
+    await expect(client.browse("/second")).resolves.toMatchObject({ items: expect.any(Array) });
     expect(calls.filter(([argv]) => (argv as string[])[1] === "--version")).toHaveLength(1);
     expect(calls.filter(([argv]) => (argv as string[])[1] === "agent")).toHaveLength(2);
     expect(calls[2]![1]).toEqual(expect.objectContaining({ cwd: "/second" }));
+  });
+
+  test("rejects a child collection response or Skills from its fixed root browse", async () => {
+    for (const output of [
+      { scope: { kind: "collection", id: "team" }, items: [] },
+      {
+        scope: { kind: "root" },
+        items: [{ kind: "skill", selector: "team:deploy", name: "deploy", description: "Deploy" }],
+      },
+    ]) {
+      const calls: unknown[][] = [];
+      const client = createProcessClient({
+        path: "/tools",
+        exists: () => true,
+        runner: runner(calls, () =>
+          calls.length === 1 ? child(stream("1.18.4\n")) : child(stream(JSON.stringify(output))),
+        ),
+      });
+      await expect(client.browse("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
+    }
   });
 
   test("resolves Windows PATH entries and executable suffixes without splitting drive letters", async () => {
@@ -97,9 +118,9 @@ describe("process client", () => {
       runner: runner(calls, () => (calls.length === 1 ? child(stream("1.18.4\n")) : child())),
     });
 
-    await expect(client.list("C:\\project")).resolves.toMatchObject({ entries: expect.any(Array) });
+    await expect(client.browse("C:\\project")).resolves.toMatchObject({ items: expect.any(Array) });
     expect(calls[0]![0]).toEqual(["D:\\bin\\opencode.EXE", "--version"]);
-    expect(calls[1]![0]).toEqual(["C:\\Tools\\skill-cli.CMD", "agent", "list"]);
+    expect(calls[1]![0]).toEqual(["C:\\Tools\\skill-cli.CMD", "agent", "browse"]);
   });
 
   test("resolves relative PATH entries to absolute executables before spawning", async () => {
@@ -111,9 +132,9 @@ describe("process client", () => {
       runner: runner(calls, () => (calls.length === 1 ? child(stream("1.18.4\n")) : child())),
     });
 
-    await expect(client.list("/project")).resolves.toMatchObject({ entries: expect.any(Array) });
+    await expect(client.browse("/project")).resolves.toMatchObject({ items: expect.any(Array) });
     expect(calls[0]![0]).toEqual([`${tools}/opencode`, "--version"]);
-    expect(calls[1]![0]).toEqual([`${tools}/skill-cli`, "agent", "list"]);
+    expect(calls[1]![0]).toEqual([`${tools}/skill-cli`, "agent", "browse"]);
   });
 
   test("rejects missing executables, malformed or mismatched host versions, and negative child results", async () => {
@@ -126,14 +147,16 @@ describe("process client", () => {
           calls.length === 1 ? child(stream(value)) : child(stream(), stream("bad"), 2),
         ),
       });
-      await expect(client.list("/project")).rejects.toMatchObject({
+      await expect(client.browse("/project")).rejects.toMatchObject({
         code: value === "1.18.4\n" ? "PROTOCOL" : "HOST_VERSION",
       });
     }
     await expect(
-      createProcessClient({ path: "/tools", exists: () => false, runner: runner([], child) }).list(
-        "/project",
-      ),
+      createProcessClient({
+        path: "/tools",
+        exists: () => false,
+        runner: runner([], child),
+      }).browse("/project"),
     ).rejects.toMatchObject({ code: "SKILL_CLI_NOT_FOUND" });
   });
 
@@ -167,7 +190,7 @@ describe("process client", () => {
       },
       timeoutMs: 1,
     });
-    await expect(client.list("/project")).rejects.toMatchObject({ code: "TIMEOUT" });
+    await expect(client.browse("/project")).rejects.toMatchObject({ code: "TIMEOUT" });
     const overflow = createProcessClient({
       path: "/tools",
       exists: () => true,
@@ -180,7 +203,7 @@ describe("process client", () => {
       ),
       stdoutLimit: 3,
     });
-    await expect(overflow.list("/project")).rejects.toMatchObject({ code: "OUTPUT_OVERFLOW" });
+    await expect(overflow.browse("/project")).rejects.toMatchObject({ code: "OUTPUT_OVERFLOW" });
     let stderrOverflowCalls = 0;
     const stderrOverflow = createProcessClient({
       path: "/tools",
@@ -193,7 +216,7 @@ describe("process client", () => {
       },
       stderrLimit: 3,
     });
-    await expect(stderrOverflow.list("/project")).rejects.toMatchObject({
+    await expect(stderrOverflow.browse("/project")).rejects.toMatchObject({
       code: "OUTPUT_OVERFLOW",
     });
     expect(killed).toBe(1);
@@ -248,7 +271,7 @@ describe("process client", () => {
           terminationGraceMs: 1,
           cleanupTimeoutMs: 10,
         });
-        await expect(catalogClient.list("/project")).rejects.toMatchObject({ code: "TIMEOUT" });
+        await expect(catalogClient.browse("/project")).rejects.toMatchObject({ code: "TIMEOUT" });
       } else {
         const client = createProcessClient({
           path: "/tools",
@@ -258,7 +281,7 @@ describe("process client", () => {
           terminationGraceMs: 1,
           cleanupTimeoutMs: 10,
         });
-        await expect(client.list("/project")).rejects.toMatchObject({
+        await expect(client.browse("/project")).rejects.toMatchObject({
           code: "TIMEOUT",
           hostProbe: true,
         });
@@ -293,7 +316,7 @@ describe("process client", () => {
           })(),
         ),
       });
-      await expect(client.list("/project")).resolves.toMatchObject({ entries: expect.any(Array) });
+      await expect(client.browse("/project")).resolves.toMatchObject({ items: expect.any(Array) });
       expect([...timers]).toEqual([]);
     } finally {
       globalThis.setTimeout = set;
@@ -337,7 +360,7 @@ describe("process client", () => {
           calls.length === 1 ? child(stream("1.18.4\n")) : child(stdout),
         ),
       });
-      await expect(client.list("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
+      await expect(client.browse("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
     }
     expect(
       redactDiagnostic(
@@ -346,7 +369,7 @@ describe("process client", () => {
     ).not.toMatch(/token|user:pass|\/tmp\/a|secret/i);
   });
 
-  test("strictly validates clean skills and references", async () => {
+  test("strictly validates clean catalog nodes", async () => {
     for (const output of [
       {
         skills: [{ selector: "team:deploy", name: "deploy", description: "safe", extra: true }],
@@ -373,8 +396,46 @@ describe("process client", () => {
           calls.length === 1 ? child(stream("1.18.4\n")) : child(stream(JSON.stringify(output))),
         ),
       });
-      await expect(client.list("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
+      await expect(client.browse("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
     }
+  });
+
+  test("accepts differently named root Collection nodes with the same target ID and recognizes unavailable", async () => {
+    const calls: unknown[][] = [];
+    const client = createProcessClient({
+      path: "/tools",
+      exists: () => true,
+      runner: runner(calls, () =>
+        calls.length === 1
+          ? child(stream("1.18.4\n"))
+          : child(
+              stream(
+                JSON.stringify({
+                  scope: { kind: "root" },
+                  items: [
+                    { kind: "collection", id: "shared", name: "first", description: "First" },
+                    { kind: "collection", id: "shared", name: "second", description: "Second" },
+                  ],
+                }),
+              ),
+            ),
+      ),
+    });
+    await expect(client.browse("/project")).resolves.toMatchObject({ items: expect.any(Array) });
+    const unavailableClient = createProcessClient({
+      path: "/tools",
+      exists: () => true,
+      runner: runner(
+        [],
+        (() => {
+          let count = 0;
+          return () => (++count === 1 ? child(stream("1.18.4\n")) : child(stream(unavailable)));
+        })(),
+      ),
+    });
+    await expect(unavailableClient.browse("/project")).rejects.toMatchObject({
+      code: "CATALOG_UNAVAILABLE",
+    });
   });
 
   test("redacts and truncates diagnostics by valid UTF-8 bytes with a marker", () => {

@@ -205,7 +205,12 @@ export interface ManagedAgentView {
   readonly integration: readonly ConfigDeclarationOwner[];
   readonly use: readonly ConfigDeclarationOwner[];
   readonly reasons: readonly Diagnostic[];
-  readonly catalog: readonly AgentCatalogEntry[];
+  readonly catalog: readonly {
+    readonly selector: string;
+    readonly name: string;
+    readonly description: string;
+    readonly aliases: readonly string[];
+  }[];
 }
 export type InstalledSkillSelectorViews =
   | {
@@ -367,6 +372,8 @@ export type ConfigChange =
       readonly level: ConfigLevel;
       readonly collections: readonly string[];
     }
+  | { readonly type: "use.add"; readonly level: ConfigLevel; readonly collection: string }
+  | { readonly type: "use.remove"; readonly level: ConfigLevel; readonly collection: string }
   | {
       readonly type: "agent.managed.set";
       readonly level: ConfigLevel;
@@ -376,6 +383,10 @@ export interface ConfigurationChangeResult {
   readonly level: ConfigLevel;
   readonly file?: string;
   readonly changed: boolean;
+  readonly use?: {
+    readonly before: readonly string[];
+    readonly after: readonly string[];
+  };
 }
 export type ImpactBlocker =
   | {
@@ -637,32 +648,38 @@ export interface ConfigSourceImpact {
   readonly blockers: readonly ImpactBlocker[];
   readonly allowed: boolean;
 }
-export interface ListCatalogRequest {
+export interface BrowseCatalogRequest {
   readonly collection?: string;
 }
-export interface AgentCatalogEntry {
-  readonly selector: string;
-  readonly name: string;
-  readonly description: string;
-  readonly aliases: readonly string[];
-}
-export interface AgentCatalogReference {
-  readonly name: string;
-  readonly description: string;
-  readonly collection: string;
-}
-export interface AgentProjection {
-  readonly status: "available" | "unavailable";
-  readonly reason?: string;
-  readonly mode?: "managed";
-  readonly catalog: readonly AgentCatalogEntry[];
-  readonly references?: readonly AgentCatalogReference[];
-}
+export type AgentCatalogItem =
+  | {
+      readonly kind: "collection";
+      readonly id: string;
+      readonly name: string;
+      readonly description?: string;
+    }
+  | {
+      readonly kind: "skill";
+      readonly selector: string;
+      readonly name: string;
+      readonly description: string;
+    };
+export type AgentBrowseProjection =
+  | {
+      readonly status: "available";
+      readonly scope:
+        | { readonly kind: "root" }
+        | { readonly kind: "collection"; readonly id: string };
+      readonly items: readonly AgentCatalogItem[];
+    }
+  | { readonly status: "unavailable"; readonly reason: string };
 export interface SearchSkillsRequest {
   readonly query: string;
   readonly limit?: number;
+  readonly collection?: string;
 }
 export interface SearchSkillResult {
+  readonly kind: "skill";
   readonly rank: number;
   readonly selector: string;
   readonly name: string;
@@ -898,10 +915,10 @@ export interface ManagementCapability {
   ): Promise<OperationResult<void>>;
 }
 export interface CatalogCapability {
-  list(
-    request: ListCatalogRequest,
+  browse(
+    request: BrowseCatalogRequest,
     options?: OperationOptions,
-  ): Promise<OperationResult<AgentProjection>>;
+  ): Promise<OperationResult<AgentBrowseProjection>>;
   search(
     request: SearchSkillsRequest,
     options?: OperationOptions,

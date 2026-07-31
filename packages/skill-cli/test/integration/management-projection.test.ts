@@ -211,9 +211,10 @@ test("PROJ-015 projects selector-local member paths and Collection Use owners", 
     });
     expect(installed.primary).toBe("alpha:review");
     expect(installed.aliases).toEqual(["base:review"]);
-    expect((await core.catalog.list({})).value.catalog).toEqual([
-      expect.objectContaining({ selector: "alpha:review", aliases: ["base:review"] }),
-    ]);
+    const browsed = (await core.catalog.browse({ collection: "alpha" })).value;
+    expect(browsed).toMatchObject({ status: "available" });
+    if (browsed.status === "available")
+      expect(browsed.items).toEqual([expect.objectContaining({ selector: "alpha:review" })]);
 
     await writeFile(local, "{ invalid");
     expect((await core.workspace.get()).value.installedSkills[0]!.selectorViews).toEqual({
@@ -256,7 +257,10 @@ test("PROJ-016/017 excludes a drifted Local owner from Agent disclosure and sele
     const workspace = (await core.workspace.get()).value;
     expect(workspace.installedSkills[0]).toMatchObject({ owner: { health: "drifted" } });
     expect(workspace.installedSkills[0]!.source).toBeUndefined();
-    expect((await core.catalog.list({})).value).toMatchObject({ status: "available", catalog: [] });
+    expect((await core.catalog.browse({ collection: "team" })).value).toMatchObject({
+      status: "available",
+      items: [],
+    });
     await expect(core.content.load({ selector: "team:review" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
@@ -274,7 +278,10 @@ test("PROJ-016/017 excludes a drifted Local owner from Agent disclosure and sele
     expect((await core.workspace.get()).value.installedSkills[0]).toMatchObject({
       owner: { health: "missing" },
     });
-    expect((await core.catalog.list({})).value).toMatchObject({ status: "available", catalog: [] });
+    expect((await core.catalog.browse({ collection: "team" })).value).toMatchObject({
+      status: "available",
+      items: [],
+    });
     await expect(
       core.content.read({ selector: "team:review", path: "SKILL.md" }),
     ).rejects.toMatchObject({

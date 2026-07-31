@@ -1,4 +1,4 @@
-import type { CatalogEntry, CatalogReference } from "./process.ts";
+import type { CatalogItem, CatalogScope } from "./process.ts";
 
 export const UNAVAILABLE_NOTICE =
   "skill-cli managed catalog is unavailable for this request. Do not invent managed Skills; continue without it or report the unavailable catalog.";
@@ -23,33 +23,19 @@ function validSelector(value: string): boolean {
   );
 }
 
-export function renderCatalog(
-  entries: readonly CatalogEntry[],
-  references: readonly CatalogReference[],
-): string {
-  const records = entries.map((entry) => {
-    if (!validSelector(entry.selector) || !entry.name || !entry.description)
+export function renderCatalog(scope: CatalogScope, items: readonly CatalogItem[]): string {
+  const records = items.map((item) => {
+    if (item.kind === "skill" && (!validSelector(item.selector) || !item.name || !item.description))
       throw new Error("RENDER_INVALID");
-    return JSON.stringify({
-      selector: entry.selector,
-      name: entry.name,
-      description: entry.description,
-    });
+    if (item.kind === "collection" && (!item.id || !item.name)) throw new Error("RENDER_INVALID");
+    return JSON.stringify(item);
   });
-  const referenceRecords = references.map((reference) => {
-    if (!reference.name || !reference.description || !reference.collection)
-      throw new Error("RENDER_INVALID");
-    return JSON.stringify(reference);
-  });
-  const catalog =
-    records.length || referenceRecords.length
-      ? [...records, ...referenceRecords].join("\n")
-      : "No managed Skills are currently selected.";
+  const catalog = records.length ? records.join("\n") : "No managed Skills are currently selected.";
   const prompt = [
-    "Managed Skill catalog metadata follows. Do not invent managed Skills. Skill records are direct members; reference records are category navigation targets. Load a Skill before relying on its instructions.",
+    `Managed Skill catalog metadata follows for ${scope.kind === "root" ? "Use roots" : `collection ${scope.id}`}. Do not invent managed Skills. Browse collection nodes before loading Skills.`,
     catalog,
     "Use exact commands:",
-    "skill-cli agent list <collection>",
+    "skill-cli agent browse <collection-id>",
     "skill-cli agent load <selector>",
     "skill-cli agent read <selector> <root-relative-path>",
     "skill-cli agent download <selector> <root-relative-path> --output <host-path>",

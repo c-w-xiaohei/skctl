@@ -39,15 +39,15 @@ test("CLI-001 public setup discovers and installs a Local Skill into a managed c
       ["--project", root, "use", "set", "engineering"],
     ] as const)
       expect(await runHumanCommand(argv, { cwd: root })).toBe(0);
-    const catalog = await createSkillCliCore({ cwd: root, userConfigPath: global }).catalog.list(
-      {},
-    );
+    const catalog = await createSkillCliCore({ cwd: root, userConfigPath: global }).catalog.browse({
+      collection: "engineering",
+    });
     expect(catalog.value).toMatchObject({
       status: "available",
-      mode: "managed",
-      catalog: [{ selector: "engineering:review" }],
+      scope: { kind: "collection", id: "engineering" },
+      items: [{ selector: "engineering:review" }],
     });
-    for (const argv of [["list"], ["load", "engineering:review"]]) {
+    for (const argv of [["browse"], ["load", "engineering:review"]]) {
       let output = "";
       expect(
         await runAgentCommand(argv, {

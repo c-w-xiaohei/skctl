@@ -1,4 +1,6 @@
 import type {
+  AgentBrowseProjection,
+  AgentCatalogItem,
   CatalogCapability,
   CoreFactoryOptions,
   OperationResult,
@@ -37,11 +39,11 @@ async function records(factory: CoreFactoryOptions) {
 }
 export function createCatalog(factory: CoreFactoryOptions): CatalogCapability {
   return {
-    async list(request): Promise<OperationResult<import("./api").AgentProjection>> {
+    async browse(request): Promise<OperationResult<AgentBrowseProjection>> {
       const value = await records(factory);
       if (value.unavailable)
         return {
-          value: { status: "unavailable", reason: value.unavailable, catalog: [] },
+          value: { status: "unavailable", reason: value.unavailable },
           diagnostics: value.workspace.diagnostics,
         };
       const effective = value.workspace.value.effective;
@@ -50,41 +52,47 @@ export function createCatalog(factory: CoreFactoryOptions): CatalogCapability {
       const requested = request.collection;
       if (requested && !value.reachable.has(requested))
         throw new SkillCliError("SKILL_NOT_FOUND", "Collection is not exposed");
-      const collections = requested ? [requested] : value.rootCollections;
-      const collectionViews = collections.map((id) =>
-        effective.collectionsView.find((collection) => collection.id === id),
+      if (!requested)
+        return {
+          value: {
+            status: "available",
+            scope: { kind: "root" },
+            items: value.rootCollections.map((id) => ({ kind: "collection", id, name: id })),
+          },
+          diagnostics: value.workspace.diagnostics,
+        };
+      const collection = effective.collectionsView.find(
+        (collection) => collection.id === requested,
       );
-      if (collectionViews.some((collection) => !collection))
-        throw new SkillCliError("SKILL_NOT_FOUND", "Collection is not exposed");
-      const catalog = collectionViews.flatMap((collection) =>
-        collection!.members.flatMap((member) => {
-          const installed = value.workspace.value.installedSkills.find(
-            (skill) =>
-              skill.address.source === member.address.source &&
-              skill.address.path === member.address.path &&
-              skill.owner.health === "healthy",
-          );
-          return installed
-            ? [
-                {
-                  selector: `${collection!.id}:${member.name}`,
-                  name: installed.name,
-                  description: installed.description,
-                  aliases: [],
-                },
-              ]
-            : [];
-        }),
-      );
-      const references = collectionViews.flatMap((collection) =>
-        collection!.references.map(({ name, description, collection: target }) => ({
+      if (!collection) throw new SkillCliError("SKILL_NOT_FOUND", "Collection is not exposed");
+      const items: AgentCatalogItem[] = collection.members.flatMap((member) => {
+        const installed = value.workspace.value.installedSkills.find(
+          (skill) =>
+            skill.address.source === member.address.source &&
+            skill.address.path === member.address.path &&
+            skill.owner.health === "healthy",
+        );
+        return installed
+          ? [
+              {
+                kind: "skill" as const,
+                selector: `${collection.id}:${member.name}`,
+                name: installed.name,
+                description: installed.description,
+              },
+            ]
+          : [];
+      });
+      items.push(
+        ...collection.references.map(({ name, description, collection: target }) => ({
+          kind: "collection" as const,
+          id: target,
           name,
           description,
-          collection: target,
         })),
       );
       return {
-        value: { status: "available", mode: "managed", catalog, references },
+        value: { status: "available", scope: { kind: "collection", id: requested }, items },
         diagnostics: value.workspace.diagnostics,
       };
     },
@@ -94,12 +102,42 @@ export function createCatalog(factory: CoreFactoryOptions): CatalogCapability {
       const value = await records(factory);
       if (value.unavailable) throw new SkillCliError("CONFIG_INVALID", value.unavailable);
       const query = request.query.toLowerCase();
-      const results = value.entries
+      if (request.collection && !value.reachable.has(request.collection))
+        throw new SkillCliError("SKILL_NOT_FOUND", "Collection is not exposed");
+      const effective = value.workspace.value.effective;
+      const collectionIds = request.collection ? [request.collection] : value.rootCollections;
+      const entries =
+        effective.status === "complete"
+          ? collectionIds.flatMap((id) => {
+              const collection = effective.collectionsView.find((candidate) => candidate.id === id);
+              return (
+                collection?.members.flatMap((member) => {
+                  const installed = value.workspace.value.installedSkills.find(
+                    (skill) =>
+                      skill.address.source === member.address.source &&
+                      skill.address.path === member.address.path &&
+                      skill.owner.health === "healthy",
+                  );
+                  return installed
+                    ? [
+                        {
+                          selector: `${collection.id}:${member.name}`,
+                          name: installed.name,
+                          description: installed.description,
+                        },
+                      ]
+                    : [];
+                }) ?? []
+              );
+            })
+          : value.entries;
+      const results = entries
         .filter((item) =>
           `${item.selector} ${item.name} ${item.description}`.toLowerCase().includes(query),
         )
         .slice(0, request.limit)
         .map((item, index) => ({
+          kind: "skill" as const,
           rank: index + 1,
           selector: item.selector,
           name: item.name,
