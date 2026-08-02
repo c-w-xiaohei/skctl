@@ -64,6 +64,7 @@ export interface NavFacts {
   readonly readerTab: ReaderState["tab"];
   readonly readerRetry?: boolean;
   readonly readerResourceLevel?: "list" | "content";
+  readonly detailsRelationships?: boolean;
   readonly collectionFilterOpen: boolean;
   readonly collectionFilterDimension: boolean;
   readonly skillsFilterAvailable?: boolean;
@@ -183,9 +184,25 @@ const resolveTab = (facts: NavFacts, key: NavKey): NavDecision => {
   if (facts.readerActive && facts.focus === "reader" && facts.readerTab === "details")
     return events({ type: "focus.request", focus: key.shift ? "browser" : "inspector" });
   if (facts.readerActive && facts.focus === "inspector")
-    return events({ type: "focus.request", focus: key.shift ? "reader" : "details-relationships" });
+    return events({
+      type: "focus.request",
+      focus: key.shift
+        ? "reader"
+        : facts.detailsRelationships
+          ? "details-relationships"
+          : "details-metadata",
+    });
   if (facts.readerActive && facts.focus === "details-relationships")
-    return events({ type: "focus.request", focus: key.shift ? "inspector" : "browser" });
+    return events({ type: "focus.request", focus: key.shift ? "inspector" : "details-metadata" });
+  if (facts.readerActive && facts.focus === "details-metadata")
+    return events({
+      type: "focus.request",
+      focus: key.shift
+        ? facts.detailsRelationships
+          ? "details-relationships"
+          : "inspector"
+        : "browser",
+    });
   if (facts.readerActive && facts.focus === "browser")
     return events({ type: "focus.request", focus: "reader-tabs" });
   if (

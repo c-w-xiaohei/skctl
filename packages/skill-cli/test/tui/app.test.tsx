@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../../src/tui/app";
 import { SkillCliError, type CollectionView, type ManagementProjection } from "../../src/core/api";
@@ -143,11 +144,11 @@ async function openProjectConfigSourceActions(setup: Awaited<ReturnType<typeof t
   setup.mockInput.pressArrow("down");
   setup.mockInput.pressArrow("down");
   setup.mockInput.pressEnter();
-  await setup.waitForFrame((frame) => frame.includes("Project Config › Sources"));
+  await setup.waitForFrame((frame) => frame.includes("Configure · Project > Sources"));
   const sources = setup.renderer.root.findDescendantById("config-section-browser-tab-sources")!;
   sources.focus();
   setup.mockInput.pressArrow("right");
-  await setup.waitForFrame((frame) => frame.includes("Project Config › Config Sources"));
+  await setup.waitForFrame((frame) => frame.includes("Configure · Project > Config Sources"));
   const browser = setup.renderer.root.findDescendantById("config-config-source-browser")!;
   browser.focus();
   setup.mockInput.pressArrow("down");
@@ -1178,6 +1179,7 @@ test("RENDER stale Config preview completion cannot replace a newer same-kind ob
 test("RENDER stale Config retry preview completion cannot mutate a newer same-kind observation", async () => {
   const retryPreview = deferred<ReturnType<typeof configImpact>>();
   const observationB = deferred<ReturnType<typeof configObservation>>();
+  const adopts: unknown[] = [];
   let observes = 0;
   let previews = 0;
   const setup = await testRender(
@@ -1195,6 +1197,10 @@ test("RENDER stale Config retry preview completion cannot mutate a newer same-ki
             ++previews === 1
               ? retryPreview.promise
               : Promise.resolve(configImpact("current-retry")),
+          adoptConfig: async (request) => {
+            adopts.push(request);
+            return { value: undefined, diagnostics: [] };
+          },
         })}
         exit={() => {}}
       />
@@ -1226,7 +1232,32 @@ test("RENDER stale Config retry preview completion cannot mutate a newer same-ki
     observationB.resolve(configObservation("current-observation"));
     await setup.waitForFrame((frame) => frame.includes("Reviewed commit: current-retry"));
     expect(previews).toBe(2);
-    await awaitParsedEscape(setup);
+    const errors: unknown[][] = [];
+    const originalConsoleError = console.error;
+    const originalStderrWrite = process.stderr.write;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+      originalConsoleError(...args);
+    };
+    process.stderr.write = ((...args: Parameters<typeof process.stderr.write>) => {
+      errors.push(args);
+      return originalStderrWrite.call(process.stderr, ...args);
+    }) as typeof process.stderr.write;
+    try {
+      await awaitParsedEscape(setup);
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "config-config-source-browser",
+      );
+    } finally {
+      console.error = originalConsoleError;
+      process.stderr.write = originalStderrWrite;
+    }
+    const logged = errors.map((args) => args.map(String).join(" ")).join("\n");
+    expect(logged).not.toContain("Error in global keypress handler");
+    expect(logged).not.toContain("configOperation().impact");
+    setup.mockInput.pressEnter();
+    await setup.renderOnce();
+    expect(adopts).toEqual([]);
   } finally {
     setup.renderer.destroy();
   }
@@ -1337,14 +1368,17 @@ test("RENDER View Installed Skills filters exact structural Source ownership", a
     await openActions(setup);
     setup.mockInput.pressKeys(["ARROW_DOWN", "ARROW_DOWN"]);
     setup.mockInput.pressEnter();
-    await setup.waitForFrame(
-      (frame) =>
-        frame.includes("Installed Skills from") &&
-        frame.includes("team-") &&
-        frame.includes("main 1/1") &&
-        frame.includes("Team review") &&
-        !frame.includes("Lark docs"),
-    );
+    await setup.waitFor(() => {
+      const browser = setup.renderer.root.findDescendantById(
+        "installed-skill-browser",
+      ) as SelectRenderable;
+      return (
+        setup.captureCharFrame().includes("Installed Skills from team-main 1/1") &&
+        browser?.options.length === 1 &&
+        browser.options[0]?.value === "team-main/review" &&
+        browser.options[0]?.description === "Team review · team-main"
+      );
+    });
   } finally {
     setup.renderer.destroy();
   }
@@ -1387,9 +1421,16 @@ test("RENDER filtered Installed Skills selection leaves Source context intact an
     await openActions(setup);
     setup.mockInput.pressKeys(["ARROW_DOWN", "ARROW_DOWN"]);
     setup.mockInput.pressEnter();
-    await setup.waitForFrame(
-      (frame) => frame.includes("! first  First") && frame.includes("! second  Second"),
-    );
+    await setup.waitFor(() => {
+      const browser = setup.renderer.root.findDescendantById(
+        "installed-skill-browser",
+      ) as SelectRenderable;
+      return (
+        browser?.options[0]?.name === "! first" &&
+        browser.options[0]?.description === "First · team-main" &&
+        browser.options[1]?.name === "! second"
+      );
+    });
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
     setup.mockInput.pressArrow("down");
     await setup.renderOnce();
@@ -1429,7 +1470,12 @@ test("RENDER Project Source browser initializes its visual first row before cont
     setup.mockInput.pressArrow("down");
     setup.mockInput.pressArrow("down");
     setup.mockInput.pressEnter();
-    await setup.waitForFrame((frame) => frame.includes("team-main Direct Source"));
+    await setup.waitFor(
+      () =>
+        (
+          setup.renderer.root.findDescendantById("config-source-browser") as SelectRenderable
+        )?.getSelectedOption()?.value === "team-main",
+    );
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("config-source-browser");
     setup.mockInput.pressArrow("down");
     setup.mockInput.pressArrow("up");
@@ -1451,7 +1497,12 @@ async function projectContributedSource(setup: Awaited<ReturnType<typeof testRen
   setup.mockInput.pressArrow("down");
   setup.mockInput.pressArrow("down");
   setup.mockInput.pressEnter();
-  await setup.waitForFrame((frame) => frame.includes("team-main Direct Source"));
+  await setup.waitFor(
+    () =>
+      (
+        setup.renderer.root.findDescendantById("config-source-browser") as SelectRenderable
+      )?.getSelectedOption()?.value === "team-main",
+  );
   setup.mockInput.pressArrow("down");
   setup.mockInput.pressEnter();
   await setup.waitForFrame((frame) => frame.includes("Open Config Source"));
@@ -1597,13 +1648,14 @@ test("RENDER Project contributed Source filters unhealthy Installed Skills and r
     setup.mockInput.pressEnter();
     await setup.waitForFrame(
       (frame) =>
-        frame.includes("Installed Skills from") &&
-        frame.includes("config/lark") &&
-        frame.includes("! doc  Lark"),
+        frame.includes("Installed Skills from team-config/") &&
+        frame.includes("lark 1/1") &&
+        frame.includes("! doc"),
     );
     await awaitParsedEscape(setup);
     await setup.waitForFrame(
-      (frame) => frame.includes("Project Config › Sources") && frame.includes("team-config/lark"),
+      (frame) =>
+        frame.includes("Configure · Project > Sources") && frame.includes("team-config/lark"),
     );
   } finally {
     setup.renderer.destroy();
@@ -1654,8 +1706,17 @@ test("RENDER Open Config and Open Config Source route to their exact selected ow
     await openActions(direct);
     direct.mockInput.pressKeys(["ARROW_DOWN", "ARROW_DOWN", "ARROW_DOWN"]);
     direct.mockInput.pressEnter();
-    await direct.waitForFrame((frame) => frame.includes("team-main Direct Source"));
-    expect(direct.captureCharFrame()).toContain("▶ team-main Direct Source");
+    await direct.waitFor(
+      () =>
+        (
+          direct.renderer.root.findDescendantById("config-source-browser") as SelectRenderable
+        )?.getSelectedOption()?.value === "team-main",
+    );
+    expect(
+      (
+        direct.renderer.root.findDescendantById("config-source-browser") as SelectRenderable
+      ).getSelectedOption()?.name,
+    ).toBe("team-main · github");
   } finally {
     direct.renderer.destroy();
   }
@@ -2134,7 +2195,12 @@ test("RENDER Palette routes its Project destination and omits contributed remova
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-menu");
     setup.mockInput.pressKeys(["ARROW_DOWN", "ARROW_DOWN"]);
     setup.mockInput.pressEnter();
-    await setup.waitForFrame((frame) => frame.includes("team-main Direct Source"));
+    await setup.waitFor(
+      () =>
+        (
+          setup.renderer.root.findDescendantById("config-source-browser") as SelectRenderable
+        )?.getSelectedOption()?.value === "team-main",
+    );
   } finally {
     setup.renderer.destroy();
   }
@@ -2280,7 +2346,7 @@ test("RENDER collection removal preview failure closes the session and permits r
     await populated(setup);
     setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills")!.focus();
     setup.mockInput.pressArrow("right");
-    await setup.waitForFrame((frame) => frame.includes("Workspace › Collections"));
+    await setup.waitForFrame((frame) => frame.includes("Browse · Workspace > Collections"));
     await setup.waitFor(
       () =>
         setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-collections",

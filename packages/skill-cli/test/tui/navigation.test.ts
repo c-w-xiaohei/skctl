@@ -370,6 +370,31 @@ test("Details content reaches its registered Actions owner before leaving the Re
   });
 });
 
+test("Details traversal inserts metadata after optional Relationships and skips it when absent", () => {
+  const withRelationships = facts({
+    focus: "inspector",
+    readerActive: true,
+    readerTab: "details",
+    detailsRelationships: true,
+  });
+  expect(resolve(withRelationships, key("tab"))).toEqual({
+    kind: "events",
+    events: [{ type: "focus.request", focus: "details-relationships" }],
+  });
+  expect(resolve({ ...withRelationships, focus: "details-relationships" }, key("tab"))).toEqual({
+    kind: "events",
+    events: [{ type: "focus.request", focus: "details-metadata" }],
+  });
+  expect(resolve({ ...withRelationships, focus: "details-metadata" }, key("tab"))).toEqual({
+    kind: "events",
+    events: [{ type: "focus.request", focus: "browser" }],
+  });
+  expect(resolve({ ...withRelationships, detailsRelationships: false }, key("tab"))).toEqual({
+    kind: "events",
+    events: [{ type: "focus.request", focus: "details-metadata" }],
+  });
+});
+
 test("overlay surface takes precedence: Escape and Ctrl+C close the surface only", () => {
   const overlay = facts({ overlay: "confirm", focus: "dialog" });
   expect(resolve(overlay, key("escape"))).toEqual({ kind: "effect", effect: "close-surface" });

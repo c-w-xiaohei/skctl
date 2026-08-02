@@ -1,4 +1,4 @@
-import { createCliRenderer, InputRenderable } from "@opentui/core";
+import { createCliRenderer, InputRenderable, type Renderable } from "@opentui/core";
 import { onResize, render, useKeyboard, useRenderer } from "@opentui/solid";
 import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { batch, createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
@@ -84,11 +84,16 @@ import {
   sessionMatches as sessionMatchesOverlay,
 } from "./overlays/session";
 import { theme } from "./ui/theme";
+import { useTheme } from "./ui/use-theme";
 
-const topOptions = destinations.map((value) => ({
-  label: value === "workspace" ? "Workspace" : value[0]!.toUpperCase() + value.slice(1),
-  value,
-}));
+const topOptions = (compact: boolean) =>
+  destinations.map((value) => ({
+    label: value === "workspace" ? "Workspace" : value[0]!.toUpperCase() + value.slice(1),
+    compactLabel: compact
+      ? { workspace: "W", global: "G", project: "P", local: "L" }[value]
+      : undefined,
+    value,
+  }));
 const isDestination = (value: ActionId | Destination): value is Destination =>
   destinations.some((destination) => destination === value);
 const configBindingLine = (binding: ConfigSourceImpact["binding"]) =>
@@ -188,6 +193,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   const [overlaySession, setOverlaySession] = createSignal(createOverlaySession());
   const overlayKind = () => overlaySession().kind;
   const [readerState, setReaderState] = createSignal(createReaderState());
+  const [transition, setTransition] = createSignal<string | undefined>();
   const reader = () => activeReader(readerState());
   const readerDispatch = (event: Parameters<typeof reduceReaderState>[1]) => {
     let accepted = false;
@@ -215,10 +221,17 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   const configState = createConfigState();
   const renderer = useRenderer();
   const stopThemeFollow = theme.follow(renderer);
+  const tokens = useTheme();
   const focus = createFocus("browser");
   const focusRegistry = focus.registry;
   const layout = createLayout();
   const [focusVersion, setFocusVersion] = createSignal(focusRegistry.version());
+  const [physicalFocusOwner, setPhysicalFocusOwner] = createSignal<FocusOwner | undefined>(
+    undefined,
+    {
+      equals: false,
+    },
+  );
   const [readerFocusUnblocked, setReaderFocusUnblocked] = createSignal(0);
   const stopFocusSubscription = focusRegistry.subscribe(setFocusVersion);
   const focusOwner = focus.desired;
@@ -227,18 +240,17 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     focusOwners.find(
       (owner) => focusRegistry.target(owner) === renderer.currentFocusedRenderable,
     ) ?? fallback;
-  const syncPhysicalFocus = () => {
-    if (!physicalFocusBridgeReady || !appliedFocusOwner) return;
-    const observed = registeredFocus(focus.desired() ?? "browser");
-    const routeSnapshot = route.snapshot();
-    if (
-      routeSnapshot.destination === "workspace" &&
-      workspaceState.section() === "skills" &&
-      !!reader()?.address &&
-      readerOwnsFocus(observed) &&
-      observed !== focus.desired()
-    )
-      requestFocus(observed);
+  const physicalOwnerFor = (current: Renderable | null): FocusOwner | undefined => {
+    if (!current) return undefined;
+    if (current instanceof InputRenderable) return "input";
+    const registered = focusOwners.find((owner) => focusRegistry.target(owner) === current);
+    if (registered) return registered;
+    if (current.id === "config-source-browser" || current.id === "config-config-source-browser")
+      return "browser";
+    return undefined;
+  };
+  const syncPhysicalFocus = (current: Renderable | null) => {
+    setPhysicalFocusOwner(physicalOwnerFor(current));
   };
   renderer.on("focused_renderable", syncPhysicalFocus);
   let route: ReturnType<typeof createRoute>;
@@ -277,8 +289,36 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       setReaderFocusUnblocked((value) => value + 1);
     readerFocusWasBlocked = blocked;
   });
-  const routeSource = (target: RouteTarget) => route.source(target);
-  const routeRelationship = (target: RelationshipTarget) => route.relationship(target);
+  const routeMatches = (target: RouteTarget) => {
+    if (route.snapshot().destination !== target.destination) return false;
+    if (target.destination === "workspace")
+      return (
+        workspaceState.section() === target.section &&
+        (target.selection === undefined ||
+          (target.section === "skills"
+            ? workspaceState.selectedSkill()
+            : target.section === "sources"
+              ? workspaceState.selectedSource()
+              : collectionsState.selected()) === target.selection)
+      );
+    return (
+      configState.section(target.destination) === target.section &&
+      (target.selection === undefined ||
+        configState.selection(target.destination, target.section) === target.selection)
+    );
+  };
+  const routeSource = (target: RouteTarget) => {
+    const before = route.snapshot();
+    route.source(target);
+    if (route.snapshot() !== before && routeMatches(target))
+      setTransition(`Opened ${routeTargetLabel(target)}`);
+  };
+  const routeRelationship = (target: RelationshipTarget) => {
+    const before = route.snapshot();
+    route.relationship(target);
+    if (route.snapshot() !== before && routeMatches(target))
+      setTransition(`Opened ${routeTargetLabel(target)}`);
+  };
   const projection = createProjection(operation, {
     workspace: workspaceState,
     collections: collectionsState,
@@ -449,6 +489,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         error: undefined,
       },
     });
+    setTransition(`Reader view: ${readerTabLabel(tab)}`);
     if (tab === "resources") ensureResources();
   };
   const ensureResources = () => {
@@ -472,6 +513,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
           ? "inspector"
           : "reader");
     workspaceState.openDetail();
+    setTransition("Opened Reader");
     requestFocus(readerFocus);
   };
   const FilterSearch = () => {
@@ -508,7 +550,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   };
   let appliedFocusOwner: FocusOwner | undefined;
   let appliedFocusTarget: unknown;
-  let physicalFocusBridgeReady = false;
   let focusReconciliationRevision = 0;
   let configFocusRevision = 0;
   let pendingConfigFocus:
@@ -1335,6 +1376,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       readerTab: reader()?.tab ?? "skill",
       readerRetry: !!reader()?.error,
       readerResourceLevel: reader()?.resourceLevel,
+      detailsRelationships: !!renderer.root.findDescendantById("reader-details-relationships"),
       collectionFilterOpen: collectionFilter.open,
       collectionFilterDimension: !!collectionFilter.dimension,
       skillsFilterAvailable: !!renderer.root.findDescendantById("open-skills-filter"),
@@ -1346,20 +1388,33 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     if (decision.kind === "events") {
       batch(() => {
         for (const event of decision.events) {
-          if (event.type === "route.back") route.back();
-          else if (event.type === "destination.select") selectDestination(event.destination);
-          else if (event.type === "collections.filter.back")
+          if (event.type === "route.back") {
+            const outcome = escapeOutcome(navigationFacts());
+            route.back();
+            setTransition(outcome.message);
+          } else if (event.type === "destination.select") selectDestination(event.destination);
+          else if (event.type === "collections.filter.back") {
             collectionsState.chooseFilterDimension();
-          else if (event.type === "collections.filter.close") collectionsState.closeFilter();
-          else if (event.type === "workspace.source-filter.clear")
+            setTransition("Back to filter");
+          } else if (event.type === "collections.filter.close") {
+            collectionsState.closeFilter();
+            setTransition("Back to Browser");
+          } else if (event.type === "workspace.source-filter.clear") {
             workspaceState.clearSourceFilter();
-          else if (event.type === "palette.open") openSession("palette", { family: "palette" });
+            setTransition("Back to Browser");
+          } else if (event.type === "palette.open") openSession("palette", { family: "palette" });
           else if (event.type === "reader.patch") {
             if (event.value.tab) selectReaderTab(event.value.tab);
-            else readerDispatch({ type: "patch", value: event.value });
+            else {
+              if (event.value.resourceLevel === "list") setTransition("Back to Resources");
+              readerDispatch({ type: "patch", value: event.value });
+            }
           } else if (event.type === "focus.request") requestFocus(event.focus);
           else if (event.type === "narrow.open-detail") workspaceState.openDetail();
-          else if (event.type === "narrow.show-list") workspaceState.showList();
+          else if (event.type === "narrow.show-list") {
+            workspaceState.showList();
+            setTransition("Back to Browser");
+          }
         }
       });
     } else if (decision.effect === "exit" && !exitRequested) {
@@ -1397,6 +1452,10 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     const focused = renderer.currentFocusedRenderable;
     const interceptTabs = focused instanceof TabsTabRenderable;
     const interceptColdStart = focused?.id === "empty-workspace-action";
+    const readerDetailsSelect =
+      focused?.id === "reader-details-actions" ||
+      focused?.id === "reader-details-relationships" ||
+      focused?.id === "reader-details-metadata";
     if (
       !overlayKind() &&
       !operation.task() &&
@@ -1408,11 +1467,20 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         event.stopPropagation();
       }
     }
+    if (
+      !overlayKind() &&
+      !operation.task() &&
+      readerDetailsSelect &&
+      (name === "escape" || name === "esc") &&
+      applyNavigation(resolve(navigationFacts(), parseNavKey(event)))
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
   };
   renderer.keyInput.prependListener("keypress", interceptPriorityKey);
   useKeyboard((event) => {
     if (event.defaultPrevented) return;
-    physicalFocusBridgeReady = true;
     const observedFocus = registeredFocus(focus.desired() ?? "browser");
     if (observedFocus !== focus.desired()) requestFocus(observedFocus);
     const key = event.name.toLowerCase();
@@ -1630,6 +1698,100 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       : section === "for-agents"
         ? "For agents"
         : section[0]!.toUpperCase() + section.slice(1);
+  const readerTabLabel = (tab: import("./types").ReaderState["tab"]) =>
+    tab === "skill" ? "SKILL.md" : tab === "resources" ? "Resources" : "Details";
+  const routeTargetLabel = (target: Pick<RouteTarget, "destination" | "section">) =>
+    target.destination === "workspace"
+      ? `Workspace > ${sectionTitle(target.section)}`
+      : `${target.destination[0]!.toUpperCase()}${target.destination.slice(1)} > ${sectionTitle(target.section)}`;
+  const escapeOutcome = (facts = navigationFacts()) => {
+    const snapshot = route.snapshot();
+    if (facts.overlay === "filter" && skillsFilterPayload()?.dimension)
+      return { target: "filter", message: "Back to filter" };
+    if (facts.overlay || facts.task)
+      return {
+        target: facts.task ? "cancel" : "close",
+        message: facts.task ? "Cancel task" : "Close",
+      };
+    if (snapshot.relationshipReturn)
+      return {
+        target:
+          snapshot.relationshipReturn.focus === "details-relationships"
+            ? "Details"
+            : "relationship actions",
+        message: "Back to Details",
+      };
+    if (snapshot.contributionReturn)
+      return {
+        target: routeTargetLabel(snapshot.contributionReturn),
+        message: `Back to ${routeTargetLabel(snapshot.contributionReturn)}`,
+      };
+    if (snapshot.history.length) return { target: "back", message: "Back" };
+    if (facts.collectionFilterOpen)
+      return {
+        target: facts.collectionFilterDimension ? "filter stage" : "Browser",
+        message: facts.collectionFilterDimension ? "Back to filter" : "Back to Browser",
+      };
+    if (facts.focus === "skills-query" || facts.focus === "collections-query")
+      return { target: "Browser", message: "Back to Browser" };
+    if (facts.readerActive && readerOwnsFocus(facts.focus)) {
+      if (facts.readerTab === "resources" && facts.readerResourceLevel === "content")
+        return { target: "Resources", message: "Back to Resources" };
+      return { target: "Browser", message: "Back to Browser" };
+    }
+    if (facts.sourceFilter) return { target: "Browser", message: "Back to Browser" };
+    if (
+      !facts.readerActive &&
+      (facts.focus === "inspector" || facts.focus === "collection-relationships")
+    )
+      return { target: "Browser", message: "Back to Browser" };
+    if (
+      facts.destination === "workspace" &&
+      facts.section === "sources" &&
+      facts.narrow &&
+      facts.narrowLevel === "detail" &&
+      facts.focus === "local-nav"
+    )
+      return { target: "Browser", message: "Back to Browser" };
+    if (facts.narrow && facts.narrowLevel !== "list")
+      return { target: "Browser", message: "Back to Browser" };
+    return { target: "back", message: "Back" };
+  };
+  const escapeHint = () => {
+    const target = escapeOutcome().target;
+    if (target === "close") return "Esc close";
+    if (target === "cancel") return "Esc cancel";
+    return target === "back" ? "Esc back" : `Esc back to ${target}`;
+  };
+  const compactEscapeHint = () => {
+    const target = escapeOutcome().target;
+    return target === "back"
+      ? "Esc"
+      : target === "close"
+        ? "Esc close"
+        : target === "cancel"
+          ? "Esc cancel"
+          : `Esc ${target}`;
+  };
+  const selectedWorkspaceContext = () => {
+    const section = workspaceState.section();
+    if (section === "skills") {
+      const selected = workspaceState.selectedSkill();
+      const skill = projection
+        .workspace()
+        ?.installedSkills.find(
+          (item) => `${item.address.source}/${item.address.path}` === selected,
+        );
+      if (!skill) return undefined;
+      const tab = reader()?.tab;
+      return `${skill.name} · ${tab === "resources" ? "Resources" : tab === "details" ? "Details" : "SKILL.md"}`;
+    }
+    if (section === "sources") return workspaceState.selectedSource();
+    if (section === "collections") return collectionsState.selected();
+    return undefined;
+  };
+  const selectedConfigContext = (destination: Exclude<Destination, "workspace">) =>
+    configState.selection(destination, configState.section(destination));
   const contextLine = () => {
     const destination = route.snapshot().destination;
     const title = sectionTitle(
@@ -1637,18 +1799,79 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     );
     const context =
       destination === "workspace"
-        ? `Workspace › ${title}`
-        : `${destination[0]!.toUpperCase()}${destination.slice(1)} Config › ${title}`;
-    return layout.narrow()
-      ? context
-      : `${context} · ${projection.workspace()?.project.root ?? "Loading"}`;
+        ? `Browse · Workspace > ${title}`
+        : `Configure · ${destination[0]!.toUpperCase()}${destination.slice(1)} > ${title}`;
+    const selected =
+      destination === "workspace" ? selectedWorkspaceContext() : selectedConfigContext(destination);
+    if (!selected || layout.narrow()) return context;
+    const available = renderer.width - context.length - 3;
+    return `${context} · ${selected.length > available ? `${selected.slice(0, Math.max(0, available - 3))}...` : selected}`;
+  };
+  const focusLabel = () => {
+    focusVersion();
+    const physical = physicalFocusOwner();
+    if (physical === "input") return "Input/Search";
+    if (operation.task()) return "Task";
+    if (overlayKind() === "actions" || overlayKind() === "palette") return "Actions";
+    if (overlayKind() === "filter") return "Input/Search";
+    if (overlayKind()) return "Dialog";
+    const desired = focus.desired() ?? "browser";
+    const owner = physicalFocusOwner() ?? desired;
+    if (owner === "top-nav") return "Scope";
+    if (owner === "local-nav") return "Section";
+    if (
+      owner === "input" ||
+      owner === "skills-query" ||
+      owner === "collections-query" ||
+      owner === "collections-filter-search"
+    )
+      return "Input/Search";
+    if (owner === "dialog") return "Dialog";
+    if (owner === "task") return "Task";
+    if (owner === "palette") return "Actions";
+    if (owner === "inspector" || owner === "details-relationships" || owner === "details-metadata")
+      return "Inspector actions";
+    if (owner === "reader-tabs") return "Reader views";
+    if (readerOwnsFocus(owner)) return "Reader content";
+    return "Browser";
+  };
+  const browserCanChangeScope = () => {
+    physicalFocusOwner();
+    return renderer.currentFocusedRenderable?.id === "empty-workspace-action";
   };
   const helpLine = () =>
-    layout.narrow()
-      ? "←/→ nav Tab focus Enter open Ctrl+P Esc"
-      : "←/→ sections · Tab focus · Enter open · Ctrl+P palette · Esc back";
+    overlayKind()
+      ? layout.narrow()
+        ? `F:${focusLabel() === "Input/Search" ? "Input" : focusLabel()} Tab/Shift+Tab Ent ${compactEscapeHint()}`
+        : `Focus: ${focusLabel()} · Enter select · Tab within surface · ${escapeHint()}`
+      : operation.task()
+        ? layout.narrow()
+          ? "F:Task Tab/Shift+Tab Ent Esc cancel"
+          : "Focus: Task · Enter select · Tab within surface · Esc cancel"
+        : layout.narrow()
+          ? focusLabel() === "Scope"
+            ? `F:Scope Tab/Shift+Tab L/R Ent Ctrl+P ${compactEscapeHint()}`
+            : focusLabel() === "Section"
+              ? `F:Sec Tab/Shift+Tab L/R Ent Ctrl+P ${compactEscapeHint()}`
+              : focusLabel() === "Reader views"
+                ? `F:Views Tab/Shift+Tab L/R Ent Ctrl+P ${compactEscapeHint()}`
+                : focusLabel() === "Reader content"
+                  ? `F:Reader Tab/Shift+Tab Ent Ctrl+P ${compactEscapeHint()}`
+                  : browserCanChangeScope()
+                    ? `F:Browser Tab/Shift+Tab L/R Ent Ctrl+P ${compactEscapeHint()}`
+                    : `F:Browser Tab/Shift+Tab Ent Ctrl+P ${compactEscapeHint()}`
+          : transition()
+            ? `${transition()} · Focus: ${focusLabel()} · Tab/Shift+Tab focus region · Enter open · ${escapeHint()}`
+            : `Focus: ${focusLabel()} · Tab/Shift+Tab focus region · ${
+                focusLabel() === "Scope" || browserCanChangeScope()
+                  ? "←/→ change scope"
+                  : "Enter open"
+              } · Ctrl+P actions · ${escapeHint()}`;
   const selectDestination = (destination: Destination, focus?: FocusOwner) => {
     route.destinationSelect(destination, focus);
+    setTransition(
+      `Opened ${destination === "workspace" ? "Workspace" : `${destination[0]!.toUpperCase()}${destination.slice(1)} Config`}`,
+    );
   };
   const configDestination = () => {
     const destination = route.snapshot().destination;
@@ -1660,11 +1883,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         {!layout.narrow() && <text>skill-cli </text>}
         <SectionTabs
           id="top-navigation"
-          options={topOptions}
+          options={topOptions(layout.narrow())}
           value={route.snapshot().destination}
           owner="top-nav"
           focusRegistry={focusRegistry}
           compact={layout.narrow()}
+          label="Scope"
           onPrimaryPointerEntry={() => requestFocus("top-nav")}
           onNavigate={(destination) => selectDestination(destination, "top-nav")}
         />
@@ -1681,6 +1905,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                 config={configState}
                 overlay={() => !!overlayKind()}
                 narrow={layout.narrow()}
+                wide={layout.wide()}
                 handoff={route.snapshot().handoff}
                 projection={projection.workspace}
                 focusRegistry={focusRegistry}
@@ -1696,6 +1921,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                   configFocusRevision += 1;
                   if (pendingConfigFocus) renderer.off("frame", pendingConfigFocus.listener);
                   configState.selectSection(destination, section);
+                  setTransition(`Opened ${routeTargetLabel({ destination, section })}`);
                   requestFocus("local-nav");
                   const revision = configFocusRevision;
                   const listener = () => {
@@ -1770,6 +1996,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               }
               overlay={() => !!overlayKind()}
               narrow={layout.narrow()}
+              wide={layout.wide()}
               narrowLevel={workspaceState.narrowLevel()}
               handoff={route.snapshot().handoff}
               projection={projection.workspace}
@@ -1978,6 +2205,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               }}
               onSection={(section) => {
                 workspaceState.selectSection(section);
+                setTransition(`Opened Workspace > ${sectionTitle(section)}`);
                 requestFocus("local-nav");
               }}
               onLocalNavFocus={() => requestFocus("local-nav")}
@@ -2022,7 +2250,8 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                     resourceLoading: false,
                     error: undefined,
                   },
-                })
+                }),
+                setTransition("Back to Resources")
               )}
               onDetailsActions={() => {
                 if (!overlayKind()) void dispatchAction("open-actions");
@@ -2148,6 +2377,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
             left={0}
             width="100%"
             height="100%"
+            backgroundColor={tokens().colors.surface}
             onMouseDown={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -2161,6 +2391,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
             width="70%"
             border
             flexDirection="column"
+            backgroundColor={tokens().colors.surface}
             onMouseDown={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -2684,132 +2915,137 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
           }
         />
       )}
-      {configOperation() && (
-        <box
-          position="absolute"
-          left={0}
-          top={0}
-          width="100%"
-          height="100%"
-          backgroundColor="#111111"
-        >
-          <box border borderStyle="rounded" margin={2} padding={1} flexDirection="column">
-            <text>
-              {configOperation()!.kind === "managed"
-                ? `${configOperation()!.enabled ? "Enable" : "Disable"} Managed OpenCode`
-                : `${configOperation()!.kind[0]!.toUpperCase()}${configOperation()!.kind.slice(1)} Config Source`}
-            </text>
-            <text>
-              {configOperation()!.kind === "managed"
-                ? `Config level: ${configOperation()!.level}`
-                : `Config Source: ${configOperation()!.id}`}
-            </text>
-            {configOperation()!.kind === "adopt" && (
-              <text>{`Exact revision: ${configOperation()!.observation?.exactRevision}`}</text>
-            )}
-            {configOperation()!.impact && (
-              <>
-                <text>{`Owner: ${configOperation()!.impact!.owner.file} ${configOperation()!.impact!.owner.pointer}`}</text>
-                <text>{`Binding: ${configBindingLine(configOperation()!.impact!.binding)}`}</text>
-                {configOperation()!.impact!.currentAppliedCommit && (
-                  <text>{`Applied commit: ${configOperation()!.impact!.currentAppliedCommit}`}</text>
+      <Show when={configOperation()} keyed>
+        {(operation) => {
+          const impact = operation.impact;
+          return (
+            <box
+              position="absolute"
+              left={0}
+              top={0}
+              width="100%"
+              height="100%"
+              backgroundColor="#111111"
+            >
+              <box border borderStyle="rounded" margin={2} padding={1} flexDirection="column">
+                <text>
+                  {operation.kind === "managed"
+                    ? `${operation.enabled ? "Enable" : "Disable"} Managed OpenCode`
+                    : `${operation.kind[0]!.toUpperCase()}${operation.kind.slice(1)} Config Source`}
+                </text>
+                <text>
+                  {operation.kind === "managed"
+                    ? `Config level: ${operation.level}`
+                    : `Config Source: ${operation.id}`}
+                </text>
+                {operation.kind === "adopt" && (
+                  <text>{`Exact revision: ${operation.observation?.exactRevision}`}</text>
                 )}
-                {configOperation()!.impact!.exactRevision && (
-                  <text>{`Reviewed commit: ${configOperation()!.impact!.exactRevision}`}</text>
+                {impact && (
+                  <>
+                    <text>{`Owner: ${impact.owner.file} ${impact.owner.pointer}`}</text>
+                    <text>{`Binding: ${configBindingLine(impact.binding)}`}</text>
+                    {impact.currentAppliedCommit && (
+                      <text>{`Applied commit: ${impact.currentAppliedCommit}`}</text>
+                    )}
+                    {impact.exactRevision && (
+                      <text>{`Reviewed commit: ${impact.exactRevision}`}</text>
+                    )}
+                    {impact.delta.addedSources.map((item) => (
+                      <text>{`Added Source: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
+                    ))}
+                    {impact.delta.changedSources.map((item) => (
+                      <text>{`Changed Source: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
+                    ))}
+                    {impact.delta.removedSources.map((item) => (
+                      <text>{`Removed Source: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
+                    ))}
+                    {impact.delta.addedCollections.map((item) => (
+                      <text>{`Added Collection: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
+                    ))}
+                    {impact.delta.changedCollections.map((item) => (
+                      <text>{`Changed Collection: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
+                    ))}
+                    {impact.delta.removedCollections.map((item) => (
+                      <text>{`Removed Collection: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
+                    ))}
+                    {impact.affectedInstalled.map((item) => (
+                      <text>{`Affected Installed Skill: ${item.source}/${item.path}`}</text>
+                    ))}
+                    {impact.disappearingSelectors.map((item) => (
+                      <text>{`Disappears: ${item}`}</text>
+                    ))}
+                    {impact.blockers.map((item) => (
+                      <text>{`Blocker: ${item.reason}`}</text>
+                    ))}
+                    {!impact.allowed && <text>Operation is blocked by current dependencies.</text>}
+                  </>
                 )}
-                {configOperation()!.impact!.delta.addedSources.map((item) => (
-                  <text>{`Added Source: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
-                ))}
-                {configOperation()!.impact!.delta.changedSources.map((item) => (
-                  <text>{`Changed Source: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
-                ))}
-                {configOperation()!.impact!.delta.removedSources.map((item) => (
-                  <text>{`Removed Source: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
-                ))}
-                {configOperation()!.impact!.delta.addedCollections.map((item) => (
-                  <text>{`Added Collection: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
-                ))}
-                {configOperation()!.impact!.delta.changedCollections.map((item) => (
-                  <text>{`Changed Collection: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
-                ))}
-                {configOperation()!.impact!.delta.removedCollections.map((item) => (
-                  <text>{`Removed Collection: ${item.id} (${item.owner.file} ${item.owner.pointer})`}</text>
-                ))}
-                {configOperation()!.impact!.affectedInstalled.map((item) => (
-                  <text>{`Affected Installed Skill: ${item.source}/${item.path}`}</text>
-                ))}
-                {configOperation()!.impact!.disappearingSelectors.map((item) => (
-                  <text>{`Disappears: ${item}`}</text>
-                ))}
-                {configOperation()!.impact!.blockers.map((item) => (
-                  <text>{`Blocker: ${item.reason}`}</text>
-                ))}
-                {!configOperation()!.impact!.allowed && (
-                  <text>Operation is blocked by current dependencies.</text>
-                )}
-              </>
-            )}
-            <select
-              id="config-operation-review"
-              focused={true}
-              selectedIndex={0}
-              showDescription={false}
-              options={
-                configOperation()!.impact && !configOperation()!.impact!.allowed
-                  ? [
-                      {
-                        name: "Cancel",
-                        description: "Return without mutation",
-                        value: "cancel",
-                      },
-                    ]
-                  : [
-                      {
-                        name: "Cancel",
-                        description: "Keep current configuration",
-                        value: "cancel",
-                      },
-                      {
-                        name: overlaySession().phase === "executing" ? "Applying" : "Confirm",
-                        description: "Apply reviewed operation",
-                        value: "confirm",
-                      },
-                    ]
-              }
-              onSelect={(_index, option) => {
-                if (option?.value === "cancel") closeOverlay();
-                else if (option?.value === "confirm" && overlaySession().phase !== "executing") {
-                  const operation = configOperation()!;
-                  const begun = beginSession(overlaySession().revision, "executing");
-                  const execute =
-                    operation.kind === "adopt"
-                      ? effects.adoptConfig(
-                          operation.id!,
-                          operation.observation!.exactRevision!,
-                          operation.observation!,
-                        )
-                      : operation.kind === "forget"
-                        ? effects.forgetConfig(operation.id!)
-                        : operation.kind === "remove"
-                          ? effects.removeConfig(operation.id!)
-                          : effects.setManagedOpenCode(operation.level!, operation.enabled!);
-                  void execute.then((complete) => {
-                    if (complete && sessionMatches(begun, "confirm", "config-operation"))
-                      closeSession(begun.revision);
+                <select
+                  id="config-operation-review"
+                  focused={true}
+                  selectedIndex={0}
+                  showDescription={false}
+                  options={
+                    impact && !impact.allowed
+                      ? [
+                          {
+                            name: "Cancel",
+                            description: "Return without mutation",
+                            value: "cancel",
+                          },
+                        ]
+                      : [
+                          {
+                            name: "Cancel",
+                            description: "Keep current configuration",
+                            value: "cancel",
+                          },
+                          {
+                            name: overlaySession().phase === "executing" ? "Applying" : "Confirm",
+                            description: "Apply reviewed operation",
+                            value: "confirm",
+                          },
+                        ]
+                  }
+                  onSelect={(_index, option) => {
+                    if (option?.value === "cancel") closeOverlay();
                     else if (
-                      sessionMatches(begun, "confirm", "config-operation") &&
-                      overlaySession().dismissed
-                    )
-                      closeSession(begun.revision);
-                    else settleFailedExecution(begun);
-                  });
-                }
-              }}
-            />
-            <text>Cancel is selected by default</text>
-          </box>
-        </box>
-      )}
+                      option?.value === "confirm" &&
+                      overlaySession().phase !== "executing"
+                    ) {
+                      const begun = beginSession(overlaySession().revision, "executing");
+                      const execute =
+                        operation.kind === "adopt"
+                          ? effects.adoptConfig(
+                              operation.id!,
+                              operation.observation!.exactRevision!,
+                              operation.observation!,
+                            )
+                          : operation.kind === "forget"
+                            ? effects.forgetConfig(operation.id!)
+                            : operation.kind === "remove"
+                              ? effects.removeConfig(operation.id!)
+                              : effects.setManagedOpenCode(operation.level!, operation.enabled!);
+                      void execute.then((complete) => {
+                        if (complete && sessionMatches(begun, "confirm", "config-operation"))
+                          closeSession(begun.revision);
+                        else if (
+                          sessionMatches(begun, "confirm", "config-operation") &&
+                          overlaySession().dismissed
+                        )
+                          closeSession(begun.revision);
+                        else settleFailedExecution(begun);
+                      });
+                    }
+                  }}
+                />
+                <text>Cancel is selected by default</text>
+              </box>
+            </box>
+          );
+        }}
+      </Show>
       {installedPreviewPayload()?.review && (
         <InstalledSkillReviewOverlay
           review={installedPreviewPayload()!.review!}

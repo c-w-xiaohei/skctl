@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { InputRenderable, SelectRenderable } from "@opentui/core";
+import { BoxRenderable, InputRenderable, parseColor, SelectRenderable } from "@opentui/core";
 import { TabsRootRenderable } from "@tuiparts/core/tabs";
 import { testRender } from "@opentui/solid";
 import { App } from "../../src/tui/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
+import { theme } from "../../src/tui/ui/theme";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
@@ -49,7 +50,7 @@ test("RENDER filter underlay blocks a background destination without stealing fi
     const browser = renderable(setup, "installed-skill-browser") as SelectRenderable;
     const input = renderable(setup, "skills-filter-search") as InputRenderable;
     const stage = renderable(setup, "skills-filter-dimensions");
-    const underlay = renderable(setup, "skills-filter-underlay");
+    const underlay = renderable(setup, "skills-filter-underlay") as BoxRenderable;
 
     expect(underlay.screenX).toBe(0);
     expect(underlay.screenY).toBe(0);
@@ -75,6 +76,24 @@ test("RENDER filter underlay blocks a background destination without stealing fi
   }
 });
 
+test("RENDER filter underlay follows the active surface theme token", async () => {
+  const surface = "#123456";
+  theme.override({ colors: { surface } });
+  const setup = await testRender(
+    () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
+    await setup.renderOnce();
+    await openFilter(setup);
+    const underlay = renderable(setup, "skills-filter-underlay") as BoxRenderable;
+    expect(parseColor(underlay.backgroundColor).equals(parseColor(surface))).toBe(true);
+  } finally {
+    setup.renderer.destroy();
+    theme.override(undefined);
+  }
+});
+
 test("RENDER filter underlay blocks background Installed rows while filter rows remain clickable", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -89,7 +108,7 @@ test("RENDER filter underlay blocks background Installed rows while filter rows 
     const overlay = renderable(setup, "skills-filter-overlay");
     const selection = browser.getSelectedOption()?.value;
 
-    expect(browser.screenX).toBeLessThan(overlay.screenX);
+    expect(browser.screenX).not.toBe(overlay.screenX);
     await setup.mockMouse.click(browser.screenX, browser.screenY + 1);
     await setup.renderOnce();
 

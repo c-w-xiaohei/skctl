@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { SelectRenderable } from "@opentui/core";
+import { ScrollBoxRenderable, TextBufferRenderable, type SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../../src/tui/app";
 import type {
@@ -801,6 +801,74 @@ test("Details direct Source relationship mounts the exact Source", async () => {
     if (!browser) throw new Error("Source browser was not mounted");
     expect(setup.renderer.currentFocusedRenderable).toBe(browser);
     expect(setup.captureCharFrame()).toContain("team-main");
+    expect(setup.captureCharFrame()).toContain("Esc back to Details");
+    await parsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-relationships",
+    );
+    expect(setup.captureCharFrame()).toContain("Back to Details");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("Details relationship writes its opened transition only after the keyboard handoff succeeds", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(projection())} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
+    await openRelationships(setup);
+    setup.mockInput.pressEnter();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Opened Workspace > Sources");
+    await parsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-relationships",
+    );
+    expect(setup.captureCharFrame()).toContain("Back to Details");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("changing the selected Reader removes the obsolete Details relationship control", async () => {
+  const base = projection();
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore({
+          ...base,
+          installedSkills: [
+            ...base.installedSkills,
+            {
+              ...base.installedSkills[0]!,
+              address: { source: "team-main", path: "replacement" },
+              name: "replacement",
+            },
+          ],
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await openRelationships(setup);
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-metadata",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+    setup.mockInput.pressArrow("down");
+    await setup.waitForFrame((frame) => frame.includes("replacement · SKILL.md"));
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
+    expect(setup.captureCharFrame()).not.toContain("Opened Workspace > Sources");
+    expect(setup.renderer.root.findDescendantById("reader-details-relationships")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
   }
@@ -842,16 +910,42 @@ test("Details discloses the Local Config Source contributed declaration file", a
   try {
     await openDetailsActions(setup);
     await parsedEscape(setup);
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-metadata",
+    );
+    setup.mockInput.pressEnter();
+    await setup.renderOnce();
+    const details = setup.renderer.root.findDescendantById("reader-details") as ScrollBoxRenderable;
+    details.scrollTop = 20;
+    await setup.renderOnce();
     const frame = setup.captureCharFrame();
+    const detailsText = (node: { getChildren(): readonly unknown[] }): string =>
+      node
+        .getChildren()
+        .flatMap((child) =>
+          child instanceof TextBufferRenderable
+            ? [child.plainText]
+            : child && typeof child === "object" && "getChildren" in child
+              ? detailsText(child as { getChildren(): readonly unknown[] })
+              : [],
+        )
+        .join("\n");
     expect(frame).toContain("Config Source ID  local-team");
     expect(frame).toContain("Host level  project");
-    expect(frame).toContain("Host file  /workspace/skill-cli/skill-cli.jsonc");
-    expect(frame).toContain("Host pointer  /configSources/local-team");
-    expect(frame).toContain(
-      "Contributed declaration file  /workspace/shared-skills/skill-cli.jsonc",
-    );
+    expect(frame).toContain("Host file");
+    expect(frame).toContain("Host pointer");
+    expect(frame).toContain("Contributed declaration file");
     expect(frame).toContain("Contributed declaration  /sources/lark");
     expect(frame).toContain("Namespace  local-team");
+    expect(detailsText(details)).toContain("Host file  /workspace/skill-cli/skill-cli.jsonc");
+    expect(detailsText(details)).toContain("Host pointer  /configSources/local-team");
+    expect(detailsText(details)).toContain(
+      "Contributed declaration file  /workspace/shared-skills/skill-cli.jsonc",
+    );
   } finally {
     setup.renderer.destroy();
   }

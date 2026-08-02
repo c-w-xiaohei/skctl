@@ -39,13 +39,32 @@ async function openDetails(setup: Awaited<ReturnType<typeof testRender>>, skill:
   setup.mockInput.pressKey("TAB");
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
   setup.mockInput.pressKey("ARROW_RIGHT");
+  await setup.renderOnce();
   setup.mockInput.pressKey("ARROW_RIGHT");
+  await setup.renderOnce();
   await setup.waitFor(
     () =>
       (
         setup.renderer.root.findDescendantById("reader-tabs") as TabSelectRenderable
       )?.getSelectedIndex() === 2 && setup.captureCharFrame().includes(`Address  ${skill}`),
   );
+  setup.mockInput.pressKey("TAB");
+  await setup.renderOnce();
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
+}
+
+async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
+  await new Promise<void>((resolve) => {
+    const listener = (event: { readonly name: string }) => {
+      if (event.name === "escape" || event.name === "esc") {
+        setup.renderer.keyInput.off("keypress", listener);
+        resolve();
+      }
+    };
+    setup.renderer.keyInput.prependListener("keypress", listener);
+    setup.mockInput.pressKey("ESCAPE");
+  });
+  await setup.renderOnce();
 }
 
 test("FILTER Collections combines semantic facts without Core calls", () => {
@@ -236,7 +255,7 @@ test("RENDER Collection producer route lands its distinct Installed Skill in Wor
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === producer);
     setup.mockInput.pressEnter();
     await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("Workspace › Skills"));
+    await setup.waitForFrame((frame) => frame.includes("Browse · Workspace > Skills"));
     await setup.waitFor(
       () =>
         (
@@ -247,11 +266,31 @@ test("RENDER Collection producer route lands its distinct Installed Skill in Wor
     expect(setup.renderer.root.findDescendantById("collection-browser")).toBeUndefined();
     expect(loads).toEqual(["guide", "reference"]);
     await openDetails(setup, "team-main/reference");
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details-actions");
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details-relationships");
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-metadata",
+    );
+    setup.mockInput.pressEnter();
+    await setup.renderOnce();
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Address  team-main/reference");
     expect(frame).toContain("Entry name  reference");
     expect(setup.renderer.root.findDescendantById("reader-details-actions")).toBeDefined();
     await referenceLoaded;
+    await parsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
     setup.mockInput.pressKey("ARROW_LEFT");
     setup.mockInput.pressKey("ARROW_LEFT");
     await setup.waitForFrame((value) => value.includes("other needle"));

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { MarkdownRenderable, ScrollBoxRenderable } from "@opentui/core";
+import { MarkdownRenderable, ScrollBoxRenderable, TextBufferRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { SkillCliError } from "../../src/core/api";
 import { App } from "../../src/tui/app";
@@ -43,7 +43,10 @@ async function chooseReaderTab(setup: Setup, stepsRight: number) {
   setup.mockInput.pressKey("TAB");
   await setup.renderOnce();
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-tabs");
-  for (let index = 0; index < stepsRight; index++) setup.mockInput.pressKey("ARROW_RIGHT");
+  for (let index = 0; index < stepsRight; index++) {
+    setup.mockInput.pressKey("ARROW_RIGHT");
+    await setup.renderOnce();
+  }
   setup.mockInput.pressKey("TAB");
   await setup.renderOnce();
 }
@@ -92,13 +95,44 @@ test("RENDER native Details selection exposes Source provenance through the rend
   const setup = await testRender(() => readerApp(), { width: 120, height: 40 });
   try {
     await openDetails(setup);
-    const details = setup.renderer.root.findDescendantById("reader-details");
-    expect(details).toBeDefined();
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details-actions");
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details-relationships");
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-metadata",
+    );
+    setup.mockInput.pressEnter();
+    await setup.renderOnce();
+    const details = setup.renderer.root.findDescendantById("reader-details") as ScrollBoxRenderable;
+    const binding = (node: {
+      getChildren(): readonly unknown[];
+    }): TextBufferRenderable | undefined =>
+      node
+        .getChildren()
+        .find(
+          (child): child is TextBufferRenderable =>
+            child instanceof TextBufferRenderable && child.plainText.includes("Binding  github"),
+        ) ??
+      node
+        .getChildren()
+        .filter(
+          (child): child is { getChildren(): readonly unknown[] } =>
+            !!child && typeof child === "object" && "getChildren" in child,
+        )
+        .map(binding)
+        .find(Boolean);
+    const provenance = binding(details);
+    expect(provenance).toBeDefined();
     await setup.mockMouse.drag(
-      details!.screenX,
-      details!.screenY + 3,
-      details!.screenX + 19,
-      details!.screenY + 3,
+      provenance!.screenX,
+      provenance!.screenY + 2,
+      provenance!.screenX + 19,
+      provenance!.screenY + 2,
     );
     await setup.flush();
     expect(selectionText(setup)).toBe("Binding  github");

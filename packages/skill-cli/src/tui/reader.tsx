@@ -11,6 +11,7 @@ import type { InstalledSkill, ReaderState } from "./types";
 import type { ManagementProjection } from "../core/api";
 import { findLiteralMatches, rawLineForMarkdownMatch } from "./types";
 import type { FocusRegistry, FocusTarget } from "./focus";
+import { Accordion } from "@tuiparts/solid/accordion";
 
 const syntaxStyle = SyntaxStyle.fromStyles({});
 
@@ -22,7 +23,7 @@ function NativeMarkdown(props: { readonly content: () => string }) {
       streaming={false}
       conceal
       internalBlockMode="coalesced"
-      tableOptions={{ selectable: true }}
+      tableOptions={{ selectable: true, wrapMode: "word" }}
     />
   );
 }
@@ -45,6 +46,7 @@ export function Reader(props: {
 }) {
   const [find, setFind] = createSignal(props.reader().find);
   const [markdownFallback, setMarkdownFallback] = createSignal(false);
+  const [metadataOpenAddress, setMetadataOpenAddress] = createSignal<string>();
   let readerScrollbox: ScrollBoxRenderable | undefined;
   let readerTabs: TabSelectRenderable | undefined;
   let synchronizingTab = false;
@@ -71,6 +73,9 @@ export function Reader(props: {
   const [detailsScrollbox, setDetailsScrollbox] = createSignal<ScrollBoxRenderable>();
   const reader = props.reader;
   let address = reader().address;
+  const readerAddress = () =>
+    reader().address ? `${reader().address!.source}/${reader().address!.path}` : undefined;
+  const installedSkill = () => props.skill;
   const commitFind = () => {
     const current = reader().address;
     if (current?.source === address?.source && current?.path === address?.path)
@@ -126,9 +131,27 @@ export function Reader(props: {
   const descriptor = (resource: ReaderState["resources"][number]) =>
     `${resource.path}  ${resource.kind}${resource.size === undefined ? "" : ` ${resource.size} bytes`}${resource.executable === undefined ? "" : resource.executable ? " executable" : " not executable"}${resource.gitlinkCommit ? ` ${resource.gitlinkCommit}` : ""}`;
   const readerError = () => reader().error;
-  const details = () => {
-    const skill = props.skill;
-    if (!skill) return "Select an Installed Skill";
+  const readerIdentity = () => {
+    const installed = installedSkill();
+    return installed
+      ? `Reader · ${installed.name}\nSource: ${installed.address.source}\nPath: ${installed.address.path}`
+      : "Reader";
+  };
+  const detailsSummary = () => {
+    const installed = installedSkill();
+    if (!installed) return "Summary\nSelect an Installed Skill";
+    return [
+      "Summary",
+      `Address  ${installed.address.source}/${installed.address.path}`,
+      `Description  ${installed.description || "None"}`,
+      `Health  ${installed.owner.health}`,
+      `Problems  ${installed.problems.map((problem) => `${problem.code}: ${problem.message}`).join("; ") || "None"}`,
+    ].join("\n");
+  };
+  const detailsMetadata = () => {
+    const installed = installedSkill();
+    if (!installed) return "Select an Installed Skill";
+    const skill = installed;
     const source = skill.source;
     const directOwner = source?.contribution
       ? undefined
@@ -181,7 +204,6 @@ export function Reader(props: {
         : agent?.reasons.map((reason) => `${reason.code}: ${reason.message}`).join("; ") ||
           "Unavailable";
     return [
-      `Address  ${skill.address.source}/${skill.address.path}`,
       `Entry name  ${skill.name}`,
       `Source  ${skill.owner.source}`,
       source
@@ -199,9 +221,6 @@ export function Reader(props: {
       skill.primary ? `Primary selector  ${skill.primary}` : "Primary selector  None",
       `Aliases  ${skill.aliases.join(", ") || "None"}`,
       `Collections  ${skill.collections.map((item) => item.id).join(", ") || "None"}`,
-      `Owner  ${skill.owner.health}`,
-      `Problems  ${skill.problems.map((problem) => `${problem.code}: ${problem.message}`).join("; ") || "None"}`,
-      `Description  ${skill.description}`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -245,8 +264,9 @@ export function Reader(props: {
     if (reader().tab !== "skill") setMarkdownFallback(true);
   });
   const detailRelationships = () => {
-    const skill = props.skill;
-    if (!skill) return [];
+    const installed = installedSkill();
+    if (!installed) return [];
+    const skill = installed;
     const source = skill.source;
     const directOwner = source?.contribution
       ? undefined
@@ -312,29 +332,37 @@ export function Reader(props: {
     queueMicrotask(() => revealCurrent(raw, line));
   });
   return (
-    <box flexDirection="column" flexGrow={1} paddingLeft={props.narrow ? 0 : 1}>
-      <tab_select
-        id="reader-tabs"
-        ref={(value: TabSelectRenderable) => {
-          readerTabs = value;
-          bind("reader-tabs", value);
-        }}
-        options={[
-          { name: "SKILL.md", description: "", value: "skill" },
-          { name: "Resources", description: "", value: "resources" },
-          { name: "Details", description: "", value: "details" },
-        ]}
-        showDescription={false}
-        showUnderline={false}
-        wrapSelection={false}
-        onChange={(index) => {
-          if (synchronizingTab) return;
-          const tab = ["skill", "resources", "details"] as const;
-          const next = tab[index]!;
-          commitFind();
-          props.onPatch({ tab: next });
-        }}
-      />
+    <box flexDirection="column" flexGrow={1} minWidth={0} height="100%" minHeight={0}>
+      <text id="reader-identity" width="100%" height={5} flexShrink={0} wrapMode="word">
+        {readerIdentity()}
+      </text>
+      <box flexDirection="row" height={1} flexShrink={0}>
+        <text>View: </text>
+        <box flexGrow={1} height={1}>
+          <tab_select
+            id="reader-tabs"
+            ref={(value: TabSelectRenderable) => {
+              readerTabs = value;
+              bind("reader-tabs", value);
+            }}
+            options={[
+              { name: "SKILL.md", description: "", value: "skill" },
+              { name: "Resources", description: "", value: "resources" },
+              { name: "Details", description: "", value: "details" },
+            ]}
+            showDescription={false}
+            showUnderline={false}
+            wrapSelection={false}
+            onChange={(index) => {
+              if (synchronizingTab) return;
+              const tab = ["skill", "resources", "details"] as const;
+              const next = tab[index]!;
+              commitFind();
+              props.onPatch({ tab: next });
+            }}
+          />
+        </box>
+      </box>
       {reader().tab === "resources" && (
         <>
           {(!props.narrow || reader().resourceLevel !== "content") && (
@@ -344,7 +372,8 @@ export function Reader(props: {
                 ref={(value: SelectRenderable) => {
                   bind("reader-resource-list", value);
                 }}
-                height={8}
+                height={readerError() ? 8 : undefined}
+                flexGrow={readerError() ? undefined : 1}
                 options={reader().resources.map((resource) => ({
                   name: descriptor(resource),
                   description: "",
@@ -357,6 +386,8 @@ export function Reader(props: {
                   ),
                 )}
                 showDescription={false}
+                showSelectionIndicator
+                showScrollIndicator
                 onChange={(index) =>
                   props.onPatch({ selectedResource: reader().resources[index]?.path })
                 }
@@ -381,8 +412,9 @@ export function Reader(props: {
                     bind("reader-resource-content", value);
                   }}
                   width="100%"
-                  height={8}
                   flexGrow={1}
+                  flexShrink={1}
+                  minHeight={0}
                 >
                   <text>Loading resource content</text>
                 </scrollbox>
@@ -394,8 +426,9 @@ export function Reader(props: {
                     bind("reader-resource-content", value);
                   }}
                   width="100%"
-                  height={8}
                   flexGrow={1}
+                  flexShrink={1}
+                  minHeight={0}
                 >
                   {textResource()!.format === "markdown" ? (
                     <NativeMarkdown content={resourceMarkdownContent} />
@@ -403,7 +436,7 @@ export function Reader(props: {
                     content()
                       .split("\n")
                       .map((line, index) => (
-                        <text id={`resource-line-${index}`} selectable>
+                        <text id={`resource-line-${index}`} selectable wrapMode="word">
                           {line}
                         </text>
                       ))
@@ -417,10 +450,13 @@ export function Reader(props: {
                     bind("reader-resource-content", value);
                   }}
                   width="100%"
-                  height={8}
                   flexGrow={1}
+                  flexShrink={1}
+                  minHeight={0}
                 >
-                  <text selectable>{content()}</text>
+                  <text selectable wrapMode="word">
+                    {content()}
+                  </text>
                 </scrollbox>
               )}
             </>
@@ -451,12 +487,16 @@ export function Reader(props: {
             bind("reader", value);
           }}
           flexGrow={1}
+          flexShrink={1}
+          minHeight={0}
           onMouseScroll={() => {
             const scroll = detailsScrollbox()?.scrollTop;
             if (scroll && scroll > 0) props.onDetailsScroll(scroll);
           }}
         >
-          <text selectable>{details()}</text>
+          <text selectable wrapMode="word">
+            {detailsSummary()}
+          </text>
           <select
             id="reader-details-actions"
             ref={(value: SelectRenderable) => {
@@ -469,6 +509,8 @@ export function Reader(props: {
                 value: "actions",
               },
             ]}
+            height={1}
+            flexShrink={0}
             showDescription={false}
             onSelect={props.onDetailsActions}
           />
@@ -479,10 +521,51 @@ export function Reader(props: {
                 bind("details-relationships", value);
               }}
               options={detailRelationships()}
+              height={1}
+              flexShrink={0}
               showDescription
               onSelect={(_index, option) => option && props.onDetailsRelationship(option.value)}
             />
           )}
+          <Show
+            when={
+              reader().address ? `${reader().address!.source}/${reader().address!.path}` : undefined
+            }
+            keyed
+          >
+            {(_address) => (
+              <Accordion.Root
+                value={metadataOpenAddress() === readerAddress() ? ["metadata"] : []}
+                onValueChange={(value) =>
+                  setMetadataOpenAddress(value.includes("metadata") ? readerAddress() : undefined)
+                }
+                flexDirection="column"
+                width="100%"
+              >
+                <Accordion.Item value="metadata" flexDirection="column" width="100%">
+                  <Accordion.Trigger
+                    id="reader-details-metadata"
+                    ref={(value) => {
+                      if (value) bind("details-metadata", value);
+                    }}
+                    height={1}
+                    width="100%"
+                  >
+                    {(state) => (
+                      <text>{`${state.open ? "▼" : "▶"} Source, Config & agent metadata`}</text>
+                    )}
+                  </Accordion.Trigger>
+                  <Show when={metadataOpenAddress() === readerAddress()}>
+                    <Accordion.Panel width="100%">
+                      <text selectable wrapMode="word">
+                        {detailsMetadata()}
+                      </text>
+                    </Accordion.Panel>
+                  </Show>
+                </Accordion.Item>
+              </Accordion.Root>
+            )}
+          </Show>
         </scrollbox>
       )}
       <Show when={reader().tab === "skill"}>
@@ -582,6 +665,8 @@ export function Reader(props: {
             setScrollbox(value);
           }}
           flexGrow={1}
+          flexShrink={1}
+          minHeight={0}
           onMouseScroll={() =>
             queueMicrotask(() => {
               const scroll = readerScrollbox?.scrollTop;
@@ -599,7 +684,7 @@ export function Reader(props: {
               fallback={content()
                 .split("\n")
                 .map((line, index) => (
-                  <text id={`reader-line-${index}`} selectable>
+                  <text id={`reader-line-${index}`} selectable wrapMode="word">
                     {line}
                   </text>
                 ))}

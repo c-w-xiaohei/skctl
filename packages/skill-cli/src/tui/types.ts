@@ -37,6 +37,7 @@ export type FocusOwner =
   | "reader-resource-retry"
   | "inspector"
   | "details-relationships"
+  | "details-metadata"
   | "dialog"
   | "task"
   | "problems"
@@ -70,6 +71,7 @@ export const focusOwners: readonly FocusOwner[] = [
   "reader-resource-retry",
   "inspector",
   "details-relationships",
+  "details-metadata",
   "dialog",
   "task",
   "problems",
@@ -102,6 +104,7 @@ export const readerOwnsFocus = (focus: FocusOwner): boolean =>
     "reader-resource-retry",
     "inspector",
     "details-relationships",
+    "details-metadata",
     "input",
   ].includes(focus);
 export type NarrowLevel = "list" | "detail" | "task";

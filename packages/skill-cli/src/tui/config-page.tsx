@@ -21,6 +21,7 @@ export function ConfigPage(props: {
   readonly config: ConfigReadonly;
   readonly overlay?: () => boolean;
   readonly narrow?: boolean;
+  readonly wide?: boolean;
   readonly handoff?: RouteHandoff;
   readonly projection: () => ManagementProjection | undefined;
   readonly focusRegistry?: FocusRegistry;
@@ -104,9 +105,9 @@ export function ConfigPage(props: {
       const owner =
         source.contribution?.configSource ??
         value()?.direct.sources.find((item) => item.id === source.id)?.ref.owner;
-      return owner
-        ? `Source declaration  ${source.id}\nOwner  ${owner.file} ${owner.pointer}`
-        : undefined;
+      const provenance = source.contribution ? "Config Source" : "Direct";
+      const trackedRef = typeof source.ref === "string" ? source.ref : source.ref?.id;
+      return `Selected Source  ${source.id}\nBinding kind  ${source.kind}\nCanonical Origin  ${source.origin}\nSource Root  ${source.root}${trackedRef ? `\nTracked ref  ${trackedRef}` : ""}\nProvenance  ${provenance}${owner ? `\n${source.contribution ? "Config Source owner" : "Owner"}  ${owner.level} ${owner.file} ${owner.pointer}` : ""}`;
     }
     if (section() === "config-sources") {
       if (props.handoff?.kind === "source-contribution") return undefined;
@@ -123,6 +124,25 @@ export function ConfigPage(props: {
           ? `Applied commit  ${source.adoption.commit}`
           : `Adoption  ${source.adoption.status}`;
       return `Selected > ${source.id}\nConfig Source  ${source.id}\nOwner  ${source.owner.file} ${source.owner.pointer}\n${binding}\n${adoption}`;
+    }
+    return undefined;
+  };
+  const declarationText = () => {
+    if (section() === "collections") {
+      const collection = (value()?.direct.collections ?? []).find(
+        (item) => item.id === selection(),
+      );
+      return collection
+        ? `Selected Collection  ${collection.id}\nOwner  ${collection.owner.file} ${collection.owner.pointer}`
+        : undefined;
+    }
+    if (section() === "for-agents") {
+      const use = (value()?.direct.collectionUse ?? []).find(
+        (item) => item.collection === selection(),
+      );
+      return use
+        ? `Selected Collection Use  ${use.collection}\nOwner  ${use.owner.file} ${use.owner.pointer}`
+        : undefined;
     }
     return undefined;
   };
@@ -156,375 +176,409 @@ export function ConfigPage(props: {
     return "Integrations connect this Config to agent hosts.";
   };
   return (
-    <box flexDirection="column" flexGrow={1} paddingLeft={1}>
-      <text>
-        {value()?.file.file ?? "Config"} {value()?.file.status ?? "missing"}
-      </text>
+    <box flexDirection={props.wide ? "row" : "column"} flexGrow={1} paddingLeft={1}>
       <Show when={!props.overlay?.()}>
         <SectionTabs
           id="config-section-browser"
           options={[
-            { label: "Sources", value: "sources" },
+            { label: "Sources", compactLabel: "Sources", value: "sources" },
             {
               label: "Config Sources",
+              compactLabel: "Config",
               value: "config-sources",
             },
-            { label: "Collections", value: "collections" },
-            { label: "For agents", value: "for-agents" },
-            { label: "Integrations", value: "integrations" },
+            { label: "Collections", compactLabel: "Coll", value: "collections" },
+            { label: "For agents", compactLabel: "Agents", value: "for-agents" },
+            { label: "Integrations", compactLabel: "Int", value: "integrations" },
           ]}
           value={section() as ConfigSection}
           owner="local-nav"
           focusRegistry={props.focusRegistry}
           compact={props.narrow === true}
+          label={props.wide ? "Navigation" : "Section"}
+          vertical={props.wide}
+          panelId={props.wide ? "config-navigation-panel" : undefined}
           onPrimaryPointerEntry={props.onLocalNavFocus}
           onNavigate={props.onSection}
         />
       </Show>
-      {handoffText() && (
-        <box flexDirection="column" paddingTop={1}>
-          {handoffText()
-            ?.split("\n")
-            .map((line) => (
-              <text height={1} selectable>
-                {line}
-              </text>
-            ))}
-        </box>
-      )}
-      {!handoffText() &&
-        sourceText()
-          ?.split("\n")
-          .map((line) => (
-            <text height={1} selectable>
-              {line}
-            </text>
-          ))}
-      <scrollbox flexGrow={1}>
-        <text height={1}>{sectionIntro()}</text>
-        {section() === "sources" && (
-          <>
-            <select
-              id="config-source-browser"
-              ref={(item: SelectRenderable) => {
-                bind("browser", item);
-              }}
-              height={10}
-              options={[
-                ...(value()?.direct.sources ?? []).map((item) => ({
-                  name: `${item.id} Direct Source`,
-                  description: item.origin,
-                  value: item.id,
-                })),
-                ...(value()?.contributed.sources ?? []).map((item) => ({
-                  name: `${item.id} via Config Source`,
-                  description: item.origin,
-                  value: item.id,
-                })),
-              ]}
-              selectedIndex={
-                selection()
-                  ? [
-                      ...(value()?.direct.sources ?? []),
-                      ...(value()?.contributed.sources ?? []),
-                    ].findIndex((item) => item.id === selection())
-                  : undefined
-              }
-              showDescription={false}
-              onChange={(index) => {
-                const items = [
-                  ...(value()?.direct.sources ?? []),
-                  ...(value()?.contributed.sources ?? []),
-                ];
-                props.onSelect(items[index]!.id);
-              }}
-              onSelect={(index) => {
-                const items = [
-                  ...(value()?.direct.sources ?? []),
-                  ...(value()?.contributed.sources ?? []),
-                ];
-                props.onSelect(items[index]!.id);
-                props.onActions();
-              }}
-            />
-            {!value()?.direct.sources.length && !value()?.contributed.sources.length && (
-              <EmptyState
-                title="No Sources yet"
-                lines={["Add a Source at this level, then Discover and Install Skills."]}
-                action={{
-                  id: "config-empty-add-source",
-                  name: "Add Source",
-                  description: "Register a Source at this level",
-                  registerRef: (item) => item && bind("browser", item),
-                  onSelect: () => props.onAction("add-source"),
-                }}
-                hint="Enter Actions → Add Source"
-              />
-            )}
-          </>
-        )}
-        {section() === "config-sources" && (
-          <>
-            {(value()?.direct.configSources ?? []).map((item) => (
-              <text>{`${item.owner.pointer === selection() ? "> " : "  "}${item.id}`}</text>
-            ))}
-            <select
-              id="config-config-source-browser"
-              ref={(item: SelectRenderable) => {
-                bind("browser", item);
-              }}
-              height={10}
-              options={(value()?.direct.configSources ?? []).map((item) => ({
-                name: item.id,
-                description: `${item.owner.file} ${item.owner.pointer}`,
-                value: item.owner.pointer,
-              }))}
-              selectedIndex={
-                selection()
-                  ? (value()?.direct.configSources ?? []).findIndex(
-                      (item) => item.owner.pointer === selection(),
-                    )
-                  : undefined
-              }
-              showDescription
-              onChange={(index) => {
-                const item = value()?.direct.configSources[index];
-                if (item) props.onSelect(item.owner.pointer);
-              }}
-            />
-            {!value()?.direct.configSources.length && (
-              <EmptyState
-                title="No Config Sources yet"
-                lines={["Register a reusable Config Source for this level."]}
-                action={{
-                  id: "config-empty-add-config-source",
-                  name: "Add Config Source",
-                  description: "Register a Config Source",
-                  registerRef: (item) => item && bind("browser", item),
-                  onSelect: () => props.onAction("add-config-source"),
-                }}
-                hint="Enter Actions → Add Config Source"
-              />
-            )}
-            {selectedConfigSource() && (
+      <box
+        id={props.wide ? "config-browser-panel" : undefined}
+        flexDirection="column"
+        flexGrow={1}
+        border={props.wide}
+      >
+        <text>
+          {props.wide ? "Browser · " : ""}
+          {value()?.file.file ?? "Config"} {value()?.file.status ?? "missing"}
+        </text>
+        <Show
+          when={handoffText()}
+          fallback={
+            <Show when={sourceText() ?? declarationText()}>
+              {(text) => (
+                <box flexDirection="column" flexShrink={0}>
+                  {text()
+                    .split("\n")
+                    .map((line) => (
+                      <text height={1} selectable>
+                        {line}
+                      </text>
+                    ))}
+                </box>
+              )}
+            </Show>
+          }
+        >
+          {(text) => (
+            <box flexDirection="column" paddingTop={1}>
+              {text()
+                .split("\n")
+                .map((line) => (
+                  <text height={1} selectable>
+                    {line}
+                  </text>
+                ))}
+            </box>
+          )}
+        </Show>
+        <scrollbox flexGrow={1}>
+          <text height={1}>{sectionIntro()}</text>
+          {section() === "sources" && (
+            <>
               <select
-                id="config-source-contributions"
+                id="config-source-browser"
                 ref={(item: SelectRenderable) => {
-                  bind("config-source-contributions", item);
+                  bind("browser", item);
                 }}
-                height={10}
+                flexGrow={1}
                 options={[
-                  ...selectedConfigSource()!.contributed.sources.map((source, index) => ({
-                    name: `Source  ${source.id}`,
-                    description: "Contributed read-only Source",
-                    value: `source:${index}`,
+                  ...(value()?.direct.sources ?? []).map((item) => ({
+                    name: `${item.id} · ${item.kind}`,
+                    description: `${item.origin} · ${item.root} · Direct`,
+                    value: item.id,
                   })),
-                  ...selectedConfigSource()!.contributed.collections.map((collection, index) => ({
-                    name: `Collection  ${collection.id}`,
-                    description: "Contributed read-only Collection",
-                    value: `collection:${index}`,
+                  ...(value()?.contributed.sources ?? []).map((item) => ({
+                    name: `${item.id} · ${item.kind}`,
+                    description: `${item.origin} · ${item.root} · Config Source`,
+                    value: item.id,
                   })),
                 ]}
-                showDescription
-                onSelect={(_index, option) => {
-                  const current = selectedConfigSource();
-                  if (!current || !option) return;
-                  const [kind, index] = option.value.split(":");
-                  if (kind === "source") {
-                    const source = current.contributed.sources[Number(index)];
-                    if (source)
-                      props.onContribution({
-                        kind: "source",
-                        source,
-                        owner: current.owner,
-                      });
-                  } else {
-                    const collection = current.contributed.collections[Number(index)];
-                    if (collection)
-                      props.onContribution({
-                        kind: "collection",
-                        collection: collection.id,
-                        owner: collection.owner,
-                      });
-                  }
+                selectedIndex={
+                  selection()
+                    ? [
+                        ...(value()?.direct.sources ?? []),
+                        ...(value()?.contributed.sources ?? []),
+                      ].findIndex((item) => item.id === selection())
+                    : undefined
+                }
+                showDescription={false}
+                showSelectionIndicator
+                showScrollIndicator
+                onChange={(index) => {
+                  const items = [
+                    ...(value()?.direct.sources ?? []),
+                    ...(value()?.contributed.sources ?? []),
+                  ];
+                  props.onSelect(items[index]!.id);
+                }}
+                onSelect={(index) => {
+                  const items = [
+                    ...(value()?.direct.sources ?? []),
+                    ...(value()?.contributed.sources ?? []),
+                  ];
+                  props.onSelect(items[index]!.id);
+                  props.onActions();
                 }}
               />
-            )}
-          </>
-        )}
-        {section() === "collections" && (
-          <>
-            <select
-              id="config-collection-browser"
-              ref={(item: SelectRenderable) => {
-                bind("browser", item);
-              }}
-              height={10}
-              options={[
-                ...(value()?.direct.collections ?? []).map((item) => ({
-                  name: `${item.id} (${item.owner.level})`,
+              {!value()?.direct.sources.length && !value()?.contributed.sources.length && (
+                <EmptyState
+                  title="No Sources yet"
+                  lines={["Add a Source at this level, then Discover and Install Skills."]}
+                  action={{
+                    id: "config-empty-add-source",
+                    name: "Add Source",
+                    description: "Register a Source at this level",
+                    registerRef: (item) => item && bind("browser", item),
+                    onSelect: () => props.onAction("add-source"),
+                  }}
+                  hint="Enter Actions → Add Source"
+                />
+              )}
+            </>
+          )}
+          {section() === "config-sources" && (
+            <>
+              {(value()?.direct.configSources ?? []).map((item) => (
+                <text>{`${item.owner.pointer === selection() ? "> " : "  "}${item.id}`}</text>
+              ))}
+              <select
+                id="config-config-source-browser"
+                ref={(item: SelectRenderable) => {
+                  bind("browser", item);
+                }}
+                flexGrow={1}
+                options={(value()?.direct.configSources ?? []).map((item) => ({
+                  name: `${item.id} · ${item.binding.kind}`,
                   description: `${item.owner.file} ${item.owner.pointer}`,
-                  value: item.id,
-                })),
-                ...(value()?.contributed.collections ?? []).map((item) => ({
-                  name: `${item} (Config Source)`,
-                  description: "Contributed Collection",
-                  value: item,
-                })),
-              ]}
-              selectedIndex={
-                selection()
-                  ? [
-                      ...(value()?.direct.collections ?? []).map((item) => item.id),
-                      ...(value()?.contributed.collections ?? []),
-                    ].indexOf(selection()!)
-                  : undefined
-              }
-              showDescription
-              onChange={(index) => {
-                const collections = [
-                  ...(value()?.direct.collections ?? []).map((item) => item.id),
-                  ...(value()?.contributed.collections ?? []),
-                ];
-                const collection = collections[index];
-                if (collection) props.onSelect(collection);
-              }}
-              onSelect={() => props.onActions()}
-            />
-            {!value()?.direct.collections.length && !value()?.contributed.collections.length && (
-              <EmptyState
-                title="No Collections yet"
-                lines={["Collections group Skills for reuse and agent disclosure."]}
-                action={{
-                  id: "config-empty-new-collection",
-                  name: "New Collection",
-                  description: "Create a Collection",
-                  registerRef: (item) => item && bind("browser", item),
-                  onSelect: () => props.onAction("new-collection"),
+                  value: item.owner.pointer,
+                }))}
+                selectedIndex={
+                  selection()
+                    ? (value()?.direct.configSources ?? []).findIndex(
+                        (item) => item.owner.pointer === selection(),
+                      )
+                    : undefined
+                }
+                showDescription={false}
+                showSelectionIndicator
+                showScrollIndicator
+                onChange={(index) => {
+                  const item = value()?.direct.configSources[index];
+                  if (item) props.onSelect(item.owner.pointer);
                 }}
-                hint="Enter Actions → New Collection"
               />
-            )}
-          </>
-        )}
-        {section() === "for-agents" && (
-          <box flexDirection="column">
-            <select
-              id="config-agent-use-browser"
-              ref={(item: SelectRenderable) => {
-                bind("browser", item);
-              }}
-              height={10}
-              options={(value()?.direct.collectionUse ?? []).map((item) => ({
-                name: item.collection,
-                description: `${item.owner.file} ${item.owner.pointer}`,
-                value: item.collection,
-              }))}
-              selectedIndex={
-                selection()
-                  ? (value()?.direct.collectionUse ?? []).findIndex(
-                      (item) => item.collection === selection(),
-                    )
-                  : undefined
-              }
-              showDescription
-              onChange={(index) => {
-                const item = value()?.direct.collectionUse[index];
-                if (item) props.onSelect(item.collection);
-              }}
-              onSelect={() => props.onActions()}
-            />
-            {!value()?.direct.collectionUse.length && (
-              <EmptyState
-                title="No Collections exposed yet"
-                lines={[
-                  "Collection Use selects which Collections agents can see.",
-                  ...(!value()?.direct.collections.length &&
-                  !value()?.contributed.collections.length
-                    ? ["Create a Collection first (Collections section)."]
-                    : []),
+              {!value()?.direct.configSources.length && (
+                <EmptyState
+                  title="No Config Sources yet"
+                  lines={["Register a reusable Config Source for this level."]}
+                  action={{
+                    id: "config-empty-add-config-source",
+                    name: "Add Config Source",
+                    description: "Register a Config Source",
+                    registerRef: (item) => item && bind("browser", item),
+                    onSelect: () => props.onAction("add-config-source"),
+                  }}
+                  hint="Enter Actions → Add Config Source"
+                />
+              )}
+              {selectedConfigSource() && (
+                <select
+                  id="config-source-contributions"
+                  ref={(item: SelectRenderable) => {
+                    bind("config-source-contributions", item);
+                  }}
+                  height={10}
+                  options={[
+                    ...selectedConfigSource()!.contributed.sources.map((source, index) => ({
+                      name: `Source  ${source.id}`,
+                      description: "Contributed read-only Source",
+                      value: `source:${index}`,
+                    })),
+                    ...selectedConfigSource()!.contributed.collections.map((collection, index) => ({
+                      name: `Collection  ${collection.id}`,
+                      description: "Contributed read-only Collection",
+                      value: `collection:${index}`,
+                    })),
+                  ]}
+                  showDescription={false}
+                  showSelectionIndicator
+                  showScrollIndicator
+                  onSelect={(_index, option) => {
+                    const current = selectedConfigSource();
+                    if (!current || !option) return;
+                    const [kind, index] = option.value.split(":");
+                    if (kind === "source") {
+                      const source = current.contributed.sources[Number(index)];
+                      if (source)
+                        props.onContribution({
+                          kind: "source",
+                          source,
+                          owner: current.owner,
+                        });
+                    } else {
+                      const collection = current.contributed.collections[Number(index)];
+                      if (collection)
+                        props.onContribution({
+                          kind: "collection",
+                          collection: collection.id,
+                          owner: collection.owner,
+                        });
+                    }
+                  }}
+                />
+              )}
+            </>
+          )}
+          {section() === "collections" && (
+            <>
+              <select
+                id="config-collection-browser"
+                ref={(item: SelectRenderable) => {
+                  bind("browser", item);
+                }}
+                flexGrow={1}
+                options={[
+                  ...(value()?.direct.collections ?? []).map((item) => ({
+                    name: `${item.id} (${item.owner.level})`,
+                    description: `${item.owner.file} ${item.owner.pointer}`,
+                    value: item.id,
+                  })),
+                  ...(value()?.contributed.collections ?? []).map((item) => ({
+                    name: `${item} (Config Source)`,
+                    description: "Contributed Collection",
+                    value: item,
+                  })),
                 ]}
-                action={
-                  value()?.direct.collections.length || value()?.contributed.collections.length
-                    ? {
-                        id: "config-empty-set-collection-use",
-                        name: "Set Collection Use",
-                        description: "Choose the Collections this Config discloses",
-                        registerRef: (item) => item && bind("browser", item),
-                        onSelect: () => props.onAction("set-collection-use"),
-                      }
+                selectedIndex={
+                  selection()
+                    ? [
+                        ...(value()?.direct.collections ?? []).map((item) => item.id),
+                        ...(value()?.contributed.collections ?? []),
+                      ].indexOf(selection()!)
                     : undefined
                 }
-                hint={
-                  value()?.direct.collections.length || value()?.contributed.collections.length
-                    ? "Enter Actions → Set Collection Use"
-                    : undefined
-                }
+                showDescription={false}
+                showSelectionIndicator
+                showScrollIndicator
+                onChange={(index) => {
+                  const collections = [
+                    ...(value()?.direct.collections ?? []).map((item) => item.id),
+                    ...(value()?.contributed.collections ?? []),
+                  ];
+                  const collection = collections[index];
+                  if (collection) props.onSelect(collection);
+                }}
+                onSelect={() => props.onActions()}
               />
-            )}
-          </box>
-        )}
-        {section() === "for-agents" && (
-          <text selectable>
-            {(() => {
-              const workspace = props.projection();
-              return workspace?.effective.status === "complete" &&
-                workspace.effective.agent.status === "available"
-                ? `Complete disclosure. Managed OpenCode: ${workspace.effective.managed ? "enabled" : "disabled"}`
-                : `Unavailable: ${(workspace?.effective.agent.reasons ?? []).map((item) => item.message).join("; ") || "Collection Use is incomplete or managed OpenCode is not enabled"}`;
-            })()}
-          </text>
-        )}
-        {section() === "integrations" && (
-          <>
-            {(value()?.direct.integrations ?? []).map((integration) => (
-              <text
-                selectable
-              >{`Managed OpenCode  ${integration.owner.file} ${integration.owner.pointer}`}</text>
-            ))}
+              {!value()?.direct.collections.length && !value()?.contributed.collections.length && (
+                <EmptyState
+                  title="No Collections yet"
+                  lines={["Collections group Skills for reuse and agent disclosure."]}
+                  action={{
+                    id: "config-empty-new-collection",
+                    name: "New Collection",
+                    description: "Create a Collection",
+                    registerRef: (item) => item && bind("browser", item),
+                    onSelect: () => props.onAction("new-collection"),
+                  }}
+                  hint="Enter Actions → New Collection"
+                />
+              )}
+            </>
+          )}
+          {section() === "for-agents" && (
+            <box flexDirection="column">
+              <select
+                id="config-agent-use-browser"
+                ref={(item: SelectRenderable) => {
+                  bind("browser", item);
+                }}
+                flexGrow={1}
+                options={(value()?.direct.collectionUse ?? []).map((item) => ({
+                  name: item.collection,
+                  description: `${item.owner.file} ${item.owner.pointer}`,
+                  value: item.collection,
+                }))}
+                selectedIndex={
+                  selection()
+                    ? (value()?.direct.collectionUse ?? []).findIndex(
+                        (item) => item.collection === selection(),
+                      )
+                    : undefined
+                }
+                showDescription={false}
+                showSelectionIndicator
+                showScrollIndicator
+                onChange={(index) => {
+                  const item = value()?.direct.collectionUse[index];
+                  if (item) props.onSelect(item.collection);
+                }}
+                onSelect={() => props.onActions()}
+              />
+              {!value()?.direct.collectionUse.length && (
+                <EmptyState
+                  title="No Collections exposed yet"
+                  lines={[
+                    "Collection Use selects which Collections agents can see.",
+                    ...(!value()?.direct.collections.length &&
+                    !value()?.contributed.collections.length
+                      ? ["Create a Collection first (Collections section)."]
+                      : []),
+                  ]}
+                  action={
+                    value()?.direct.collections.length || value()?.contributed.collections.length
+                      ? {
+                          id: "config-empty-set-collection-use",
+                          name: "Set Collection Use",
+                          description: "Choose the Collections this Config discloses",
+                          registerRef: (item) => item && bind("browser", item),
+                          onSelect: () => props.onAction("set-collection-use"),
+                        }
+                      : undefined
+                  }
+                  hint={
+                    value()?.direct.collections.length || value()?.contributed.collections.length
+                      ? "Enter Actions → Set Collection Use"
+                      : undefined
+                  }
+                />
+              )}
+            </box>
+          )}
+          {section() === "for-agents" && (
             <text selectable>
-              {props.projection()?.effective.status === "complete" &&
-              props.projection()!.effective.agent.status === "available"
-                ? `Managed OpenCode catalog: ${
-                    props
-                      .projection()!
-                      .effective.agent.catalog.map((item) => item.selector)
-                      .join(", ") || "empty"
-                  }`
-                : `Managed OpenCode unavailable: ${(props.projection()?.effective.agent.reasons ?? []).map((item) => item.message).join("; ") || "no complete Collection Use"}`}
+              {(() => {
+                const workspace = props.projection();
+                return workspace?.effective.status === "complete" &&
+                  workspace.effective.agent.status === "available"
+                  ? `Complete disclosure. Managed OpenCode: ${workspace.effective.managed ? "enabled" : "disabled"}`
+                  : `Unavailable: ${(workspace?.effective.agent.reasons ?? []).map((item) => item.message).join("; ") || "Collection Use is incomplete or managed OpenCode is not enabled"}`;
+              })()}
             </text>
-            <select
-              id="config-integrations-actions"
-              ref={(item: SelectRenderable) => {
-                bind("browser", item);
-              }}
-              height={1}
-              options={[
-                {
-                  name: "Actions",
-                  description: "Enable or disable managed OpenCode",
-                  value: "actions",
-                },
-              ]}
-              showDescription={false}
-              onSelect={() => {
-                const action = props.actions.find(
-                  (
-                    item,
-                  ): item is ActionDescriptor & {
-                    readonly id: "enable-managed-opencode" | "disable-managed-opencode";
-                  } =>
-                    item.id === "enable-managed-opencode" || item.id === "disable-managed-opencode",
-                );
-                if (action) props.onAction(action.id);
-              }}
-            />
-            {!value()?.direct.integrations.length && (
-              <text>No integrations yet. Enter Actions → Enable Managed OpenCode.</text>
-            )}
-          </>
-        )}
-      </scrollbox>
+          )}
+          {section() === "integrations" && (
+            <>
+              {(value()?.direct.integrations ?? []).map((integration) => (
+                <text
+                  selectable
+                >{`Managed OpenCode  ${integration.owner.file} ${integration.owner.pointer}`}</text>
+              ))}
+              <text selectable>
+                {props.projection()?.effective.status === "complete" &&
+                props.projection()!.effective.agent.status === "available"
+                  ? `Managed OpenCode catalog: ${
+                      props
+                        .projection()!
+                        .effective.agent.catalog.map((item) => item.selector)
+                        .join(", ") || "empty"
+                    }`
+                  : `Managed OpenCode unavailable: ${(props.projection()?.effective.agent.reasons ?? []).map((item) => item.message).join("; ") || "no complete Collection Use"}`}
+              </text>
+              <select
+                id="config-integrations-actions"
+                ref={(item: SelectRenderable) => {
+                  bind("browser", item);
+                }}
+                height={1}
+                options={[
+                  {
+                    name: "Actions",
+                    description: "Enable or disable managed OpenCode",
+                    value: "actions",
+                  },
+                ]}
+                showDescription={false}
+                onSelect={() => {
+                  const action = props.actions.find(
+                    (
+                      item,
+                    ): item is ActionDescriptor & {
+                      readonly id: "enable-managed-opencode" | "disable-managed-opencode";
+                    } =>
+                      item.id === "enable-managed-opencode" ||
+                      item.id === "disable-managed-opencode",
+                  );
+                  if (action) props.onAction(action.id);
+                }}
+              />
+              {!value()?.direct.integrations.length && (
+                <text>No integrations yet. Enter Actions → Enable Managed OpenCode.</text>
+              )}
+            </>
+          )}
+        </scrollbox>
+      </box>
     </box>
   );
 }

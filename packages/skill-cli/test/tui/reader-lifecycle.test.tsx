@@ -32,7 +32,7 @@ async function boot() {
   );
   await setup.renderOnce();
   await Promise.resolve();
-  await setup.waitForFrame((frame) => frame.includes("A rich Installed Skill"));
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-scrollbox"));
   return setup;
 }

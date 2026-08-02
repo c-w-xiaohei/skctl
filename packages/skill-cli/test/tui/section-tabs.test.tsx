@@ -50,6 +50,87 @@ test("SectionTabs registers the selected trigger under its focus owner with stab
   expect(setup!.renderer.currentFocusedRenderable?.id).toBe("workspace-section-browser-tab-skills");
 });
 
+test("SectionTabs renders its label before compact captions without changing tab identities", async () => {
+  const registry = createFocusRegistry();
+  const navigations: string[] = [];
+  const [value, setValue] = createSignal<"sources" | "collections">("sources");
+  setup = await testRender(
+    () => (
+      <SectionTabs
+        id="config-section-browser"
+        label="Section"
+        compact
+        options={[
+          { label: "Sources", compactLabel: "Src", value: "sources" },
+          { label: "Collections", compactLabel: "Coll", value: "collections" },
+        ]}
+        value={value()}
+        owner="local-nav"
+        focusRegistry={registry}
+        onNavigate={(next) => {
+          navigations.push(next);
+          setValue(next);
+        }}
+      />
+    ),
+    { width: 30, height: 3 },
+  );
+  await setup.renderOnce();
+  const frame = setup.captureCharFrame();
+  expect(frame.indexOf("Section:")).toBeLessThan(frame.indexOf("Src"));
+  expect(frame).not.toContain("Sources");
+  const sources = setup.renderer.root.findDescendantById("config-section-browser-tab-sources")!;
+  const collections = setup.renderer.root.findDescendantById(
+    "config-section-browser-tab-collections",
+  )!;
+  expect(sources.screenY).toBe(collections.screenY);
+  expect(registry.applyFocus("local-nav")).toBe(true);
+  setup.mockInput.pressArrow("right");
+  await setup.renderOnce();
+  expect(value()).toBe("collections");
+  await setup.mockMouse.click(sources.screenX + 1, sources.screenY);
+  await setup.renderOnce();
+  expect(value()).toBe("sources");
+  expect(navigations).toEqual(["collections", "sources"]);
+});
+
+test("SectionTabs presents vertically without changing horizontal keyboard semantics or ids", async () => {
+  const registry = createFocusRegistry();
+  const [value, setValue] = createSignal<"skills" | "collections" | "sources">("skills");
+  setup = await testRender(
+    () => (
+      <SectionTabs
+        id="workspace-section-browser"
+        label="Navigation"
+        vertical
+        options={[
+          { label: "Skills", value: "skills" },
+          { label: "Collections", value: "collections" },
+          { label: "Sources", value: "sources" },
+        ]}
+        value={value()}
+        owner="local-nav"
+        focusRegistry={registry}
+        onNavigate={setValue}
+      />
+    ),
+    { width: 30, height: 10 },
+  );
+  await setup.renderOnce();
+  const skills = setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills")!;
+  const collections = setup.renderer.root.findDescendantById(
+    "workspace-section-browser-tab-collections",
+  )!;
+  expect(skills.screenY).toBeLessThan(collections.screenY);
+  expect(registry.applyFocus("local-nav")).toBe(true);
+  setup.mockInput.pressArrow("right");
+  await setup.renderOnce();
+  expect(value()).toBe("collections");
+  expect(setup.renderer.currentFocusedRenderable?.id).toBe(
+    "workspace-section-browser-tab-collections",
+  );
+});
+
 test("SectionTabs delegates automatic keyboard navigation and ignores same-value selection intent", async () => {
   const { navigations, registry, value } = await renderTabs();
   registry.applyFocus("local-nav");

@@ -127,6 +127,36 @@ test.serial(
 );
 
 test.serial(
+  "RENDER Resources uses the remaining Reader height with selection indicators",
+  async () => {
+    const setup = await testRender(
+      () => (
+        <App
+          core={directSourceCore(readerProjection(), {
+            loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+            listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
+          })}
+          exit={() => {}}
+        />
+      ),
+      { width: 120, height: 40 },
+    );
+    try {
+      await openResources(setup);
+      const browser = setup.renderer.root.findDescendantById(
+        "resource-browser",
+      ) as SelectRenderable;
+      expect(browser.height).toBeGreaterThan(8);
+      expect(browser.showSelectionIndicator).toBe(true);
+      expect(browser.showScrollIndicator).toBe(true);
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("resource-browser");
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
+
+test.serial(
   "RENDER Resources reads only files and renders returned Markdown, text, and not-text results",
   async () => {
     const calls: unknown[] = [];

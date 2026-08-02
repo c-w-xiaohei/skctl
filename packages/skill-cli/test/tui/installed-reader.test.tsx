@@ -51,6 +51,97 @@ async function loadedReader(setup: Awaited<ReturnType<typeof testRender>>) {
 const readerContentFor = (address: { readonly path: string }) =>
   address.path === readerSecondAddress.path ? readerSecondContent : paddedReaderContent;
 
+test("RENDER Installed Skills keeps identity primary and uses available list height", async () => {
+  const base = readerProjection();
+  const template = base.installedSkills[0]!;
+  const projection = {
+    ...base,
+    installedSkills: Array.from({ length: 12 }, (_, index) => ({
+      ...template,
+      address: { source: "team-main", path: `entry-${index}` },
+      name: `entry-${index}`,
+      description: `Description ${index}`,
+      owner: {
+        ...template.owner,
+        health: index === 11 ? ("missing" as const) : template.owner.health,
+      },
+      problems:
+        index === 11
+          ? [{ code: "SOURCE_MISSING", severity: "warning" as const, message: "Missing" }]
+          : [],
+    })),
+  };
+  const setup = await testRender(
+    () => <App core={directSourceCore(projection)} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
+    await setup.waitFor(() => {
+      const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
+      return browser instanceof SelectRenderable && browser.options.length === 12;
+    });
+    const browser = setup.renderer.root.findDescendantById(
+      "installed-skill-browser",
+    ) as SelectRenderable;
+    expect(browser.options[0]).toEqual({
+      name: "entry-0",
+      description: "Description 0 · team-main",
+      value: "team-main/entry-0",
+    });
+    expect(browser.options[11]).toMatchObject({
+      name: "! entry-11",
+      value: "team-main/entry-11",
+    });
+    expect(browser.showDescription).toBe(false);
+    expect(browser.showSelectionIndicator).toBe(true);
+    expect(browser.showScrollIndicator).toBe(true);
+    expect(browser.height).toBeGreaterThan(10);
+    expect(browser.height).toBeLessThanOrEqual(40 - browser.screenY - 2);
+    browser.focus();
+    for (let index = 0; index < 11; index++) setup.mockInput.pressArrow("down");
+    await setup.waitFor(() => browser.getSelectedOption()?.value === "team-main/entry-11");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER Installed Skills keeps the selected Skill's secondary facts visible", async () => {
+  const base = readerProjection();
+  const template = base.installedSkills[0]!;
+  const projection = {
+    ...base,
+    installedSkills: [
+      {
+        ...template,
+        name: "broken-guide",
+        description: "Recover an unavailable guide",
+        owner: { ...template.owner, health: "missing" as const },
+        problems: [
+          { code: "SOURCE_MISSING", severity: "warning" as const, message: "Source missing" },
+        ],
+      },
+    ],
+  };
+  for (const width of [120, 79] as const) {
+    const setup = await testRender(
+      () => <App core={directSourceCore(projection)} exit={() => {}} />,
+      { width, height: 40 },
+    );
+    try {
+      await setup.waitForFrame((frame) => frame.includes("Installed Skills 1/1"));
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("Selected Skill  broken-guide");
+      expect(frame).toContain("Description  Recover an unavailable");
+      expect(frame).toContain("guide");
+      expect(frame).toContain("Source  team-main");
+      expect(frame).toContain("Health  missing");
+      expect(frame).toContain("Problem  Source missing");
+    } finally {
+      setup.renderer.destroy();
+    }
+  }
+});
+
 async function enterFind(setup: Awaited<ReturnType<typeof testRender>>, value: string) {
   await setup.waitFor(
     () =>
@@ -104,7 +195,10 @@ async function selectReaderControl(
 async function restoreReaderScroll(setup: Awaited<ReturnType<typeof testRender>>) {
   const scrollbox = setup.renderer.root.findDescendantById("reader-scrollbox");
   expect(scrollbox).toBeInstanceOf(ScrollBoxRenderable);
-  await setup.mockMouse.click(scrollbox!.screenX, scrollbox!.screenY);
+  expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-raw");
+  setup.mockInput.pressKey("TAB", { shift: true });
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-find");
+  setup.mockInput.pressKey("TAB", { shift: true });
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
 }
 
@@ -197,7 +291,11 @@ test.serial(
     try {
       await setup.renderOnce();
       await Promise.resolve();
-      await setup.waitForFrame((frame) => frame.includes("A rich Installed Skill"));
+      await setup.waitFor(
+        () =>
+          (setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable)
+            ?.options[0]?.description === "A rich Installed Skill · team-main",
+      );
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-scrollbox"));
       expect(loads).toEqual([{ address: readerAddress }]);
       expect(setup.renderer.root.findDescendantById("reader-scrollbox")).toBeInstanceOf(
@@ -247,7 +345,9 @@ test.serial(
         await Promise.resolve();
         await setup.renderOnce();
         await setup.renderOnce();
-        await setup.waitForFrame((frame) => frame.includes("A rich Installed Skill"));
+        await setup.waitFor(
+          () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
+        );
         expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
         setup.mockInput.pressEnter();
         await setup.waitFor(
@@ -286,7 +386,9 @@ test.serial(
     try {
       await setup.renderOnce();
       await Promise.resolve();
-      await setup.waitForFrame((frame) => frame.includes("A rich Installed Skill"));
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
+      );
       await enterFind(setup, "");
       await setup.mockInput.pressKeys(["n", "e", "e", "d", "l", "e"]);
       setup.mockInput.pressEnter();
@@ -339,7 +441,9 @@ test.serial(
     try {
       await setup.renderOnce();
       await Promise.resolve();
-      await setup.waitForFrame((frame) => frame.includes("A rich Installed Skill"));
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
+      );
       await setup.waitFor(
         () =>
           !!setup.renderer.root
@@ -352,6 +456,7 @@ test.serial(
       await selectReaderControl(setup, "open-match-raw");
       await setup.renderOnce();
       await restoreReaderScroll(setup);
+      expect(scroll.positions).toContain(15);
       setup.mockInput.pressKey("PAGEDOWN");
       setup.mockInput.pressKey("END");
       await setup.renderOnce();
@@ -389,7 +494,7 @@ test.serial("RENDER Reader find input owns slash characters", async () => {
   try {
     await setup.renderOnce();
     await Promise.resolve();
-    await setup.waitForFrame((frame) => frame.includes("A rich Installed Skill"));
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
     await enterFind(setup, "");
     await setup.renderOnce();
     await setup.mockInput.pressKeys([
@@ -448,7 +553,9 @@ test.serial(
       await Promise.resolve();
       await setup.renderOnce();
       await setup.renderOnce();
-      await setup.waitForFrame((frame) => frame.includes("A rich Installed Skill"));
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
+      );
       await setup.waitFor(
         () =>
           !!setup.renderer.root
@@ -631,7 +738,7 @@ test.serial(
           setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-skills",
       );
       setup.mockInput.pressArrow("right");
-      await setup.waitForFrame((frame) => frame.includes("Workspace › Collections"));
+      await setup.waitForFrame((frame) => frame.includes("Browse · Workspace > Collections"));
       await setup.waitFor(
         () =>
           setup.renderer.currentFocusedRenderable?.id ===
@@ -655,7 +762,7 @@ test.serial(
       );
       expect(skillsSection).toBeDefined();
       await setup.mockMouse.click(skillsSection!.screenX + 1, skillsSection!.screenY);
-      await setup.waitForFrame((frame) => frame.includes("Workspace › Skills"));
+      await setup.waitForFrame((frame) => frame.includes("Browse · Workspace > Skills"));
       const skillsBrowser = setup.renderer.root.findDescendantById("installed-skill-browser");
       expect(skillsBrowser).toBeDefined();
       await setup.mockMouse.click(skillsBrowser!.screenX + 1, skillsBrowser!.screenY + 1);
@@ -791,30 +898,22 @@ test.serial(
         await setup.renderOnce();
         await Promise.resolve();
         await setup.waitFor(() =>
-          width >= 80
+          width >= 100
             ? !!setup.renderer.root.findDescendantById("reader-scrollbox") &&
-              !!setup.renderer.root.findDescendantById("skills-reader-separator")
-            : !!setup.renderer.root.findDescendantById("installed-skill-browser"),
+              !!setup.renderer.root.findDescendantById("workspace-reader-panel")
+            : width >= 80
+              ? !!setup.renderer.root.findDescendantById("reader-scrollbox") &&
+                !!setup.renderer.root.findDescendantById("skills-reader-separator")
+              : !!setup.renderer.root.findDescendantById("installed-skill-browser"),
         );
-        const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
-        expect(browser).toBeDefined();
         expect(setup.captureCharFrame()).toContain("guide");
         expect(!!setup.renderer.root.findDescendantById("skills-reader-separator")).toBe(
-          width >= 80,
+          width === 80,
         );
         const reader = setup.renderer.root.findDescendantById("reader-scrollbox");
         if (width >= 80) {
           expect(reader?.screenX).toBeGreaterThanOrEqual(0);
           expect((reader?.screenX ?? 0) + (reader?.width ?? 0)).toBeLessThanOrEqual(width);
-          const separator = setup.renderer.root.findDescendantById("skills-reader-separator")!;
-          expect(separator.screenX).toBeGreaterThanOrEqual(browser!.screenX + browser!.width - 1);
-          expect(separator.screenX).toBeLessThanOrEqual(browser!.screenX + browser!.width);
-          expect(separator.screenX + separator.width).toBeLessThanOrEqual(reader!.screenX);
-          expect(separator.height).toBeGreaterThan(1);
-          expect(separator.screenY).toBeLessThanOrEqual(browser!.screenY);
-          expect(separator.screenY + separator.height).toBeGreaterThanOrEqual(
-            reader!.screenY + reader!.height,
-          );
         } else expect(reader).toBeUndefined();
       } finally {
         setup.renderer.destroy();

@@ -198,19 +198,56 @@ test("Details renders Core-backed provenance and opens exact agent path choices 
     setup.mockInput.pressKey("ARROW_RIGHT");
     setup.mockInput.pressKey("TAB");
     await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("Source Root"));
+    await setup.waitForFrame((frame) => frame.includes("Summary"));
     const frame = setup.captureCharFrame();
     expect(frame).toContain("team-main/guide");
-    expect(frame).toContain("Config  project (/sources/team-main)");
-    expect(frame).toContain("engineering:guide");
-    expect(frame).toContain("Membership  engineering:guide");
-    expect(frame).toContain("Repository-derived  acme/main");
-    expect(frame).toContain("Collection Use  project");
-    expect(frame).toContain("Observed binding drift");
+    expect(frame).toContain("Summary");
+    expect(frame).toContain("Health  healthy");
+    expect(frame).toContain("Problems  SOURCE_DRIFT: Observed");
+    expect(frame).toContain("binding drift");
+    expect(frame).toContain("Actions");
+    expect(frame).toContain("Source, Config & agent metadata");
+    expect(frame).not.toContain("Source Root");
+    expect(frame).not.toContain("Config  project (/sources/team-main)");
+    expect(frame.indexOf("Summary")).toBeLessThan(frame.indexOf("Actions"));
+    expect(frame.indexOf("Actions")).toBeLessThan(frame.indexOf("Source, Config & agent metadata"));
     expect(frame).not.toContain("Materialization");
     expect(frame).not.toContain("Snapshot");
     expect(frame).not.toContain("Registry");
     setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-actions",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-relationships",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-metadata",
+    );
+    setup.mockInput.pressEnter();
+    await setup.waitForFrame((next) => next.includes("Source Root"));
+    const details = setup.renderer.root.findDescendantById(
+      "reader-details",
+    ) as import("@opentui/core").ScrollBoxRenderable;
+    details.scrollTop = 20;
+    await setup.renderOnce();
+    const expanded = setup.captureCharFrame();
+    expect(expanded).toContain("Config  project (/sources/team-main)");
+    expect(expanded).toContain("engineering:guide");
+    expect(expanded).toContain("Membership  engineering:guide");
+    expect(expanded).toContain("Repository-derived  acme/main");
+    expect(expanded).toContain("Collection Use  project");
+    setup.mockInput.pressKey("TAB", { shift: true });
+    await setup.renderOnce();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-relationships",
+    );
+    setup.mockInput.pressKey("TAB", { shift: true });
     await setup.renderOnce();
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "reader-details-actions",

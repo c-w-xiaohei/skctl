@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
+import { SelectRenderable, TextBufferRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
+import { SkillCliError } from "../../src/core/api";
 import { App } from "../../src/tui/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
+import { readerContent, readerProjection } from "./installed-reader.fixture";
 
 async function awaitParsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
   await new Promise<void>((resolve) => {
@@ -16,8 +19,22 @@ async function awaitParsedEscape(setup: Awaited<ReturnType<typeof testRender>>) 
   });
 }
 
+function textIn(renderable: { getChildren(): readonly unknown[] }): string {
+  return (
+    renderable.getChildren() as { getChildren?: () => readonly unknown[]; plainText?: string }[]
+  )
+    .flatMap((child) =>
+      child instanceof TextBufferRenderable
+        ? [child.plainText]
+        : child.getChildren
+          ? [textIn(child as { getChildren(): readonly unknown[] })]
+          : [],
+    )
+    .join("\n");
+}
+
 async function navigateToSources(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitForFrame((frame) => frame.includes("Workspace › Skills"));
+  await setup.waitForFrame((frame) => frame.includes("Browse · Workspace > Skills"));
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills"),
   );
@@ -28,13 +45,13 @@ async function navigateToSources(setup: Awaited<ReturnType<typeof testRender>>) 
     () => setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-skills",
   );
   setup.mockInput.pressArrow("right");
-  await setup.waitForFrame((frame) => frame.includes("Workspace › Collections"));
+  await setup.waitForFrame((frame) => frame.includes("Browse · Workspace > Collections"));
   await setup.waitFor(
     () =>
       setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-collections",
   );
   setup.mockInput.pressArrow("right");
-  await setup.waitForFrame((frame) => frame.includes("Workspace › Sources"));
+  await setup.waitForFrame((frame) => frame.includes("Browse · Workspace > Sources"));
   await setup.waitFor(
     () => setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-sources",
   );
@@ -44,7 +61,14 @@ async function navigateToSources(setup: Awaited<ReturnType<typeof testRender>>) 
 
 test("RENDER Sources replaces the Collection browser native target", async () => {
   const setup = await testRender(
-    () => <App core={directSourceCore(workspaceProjection())} exit={() => {}} />,
+    () => (
+      <App
+        core={directSourceCore(readerProjection(), {
+          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+        })}
+        exit={() => {}}
+      />
+    ),
     { width: 120, height: 40 },
   );
   try {
@@ -65,6 +89,121 @@ test("RENDER Sources replaces the Collection browser native target", async () =>
     expect(setup.renderer.root.findDescendantById("source-browser")).not.toBe(collections);
   } finally {
     setup.renderer.destroy();
+  }
+});
+
+test("RENDER Workspace Sources keeps source identity primary and origin secondary", async () => {
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(readerProjection(), {
+          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await navigateToSources(setup);
+    const browser = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;
+    expect(browser.options[0]).toEqual({
+      name: "team-main · github",
+      description: "https://github.com/acme/main · skills · Direct",
+      value: "team-main",
+    });
+    expect(browser.showDescription).toBe(false);
+    expect(browser.showSelectionIndicator).toBe(true);
+    expect(browser.showScrollIndicator).toBe(true);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER wide Workspace owns bounded Navigation, Browser, and Reader panels", async () => {
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(readerProjection(), {
+          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await setup.renderOnce();
+    const navigation = setup.renderer.root.findDescendantById("workspace-navigation-panel")!;
+    const browser = setup.renderer.root.findDescendantById("workspace-browser-panel")!;
+    const reader = setup.renderer.root.findDescendantById("workspace-reader-panel")!;
+    const skills = setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills")!;
+    const collections = setup.renderer.root.findDescendantById(
+      "workspace-section-browser-tab-collections",
+    )!;
+    for (const panel of [navigation, browser, reader]) {
+      expect(panel.screenX).toBeGreaterThanOrEqual(0);
+      expect(panel.screenY).toBeGreaterThanOrEqual(0);
+      expect(panel.screenX + panel.width).toBeLessThanOrEqual(120);
+      expect(panel.screenY + panel.height).toBeLessThanOrEqual(40);
+    }
+    expect(navigation.screenX + navigation.width).toBeLessThanOrEqual(browser.screenX);
+    expect(browser.screenX + browser.width).toBeLessThanOrEqual(reader.screenX);
+    expect(skills.screenY).toBeLessThan(collections.screenY);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER medium keeps the horizontal Section row and two content surfaces without wide navigation", async () => {
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(readerProjection(), {
+          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 80, height: 24 },
+  );
+  try {
+    await setup.renderOnce();
+    expect(setup.renderer.root.findDescendantById("workspace-navigation-panel")).toBeUndefined();
+    expect(setup.renderer.root.findDescendantById("workspace-browser-panel")).toBeUndefined();
+    expect(setup.renderer.root.findDescendantById("workspace-reader-panel")).toBeUndefined();
+    const skills = setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills")!;
+    const collections = setup.renderer.root.findDescendantById(
+      "workspace-section-browser-tab-collections",
+    )!;
+    expect(skills.screenY).toBe(collections.screenY);
+    const browser = setup.renderer.root.findDescendantById("installed-skill-browser")!;
+    const reader = setup.renderer.root.findDescendantById("reader-scrollbox")!;
+    expect(browser.screenX + browser.width).toBeLessThanOrEqual(reader.screenX);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER App follows the layout too-small boundaries", async () => {
+  for (const [width, height, tooSmall] of [
+    [42, 12, true],
+    [43, 11, true],
+    [43, 12, true],
+    [43, 13, false],
+    [44, 12, false],
+  ] as const) {
+    const setup = await testRender(
+      () => <App core={directSourceCore(workspaceProjection())} exit={() => {}} />,
+      { width, height },
+    );
+    try {
+      if (tooSmall) await setup.waitForFrame((frame) => frame.includes("Terminal is too small."));
+      else await setup.waitForFrame((frame) => frame.includes("Skills"));
+      expect(setup.captureCharFrame().includes("Terminal is too small.")).toBe(tooSmall);
+    } finally {
+      setup.renderer.destroy();
+    }
   }
 });
 
@@ -133,11 +272,18 @@ test("RENDER narrow observation progress remains bounded at 79x24 and 43x30", as
     [79, 24],
     [43, 30],
   ] as const) {
+    let aborts = 0;
     const setup = await testRender(
       () => (
         <App
           core={directSourceCore(workspaceProjection(), {
-            discover: () => new Promise(() => {}),
+            discover: (_request, options) =>
+              new Promise((_, reject) =>
+                options?.signal?.addEventListener("abort", () => {
+                  aborts++;
+                  reject(new SkillCliError("CANCELLED", "cancelled"));
+                }),
+              ),
           })}
           exit={() => {}}
         />
@@ -155,6 +301,16 @@ test("RENDER narrow observation progress remains bounded at 79x24 and 43x30", as
       await setup.waitForFrame(
         (frame) => frame.includes("Discovering Skills") && frame.includes("Observing"),
       );
+      if (width === 79) {
+        const frame = setup.captureCharFrame();
+        expect(frame).toContain("Escape Cancel");
+        expect(textIn(setup.renderer.root)).toContain("F:Task Tab/Shift+Tab Ent Esc cancel");
+        await awaitParsedEscape(setup);
+        await setup.waitFor(() => aborts === 1);
+        await setup.waitFor(
+          () => setup.renderer.root.findDescendantById("source-observation-progress") === undefined,
+        );
+      }
     } finally {
       setup.renderer.destroy();
     }

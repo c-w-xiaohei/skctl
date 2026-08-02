@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { InputRenderable } from "@opentui/core";
+import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../../src/tui/app";
 import { CollectionsPage } from "../../src/tui/collections-page";
@@ -21,7 +21,7 @@ async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
 }
 
 async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitForFrame((frame) => frame.includes("Workspace › Skills"));
+  await setup.waitForFrame((frame) => frame.includes("Browse · Workspace > Skills"));
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("workspace-section-browser-tab-skills"),
   );
@@ -32,7 +32,7 @@ async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender
     () => setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-skills",
   );
   setup.mockInput.pressArrow("right");
-  await setup.waitForFrame((frame) => frame.includes("Workspace › Collections"));
+  await setup.waitForFrame((frame) => frame.includes("Browse · Workspace > Collections"));
   await setup.waitFor(
     () =>
       setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-collections",
@@ -131,6 +131,453 @@ test("RENDER App routes Sources to Collections and opens a narrow Collection ins
     setup.renderer.destroy();
   }
 });
+
+test("RENDER Collections and relationships keep actionable identities primary", async () => {
+  const projection = workspaceProjection();
+  if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
+  const owner = {
+    level: "project" as const,
+    file: "/project.jsonc",
+    pointer: "/collections/alpha",
+  };
+  const complete = {
+    ...projection,
+    effective: {
+      ...projection.effective,
+      collectionsView: [
+        {
+          id: "alpha",
+          declared: [owner],
+          repository: { derived: false, producers: [] },
+          members: [
+            {
+              name: "guide",
+              address: { source: "team-main", path: "guide" },
+              paths: [{ kind: "direct" as const, collection: "alpha", entryName: "guide", owner }],
+            },
+          ],
+          references: [],
+          links: [],
+        },
+      ],
+    },
+  };
+  const setup = await testRender(() => <App core={directSourceCore(complete)} exit={() => {}} />, {
+    width: 160,
+    height: 40,
+  });
+  try {
+    await navigateToCollections(setup);
+    const browser = setup.renderer.root.findDescendantById(
+      "collection-browser",
+    ) as SelectRenderable;
+    expect(browser.options[0]).toMatchObject({ name: "alpha", value: "alpha" });
+    expect(browser.options[0]!.description).toContain("1 member");
+    expect(browser.showDescription).toBe(false);
+    expect(browser.showSelectionIndicator).toBe(true);
+    expect(browser.showScrollIndicator).toBe(true);
+    setup.mockInput.pressEnter();
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
+    const relationships = setup.renderer.root.findDescendantById(
+      "collection-relationships",
+    ) as SelectRenderable;
+    expect(relationships.options[0]).toMatchObject({
+      name: "guide",
+      description: "team-main/guide · project",
+      value: "guide:0",
+    });
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER Collection browser uses remaining list height for long results", async () => {
+  const projection = workspaceProjection();
+  if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
+  const owner = { level: "project" as const, file: "/project.jsonc", pointer: "/collections" };
+  const complete = {
+    ...projection,
+    effective: {
+      ...projection.effective,
+      collectionsView: Array.from({ length: 12 }, (_, index) => ({
+        id: `collection-${index}`,
+        declared: [owner],
+        repository: { derived: false, producers: [] },
+        members: [],
+        references: [],
+        links: [],
+      })),
+    },
+  };
+  const setup = await testRender(() => <App core={directSourceCore(complete)} exit={() => {}} />, {
+    width: 120,
+    height: 40,
+  });
+  try {
+    await navigateToCollections(setup);
+    const browser = setup.renderer.root.findDescendantById(
+      "collection-browser",
+    ) as SelectRenderable;
+    expect(browser.height).toBeGreaterThan(10);
+    browser.focus();
+    for (let index = 0; index < 11; index++) setup.mockInput.pressArrow("down");
+    await setup.waitFor(() => browser.getSelectedOption()?.value === "collection-11");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER wide Collections owns ordered bounded Browser and Inspector surfaces", async () => {
+  const projection = workspaceProjection();
+  if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
+  const owner = { level: "project" as const, file: "/project.jsonc", pointer: "/collections" };
+  const complete = {
+    ...projection,
+    effective: {
+      ...projection.effective,
+      collectionsView: [
+        {
+          id: "engineering",
+          declared: [owner],
+          repository: { derived: false, producers: [] },
+          members: [],
+          references: [],
+          links: [],
+        },
+      ],
+    },
+  };
+  const setup = await testRender(() => <App core={directSourceCore(complete)} exit={() => {}} />, {
+    width: 120,
+    height: 40,
+  });
+  try {
+    await navigateToCollections(setup);
+    const browser = setup.renderer.root.findDescendantById("collection-browser")!;
+    const inspector = setup.renderer.root.findDescendantById("collections-inspector-panel");
+    expect(inspector).toBeDefined();
+    expect(inspector!.screenX).toBeGreaterThan(browser.screenX);
+    expect(inspector!.screenX).toBeGreaterThanOrEqual(browser.screenX + browser.width);
+    expect(inspector!.screenX + inspector!.width).toBeLessThanOrEqual(120);
+    expect(inspector!.screenY + inspector!.height).toBeLessThanOrEqual(40);
+    expect(setup.captureCharFrame()).toContain("Inspector");
+    expect(
+      setup.renderer.root.findDescendantById("collections-inspector-separator"),
+    ).toBeUndefined();
+    setup.mockInput.pressEnter();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-members",
+    );
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test.each([
+  [80, 24, true],
+  [79, 24, false],
+  [43, 30, false],
+] as const)(
+  "RENDER Collections keeps the wide Inspector panel unmounted at %ix%i",
+  async (width, height, hasMediumSeparator) => {
+    const setup = await testRender(
+      () => <App core={directSourceCore(workspaceProjection())} exit={() => {}} />,
+      { width, height },
+    );
+    try {
+      await navigateToCollections(setup);
+      expect(setup.renderer.root.findDescendantById("collections-inspector-panel")).toBeUndefined();
+      expect(
+        setup.renderer.root.findDescendantById("collections-inspector-separator") !== undefined,
+      ).toBe(hasMediumSeparator);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
+
+test("RENDER Collection relationship preview follows arrow selection before opening", async () => {
+  const projection = workspaceProjection();
+  if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
+  const owner = {
+    level: "project" as const,
+    file: "/project.jsonc",
+    pointer: "/collections/alpha",
+  };
+  const complete = {
+    ...projection,
+    effective: {
+      ...projection.effective,
+      collectionsView: [
+        {
+          id: "alpha",
+          declared: [owner],
+          repository: { derived: false, producers: [] },
+          members: [
+            {
+              name: "guide",
+              address: { source: "team-main", path: "guide" },
+              paths: [{ kind: "direct" as const, collection: "alpha", entryName: "guide", owner }],
+            },
+            {
+              name: "review",
+              address: { source: "team-main", path: "review" },
+              paths: [{ kind: "direct" as const, collection: "alpha", entryName: "review", owner }],
+            },
+          ],
+          references: [],
+          links: [],
+        },
+      ],
+    },
+  };
+  const setup = await testRender(() => <App core={directSourceCore(complete)} exit={() => {}} />, {
+    width: 160,
+    height: 40,
+  });
+  try {
+    await navigateToCollections(setup);
+    setup.mockInput.pressEnter();
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
+    const relationships = setup.renderer.root.findDescendantById("collection-relationships")!;
+    relationships.focus();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+    );
+    expect(setup.captureCharFrame()).toContain("Selected Member  guide");
+    expect(setup.captureCharFrame()).toContain("Skill  team-main/guide");
+    setup.mockInput.pressArrow("down");
+    await setup.waitForFrame((frame) => frame.includes("Selected Member  review"));
+    expect(setup.captureCharFrame()).toContain("Skill  team-main/review");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER Collection relationship preview resets to the native first row when Browser selection changes", async () => {
+  const projection = workspaceProjection();
+  if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
+  const owner = {
+    level: "project" as const,
+    file: "/project.jsonc",
+    pointer: "/collections/a",
+  };
+  const complete = {
+    ...projection,
+    effective: {
+      ...projection.effective,
+      collectionsView: [
+        {
+          id: "a",
+          declared: [owner],
+          repository: { derived: false, producers: [] },
+          members: [
+            {
+              name: "a-first",
+              address: { source: "team-main", path: "a-first" },
+              paths: [{ kind: "direct" as const, collection: "a", entryName: "a-first", owner }],
+            },
+            {
+              name: "a-second",
+              address: { source: "team-main", path: "a-second" },
+              paths: [{ kind: "direct" as const, collection: "a", entryName: "a-second", owner }],
+            },
+          ],
+          references: [],
+          links: [],
+        },
+        {
+          id: "b",
+          declared: [owner],
+          repository: { derived: false, producers: [] },
+          members: [
+            {
+              name: "b-first",
+              address: { source: "team-main", path: "b-first" },
+              paths: [{ kind: "direct" as const, collection: "b", entryName: "b-first", owner }],
+            },
+            {
+              name: "b-second",
+              address: { source: "team-main", path: "b-second" },
+              paths: [{ kind: "direct" as const, collection: "b", entryName: "b-second", owner }],
+            },
+          ],
+          references: [],
+          links: [],
+        },
+      ],
+    },
+  };
+  const setup = await testRender(() => <App core={directSourceCore(complete)} exit={() => {}} />, {
+    width: 160,
+    height: 40,
+  });
+  try {
+    await navigateToCollections(setup);
+    const relationships = setup.renderer.root.findDescendantById("collection-relationships")!;
+    relationships.focus();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+    );
+    setup.mockInput.pressArrow("down");
+    await setup.waitForFrame((frame) => frame.includes("Selected Member  a-second"));
+
+    const browser = setup.renderer.root.findDescendantById("collection-browser")!;
+    browser.focus();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
+    setup.mockInput.pressArrow("down");
+    await setup.waitForFrame((frame) => frame.includes("Selected Member  b-first"));
+    expect(setup.captureCharFrame()).not.toContain("Selected Member  b-second");
+    expect(
+      (
+        setup.renderer.root.findDescendantById("collection-relationships") as SelectRenderable
+      ).getSelectedIndex(),
+    ).toBe(0);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER Collection relationship previews retain complete structured Member, Reference, and Link facts", async () => {
+  const projection = workspaceProjection();
+  if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
+  const configSource = {
+    level: "project" as const,
+    file: "/project.jsonc",
+    pointer: "/configSources/team",
+  };
+  const owner = {
+    level: "project" as const,
+    file: "/project.jsonc",
+    pointer: "/collections/alpha",
+    contribution: {
+      configSource,
+      declaration: {
+        level: "project" as const,
+        pointer: "/collections/alpha",
+        namespace: "team@commit",
+      },
+    },
+  };
+  const complete = {
+    ...projection,
+    effective: {
+      ...projection.effective,
+      collectionsView: [
+        {
+          id: "alpha",
+          declared: [owner],
+          repository: { derived: false, producers: [] },
+          members: [
+            {
+              name: "guide",
+              address: { source: "team-main", path: "guide" },
+              paths: [{ kind: "direct" as const, collection: "alpha", entryName: "guide", owner }],
+            },
+          ],
+          references: [
+            { name: "docs", collection: "shared-docs", description: "Read shared docs", owner },
+          ],
+          links: [{ collection: "shared", owner }],
+        },
+      ],
+    },
+  };
+  const setup = await testRender(() => <App core={directSourceCore(complete)} exit={() => {}} />, {
+    width: 160,
+    height: 40,
+  });
+  try {
+    await navigateToCollections(setup);
+    setup.mockInput.pressEnter();
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
+    let frame = setup.captureCharFrame();
+    expect(frame).toContain("NAME SKILL FROM");
+    expect(frame).toContain("Selected Member  guide");
+    expect(frame).toContain("Skill  team-main/guide");
+    expect(frame).toContain("Origin  project / /configSources/team");
+
+    setup.mockInput.pressArrow("right");
+    await setup.waitForFrame((current) =>
+      current.includes("NAME TARGET DESCRIPTION FROM 0 Skills exposed"),
+    );
+    frame = setup.captureCharFrame();
+    expect(frame).toContain("Selected Reference  docs");
+    expect(frame).toContain("Target  shared-docs");
+    expect(frame).toContain("Description  Read shared docs");
+    expect(frame).toContain("Owner  project /project.jsonc /collections/alpha");
+    expect(frame).toContain("Provenance  Config Source project /project.jsonc /configSources/team");
+    expect(frame).toContain("0 Skills exposed");
+
+    setup.mockInput.pressArrow("right");
+    await setup.waitForFrame((current) => current.includes("TARGET FROM"));
+    frame = setup.captureCharFrame();
+    expect(frame).toContain("Selected Link  shared");
+    expect(frame).toContain("Target  shared");
+    expect(frame).toContain("Owner  project /project.jsonc /collections/alpha");
+    expect(frame).toContain("Provenance  Config Source project /project.jsonc /configSources/team");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test.each([120, 80, 43])(
+  "RENDER Collection View label remains visible when the inspector is mounted at width %i",
+  async (width) => {
+    const projection = workspaceProjection();
+    if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
+    const owner = {
+      level: "project" as const,
+      file: "/workspace/skill-cli/skill-cli.jsonc",
+      pointer: "/collections/engineering",
+    };
+    const complete = {
+      ...projection,
+      effective: {
+        ...projection.effective,
+        collectionsView: [
+          {
+            id: "engineering",
+            declared: [owner],
+            repository: { derived: false, producers: [] },
+            members: [],
+            references: [],
+            links: [],
+          },
+        ],
+      },
+    };
+    const setup = await testRender(
+      () => <App core={directSourceCore(complete)} exit={() => {}} />,
+      { width, height: 40 },
+    );
+    try {
+      await navigateToCollections(setup);
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "collection-browser",
+      );
+      setup.mockInput.pressEnter();
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("collection-tabs-tab-members"),
+      );
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("engineering");
+      if (width === 43) {
+        expect(frame).toContain("Scope:");
+        expect(frame).toContain("Browse · Workspace > Collections");
+        expect(frame).not.toContain("View:");
+      } else {
+        expect(frame).toContain("View:");
+        for (const value of ["members", "references", "links"])
+          expect(
+            setup.renderer.root.findDescendantById(`collection-tabs-tab-${value}`),
+          ).toBeDefined();
+      }
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 
 test("RENDER Collection browser mounts an empty initial projection", async () => {
   const noop = () => {};
@@ -512,15 +959,18 @@ test("RENDER Collection browser shows direct, contributed, derived, composed, an
   });
   try {
     await navigateToCollections(setup);
-    await setup.waitForFrame((frame) =>
-      [
-        "direct  1  project",
-        "contributed  0  global / /configSources/team",
-        "derived  1  Repository",
-        "composed  1  project + Repository",
-        "empty  0  Empty",
-      ].every((row) => frame.includes(row)),
-    );
+    await setup.waitFor(() => {
+      const browser = setup.renderer.root.findDescendantById(
+        "collection-browser",
+      ) as SelectRenderable;
+      return (
+        browser?.options.length === 5 &&
+        browser.options[0]?.name === "direct" &&
+        browser.options[0]?.description === "1 member · project" &&
+        browser.options[4]?.name === "empty" &&
+        browser.options[4]?.description === "0 members · Empty"
+      );
+    });
     expect(setup.captureCharFrame()).not.toContain("\ncollections\n");
   } finally {
     setup.renderer.destroy();
@@ -577,7 +1027,9 @@ test("RENDER Collections retain selection, tab, and focus through 120 80 79 43 1
       await setup.renderOnce();
       expect(setup.renderer.currentFocusedRenderable).toBeDefined();
       expect(setup.captureCharFrame()).toContain("a");
-      if (width >= 80)
+      if (width >= 100)
+        expect(setup.renderer.root.findDescendantById("collections-inspector-panel")).toBeDefined();
+      else if (width >= 80)
         expect(
           setup.renderer.root.findDescendantById("collections-inspector-separator"),
         ).toBeDefined();

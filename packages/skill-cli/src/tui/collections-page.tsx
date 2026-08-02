@@ -1,5 +1,5 @@
 import { InputRenderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
-import { createMemo, Match, onCleanup, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createSignal, Match, onCleanup, Show, Switch } from "solid-js";
 import type { CollectionView, ConfigDeclarationOwner, ManagementProjection } from "../core/api";
 import type { MemberOriginPath } from "../core/collections";
 import {
@@ -56,6 +56,12 @@ const pathText = (path: MemberOriginPath): string =>
       ? `Repository ${path.source}/${path.path}`
       : `via ${path.links.map((link) => link.linkedCollection).join(" -> ")}`;
 
+const ownerText = (owner: ConfigDeclarationOwner): string =>
+  `${owner.level} ${owner.file} ${owner.pointer}`;
+
+const ownerProvenanceText = (owner: ConfigDeclarationOwner): string | undefined =>
+  owner.contribution ? `Config Source ${ownerText(owner.contribution.configSource)}` : undefined;
+
 export const collectionMemberOriginIntent = (
   collection: string,
   member: {
@@ -98,6 +104,7 @@ export const collectionMemberOriginIntent = (
 export function CollectionsPage(props: {
   readonly collections: CollectionsReadonly;
   readonly narrow?: boolean;
+  readonly wide?: boolean;
   readonly narrowLevel: NarrowLevel;
   readonly projection: () => ManagementProjection | undefined;
   readonly focusRegistry?: FocusRegistry;
@@ -153,14 +160,20 @@ export function CollectionsPage(props: {
   const filterState = props.collections.filter;
   const filterDimension = () => filterState().dimension as CollectionFilterDimension | undefined;
   const filterSearch = () => filterState().search;
+  const [selectedRelationship, setSelectedRelationship] = createSignal(0);
+  createEffect(() => {
+    void selected()?.id;
+    void tab();
+    setSelectedRelationship(0);
+  });
   const matching = (values: readonly string[]) =>
     values.filter((value) =>
       value.toLocaleLowerCase().includes(filterSearch().toLocaleLowerCase()),
     );
   const options = createMemo(() =>
     collections().map((item) => ({
-      name: `${item.id}  ${item.members.length}  ${collectionContributionText(item)}`,
-      description: "",
+      name: item.id,
+      description: `${item.members.length} ${item.members.length === 1 ? "member" : "members"} · ${collectionContributionText(item)}`,
       value: item.id,
     })),
   );
@@ -228,7 +241,11 @@ export function CollectionsPage(props: {
     const selectedTab = tab();
     const memberOrigins = collection.members.flatMap((member) =>
       member.paths.map((path, index) => ({
-        name: `${member.name}  ${member.address.source}/${member.address.path}  ${pathText(path)}`,
+        kind: "member" as const,
+        name: member.name,
+        address: member.address,
+        origin: pathText(path),
+        description: `${member.address.source}/${member.address.path} · ${pathText(path)}`,
         value: `${member.name}:${index}`,
         intent: collectionMemberOriginIntent(collection.id, member, path),
       })),
@@ -238,7 +255,12 @@ export function CollectionsPage(props: {
         ? memberOrigins
         : selectedTab === "references"
           ? collection.references.map((reference) => ({
-              name: `${reference.name}  ${reference.collection}  ${reference.description}  ${reference.owner.level}  0 Skills`,
+              kind: "reference" as const,
+              name: reference.name,
+              target: reference.collection,
+              referenceDescription: reference.description,
+              owner: reference.owner,
+              description: `${reference.collection} · ${reference.description} · ${reference.owner.level} · 0 Skills exposed`,
               value: reference.name,
               intent: {
                 kind: "collection-reference" as const,
@@ -250,7 +272,11 @@ export function CollectionsPage(props: {
               },
             }))
           : collection.links.map((link) => ({
-              name: `${link.collection}  ${link.owner.level}`,
+              kind: "link" as const,
+              name: link.collection,
+              target: link.collection,
+              owner: link.owner,
+              description: link.owner.level,
               value: link.collection,
               intent: {
                 kind: "collection-link" as const,
@@ -265,16 +291,20 @@ export function CollectionsPage(props: {
         <SectionTabs
           id="collection-tabs"
           options={[
-            { label: "Members", value: "members" },
-            { label: "References", value: "references" },
-            { label: "Links", value: "links" },
+            { label: "Members", compactLabel: "Members", value: "members" },
+            { label: "References", compactLabel: "Refs", value: "references" },
+            { label: "Links", compactLabel: "Links", value: "links" },
           ]}
           value={selectedTab}
           owner="inspector"
           focusRegistry={props.focusRegistry}
           compact={props.narrow === true}
+          label="View"
           onPrimaryPointerEntry={props.onInspectorFocus}
-          onNavigate={(value) => props.onTab(collection.id, value)}
+          onNavigate={(value) => {
+            setSelectedRelationship(0);
+            props.onTab(collection.id, value);
+          }}
         />
         <Switch>
           <Match when={selectedTab === "members"}>
@@ -296,13 +326,41 @@ export function CollectionsPage(props: {
             </Show>
           </Match>
         </Switch>
+        {(() => {
+          const relation = relationOptions[selectedRelationship()] ?? relationOptions[0];
+          if (!relation) return undefined;
+          if (relation.kind === "member")
+            return (
+              <text
+                selectable
+              >{`Selected Member  ${relation.name}\nSkill  ${relation.address.source}/${relation.address.path}\nOrigin  ${relation.origin}`}</text>
+            );
+          if (relation.kind === "reference")
+            return (
+              <text
+                selectable
+              >{`Selected Reference  ${relation.name}\nTarget  ${relation.target}\nDescription  ${relation.referenceDescription}\nOwner  ${ownerText(relation.owner)}${ownerProvenanceText(relation.owner) ? `\nProvenance  ${ownerProvenanceText(relation.owner)}` : ""}\n0 Skills exposed`}</text>
+            );
+          return (
+            <text
+              selectable
+            >{`Selected Link  ${relation.name}\nTarget  ${relation.target}\nOwner  ${ownerText(relation.owner)}${ownerProvenanceText(relation.owner) ? `\nProvenance  ${ownerProvenanceText(relation.owner)}` : ""}`}</text>
+          );
+        })()}
         <select
           id="collection-relationships"
           ref={(value: SelectRenderable) => {
             bind("collection-relationships", value);
           }}
-          options={relationOptions.map(({ name, value }) => ({ name, description: "", value }))}
+          options={relationOptions.map(({ name, description, value }) => ({
+            name,
+            description,
+            value,
+          }))}
           showDescription={false}
+          showSelectionIndicator
+          showScrollIndicator
+          onChange={(index) => setSelectedRelationship(index)}
           onSelect={(index) => {
             const intent = relationOptions[index]?.intent;
             if (intent) props.onRelationship(intent);
@@ -315,7 +373,11 @@ export function CollectionsPage(props: {
     filterState().open ? (
       filterPanel()
     ) : (
-      <box flexDirection="column" width={props.narrow === true ? "100%" : "48%"}>
+      <box
+        flexDirection="column"
+        flexGrow={props.wide ? 1 : undefined}
+        width={props.narrow === true ? "100%" : "48%"}
+      >
         <text>{`Collections ${collections().length}/${effective().length}${Object.keys(filters()).length ? ` · ${Object.keys(filters()).length} filters` : ""}`}</text>
         <Show when={effective().length > 0}>
           <box flexDirection="row">
@@ -385,7 +447,7 @@ export function CollectionsPage(props: {
               />
             </box>
           </Show>
-          <text>NAME SKILLS FROM</text>
+          <text>COLLECTION</text>
         </Show>
         <select
           id="collection-browser"
@@ -393,12 +455,14 @@ export function CollectionsPage(props: {
             bind("browser", value);
           }}
           options={options()}
-          height={10}
+          flexGrow={1}
           selectedIndex={Math.max(
             0,
             options().findIndex((option) => option.value === props.collections.selected()),
           )}
           showDescription={false}
+          showSelectionIndicator
+          showScrollIndicator
           onChange={(index) => choose(index, false)}
           onSelect={(index) => choose(index, true)}
         />
@@ -426,8 +490,26 @@ export function CollectionsPage(props: {
       fallback={
         <box flexDirection="row" flexGrow={1}>
           {list()}
-          <box id="collections-inspector-separator" height="100%" border={["left"]} />
-          {detail()}
+          <Show
+            when={props.wide}
+            fallback={
+              <>
+                <box id="collections-inspector-separator" height="100%" border={["left"]} />
+                {detail()}
+              </>
+            }
+          >
+            <box
+              id="collections-inspector-panel"
+              flexDirection="column"
+              flexGrow={1}
+              width="50%"
+              border
+            >
+              <text>Inspector</text>
+              {detail()}
+            </box>
+          </Show>
         </box>
       }
     >

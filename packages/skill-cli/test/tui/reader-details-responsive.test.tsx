@@ -25,7 +25,8 @@ function detailsAreReady(setup: Setup, skill: string) {
     tabs instanceof TabSelectRenderable &&
     tabs.getSelectedIndex() === 2 &&
     !!setup.renderer.root.findDescendantById("reader-details") &&
-    setup.captureCharFrame().includes(`Address  ${skill}`)
+    setup.captureCharFrame().includes(`Address  ${skill}`) &&
+    setup.captureCharFrame().includes("Summary")
   );
 }
 
@@ -85,6 +86,42 @@ function topNavigation(setup: Setup) {
   return ancestor as TabsRootRenderable;
 }
 
+function containsText(node: { getChildren(): readonly unknown[] }, text: string): boolean {
+  return node
+    .getChildren()
+    .some(
+      (child) =>
+        (child &&
+          typeof child === "object" &&
+          "plainText" in child &&
+          typeof child.plainText === "string" &&
+          child.plainText.includes(text)) ||
+        (child &&
+          typeof child === "object" &&
+          "getChildren" in child &&
+          containsText(child as { getChildren(): readonly unknown[] }, text)),
+    );
+}
+
+function noRelationshipProjection() {
+  const projection = readerProjection();
+  return {
+    ...projection,
+    installedSkills: projection.installedSkills.map((skill) => ({ ...skill, source: undefined })),
+  };
+}
+
+function expectInBounds(
+  renderable: { screenX: number; screenY: number; width: number; height: number },
+  width: number,
+  height: number,
+) {
+  expect(renderable.screenX).toBeGreaterThanOrEqual(0);
+  expect(renderable.screenY).toBeGreaterThanOrEqual(0);
+  expect(renderable.screenX + renderable.width).toBeLessThanOrEqual(width);
+  expect(renderable.screenY + renderable.height).toBeLessThanOrEqual(height);
+}
+
 test("RENDER Details Tab traversal never retains an unmounted relationship focus", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -104,10 +141,233 @@ test("RENDER Details Tab traversal never retains an unmounted relationship focus
 
     setup.mockInput.pressKey("TAB");
     await setup.renderOnce();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details-metadata");
+
+    setup.mockInput.pressKey("TAB");
+    await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
     expect(setup.renderer.currentFocusedRenderable).toBe(
       setup.renderer.root.findDescendantById("installed-skill-browser")!,
     );
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER Details Actions Escape returns once to the selected Skill Browser", async () => {
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(noRelationshipProjection(), {
+          loadInstalled: async (request) => ({
+            value:
+              request.address.path === readerSecondAddress.path
+                ? readerSecondContent
+                : readerContent,
+            diagnostics: [],
+          }),
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await openDetails(setup, "team-main/guide");
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-actions",
+    );
+
+    await awaitParsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+    expect(selectedSkillIs(setup, "team-main/guide")).toBe(true);
+    expect(readerTabs(setup).getSelectedIndex()).toBe(2);
+
+    await awaitParsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "workspace-section-browser-tab-skills",
+    );
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER Details Relationships Escape returns to the selected Skill Browser", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
+    await openDetails(setup, "team-main/guide");
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-actions",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-relationships",
+    );
+
+    await awaitParsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+    expect(selectedSkillIs(setup, "team-main/guide")).toBe(true);
+    expect(readerTabs(setup).getSelectedIndex()).toBe(2);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER Details metadata Escape returns once to the selected Skill Browser", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
+    await openDetails(setup, "team-main/guide");
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-actions",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-relationships",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-metadata",
+    );
+
+    await awaitParsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+    expect(selectedSkillIs(setup, "team-main/guide")).toBe(true);
+    expect(readerTabs(setup).getSelectedIndex()).toBe(2);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER Details without relationships toggles metadata by Enter and Space without stale bindings", async () => {
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(noRelationshipProjection(), {
+          loadInstalled: async (request) => ({
+            value:
+              request.address.path === readerSecondAddress.path
+                ? readerSecondContent
+                : readerContent,
+            diagnostics: [],
+          }),
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await openDetails(setup, "team-main/guide");
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-actions",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-metadata",
+    );
+    setup.mockInput.pressKey("TAB", { shift: true });
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-actions",
+    );
+    setup.mockInput.pressKey("TAB", { shift: true });
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-actions",
+    );
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-metadata",
+    );
+    expect(setup.renderer.root.findDescendantById("reader-details-relationships")).toBeUndefined();
+    expect(containsText(setup.renderer.root, "Entry name  guide")).toBe(false);
+
+    setup.mockInput.pressEnter();
+    await setup.waitFor(() => containsText(setup.renderer.root, "Entry name  guide"));
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details-metadata");
+
+    setup.mockInput.pressKey(" ");
+    await setup.renderOnce();
+    expect(containsText(setup.renderer.root, "Entry name  guide")).toBe(false);
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details-metadata");
+
+    setup.mockInput.pressKey(" ");
+    await setup.waitFor(() => containsText(setup.renderer.root, "Entry name  guide"));
+    await awaitParsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+
+    setup.mockInput.pressArrow("down");
+    await setup.waitFor(
+      () =>
+        selectedSkillIs(setup, "team-main/reference") && readerTabs(setup).getSelectedIndex() === 0,
+    );
+    await openDetails(setup, "team-main/reference");
+    expect(containsText(setup.renderer.root, "Entry name  guide")).toBe(false);
+    expect(containsText(setup.renderer.root, "Entry name  reference")).toBe(false);
+
+    setup.resize(79, 24);
+    await setup.waitFor(
+      () =>
+        !setup.renderer.root.findDescendantById("reader-details") &&
+        !setup.renderer.root.findDescendantById("reader-details-metadata") &&
+        setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER task-first Details controls remain bounded at supported breakpoints", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
+    await openDetails(setup, "team-main/guide");
+    for (const [width, height] of [
+      [120, 40],
+      [80, 24],
+    ] as const) {
+      setup.resize(width, height);
+      await setup.waitFor(() => detailsAreReady(setup, "team-main/guide"));
+      const details = setup.renderer.root.findDescendantById("reader-details")!;
+      const actions = setup.renderer.root.findDescendantById("reader-details-actions")!;
+      const metadata = setup.renderer.root.findDescendantById("reader-details-metadata")!;
+      expect(setup.captureCharFrame()).toContain("Summary");
+      expectInBounds(details, width, height);
+      expectInBounds(actions, width, height);
+      expectInBounds(metadata, width, height);
+    }
+
+    for (const [width, height] of [
+      [79, 24],
+      [43, 30],
+    ] as const) {
+      setup.resize(width, height);
+      await setup.waitFor(
+        () =>
+          !setup.renderer.root.findDescendantById("reader-details") &&
+          setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+      );
+    }
   } finally {
     setup.renderer.destroy();
   }
@@ -273,6 +533,8 @@ test("RENDER Details retains per-Skill scroll, native tab, mounted focus, destin
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
+    expect(selectedSkillIs(setup, "team-main/guide")).toBe(true);
+    expect(readerTabs(setup).getSelectedIndex()).toBe(2);
     setup.mockInput.pressEnter();
     await setup.waitFor(
       () =>

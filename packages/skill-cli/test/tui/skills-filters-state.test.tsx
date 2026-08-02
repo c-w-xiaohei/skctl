@@ -242,12 +242,13 @@ test("STATE-004 RENDER empty filtering clears action context and destination ret
   );
   try {
     await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("A rich Installed Skill"));
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
     await query(setup, "no-such-skill");
     await setup.waitForFrame((frame) => frame.includes("Installed Skills 0/3"));
     const emptyFrame = setup.captureCharFrame();
     expect(emptyFrame).toContain("No Skills match the current search or filters");
-    expect(emptyFrame).toContain("Select a Skill to read its SKILL.md, resources, and details.");
+    expect(emptyFrame).toContain("Select a Skill to read its SKILL.md,");
+    expect(emptyFrame).toContain("resources, and details.");
     expect(emptyFrame).not.toContain("needle in prose");
     expect(emptyFrame).not.toContain("title: Guide");
     expect(setup.renderer.root.findDescendantById("reader-details-actions")).toBeUndefined();

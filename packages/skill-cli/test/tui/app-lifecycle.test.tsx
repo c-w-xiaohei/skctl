@@ -20,6 +20,19 @@ async function openReaderRaw(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
 }
 
+async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
+  await new Promise<void>((resolve) => {
+    const onKeypress = (event: { readonly name: string }) => {
+      if (event.name === "escape" || event.name === "esc") {
+        setup.renderer.keyInput.off("keypress", onKeypress);
+        resolve();
+      }
+    };
+    setup.renderer.keyInput.prependListener("keypress", onKeypress);
+    setup.mockInput.pressKey("ESCAPE");
+  });
+}
+
 test("RENDER initial Workspace projection applies once and defers reader focus until its target registers", async () => {
   let loads = 0;
   let initialSignal: AbortSignal | undefined;
@@ -219,16 +232,55 @@ test("RENDER closing the palette settles focus back on the originating browser, 
     { width: 120, height: 40 },
   );
   try {
+    await setup.waitForFrame((frame) => frame.includes("Focus: Browser"));
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
     setup.mockInput.pressKey("p", { ctrl: true });
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-menu");
-    setup.mockInput.pressKey("ESCAPE");
+    await setup.waitForFrame((frame) => frame.includes("Focus: Actions"));
+    expect(setup.captureCharFrame()).toContain("Enter select · Tab within surface · Esc close");
+    await parsedEscape(setup);
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("palette-menu"));
+    await setup.waitForFrame((frame) => frame.includes("Focus: Browser"));
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
     expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("task");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER an unregistered physical focus event does not request a new desired target", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+    const observed: string[] = [];
+    const observe = (target: { readonly id?: string } | null) =>
+      observed.push(target?.id ?? "null");
+    setup.renderer.on(CliRenderEvents.FOCUSED_RENDERABLE, observe);
+    setup.renderer.emit(CliRenderEvents.FOCUSED_RENDERABLE, null, undefined);
+    await setup.renderOnce();
+    expect(observed).toEqual(["null"]);
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
+    expect(setup.captureCharFrame()).toContain("Focus: Browser");
+
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-tabs");
+    const browser = setup.renderer.root.findDescendantById("installed-skill-browser")!;
+    browser.focus();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
+    const readerFind = setup.renderer.root.findDescendantById("reader-find")!;
+    setup.renderer.emit(CliRenderEvents.FOCUSED_RENDERABLE, readerFind, browser);
+    await setup.waitForFrame((frame) => frame.includes("Focus: Input/Search"));
+    expect(setup.renderer.currentFocusedRenderable).toBe(browser);
+    setup.renderer.off(CliRenderEvents.FOCUSED_RENDERABLE, observe);
   } finally {
     setup.renderer.destroy();
   }

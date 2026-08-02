@@ -155,7 +155,9 @@ async function openDestination(
     await setup.renderOnce();
   }
   setup.mockInput.pressEnter();
-  await setup.waitForFrame((frame) => frame.includes("Config › Sources"));
+  await setup.waitForFrame((frame) =>
+    frame.includes(`Configure · ${destination[0]!.toUpperCase()}${destination.slice(1)} > Sources`),
+  );
   const sections = setup.renderer.root.findDescendantById("config-section-browser-tab-sources");
   expect(sections).toBeDefined();
   sections!.focus();
@@ -200,8 +202,35 @@ test("RENDER palette reaches Global, Project, and Local Config through physical 
     for (const destination of ["global", "project", "local"] as const) {
       await openDestination(setup, destination);
       const title = destination[0]!.toUpperCase() + destination.slice(1);
-      expect(setup.captureCharFrame()).toContain(`${title} Config › Sources`);
+      expect(setup.captureCharFrame()).toContain(`Configure · ${title} > Sources`);
     }
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("RENDER wide Config owns bounded Navigation and Browser panels with a growing primary list", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
+    await setup.waitForFrame((frame) => frame.includes("Add your first Skill"));
+    await openDestination(setup, "project");
+    const navigation = setup.renderer.root.findDescendantById("config-navigation-panel")!;
+    const browser = setup.renderer.root.findDescendantById("config-browser-panel")!;
+    const sources = setup.renderer.root.findDescendantById(
+      "config-source-browser",
+    ) as import("@opentui/core").SelectRenderable;
+    for (const panel of [navigation, browser]) {
+      expect(panel.screenX).toBeGreaterThanOrEqual(0);
+      expect(panel.screenY).toBeGreaterThanOrEqual(0);
+      expect(panel.screenX + panel.width).toBeLessThanOrEqual(120);
+      expect(panel.screenY + panel.height).toBeLessThanOrEqual(40);
+    }
+    expect(navigation.screenX + navigation.width).toBeLessThanOrEqual(browser.screenX);
+    expect(sources.height).toBeGreaterThan(10);
+    expect(sources.height).toBeLessThanOrEqual(browser.height);
   } finally {
     setup.renderer.destroy();
   }
@@ -233,6 +262,75 @@ test("RENDER selected Config Source exposes its contributed source and collectio
     expect(setup.captureCharFrame()).toContain("Collection  team/docs");
   } finally {
     setup.renderer.destroy();
+  }
+});
+
+test("RENDER selected Config declarations expose binding and owner facts", async () => {
+  const projection = configProjection();
+  const state = createConfigState();
+  const render = async (section: "sources" | "collections" | "for-agents", selection: string) => {
+    state.land("project", section, selection);
+    const setup = await testRender(
+      () => (
+        <ConfigPage
+          config={state}
+          projection={() => projection}
+          destination="project"
+          actions={[]}
+          onSelect={() => {}}
+          onActions={() => {}}
+          onAction={() => {}}
+          onSection={() => {}}
+          onContribution={() => {}}
+        />
+      ),
+      { width: 120, height: 40 },
+    );
+    await setup.renderOnce();
+    return setup;
+  };
+  const sources = await render("sources", "team-main");
+  try {
+    const frame = sources.captureCharFrame();
+    expect(frame).toContain("Selected Source  team-main");
+    expect(frame).toContain("Canonical Origin  https://github.com/acme/main");
+    expect(frame).toContain("Source Root  skills");
+    expect(frame).toContain("Binding kind  github");
+    expect(frame).toContain("Tracked ref  team-main");
+    expect(frame).toContain("Provenance  Direct");
+  } finally {
+    sources.renderer.destroy();
+  }
+  const contributed = await render("sources", "team/lark");
+  try {
+    const frame = contributed.captureCharFrame();
+    expect(frame).toContain("Selected Source  team/lark");
+    expect(frame).toContain("Binding kind  github");
+    expect(frame).toContain("Canonical Origin  https://github.com/acme/skills");
+    expect(frame).toContain("Source Root  skills");
+    expect(frame).toContain("Tracked ref  main");
+    expect(frame).toContain("Provenance  Config Source");
+    expect(frame).toContain(
+      "Config Source owner  project /workspace/skill-cli/skill-cli.jsonc /configSources/team",
+    );
+  } finally {
+    contributed.renderer.destroy();
+  }
+  const collections = await render("collections", "team");
+  try {
+    expect(collections.captureCharFrame()).toContain("Selected Collection  team");
+    expect(collections.captureCharFrame()).toContain(
+      "Owner  /workspace/skill-cli/skill-cli.jsonc /collections/team",
+    );
+  } finally {
+    collections.renderer.destroy();
+  }
+  const use = await render("for-agents", "team");
+  try {
+    expect(use.captureCharFrame()).toContain("Selected Collection Use  team");
+    expect(use.captureCharFrame()).toContain("Owner  /workspace/skill-cli/skill-cli.jsonc /use/0");
+  } finally {
+    use.renderer.destroy();
   }
 });
 
@@ -295,7 +393,7 @@ test("RENDER Config Source contributions return to their originating Config Sour
     await setup.waitForFrame((frame) => frame.includes("Add your first Skill"));
     await openDestination(setup, "project");
     setup.mockInput.pressArrow("right");
-    await setup.waitForFrame((frame) => frame.includes("Project Config › Config Sources"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Project > Config Sources"));
     setup.mockInput.pressEnter();
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "config-config-source-browser",
@@ -312,10 +410,10 @@ test("RENDER Config Source contributions return to their originating Config Sour
     );
 
     setup.mockInput.pressEnter();
-    await setup.waitForFrame((frame) => frame.includes("Project Config › Sources"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Project > Sources"));
     expect(setup.captureCharFrame()).toContain("Contributed Source  team/lark");
     await pressEscape(setup);
-    await setup.waitForFrame((frame) => frame.includes("Project Config › Config Sources"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Project > Config Sources"));
     expect(setup.captureCharFrame()).toContain("Config Source  team");
 
     const returnedContributions = setup.renderer.root.findDescendantById(
@@ -327,10 +425,10 @@ test("RENDER Config Source contributions return to their originating Config Sour
     );
     setup.mockInput.pressArrow("down");
     setup.mockInput.pressEnter();
-    await setup.waitForFrame((frame) => frame.includes("Project Config › Collections"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Project > Collections"));
     expect(setup.captureCharFrame()).toContain("team/docs");
     await pressEscape(setup);
-    await setup.waitForFrame((frame) => frame.includes("Project Config › Config Sources"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Project > Config Sources"));
     expect(setup.captureCharFrame()).toContain("Config Source  team");
   } finally {
     setup.renderer.destroy();
@@ -364,10 +462,10 @@ test("RENDER Config section selector physically navigates sources, collections, 
       setup.renderer.root.findDescendantById("config-section-browser-tab-integrations"),
     ).toBeDefined();
     setup.mockInput.pressArrow("right");
-    await setup.waitForFrame((frame) => frame.includes("Project Config › Config Sources"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Project > Config Sources"));
     setup.mockInput.pressArrow("right");
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Project Config › Collections");
+    expect(setup.captureCharFrame()).toContain("Configure · Project > Collections");
     setup.mockInput.pressEnter();
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "config-collection-browser",
@@ -378,6 +476,73 @@ test("RENDER Config section selector physically navigates sources, collections, 
     setup.renderer.destroy();
   }
 });
+
+test("RENDER Config browsers keep declaration identities primary and owner evidence secondary", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
+    await setup.waitForFrame((frame) => frame.includes("Add your first Skill"));
+    await openDestination(setup, "project");
+    const sources = setup.renderer.root.findDescendantById(
+      "config-source-browser",
+    ) as import("@opentui/core").SelectRenderable;
+    expect(sources.options[0]).toMatchObject({
+      name: "team-main · github",
+      description: "https://github.com/acme/main · skills · Direct",
+      value: "team-main",
+    });
+    expect(sources.showDescription).toBe(false);
+    expect(sources.showSelectionIndicator).toBe(true);
+    expect(sources.showScrollIndicator).toBe(true);
+    setup.mockInput.pressArrow("right");
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("config-config-source-browser"),
+    );
+    const configs = setup.renderer.root.findDescendantById(
+      "config-config-source-browser",
+    ) as import("@opentui/core").SelectRenderable;
+    expect(configs.options[0]).toMatchObject({
+      name: "team · github",
+      description: "/workspace/skill-cli/skill-cli.jsonc /configSources/team",
+      value: "/configSources/team",
+    });
+    expect(configs.showDescription).toBe(false);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test.each([120, 80, 43])(
+  "RENDER Config section label remains visible with stable structural tabs at width %i",
+  async (width) => {
+    const setup = await testRender(
+      () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
+      { width, height: 40 },
+    );
+    try {
+      await setup.waitForFrame((frame) => frame.includes("Add your first Skill"));
+      await openDestination(setup, "project");
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain(width >= 100 ? "Navigation:" : "Section:");
+      expect(frame).toContain("Configure · Project > Sources");
+      expect(frame).not.toContain(" Proj ");
+      for (const value of [
+        "sources",
+        "config-sources",
+        "collections",
+        "for-agents",
+        "integrations",
+      ])
+        expect(
+          setup.renderer.root.findDescendantById(`config-section-browser-tab-${value}`),
+        ).toBeDefined();
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 
 test("RENDER same-value primary Config tab click restores local navigation ownership", async () => {
   const setup = await testRender(
@@ -393,7 +558,7 @@ test("RENDER same-value primary Config tab click restores local navigation owner
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "config-section-browser-tab-sources",
     );
-    expect(setup.captureCharFrame()).toContain("Project Config › Sources");
+    expect(setup.captureCharFrame()).toContain("Configure · Project > Sources");
   } finally {
     setup.renderer.destroy();
   }
@@ -412,7 +577,7 @@ test("RENDER Config does not reclaim top navigation after Tab leaves its section
       () => setup.renderer.currentFocusedRenderable?.id === "top-navigation-tab-project",
     );
     setup.mockInput.pressArrow("right");
-    await setup.waitForFrame((frame) => frame.includes("Local Config › Sources"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Local > Sources"));
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("top-navigation-tab-local");
   } finally {
     setup.renderer.destroy();
@@ -431,7 +596,7 @@ test("RENDER secondary Config tab clicks preserve selection and focus", async ()
     await setup.mockMouse.click(sources.screenX + 1, sources.screenY, 2);
     await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("config-section-browser-tab-sources");
-    expect(setup.captureCharFrame()).toContain("Project Config › Sources");
+    expect(setup.captureCharFrame()).toContain("Configure · Project > Sources");
   } finally {
     setup.renderer.destroy();
   }
@@ -447,7 +612,7 @@ test("RENDER Config frame-focus handoff is removed when the App tears down", asy
     await openDestination(setup, "project");
     const frameListeners = interceptFrameListeners(setup);
     setup.mockInput.pressArrow("right");
-    await setup.waitForFrame((frame) => frame.includes("Project Config › Config Sources"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Project > Config Sources"));
     expect(frameListeners.listeners.size).toBe(1);
     setup.renderer.destroy();
     expect(frameListeners.listeners.size).toBe(0);
@@ -466,11 +631,11 @@ test("RENDER Config frame-focus handoff replaces same-frame ABA requests", async
     await openDestination(setup, "project");
     const frameListeners = interceptFrameListeners(setup);
     setup.mockInput.pressArrow("right");
-    await setup.waitForFrame((frame) => frame.includes("Project Config › Config Sources"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Project > Config Sources"));
     setup.mockInput.pressArrow("right");
-    await setup.waitForFrame((frame) => frame.includes("Project Config › Collections"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Project > Collections"));
     setup.mockInput.pressArrow("left");
-    await setup.waitForFrame((frame) => frame.includes("Project Config › Config Sources"));
+    await setup.waitForFrame((frame) => frame.includes("Configure · Project > Config Sources"));
     expect(frameListeners.listeners.size).toBe(1);
 
     const tab = setup.renderer.root.findDescendantById(
@@ -555,10 +720,10 @@ test("RENDER empty Config actions are reachable by Enter and mouse with the brow
               : current === "for-agents"
                 ? "For agents"
                 : current[0]!.toUpperCase() + current.slice(1);
-          await setup.waitForFrame((frame) => frame.includes(`Project Config › ${title}`));
+          await setup.waitForFrame((frame) => frame.includes(`Configure · Project > ${title}`));
         }
         expect(setup.captureCharFrame()).toContain(
-          `Project Config › ${
+          `Configure · Project > ${
             section === "config-sources"
               ? "Config Sources"
               : section === "for-agents"

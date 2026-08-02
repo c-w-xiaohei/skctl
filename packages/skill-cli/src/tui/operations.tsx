@@ -936,6 +936,7 @@ export function SourceRegistrationOverlay(props: {
               });
           }}
         />
+        <text>Dialog focus · Enter select · Tab within surface · Esc close</text>
         <text>Cancel is selected by default</text>
       </box>
     </box>
@@ -1487,6 +1488,7 @@ export function ActionOverlay(props: {
           showDescription
           onSelect={(_index, option) => option && props.onSelect(option.value)}
         />
+        <text>Focus: Actions · Enter select · Tab within surface · Esc close</text>
         <text>Escape Close</text>
       </box>
     </box>
@@ -1755,6 +1757,7 @@ export function SourceRemovalOverlay(props: {
             } else if (!props.pending) props.onConfirm();
           }}
         />
+        <text>Focus: Dialog · Enter select · Tab within surface · Esc close</text>
         <text>Cancel is selected by default</text>
       </box>
     </box>

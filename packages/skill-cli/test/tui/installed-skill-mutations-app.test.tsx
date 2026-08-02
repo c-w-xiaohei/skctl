@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
+import { TextBufferRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
+import { SkillCliError } from "../../src/core/api";
 import type {
   ManagementProjection,
   OperationResult,
@@ -107,6 +109,23 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function textIn(renderable: { getChildren(): readonly unknown[] }): string {
+  return (
+    renderable.getChildren() as {
+      getChildren?: () => readonly unknown[];
+      plainText?: string;
+    }[]
+  )
+    .flatMap((child) =>
+      child instanceof TextBufferRenderable
+        ? [child.plainText]
+        : child.getChildren
+          ? [textIn(child as { getChildren(): readonly unknown[] })]
+          : [],
+    )
+    .join("\n");
+}
+
 async function openDetailsActions(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.renderOnce();
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-tabs"));
@@ -152,53 +171,63 @@ async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.renderOnce();
 }
 
-test("App keeps an executing Installed Skill review mounted when Confirm is pressed twice", async () => {
-  const executing = deferred<OperationResult<void>>();
-  let executions = 0;
-  let aborted = 0;
-  const setup = await testRender(
-    () => (
-      <App
-        core={directSourceCore(projection(), {
-          previewUninstall: async (request) =>
-            result<UninstallImpact>({
-              kind: "uninstall",
-              installed: request.paths.map((path) => ({ source: request.source, path })),
-              directMemberships: [],
-              disappearingSelectors: [],
-              retainedSelectors: [],
-              blockers: [],
-              allowed: true,
-            }),
-          uninstall: (_request, options) => {
-            executions++;
-            options?.signal?.addEventListener("abort", () => aborted++);
-            return executing.promise;
-          },
-        })}
-        exit={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
-  try {
-    await openDetailsActions(setup);
-    await chooseAction(setup, 5);
-    await setup.waitFor(() => setup.captureCharFrame().includes("Uninstall Skill"));
-    setup.mockInput.pressKey("ARROW_DOWN");
-    setup.mockInput.pressEnter();
-    await setup.renderOnce();
-    setup.mockInput.pressEnter();
-    await setup.renderOnce();
-    expect(executions).toBe(1);
-    expect(aborted).toBe(0);
-    expect(setup.captureCharFrame()).toContain("Uninstall Skill");
-    executing.resolve(result(undefined));
-    await setup.renderOnce();
-  } finally {
-    setup.renderer.destroy();
-  }
-});
+test.each([[120, 40, "Focus: Task · Enter select · Tab within surface · Esc cancel"]] as const)(
+  "App gives the executing review overlay Esc cancel at %ix%i",
+  async (width, height, expectedHelp) => {
+    const executing = deferred<OperationResult<void>>();
+    let executions = 0;
+    let aborted = 0;
+    const setup = await testRender(
+      () => (
+        <App
+          core={directSourceCore(projection(), {
+            previewUninstall: async (request) =>
+              result<UninstallImpact>({
+                kind: "uninstall",
+                installed: request.paths.map((path) => ({ source: request.source, path })),
+                directMemberships: [],
+                disappearingSelectors: [],
+                retainedSelectors: [],
+                blockers: [],
+                allowed: true,
+              }),
+            uninstall: (_request, options) => {
+              executions++;
+              options?.signal?.addEventListener("abort", () => {
+                aborted++;
+                executing.reject(new SkillCliError("CANCELLED", "cancelled"));
+              });
+              return executing.promise;
+            },
+          })}
+          exit={() => {}}
+        />
+      ),
+      { width, height },
+    );
+    try {
+      await openDetailsActions(setup);
+      await chooseAction(setup, 5);
+      await setup.waitFor(() => setup.captureCharFrame().includes("Uninstall Skill"));
+      setup.mockInput.pressKey("ARROW_DOWN");
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+      setup.mockInput.pressEnter();
+      await setup.renderOnce();
+      expect(executions).toBe(1);
+      expect(aborted).toBe(0);
+      expect(setup.captureCharFrame()).toContain("Uninstall Skill");
+      expect(textIn(setup.renderer.root)).toContain(expectedHelp);
+      await parsedEscape(setup);
+      await setup.waitFor(
+        () => setup.renderer.root.findDescendantById("installed-skill-review") === undefined,
+      );
+      expect(aborted).toBe(1);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 
 test("App returns an Installed Skill execution failure to its live review and can retry", async () => {
   let executions = 0;

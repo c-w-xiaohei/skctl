@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 
 export interface SectionTabOption<Value extends string> {
   readonly label: string;
+  readonly compactLabel?: string;
   readonly value: Value;
 }
 
@@ -18,6 +19,9 @@ export function SectionTabs<Value extends string>(props: {
   readonly owner: FocusOwner;
   readonly focusRegistry?: FocusRegistry;
   readonly compact?: boolean;
+  readonly label?: string;
+  readonly vertical?: boolean;
+  readonly panelId?: string;
   readonly onPrimaryPointerEntry?: () => void;
   readonly onNavigate: (value: Value) => void;
 }) {
@@ -47,8 +51,19 @@ export function SectionTabs<Value extends string>(props: {
     triggerSubscriptions.clear();
   });
   return (
-    <box flexDirection="row" height={1}>
+    <box
+      id={props.panelId}
+      flexDirection={props.vertical ? "column" : "row"}
+      height={props.vertical ? "100%" : 1}
+      width={props.vertical ? 20 : undefined}
+      flexShrink={props.vertical ? 0 : undefined}
+      border={props.vertical}
+    >
+      {props.label && <text selectable={false}>{`${props.label}: `}</text>}
       <Tabs
+        orientation="horizontal"
+        flexDirection={props.vertical ? "column" : undefined}
+        flexGrow={props.vertical ? 1 : undefined}
         value={props.value}
         activationMode="automatic"
         onValueChange={(value) => {
@@ -58,7 +73,7 @@ export function SectionTabs<Value extends string>(props: {
           }
         }}
       >
-        <TabsList>
+        <TabsList flexDirection={props.vertical ? "column" : undefined}>
           <For each={props.options.map((option) => option.value)}>
             {(value) => {
               const option = () => props.options.find((option) => option.value === value)!;
@@ -91,7 +106,7 @@ export function SectionTabs<Value extends string>(props: {
                     setTriggerVersion((version) => version + 1);
                   }}
                   value={value}
-                  label={option().label}
+                  label={props.compact ? (option().compactLabel ?? option().label) : option().label}
                   onKeyDown={(event) => {
                     if (
                       ["left", "right", "home", "end"].includes(event.name) &&
@@ -121,7 +136,7 @@ export function SectionTabs<Value extends string>(props: {
           </For>
         </TabsList>
       </Tabs>
-      {!props.compact && <text> ←/→</text>}
+      {!props.compact && !props.vertical && <text> ←/→</text>}
     </box>
   );
 }

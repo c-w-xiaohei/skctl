@@ -20,6 +20,7 @@ export function WorkspacePage(props: {
   readonly reader: () => ReaderState;
   readonly overlay?: () => boolean;
   readonly narrow?: boolean;
+  readonly wide?: boolean;
   readonly narrowLevel: NarrowLevel;
   readonly handoff?: RouteHandoff;
   readonly projection: () => ManagementProjection | undefined;
@@ -74,6 +75,7 @@ function WorkspacePageContent(props: {
   readonly reader: () => ReaderState;
   readonly overlay?: () => boolean;
   readonly narrow?: boolean;
+  readonly wide?: boolean;
   readonly narrowLevel: NarrowLevel;
   readonly handoff?: RouteHandoff;
   readonly projection: () => ManagementProjection | undefined;
@@ -157,6 +159,12 @@ function WorkspacePageContent(props: {
     });
   const selectedSkill = () =>
     skills().find((skill) => skillKey(skill.address) === props.workspace.selectedSkill());
+  const selectedSkillFacts = () => {
+    const skill = selectedSkill();
+    if (!skill) return undefined;
+    const problem = skill.problems[0]?.message;
+    return `Selected Skill  ${skill.name}\nDescription  ${skill.description}\nSource  ${skill.address.source}\nHealth  ${skill.owner.health}${problem ? `\nProblem  ${problem}` : ""}`;
+  };
   const chooseSkill = (address: SkillAddress, intent: "select" | "open") => {
     props.onSkill(address, intent);
   };
@@ -168,8 +176,8 @@ function WorkspacePageContent(props: {
       : undefined;
   const options = () =>
     sources().map((item) => ({
-      name: `${item.id}  ${item.kind}  ${item.contribution ? "Config Source" : "Direct"}`,
-      description: item.origin,
+      name: `${item.id} · ${item.kind}`,
+      description: `${item.origin} · ${item.root} · ${item.contribution ? "Config Source" : "Direct"}`,
       value: item.id,
     }));
   const sourceOptions = createMemo(options, [], {
@@ -185,8 +193,8 @@ function WorkspacePageContent(props: {
   const skillOptions = createMemo(
     () =>
       skills().map((skill) => ({
-        name: `${skill.owner.health === "healthy" ? "" : "! "}${skill.name}  ${skill.description}${props.narrow === true ? "" : `  ${skill.address.source}`}`,
-        description: "",
+        name: `${skill.owner.health === "healthy" ? "" : "! "}${skill.name}`,
+        description: `${skill.description}${props.narrow === true ? "" : ` · ${skill.address.source}`}`,
         value: skillKey(skill.address),
       })),
     [],
@@ -250,6 +258,8 @@ function WorkspacePageContent(props: {
                 options().findIndex((option) => option.value === selected()),
               )}
               showDescription={false}
+              showSelectionIndicator
+              showScrollIndicator
               onChange={(index) => props.onSelectSource(options()[index]!.value)}
               onSelect={(index) => {
                 props.onSelectSource(options()[index]!.value);
@@ -274,8 +284,14 @@ function WorkspacePageContent(props: {
     const list = () => (
       <box
         flexDirection="column"
-        flexGrow={props.workspace.sourceFilter() || trueEmpty() ? 1 : undefined}
-        width={props.narrow === true ? "100%" : props.workspace.sourceFilter() ? undefined : "45%"}
+        flexGrow={props.wide || props.workspace.sourceFilter() || trueEmpty() ? 1 : undefined}
+        width={
+          props.narrow === true || props.wide === true
+            ? "100%"
+            : props.workspace.sourceFilter()
+              ? undefined
+              : "45%"
+        }
       >
         <text>
           {props.workspace.sourceFilter()
@@ -366,6 +382,7 @@ function WorkspacePageContent(props: {
           </>
         )}
         {producerHandoff() && <text selectable>{producerHandoff()}</text>}
+        {selectedSkillFacts() && <text selectable>{selectedSkillFacts()}</text>}
         {!trueEmpty() && (
           <select
             id="installed-skill-browser"
@@ -373,7 +390,7 @@ function WorkspacePageContent(props: {
               installedSkillBrowser = value;
               if (value && !trueEmpty()) bind("browser", value);
             }}
-            height={10}
+            flexGrow={1}
             options={skillOptions()}
             selectedIndex={Math.max(
               0,
@@ -382,6 +399,8 @@ function WorkspacePageContent(props: {
               ),
             )}
             showDescription={false}
+            showSelectionIndicator
+            showScrollIndicator
             onChange={(index) => {
               const skill = skills()[index];
               if (skill) chooseSkill(skill.address, "select");
@@ -450,36 +469,44 @@ function WorkspacePageContent(props: {
   const ReaderPane = () => (
     <Show when={!trueEmpty() && (props.narrow !== true || props.narrowLevel === "detail")}>
       <>
-        {props.narrow !== true && (
+        {props.narrow !== true && !props.wide && (
           <box id="skills-reader-separator" height="100%" border={["left"]} />
         )}
-        <Show
-          when={selectedSkill()}
-          fallback={
-            <box flexDirection="column" flexGrow={1} paddingLeft={1}>
-              <text>Select a Skill to read its SKILL.md, resources, and details.</text>
-            </box>
-          }
+        <box
+          id={props.wide ? "workspace-reader-panel" : undefined}
+          flexDirection="column"
+          flexGrow={props.wide ? undefined : 1}
+          width={props.wide ? 40 : undefined}
         >
-          {(skill) => (
-            <Reader
-              reader={props.reader}
-              projection={projection}
-              focusRegistry={props.focusRegistry}
-              skill={skill()}
-              narrow={props.narrow === true}
-              onPatch={props.onReaderPatch}
-              onCommitFind={props.onReaderFindCommit}
-              onResources={() => props.onResources(skill().address)}
-              onReadResource={(path) => props.onReadResource(skill().address, path)}
-              onRetryResource={() => props.onRetryResource(skill().address)}
-              onResourceBack={props.onResourceBack}
-              onDetailsActions={props.onDetailsActions}
-              onDetailsRelationship={props.onDetailsRelationship}
-              onDetailsScroll={props.onDetailsScroll}
-            />
-          )}
-        </Show>
+          {props.wide && <text>Reader</text>}
+          <Show
+            when={selectedSkill()}
+            fallback={
+              <box flexDirection="column" flexGrow={1} paddingLeft={1}>
+                <text>Select a Skill to read its SKILL.md, resources, and details.</text>
+              </box>
+            }
+          >
+            {(skill) => (
+              <Reader
+                reader={props.reader}
+                projection={projection}
+                focusRegistry={props.focusRegistry}
+                skill={skill()}
+                narrow={props.narrow === true}
+                onPatch={props.onReaderPatch}
+                onCommitFind={props.onReaderFindCommit}
+                onResources={() => props.onResources(skill().address)}
+                onReadResource={(path) => props.onReadResource(skill().address, path)}
+                onRetryResource={() => props.onRetryResource(skill().address)}
+                onResourceBack={props.onResourceBack}
+                onDetailsActions={props.onDetailsActions}
+                onDetailsRelationship={props.onDetailsRelationship}
+                onDetailsScroll={props.onDetailsScroll}
+              />
+            )}
+          </Show>
+        </box>
       </>
     </Show>
   );
@@ -494,6 +521,7 @@ function WorkspacePageContent(props: {
       <CollectionsPage
         collections={props.collections}
         narrow={props.narrow === true}
+        wide={props.wide === true}
         narrowLevel={props.narrowLevel}
         projection={projection}
         focusRegistry={props.focusRegistry}
@@ -518,7 +546,7 @@ function WorkspacePageContent(props: {
       </box>
     );
   return (
-    <box flexDirection="column" flexGrow={1}>
+    <box flexDirection={props.wide ? "row" : "column"} flexGrow={1}>
       <SectionTabs
         id="workspace-section-browser"
         options={[
@@ -530,13 +558,24 @@ function WorkspacePageContent(props: {
         owner="local-nav"
         focusRegistry={props.focusRegistry}
         compact={props.narrow === true}
+        label={props.wide ? "Navigation" : "Section"}
+        vertical={props.wide}
+        panelId={props.wide ? "workspace-navigation-panel" : undefined}
         onPrimaryPointerEntry={props.onLocalNavFocus}
         onNavigate={props.onSection}
       />
       <box flexDirection="row" flexGrow={1}>
-        <Show when={browserSection()} keyed>
-          {(section) => <BrowserSurface section={section} />}
-        </Show>
+        <box
+          id={props.wide ? "workspace-browser-panel" : undefined}
+          flexDirection="column"
+          flexGrow={1}
+          border={props.wide}
+        >
+          {props.wide && <text>Browser</text>}
+          <Show when={browserSection()} keyed>
+            {(section) => <BrowserSurface section={section} />}
+          </Show>
+        </box>
         <Show when={browserSection() === "skills"}>
           <ReaderPane />
         </Show>

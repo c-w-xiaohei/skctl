@@ -2,24 +2,31 @@ import { expect, test } from "bun:test";
 import { createEffect, createRoot } from "solid-js";
 import { createLayout } from "../../src/tui/layout";
 
-test("layout derives narrow and too-small facts at the locked boundaries", () => {
+test("layout derives wide, narrow and too-small facts at the locked boundaries", () => {
   const layout = createLayout();
+  layout.resize(100, 12, () => {});
+  expect(layout.wide()).toBe(true);
   layout.resize(80, 12, () => {});
   expect(layout.width()).toBe(80);
   expect(layout.height()).toBe(12);
   expect(layout.narrow()).toBe(false);
+  expect(layout.wide()).toBe(false);
   expect(layout.tooSmall()).toBe(false);
 
   layout.resize(79, 12, () => {});
   expect(layout.narrow()).toBe(true);
   expect(layout.tooSmall()).toBe(false);
 
-  layout.resize(43, 12, () => {});
-  expect(layout.tooSmall()).toBe(false);
-  layout.resize(42, 12, () => {});
-  expect(layout.tooSmall()).toBe(true);
-  layout.resize(120, 11, () => {});
-  expect(layout.tooSmall()).toBe(true);
+  for (const [width, height, expected] of [
+    [42, 12, true],
+    [43, 11, true],
+    [43, 12, true],
+    [43, 13, false],
+    [44, 12, false],
+  ] as const) {
+    layout.resize(width, height, () => {});
+    expect(layout.tooSmall(), `${width}x${height}`).toBe(expected);
+  }
 });
 
 test("resize publishes dimensions before synchronously reconciling the narrow transition", () => {

@@ -149,7 +149,41 @@ describe("packaged release orchestration", () => {
     expect(controller).toContain('locate("Search dimensions", &column, &row) || ++row > height');
     expect(controller).toContain("if (c >= 0x20 && c <= 0x3f) return");
     expect(controller).toContain("c == '\\\\' ? 0 : 3");
+    expect(controller).toContain("static int width = 120, height = 40, x, y, saved_x, saved_y");
+    expect(controller).toContain("else if (c == 's') { saved_x = x; saved_y = y; }");
+    expect(controller).toContain("else if (c == 'u') { x = saved_x; y = saved_y; }");
+    expect(controller).toContain("static int cell_width(unsigned int codepoint)");
+    expect(controller).toContain("in_range(codepoint, 0x0300, 0x036f)");
+    expect(controller).toContain("in_range(codepoint, 0xfe00, 0xfe0f)");
+    expect(controller).toContain("in_range(codepoint, 0x2e80, 0xa4cf)");
+    expect(controller).toContain("in_range(codepoint, 0x1f000, 0x1faff)");
+    expect(controller).toContain("if ((c & 0xc0) == 0x80)");
+    expect(controller).toContain("codepoint >= (unsigned int)utf8_min");
+    expect(controller).not.toContain("utf8_remaining");
   });
+
+  test.if(process.platform === "linux")(
+    "tracks wide and combining UTF-8 codepoints across chunks for mouse locate coordinates",
+    async () => {
+      const output = await mkdtemp(join(tmpdir(), "skill-cli-pty-width-"));
+      const source = join(output, "pty-controller.c");
+      const controller = join(output, "pty-controller");
+      try {
+        await writeFile(source, terminalControllerSource("linux"));
+        const compile = Bun.spawn(["cc", source, "-lutil", "-o", controller], {
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(await compile.exited, await new Response(compile.stderr).text()).toBe(0);
+        const probe = Bun.spawn([controller, "--width-probe"], { stdout: "pipe", stderr: "pipe" });
+        expect(await probe.exited).toBe(0);
+        expect(await new Response(probe.stderr).text()).toBe("");
+        expect(await new Response(probe.stdout).text()).toBe("wide=3,1 combining=2,2\n");
+      } finally {
+        await rm(output, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("makes the Windows ConPTY helper close and boundedly drain every owned resource", () => {
     const controller = terminalControllerSource("win32");

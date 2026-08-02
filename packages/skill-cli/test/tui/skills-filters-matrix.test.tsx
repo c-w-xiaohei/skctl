@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { InputRenderable, SelectRenderable } from "@opentui/core";
+import { InputRenderable, SelectRenderable, TextBufferRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { Diagnostic, ManagementProjection } from "../../src/core/api";
 import { App } from "../../src/tui/app";
@@ -102,6 +102,20 @@ function filterProjection(
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
+function textIn(renderable: { getChildren(): readonly unknown[] }): string {
+  return (
+    renderable.getChildren() as { getChildren?: () => readonly unknown[]; plainText?: string }[]
+  )
+    .flatMap((child) =>
+      child instanceof TextBufferRenderable
+        ? [child.plainText]
+        : child.getChildren
+          ? [textIn(child as { getChildren(): readonly unknown[] })]
+          : [],
+    )
+    .join("\n");
+}
+
 async function key(setup: Setup, name: string, shift = false) {
   if (name === "ENTER") setup.mockInput.pressEnter();
   else if (name === "ARROW_DOWN") setup.mockInput.pressArrow("down");
@@ -111,6 +125,20 @@ async function key(setup: Setup, name: string, shift = false) {
 
 async function type(setup: Setup, value: string) {
   for (const character of value.toLocaleLowerCase()) await key(setup, character);
+}
+
+async function pressEscape(setup: Setup) {
+  await new Promise<void>((resolve) => {
+    const onKeypress = (event: { readonly name: string }) => {
+      if (event.name === "escape" || event.name === "esc") {
+        setup.renderer.keyInput.off("keypress", onKeypress);
+        resolve();
+      }
+    };
+    setup.renderer.keyInput.prependListener("keypress", onKeypress);
+    setup.mockInput.pressKey("ESCAPE");
+  });
+  await setup.renderOnce();
 }
 
 async function openFilter(setup: Setup) {
@@ -198,6 +226,54 @@ test("RENDER Skills filter keyboard flow searches native stages and applies Coll
     setup.renderer.destroy();
   }
 });
+
+test.each([
+  [120, "Focus: Input/Search · Enter select · Tab within surface · Esc back to filter"],
+  [43, "F:Input Tab/Shift+Tab Ent Esc filter"],
+] as const)(
+  "RENDER Skills filter Escape projects its selected stage at width %i",
+  async (width, selectedStageHelp) => {
+    const setup = await testRender(
+      () => <App core={directSourceCore(filterProjection())} exit={() => {}} />,
+      { width, height: 40 },
+    );
+    try {
+      await setup.renderOnce();
+      await openFilter(setup);
+      await type(setup, "Collection");
+      await key(setup, "TAB");
+      await key(setup, "ENTER");
+
+      const search = () =>
+        setup.renderer.root.findDescendantById("skills-filter-search") as InputRenderable;
+      expect(textIn(setup.renderer.root)).toContain(selectedStageHelp);
+      expect(setup.renderer.currentFocusedRenderable).toBe(search());
+      expect(search().value).toBe("");
+      expect(setup.renderer.root.findDescendantById("skills-filter-values")).toBeDefined();
+
+      await pressEscape(setup);
+
+      await setup.waitFor(
+        () => setup.renderer.root.findDescendantById("skills-filter-values") === undefined,
+      );
+      expect(textIn(setup.renderer.root)).toContain(
+        width === 120
+          ? "Focus: Input/Search · Enter select · Tab within surface · Esc close"
+          : "F:Input Tab/Shift+Tab Ent Esc close",
+      );
+      expect(setup.renderer.root.findDescendantById("skills-filter-overlay")).toBeDefined();
+      expect(setup.renderer.root.findDescendantById("skills-filter-dimensions")).toBeDefined();
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-filter-search");
+      expect(search().value).toBe("");
+
+      await pressEscape(setup);
+
+      expect(setup.renderer.root.findDescendantById("skills-filter-overlay")).toBeUndefined();
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 
 test("RENDER Skills filter mouse selects the exact mounted Collection value", async () => {
   const setup = await testRender(
