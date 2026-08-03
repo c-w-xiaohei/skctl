@@ -129,13 +129,19 @@ export async function openGitSource(
   try {
     await git(directory, ["init", "--bare"], signal);
     try {
-      await git(directory, ["fetch", "--no-tags", url, commit], signal);
+      await git(
+        directory,
+        ["fetch", "--no-tags", "--depth=1", "--filter=blob:none", url, commit],
+        signal,
+      );
     } catch {
       await git(
         directory,
         [
           "fetch",
           "--no-tags",
+          "--depth=1",
+          "--filter=blob:none",
           url,
           "+refs/heads/*:refs/skill-cli/heads/*",
           "+refs/tags/*:refs/skill-cli/tags/*",

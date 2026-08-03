@@ -12,6 +12,7 @@ export type GitHubApi = {
   readonly baseUrl: string;
   readonly token?: string;
   readonly timeout?: number;
+  readonly rawBaseUrl?: string;
 };
 
 /** Classifies only sanitized GitHub API outcomes; callers decide whether to restart via Git. */
@@ -59,10 +60,6 @@ function providerError(status: number, message: string): SkillCliError {
 
 function isEligibleFallback(error: unknown): boolean {
   return error instanceof SkillCliError && error.code === "PROVIDER_UNAVAILABLE";
-}
-function relativePath(root: string, path: string): string | undefined {
-  if (!root) return path;
-  return path === root ? "" : path.startsWith(`${root}/`) ? path.slice(root.length + 1) : undefined;
 }
 function normalizeEntry(
   item: { path?: unknown; mode?: unknown; type?: unknown; sha?: unknown; size?: unknown },
@@ -167,6 +164,7 @@ export async function openGitHubSource(
     baseUrl: api.baseUrl,
     request: { signal: requestSignal },
   });
+  const rawBaseUrl = api.rawBaseUrl ?? "https://raw.githubusercontent.com";
   async function request<T>(run: () => Promise<{ data: T }>): Promise<T> {
     try {
       return (await run()).data;
@@ -187,14 +185,31 @@ export async function openGitHubSource(
       throw providerError(status, message);
     }
   }
+  let entriesPromise: Promise<SourceEntry[]> | undefined;
   async function entries(): Promise<SourceEntry[]> {
+    entriesPromise ??= readEntries();
+    return entriesPromise;
+  }
+  async function readEntries(): Promise<SourceEntry[]> {
     const resolved = await request(() => client.rest.repos.getCommit({ owner, repo, ref: commit }));
     if (resolved.sha !== commit || !resolved.commit.tree.sha)
       throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub commit identity mismatch");
+    let root = resolved.commit.tree.sha;
+    for (const segment of repositoryRoot.split("/").filter(Boolean)) {
+      const tree = await request(() => client.rest.git.getTree({ owner, repo, tree_sha: root }));
+      if (tree.sha !== root || !Array.isArray(tree.tree))
+        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub tree identity mismatch");
+      const child = tree.tree.find(
+        (item) => item.path === segment && item.type === "tree" && item.mode === "040000",
+      );
+      if (!child || typeof child.sha !== "string" || !/^[0-9a-f]{40,64}$/iu.test(child.sha))
+        throw new SkillCliError("SOURCE_NOT_FOUND", "GitHub Source Root was not found");
+      root = child.sha;
+    }
     const tree = await request(() =>
-      client.rest.git.getTree({ owner, repo, tree_sha: resolved.commit.tree.sha, recursive: "1" }),
+      client.rest.git.getTree({ owner, repo, tree_sha: root, recursive: "1" }),
     );
-    if (tree.sha !== resolved.commit.tree.sha)
+    if (tree.sha !== root)
       throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub tree identity mismatch");
     if (tree.truncated || !Array.isArray(tree.tree))
       throw new SkillCliError("PROVIDER_UNAVAILABLE", "GitHub tree is incomplete");
@@ -226,6 +241,43 @@ export async function openGitHubSource(
       await git.close();
     }
   }
+  async function readRaw(
+    path: string,
+    entry: Extract<SourceEntry, { readonly kind: "file" | "symlink" }>,
+  ) {
+    if (api.baseUrl !== "https://api.github.com" && !api.rawBaseUrl)
+      throw new SkillCliError("PROVIDER_UNAVAILABLE", "GitHub raw content is unavailable");
+    const objectId = entry.objectId;
+    if (!objectId)
+      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub entry has no object id");
+    const location = [repositoryRoot, path]
+      .filter(Boolean)
+      .flatMap((segment) => segment.split("/").map((part) => encodeURIComponent(part)))
+      .join("/");
+    let response: Response;
+    try {
+      response = await fetch(`${rawBaseUrl}/${owner}/${repo}/${commit}/${location}`, {
+        signal: requestSignal,
+      });
+    } catch {
+      throw new SkillCliError("PROVIDER_UNAVAILABLE", "GitHub raw content is unavailable");
+    }
+    if (!response.ok)
+      throw new SkillCliError(
+        response.status === 404 ? "SOURCE_NOT_FOUND" : "PROVIDER_UNAVAILABLE",
+        response.status === 404 ? "Resource not found" : "GitHub raw content is unavailable",
+      );
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength !== entry.size)
+      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub blob size mismatch");
+    if (
+      objectId.length === 40 &&
+      createHash("sha1").update(`blob ${bytes.byteLength}\0`).update(bytes).digest("hex") !==
+        objectId
+    )
+      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub blob identity mismatch");
+    return { entry: { ...entry, path }, bytes };
+  }
   return {
     kind: "remote",
     sourceName,
@@ -235,13 +287,7 @@ export async function openGitHubSource(
     async *list(prefix, listSignal) {
       try {
         for (const entry of await entries()) {
-          const path = relativePath(repositoryRoot, entry.path);
-          if (
-            path !== undefined &&
-            path !== "" &&
-            (!prefix || path === prefix || path.startsWith(`${prefix}/`))
-          )
-            yield { ...entry, path };
+          if (!prefix || entry.path === prefix || entry.path.startsWith(`${prefix}/`)) yield entry;
         }
       } catch (error) {
         if (!isEligibleFallback(error)) throw error;
@@ -254,9 +300,7 @@ export async function openGitHubSource(
     async read(path, readSignal) {
       parseResourcePath(path);
       try {
-        const entry = (await entries())
-          .map((item) => ({ entry: item, path: relativePath(repositoryRoot, item.path) }))
-          .find(({ path: itemPath }) => itemPath === path)?.entry;
+        const entry = (await entries()).find((item) => item.path === path);
         if (!entry || entry.kind === "directory" || entry.kind === "gitlink")
           throw new SkillCliError("RESOURCE_NOT_FOUND", `Resource not found: ${path}`);
         const objectId = entry.objectId;
@@ -286,7 +330,15 @@ export async function openGitHubSource(
         return { entry: { ...entry, path }, bytes };
       } catch (error) {
         if (!isEligibleFallback(error)) throw error;
-        return fallback((snapshot) => snapshot.read(path, readSignal));
+        const entry = (await entries()).find((item) => item.path === path);
+        if (!entry || entry.kind === "directory" || entry.kind === "gitlink")
+          throw new SkillCliError("RESOURCE_NOT_FOUND", `Resource not found: ${path}`);
+        try {
+          return await readRaw(path, entry);
+        } catch (rawError) {
+          if (!isEligibleFallback(rawError)) throw rawError;
+          return fallback((snapshot) => snapshot.read(path, readSignal));
+        }
       }
     },
     async close() {},

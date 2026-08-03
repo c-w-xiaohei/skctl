@@ -244,14 +244,15 @@ function sourceView(
       .some((part) => part === "." || part === ".." || (part === "" && value.root !== ""))
   )
     throw new SkillCliError("CONFIG_INVALID", "Source Root must be a relative normalized path");
-  const remoteValue =
-    value.kind === "local"
-      ? value.path
-      : value.kind === "github"
-        ? value.owner && value.repository
-          ? `https://github.com/${value.owner}/${value.repository}`
+  const githubOrigin =
+    value.kind === "github"
+      ? value.owner && value.repository
+        ? `https://github.com/${value.owner}/${value.repository}`
+        : value.origin?.match(/^[^/]+\/[^/]+$/u)
+          ? `https://github.com/${value.origin}`
           : value.origin
-        : value.origin;
+      : undefined;
+  const remoteValue = value.kind === "local" ? value.path : (githubOrigin ?? value.origin);
   const remoteRelative =
     inherited &&
     (value.kind === "local" || (!remoteValue?.includes("://") && !remoteValue?.startsWith("/")));
@@ -266,13 +267,7 @@ function sourceView(
     ? inherited.origin
     : value.kind === "local"
       ? canonicalLocalOrigin(value.path ?? "", dirname(file))
-      : canonicalRemoteOrigin(
-          value.kind === "github"
-            ? value.owner && value.repository
-              ? `https://github.com/${value.owner}/${value.repository}`
-              : (value.origin ?? "")
-            : (value.origin ?? ""),
-        );
+      : canonicalRemoteOrigin(githubOrigin ?? value.origin ?? "");
   const source: SourceBindingView = {
     id,
     kind,
@@ -311,7 +306,11 @@ export function validateConfigBytes(bytes: Uint8Array): ReusableConfigDocument {
     throw new SkillCliError("CONFIG_INVALID", "Invalid Remote Config");
   return value as ReusableConfigDocument;
 }
-export async function declaredConfigSource(options: ReadWorkspaceOptions, id: string) {
+export async function declaredConfigSource(
+  options: ReadWorkspaceOptions,
+  id: string,
+  requestedLevel?: ConfigLevel,
+) {
   parseQualifiedName(id);
   const project = await resolveProjectRoot(options.cwd, options.project, options.signal);
   const user =
@@ -333,6 +332,7 @@ export async function declaredConfigSource(options: ReadWorkspaceOptions, id: st
     { level: "project" as const, file: join(project.root, "skill-cli.jsonc") },
     { level: "local" as const, file: join(project.root, "skill-cli.local.jsonc") },
   ]) {
+    if (requestedLevel && level !== requestedLevel) continue;
     const binding = (await document(file)).configSources?.[id];
     if (!binding) continue;
     if (found)
@@ -375,10 +375,11 @@ export async function removeConfigSource(
   options: MutationOptions,
   id: string,
   expected?: { readonly file: string; readonly bytes: Uint8Array },
+  level?: ConfigLevel,
 ): Promise<void> {
   const coordinator = new StateCoordinator();
   await coordinator.withLock(async () => {
-    const declared = await declaredConfigSource(options, id);
+    const declared = await declaredConfigSource(options, id, level);
     if (
       expected &&
       (declared.file !== expected.file ||
@@ -461,24 +462,55 @@ export function configSourceDependencies(
       if (collections.has(use.collection)) blockers.push({ reason: "use", owner: use.owner });
   return blockers;
 }
-export async function removeDirectSource(options: MutationOptions, id: string): Promise<void> {
+export async function removeDirectSource(
+  options: MutationOptions,
+  id: string,
+  level?: ConfigLevel,
+): Promise<void> {
   const coordinator = new StateCoordinator();
   await coordinator.withLock(async () => {
-    const workspace = await readWorkspaceUnlocked(options, coordinator);
-    if (workspace.value.effective.status !== "complete")
-      throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
-    const source = capturedWorkspace(workspace.value)?.sources.get(id);
-    if (!source) throw new SkillCliError("SOURCE_NOT_FOUND", `Source not found: ${id}`);
-    if (source.contribution)
-      throw new SkillCliError("INVALID_ARGUMENT", "Config Source contributions are immutable");
+    if (!level) {
+      const workspace = await readWorkspaceUnlocked(options, coordinator);
+      if (workspace.value.effective.status !== "complete")
+        throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
+      const source = capturedWorkspace(workspace.value)?.sources.get(id);
+      if (!source) throw new SkillCliError("SOURCE_NOT_FOUND", `Source not found: ${id}`);
+      if (source.contribution)
+        throw new SkillCliError("INVALID_ARGUMENT", "Config Source contributions are immutable");
+      const state = await coordinator.read();
+      if (state.installed.some((item) => item.source === id))
+        throw new SkillCliError("CONFIG_CONFLICT", "Installed Skills still belong to this Source");
+      const original = decodeConfig(
+        await readFile(source.provenance.file!),
+        source.provenance.file!,
+      );
+      const next = edit(original, ["sources", id], undefined);
+      if (!userProjectConfigValidator(parse(next, [], { allowTrailingComma: true })))
+        throw new SkillCliError("CONFIG_INVALID", "Invalid declaration edit");
+      await coordinator.publish([{ target: source.provenance.file!, bytes: next }]);
+      return;
+    }
+    parseQualifiedName(id);
+    const project = await resolveProjectRoot(options.cwd, options.project, options.signal);
+    const file =
+      level === "global"
+        ? (options.userConfigPath ??
+          join(
+            process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"),
+            "skill-cli",
+            "config.jsonc",
+          ))
+        : join(project.root, level === "project" ? "skill-cli.jsonc" : "skill-cli.local.jsonc");
+    const original = decodeConfig(await readFile(file), file);
+    if (!parse(original, [], { allowTrailingComma: true }).sources?.[id])
+      throw new SkillCliError("SOURCE_NOT_FOUND", `Source not found: ${id}`);
     const state = await coordinator.read();
     if (state.installed.some((item) => item.source === id))
       throw new SkillCliError("CONFIG_CONFLICT", "Installed Skills still belong to this Source");
-    const original = decodeConfig(await readFile(source.provenance.file!), source.provenance.file!);
     const next = edit(original, ["sources", id], undefined);
     if (!userProjectConfigValidator(parse(next, [], { allowTrailingComma: true })))
       throw new SkillCliError("CONFIG_INVALID", "Invalid declaration edit");
-    await coordinator.publish([{ target: source.provenance.file!, bytes: next }]);
+    await coordinator.publish([{ target: file, bytes: next }]);
   });
 }
 export function contributedSourceBindings(

@@ -131,9 +131,68 @@ test("GitHub reads pinned tree metadata and requested blob bytes through its API
     expect(requests).toEqual([
       `/repos/acme/skills/commits/${commit}`,
       `/repos/acme/skills/git/trees/${"b".repeat(40)}`,
-      `/repos/acme/skills/commits/${commit}`,
-      `/repos/acme/skills/git/trees/${"b".repeat(40)}`,
       `/repos/acme/skills/git/blobs/${runObject}`,
+    ]);
+    await snapshot.close();
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("GitHub reads only the declared Source Root tree", async () => {
+  const requests: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const path = new URL(request.url).pathname;
+      requests.push(path);
+      if (path === `/repos/acme/skills/commits/${commit}`)
+        return Response.json({ sha: commit, commit: { tree: { sha: "a".repeat(40) } } });
+      if (path === `/repos/acme/skills/git/trees/${"a".repeat(40)}`)
+        return Response.json({
+          sha: "a".repeat(40),
+          truncated: false,
+          tree: [{ path: "skills", mode: "040000", type: "tree", sha: "b".repeat(40) }],
+        });
+      if (path === `/repos/acme/skills/git/trees/${"b".repeat(40)}`)
+        return Response.json({
+          sha: "b".repeat(40),
+          truncated: false,
+          tree: [
+            {
+              path: "only/SKILL.md",
+              mode: "100644",
+              type: "blob",
+              sha: "c".repeat(40),
+              size: 35,
+            },
+          ],
+        });
+      return Response.json({ message: "not found" }, { status: 404 });
+    },
+  });
+  try {
+    const snapshot = await openSource(
+      "github",
+      { origin: "git", url: "https://github.com/acme/skills.git", commit, path: "skills" },
+      provenance,
+      undefined,
+      undefined,
+      server.url.toString(),
+    );
+    expect(await Array.fromAsync(snapshot.list(""))).toEqual([
+      {
+        kind: "file",
+        path: "only/SKILL.md",
+        size: 35,
+        executable: false,
+        objectId: "c".repeat(40),
+      },
+    ]);
+    expect(requests).toEqual([
+      `/repos/acme/skills/commits/${commit}`,
+      `/repos/acme/skills/git/trees/${"a".repeat(40)}`,
+      `/repos/acme/skills/git/trees/${"b".repeat(40)}`,
     ]);
     await snapshot.close();
   } finally {

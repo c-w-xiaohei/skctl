@@ -74,6 +74,36 @@ test("MGMT-001 creates only the selected Global Project or Local Source target w
   }
 });
 
+test("GitHub Source shorthand remains readable after registration", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-github-source-"));
+  const state = join(root, "state");
+  try {
+    process.env.SKILL_CLI_STATE_DIR = state;
+    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    const core = createSkillCliCore({ cwd: root });
+
+    await core.configuration.change({
+      type: "source.register",
+      level: "project",
+      id: "example",
+      binding: { kind: "github", origin: "acme/example", root: "skills", ref: "main" },
+    });
+
+    expect((await core.workspace.get()).value.effective.sources).toContainEqual(
+      expect.objectContaining({
+        id: "example",
+        kind: "github",
+        origin: "https://github.com/acme/example",
+        root: "skills",
+        ref: "main",
+      }),
+    );
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Use changes are atomic, report their locked delta, and reject duplicate set entries", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-use-changes-"));
   const state = join(root, "state");

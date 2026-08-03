@@ -85,17 +85,46 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
     if (value === "global" || value === "project" || value === "local") return value;
     throw new SkillCliError("INVALID_ARGUMENT", "Level must be global, project, or local");
   };
-  const levelDescription =
-    "global writes the user config, project writes skill-cli.jsonc, local writes skill-cli.local.jsonc";
+  const scopeDescription =
+    "Declaration scope: global writes the user config, project writes skill-cli.jsonc, local writes skill-cli.local.jsonc";
   const flagsOf = (value: { opts?: () => Record<string, unknown> }): Record<string, unknown> =>
     value.opts?.() ?? Object.fromEntries(Object.entries(value));
+  const scopeOptions = (target: Command, defaultProject = true) =>
+    target
+      .option(
+        "--scope <scope>",
+        `${scopeDescription}${defaultProject ? ". Writes default to project" : ""}`,
+      )
+      .option("--level <level>", "Alias for --scope")
+      .option("-g", "Use global declaration scope")
+      .option("-p", "Use project declaration scope")
+      .option("-l", "Use local declaration scope");
+  const scope = (
+    flags: { opts?: () => Record<string, unknown> },
+    defaultScope: "global" | "project" | "local" | undefined = "project",
+  ) => {
+    const options = flagsOf(flags);
+    const selected = [
+      ...(options.scope === undefined ? [] : [["--scope", options.scope] as const]),
+      ...(options.level === undefined ? [] : [["--level", options.level] as const]),
+      ...(options.g ? [["-g", "global"] as const] : []),
+      ...(options.p ? [["-p", "project"] as const] : []),
+      ...(options.l ? [["-l", "local"] as const] : []),
+    ];
+    if (selected.length > 1)
+      throw new SkillCliError(
+        "INVALID_ARGUMENT",
+        `Use one scope option, received ${selected.map(([name]) => name).join(", ")}`,
+      );
+    return selected.length ? level(String(selected[0]![1])) : defaultScope;
+  };
   const command = new Command("skill-cli")
     .exitOverride()
     .configureOutput({
       writeOut: (value) => void stdout.write(value),
       writeErr: (value) => void stderr.write(value),
     })
-    .option("--project <path>")
+    .option("--project <path>", "Resolve project and local declarations from this path.")
     .addHelpText("after", "\nAgent access: skill-cli agent --help\n")
     .hook("preAction", (current) => {
       project = current.opts().project;
@@ -132,16 +161,19 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
       );
     });
 
-  const source = command.command("source");
+  const source = command
+    .command("source")
+    .description("Register discovery boundaries and inspect their candidate Skill Roots.");
   const sourceRegister = source
     .command("register <kind> <id> <origin>")
+    .description("Declare a Source. Run discover next to inspect its candidate Skill Roots.")
     .option(
       "--root <root>",
       "Origin root for local or remote sources; defaults to the origin root",
       "",
     )
-    .option("--ref <ref>")
-    .option("--level <level>", levelDescription, "project");
+    .option("--ref <ref>");
+  scopeOptions(sourceRegister);
   sourceRegister.action((kind, id, origin, flags) => {
     const options = flagsOf(flags);
     if (kind !== "local" && kind !== "git" && kind !== "github")
@@ -150,7 +182,7 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
       throw new SkillCliError("INVALID_ARGUMENT", "Remote Source requires --ref");
     return change({
       type: "source.register",
-      level: level(String(options.level ?? "project")),
+      level: scope(flags)!,
       id,
       binding:
         kind === "local"
@@ -165,11 +197,18 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
   });
   source
     .command("remove <id>")
-    .action((id) =>
-      management(`Removed source "${id}".`, () => core().management.removeSource({ source: id })),
-    );
+    .description("Remove a directly declared Source at one scope when it owns no installed Skills.")
+    .action((id, flags) => {
+      const selectedScope = scope(flags, undefined);
+      return management(
+        `Removed source "${id}"${selectedScope ? ` from ${selectedScope} scope` : ""}.`,
+        () => core().management.removeSource({ source: id, level: selectedScope }),
+      );
+    });
+  scopeOptions(source.commands.at(-1)!, false);
   source
     .command("discover <id>")
+    .description("Observe candidate Skill Roots at the tracked revision without installing them.")
     .option("--json")
     .action((id, flags) =>
       observation(
@@ -189,6 +228,9 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
 
   command
     .command("install <source> <path...>")
+    .description(
+      "Install reviewed candidate Skill Roots from a Source at an exact remote revision.",
+    )
     .option("--revision <revision>")
     .action(async (sourceId, paths, flags) => {
       const exactRevision =
@@ -203,9 +245,12 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
         `Installed ${result.value.length} skills from source "${sourceId}"${exactRevision ? ` at revision ${exactRevision}` : ""}${candidates ? `: ${candidates}` : ""}.\n`,
       );
     });
-  const update = command.command("update");
+  const update = command
+    .command("update")
+    .description("Review and apply Source updates for already installed Skills.");
   update
     .command("check <source>")
+    .description("Compare installed Skills with the Source's current tracked revision.")
     .option("--json")
     .action((sourceId, flags) =>
       observation(
@@ -233,6 +278,7 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
     );
   update
     .command("apply <source> <path...>")
+    .description("Apply reviewed Source changes at an exact remote revision.")
     .option("--remove <path...>")
     .option("--revision <revision>")
     .action(async (sourceId, paths, flags) => {
@@ -249,6 +295,7 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
     });
   command
     .command("rebind <source> <path> <owner>")
+    .description("Move an installed Skill to a different Source owner after review.")
     .option("--path <path>")
     .action((sourceId, path, owner, flags) =>
       management(`Rebound skill "${path}" from source "${sourceId}" to "${owner}".`, () =>
@@ -257,22 +304,27 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
     );
   command
     .command("uninstall <source> <path...>")
+    .description(
+      "Remove installed Skill materializations while preserving their Source declarations.",
+    )
     .action((sourceId, paths) =>
       management(`Uninstalled ${paths.length} skills from source "${sourceId}".`, () =>
         core().management.uninstall({ source: sourceId, paths }),
       ),
     );
 
-  const configs = command.command("config-source");
+  const configs = command
+    .command("config-source")
+    .description("Manage reusable Config origins and their adopted declarations.");
   configs
     .command("register <kind> <id> <origin>")
+    .description("Declare a reusable Config origin; observe and adopt it separately.")
     .option(
       "--root <root>",
       "Origin root for local or remote config sources; defaults to the origin root",
       "",
     )
     .option("--ref <ref>")
-    .option("--level <level>", levelDescription, "project")
     .action((kind, id, origin, flags) => {
       const options = flagsOf(flags);
       if (kind !== "local" && kind !== "git" && kind !== "github")
@@ -284,7 +336,7 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
         throw new SkillCliError("INVALID_ARGUMENT", "Remote Config Source requires --ref");
       return change({
         type: "config-source.register",
-        level: level(String(options.level ?? "project")),
+        level: scope(flags)!,
         id,
         binding:
           kind === "local"
@@ -297,11 +349,18 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
               },
       });
     });
+  scopeOptions(configs.commands.at(-1)!);
   configs
     .command("remove <id>")
-    .action((id) =>
-      management(`Removed config source "${id}".`, () => core().management.removeConfig({ id })),
-    );
+    .description("Remove a directly declared Config Source at one scope.")
+    .action((id, flags) => {
+      const selectedScope = scope(flags, undefined);
+      return management(
+        `Removed config source "${id}"${selectedScope ? ` from ${selectedScope} scope` : ""}.`,
+        () => core().management.removeConfig({ id, level: selectedScope }),
+      );
+    });
+  scopeOptions(configs.commands.at(-1)!, false);
   configs
     .command("observe <id>")
     .option("--json")
@@ -338,34 +397,40 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
       ),
     );
 
-  const collection = command.command("collection");
+  const collection = command
+    .command("collection")
+    .description(
+      "Create Collections and compose installed Skills with memberships, References, and Links.",
+    );
   collection
     .command("create <id>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Create an empty Collection declaration at one configuration level.")
     .action((collectionId, flags) =>
       change({
         type: "collection.create",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         collection: collectionId,
       }),
     );
+  scopeOptions(collection.commands.at(-1)!);
   collection
     .command("remove <id>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Remove an unreferenced, directly declared Collection.")
     .action((collectionId, flags) =>
       change({
         type: "collection.remove",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         collection: collectionId,
       }),
     );
+  scopeOptions(collection.commands.at(-1)!);
   collection
     .command("inspect <id>")
-    .option("--level <level>", levelDescription)
+    .description("Inspect a Collection's declarations, composition, and catalog disclosure.")
     .option("--json")
     .action(async (collectionId, flags) => {
       const options = flagsOf(flags);
-      const selectedLevel = options.level === undefined ? undefined : level(String(options.level));
+      const selectedLevel = scope(flags, undefined);
       const workspace = await core().workspace.get();
       const effective = workspace.value.effective;
       if (effective.status !== "complete")
@@ -436,92 +501,102 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
           ].join("\n") + "\n",
         );
     });
+  scopeOptions(collection.commands.at(-1)!, false);
   const member = collection.command("member");
   member
     .command("add <collection> <name> <source> <path>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Add an installed Skill address under a stable Collection entry name.")
     .action((collectionId, name, sourceId, path, flags) =>
       change({
         type: "collection.member.set",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         collection: collectionId,
         name,
         address: { source: sourceId, path },
       }),
     );
+  scopeOptions(member.commands.at(-1)!);
   member
     .command("remove <collection> <name>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Remove a direct Collection membership by its stable entry name.")
     .action((collectionId, name, flags) =>
       change({
         type: "collection.member.remove",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         collection: collectionId,
         name,
       }),
     );
+  scopeOptions(member.commands.at(-1)!);
   collection
     .command("import <from> <into>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Copy effective memberships once into an editable Collection declaration.")
     .action((from, into, flags) =>
       change({
         type: "collection.import",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         from,
         into,
       }),
     );
+  scopeOptions(collection.commands.at(-1)!);
   const reference = collection.command("reference");
   reference
     .command("add <collection> <name> <target> <description>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Expose a child Collection for progressive catalog navigation.")
     .action((collectionId, name, target, description, flags) =>
       change({
         type: "collection.reference.set",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         collection: collectionId,
         name,
         target,
         description,
       }),
     );
+  scopeOptions(reference.commands.at(-1)!);
   reference
     .command("remove <collection> <name>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Remove one named child Collection reference.")
     .action((collectionId, name, flags) =>
       change({
         type: "collection.reference.remove",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         collection: collectionId,
         name,
       }),
     );
+  scopeOptions(reference.commands.at(-1)!);
   const link = collection.command("link");
   link
     .command("add <collection> <target>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Live-merge a target Collection's effective members into this Collection.")
     .action((collectionId, target, flags) =>
       change({
         type: "collection.link.set",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         collection: collectionId,
         target,
         linked: true,
       }),
     );
+  scopeOptions(link.commands.at(-1)!);
   link
     .command("remove <collection> <target>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Remove one live Collection membership link.")
     .action((collectionId, target, flags) =>
       change({
         type: "collection.link.set",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         collection: collectionId,
         target,
         linked: false,
       }),
     );
-  const use = command.command("use");
+  scopeOptions(link.commands.at(-1)!);
+  const use = command
+    .command("use")
+    .description("Manage direct catalog roots declared at one configuration scope.");
   const changeUse = async (
     value: Extract<ConfigChange, { readonly type: "use.set" | "use.add" | "use.remove" }>,
   ) => {
@@ -531,15 +606,17 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
     const removed = delta.before.filter((id) => !delta.after.includes(id));
     const retained = delta.after.filter((id) => delta.before.includes(id));
     stdout.write(
-      `Added: ${added.join(", ") || "none"}. Retained: ${retained.join(", ") || "none"}. Removed: ${removed.join(", ") || "none"}.\n`,
+      `Scope: ${value.level}. Added: ${added.join(", ") || "none"}. Retained: ${retained.join(", ") || "none"}. Removed: ${removed.join(", ") || "none"}.\n`,
     );
   };
   use
     .command("list")
-    .option("--level <level>", levelDescription, "project")
+    .description(
+      "List direct catalog roots at one scope; this does not show the effective catalog.",
+    )
     .option("--json")
     .action(async (flags) => {
-      const selectedLevel = level(String(flagsOf(flags).level ?? "project"));
+      const selectedLevel = scope(flags);
       const workspace = await core().workspace.get();
       const collections =
         workspace.value.configs
@@ -547,90 +624,108 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
           ?.direct.collectionUse.map((item) => item.collection) ?? [];
       stdout.write(
         flagsOf(flags).json
-          ? `${JSON.stringify({ level: selectedLevel, collections })}\n`
+          ? `${JSON.stringify({ scope: selectedLevel, collections })}\n`
           : `${collections.join("\n")}${collections.length ? "\n" : ""}`,
       );
     });
+  scopeOptions(use.commands.at(-1)!);
   use
     .command("add <id>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Add one direct catalog root at one scope.")
     .action((id, flags) =>
       changeUse({
         type: "use.add",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags),
         collection: id,
       }),
     );
+  scopeOptions(use.commands.at(-1)!);
   use
     .command("remove <id>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Remove one direct catalog root from one scope.")
     .action((id, flags) =>
       changeUse({
         type: "use.remove",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags),
         collection: id,
       }),
     );
+  scopeOptions(use.commands.at(-1)!);
   use
     .command("set <collection...>")
-    .option("--level <level>", levelDescription, "project")
+    .description("Replace all direct catalog roots at one scope.")
     .action((collections, flags) =>
       changeUse({
         type: "use.set",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags),
         collections,
       }),
     );
-  const managed = command.command("managed");
+  scopeOptions(use.commands.at(-1)!);
+  const managed = command
+    .command("managed")
+    .description("Enable or disable the managed OpenCode catalog projection.");
   managed
     .command("set")
-    .option("--level <level>", levelDescription, "project")
+    .description("Enable the managed OpenCode catalog at one configuration level.")
     .action((flags) =>
       change({
         type: "agent.managed.set",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         managed: true,
       }),
     );
+  scopeOptions(managed.commands.at(-1)!);
   managed
     .command("unset")
-    .option("--level <level>", levelDescription, "project")
+    .description("Disable the managed OpenCode catalog at one configuration level.")
     .action((flags) =>
       change({
         type: "agent.managed.set",
-        level: level(String(flagsOf(flags).level ?? "project")),
+        level: scope(flags)!,
         managed: false,
       }),
     );
+  scopeOptions(managed.commands.at(-1)!);
   command
     .command("gc")
+    .description("Permanently delete unreferenced cache material.")
     .action(() =>
       management("Garbage-collected unreferenced cache data.", () => core().management.gc()),
     );
-  command.command("repair").action(async () => {
-    const result = await core().workspace.get();
-    stdout.write(
-      `Checked workspace state${result.diagnostics.length ? ` with ${result.diagnostics.length} diagnostics` : ""}.\n`,
-    );
-  });
-  const content = command.command("content");
-  content.command("load <selector>").action(async (selector) => {
-    const result = await core().content.load({ selector });
-    const { value } = result;
-    stdout.write(
-      [
-        `selector ${value.selector}`,
-        `name ${value.name}`,
-        `description ${value.description}`,
-        `path ${value.path}`,
-        `source ${value.provenance.source}`,
-        ...(value.provenance.revision ? [`revision ${value.provenance.revision}`] : []),
-        "---",
-      ].join("\n") + `\n${value.text}`,
-    );
-  });
+  command
+    .command("repair")
+    .description("Check workspace configuration and installed Skill state for diagnostics.")
+    .action(async () => {
+      const result = await core().workspace.get();
+      stdout.write(
+        `Checked workspace state${result.diagnostics.length ? ` with ${result.diagnostics.length} diagnostics` : ""}.\n`,
+      );
+    });
+  const content = command
+    .command("content")
+    .description("Inspect or run installed Skills without changing catalog declarations.");
+  content
+    .command("load <selector>")
+    .description("Load an installed Skill's SKILL.md and provenance.")
+    .action(async (selector) => {
+      const result = await core().content.load({ selector });
+      const { value } = result;
+      stdout.write(
+        [
+          `selector ${value.selector}`,
+          `name ${value.name}`,
+          `description ${value.description}`,
+          `path ${value.path}`,
+          `source ${value.provenance.source}`,
+          ...(value.provenance.revision ? [`revision ${value.provenance.revision}`] : []),
+          "---",
+        ].join("\n") + `\n${value.text}`,
+      );
+    });
   content
     .command("run <selector> [argv...]")
+    .description("Run a command with an installed Skill materialized as its working directory.")
     .allowUnknownOption()
     .action((selector, argv) => {
       if (!argv.length)

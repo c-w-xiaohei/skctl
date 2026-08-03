@@ -97,6 +97,50 @@ exec /usr/bin/git "$@"
   }
 });
 
+test("Generic Git fetches remote Snapshots without eagerly downloading blobs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-filter-"));
+  const work = join(root, "work");
+  const bare = join(root, "remote.git");
+  const bin = join(root, "bin");
+  const log = join(root, "git.log");
+  await mkdir(work);
+  await mkdir(bin);
+  await git(work, "init");
+  await git(work, "config", "user.email", "test@example.test");
+  await git(work, "config", "user.name", "Test");
+  await writeFile(join(work, "SKILL.md"), "---\nname: filtered\ndescription: Filtered\n---\n");
+  await git(work, "add", ".");
+  await git(work, "commit", "-m", "initial");
+  const commit = await git(work, "rev-parse", "HEAD");
+  await git(root, "init", "--bare", bare);
+  await git(work, "remote", "add", "origin", bare);
+  await git(work, "push", "origin", "HEAD:main");
+  await writeFile(
+    join(bin, "git"),
+    `#!/bin/sh
+printf '%s\\n' "$*" >> "${log}"
+exec /usr/bin/git "$@"
+`,
+    { mode: 0o755 },
+  );
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}:${previousPath}`;
+  try {
+    const snapshot = await openGitSource("filtered", bare, commit, "", {
+      source: "filtered",
+      origin: "git",
+      declaration: { level: "project" },
+      stability: "immutable",
+      revision: commit,
+    });
+    await snapshot.close();
+    expect(await readFile(log, "utf8")).toContain("fetch --no-tags --depth=1 --filter=blob:none");
+  } finally {
+    process.env.PATH = previousPath;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Generic Git never substitutes a missing pinned commit", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-missing-"));
   try {

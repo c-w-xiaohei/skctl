@@ -510,7 +510,7 @@ export function createManagement(options: CoreFactoryOptions): ManagementCapabil
     },
     async removeSource(request, operation) {
       if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
-      await removeDirectSource(options, request.source);
+      await removeDirectSource(options, request.source, request.level);
       return { value: undefined, diagnostics: [] };
     },
     async previewUninstall(request, operation) {
@@ -807,11 +807,11 @@ export function createManagement(options: CoreFactoryOptions): ManagementCapabil
       if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
       // The configuration owner performs the atomic JSONC/state publication; management owns this lifecycle entry point.
       const { removeConfigSource } = await import("./internal/config");
-      const declared = await declaredConfigSource(options, request.id);
+      const declared = await declaredConfigSource(options, request.id, request.level);
       const expected = { file: declared.file, bytes: await readFile(declared.file) };
       await publicationHook?.();
       try {
-        await removeConfigSource(options, request.id, expected);
+        await removeConfigSource(options, request.id, expected, request.level);
       } catch (error) {
         if (error instanceof SkillCliError && error.code === "SOURCE_NOT_FOUND")
           throw new SkillCliError("CONFIG_CONFLICT", "Config Source changed during removal");

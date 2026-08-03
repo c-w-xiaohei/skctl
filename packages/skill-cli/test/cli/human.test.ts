@@ -267,7 +267,7 @@ test("CLI-001 maps collection, use, managed, and content commands without legacy
   expect(await runHumanCommand(["profile", "set", "x"], options)).toBe(2);
 });
 
-test("MGMT-031 maps Config Source removal only through management", async () => {
+test("MGMT-031 maps scoped Config Source removal only through management", async () => {
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
@@ -275,8 +275,8 @@ test("MGMT-031 maps Config Source removal only through management", async () => 
     stdout: { write() {} },
     stderr: { write() {} },
   };
-  expect(await runHumanCommand(["config-source", "remove", "module"], options)).toBe(0);
-  expect(calls).toEqual([["removeConfig", { id: "module" }]]);
+  expect(await runHumanCommand(["config-source", "remove", "module", "-g"], options)).toBe(0);
+  expect(calls).toEqual([["removeConfig", { id: "module", level: "global" }]]);
   expect(calls).not.toContainEqual(expect.objectContaining({ type: "config-source.remove" }));
 });
 
@@ -411,6 +411,55 @@ test("human help is written to stdout and succeeds without an error", async () =
   }
 });
 
+test("use Help names declaration scope and accepts --scope as the primary option", async () => {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  expect(
+    await runHumanCommand(["use", "add", "catalog", "--scope", "global"], {
+      cwd: "/tmp",
+      createCore: () => core([]),
+      stdout: { write: (value) => stdout.push(String(value)) },
+      stderr: { write: (value) => stderr.push(String(value)) },
+    }),
+  ).toBe(0);
+  expect(
+    await runHumanCommand(["use", "add", "--help"], {
+      cwd: "/tmp",
+      stdout: { write: (value) => stdout.push(String(value)) },
+      stderr: { write: (value) => stderr.push(String(value)) },
+    }),
+  ).toBe(0);
+  expect(stdout.join("")).toContain("--scope <scope>");
+  expect(stdout.join("")).toContain("direct catalog root");
+  expect(stderr.join("")).toBe("");
+});
+
+test("declaration commands accept --level and -g/-p/-l as equivalent scope selectors", async () => {
+  const calls: unknown[] = [];
+  const options = {
+    cwd: "/tmp",
+    createCore: () => core(calls),
+    stdout: { write() {} },
+    stderr: { write() {} },
+  };
+  for (const argv of [
+    ["collection", "create", "global", "-g"],
+    ["collection", "create", "project", "-p"],
+    ["collection", "create", "local", "-l"],
+    ["collection", "create", "level", "--level", "global"],
+  ])
+    expect(await runHumanCommand(argv, options)).toBe(0);
+  expect(calls).toEqual([
+    { type: "collection.create", level: "global", collection: "global" },
+    { type: "collection.create", level: "project", collection: "project" },
+    { type: "collection.create", level: "local", collection: "local" },
+    { type: "collection.create", level: "global", collection: "level" },
+  ]);
+  expect(
+    await runHumanCommand(["collection", "create", "ambiguous", "-g", "--level", "local"], options),
+  ).toBe(2);
+});
+
 test("human mutations describe their completed action, level, target file, and installed skills", async () => {
   const calls: unknown[] = [];
   const output: string[] = [];
@@ -448,6 +497,7 @@ test("human mutations describe their completed action, level, target file, and i
   expect(output.join("")).toContain(
     'Added member "review" to collection "engineering" at project level in /tmp/project.jsonc.',
   );
+  expect(output.join("")).toContain("Scope: project.");
   expect(output.join("")).toContain("Added: engineering. Retained: none. Removed: none.");
   expect(output.join("")).not.toContain("Set collection use");
   expect(output.join("")).toContain(

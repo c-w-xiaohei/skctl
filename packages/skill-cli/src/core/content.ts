@@ -79,7 +79,8 @@ async function safeEntry(root: string, path: string) {
   for (const part of parts.slice(0, -1)) {
     current = join(current, part);
     const stat = await lstat(current).catch(() => undefined);
-    if (!stat?.isDirectory() || stat.isSymbolicLink())
+    if (!stat) throw new SkillCliError("RESOURCE_NOT_FOUND", "Resource not found");
+    if (!stat.isDirectory() || stat.isSymbolicLink())
       throw new SkillCliError("UNSUPPORTED_ENTRY", "Resource has an unsafe path");
   }
   return { candidate, stat: await lstat(candidate).catch(() => undefined) };

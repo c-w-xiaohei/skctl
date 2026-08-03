@@ -822,7 +822,7 @@ export interface ManagementCapability {
     options?: OperationOptions,
   ): Promise<OperationResult<SourceRemovalImpact>>;
   removeSource(
-    request: { readonly source: string },
+    request: { readonly source: string; readonly level?: ConfigLevel },
     options?: OperationOptions,
   ): Promise<OperationResult<void>>;
   previewUninstall(
@@ -872,7 +872,7 @@ export interface ManagementCapability {
     options?: OperationOptions,
   ): Promise<OperationResult<ConfigSourceObservation>>;
   removeConfig(
-    request: { readonly id: string },
+    request: { readonly id: string; readonly level?: ConfigLevel },
     options?: OperationOptions,
   ): Promise<OperationResult<void>>;
   discover(

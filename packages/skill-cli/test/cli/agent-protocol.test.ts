@@ -207,6 +207,22 @@ test("agent browse and load permit a reference-reachable category but reject an 
   }
 });
 
+test("agent read reports a missing resource directory as not found", async () => {
+  const previousState = process.env.SKILL_CLI_STATE_DIR;
+  const { root, global } = await fixture();
+  try {
+    const result = await command(root, global, ["read", "gingiris:router", "docs/missing.md"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("Resource not found\n");
+  } finally {
+    if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
+    else process.env.SKILL_CLI_STATE_DIR = previousState;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("agent loads a ready child Skill without requiring unrelated child members", async () => {
   const previousState = process.env.SKILL_CLI_STATE_DIR;
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-partial-child-"));
