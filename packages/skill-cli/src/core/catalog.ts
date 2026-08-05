@@ -57,7 +57,15 @@ export function createCatalog(factory: CoreFactoryOptions): CatalogCapability {
           value: {
             status: "available",
             scope: { kind: "root" },
-            items: value.rootCollections.map((id) => ({ kind: "collection", id, name: id })),
+            items: value.rootCollections.map((id) => {
+              const collection = effective.collectionsView.find((candidate) => candidate.id === id);
+              return {
+                kind: "collection" as const,
+                id,
+                name: id,
+                ...(collection?.description ? { description: collection.description } : {}),
+              };
+            }),
           },
           diagnostics: value.workspace.diagnostics,
         };

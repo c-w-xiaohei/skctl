@@ -50,6 +50,7 @@ test("PROJ-015/016 projects root and collection nodes without aliases or graph t
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: {
           alpha: {
+            description: "Engineering review workflows",
             members: { review: { source: "source", path: "review" } },
             references: { docs: { collection: "zeta", description: "Documentation" } },
           },
@@ -68,7 +69,14 @@ test("PROJ-015/016 projects root and collection nodes without aliases or graph t
       expect.objectContaining({
         status: "available",
         scope: { kind: "root" },
-        items: [{ kind: "collection", id: "alpha", name: "alpha" }],
+        items: [
+          {
+            kind: "collection",
+            id: "alpha",
+            name: "alpha",
+            description: "Engineering review workflows",
+          },
+        ],
       }),
     );
     await expect(core.catalog.browse({ collection: "alpha" })).resolves.toMatchObject({

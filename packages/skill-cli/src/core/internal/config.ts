@@ -95,6 +95,7 @@ const reference = Type.Object(
 );
 const collection = Type.Object(
   {
+    description: Type.Optional(Type.String({ minLength: 1 })),
     members: Type.Optional(Type.Record(Type.String(), address)),
     links: Type.Optional(Type.Array(Type.String())),
     references: Type.Optional(Type.Record(Type.String(), reference)),
@@ -547,6 +548,7 @@ function contributedCollection(
 ) {
   const namespace = (id: string) => `${configId}/${parseQualifiedName(id)}`;
   return {
+    ...(declaration.description ? { description: declaration.description } : {}),
     ...(declaration.members
       ? {
           members: Object.fromEntries(
@@ -960,6 +962,9 @@ export async function readWorkspaceUnlocked(
           };
           return {
             id,
+            ...(declaredContributions[0]?.declaration.description
+              ? { description: declaredContributions[0].declaration.description }
+              : {}),
             declared: declaredContributions.map((item) => item.owner!),
             repository: {
               derived: [...(resolved.origins.get(id)?.values() ?? [])].some((paths) =>

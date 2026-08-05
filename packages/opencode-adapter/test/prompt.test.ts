@@ -17,7 +17,14 @@ const collection = {
 describe("catalog prompt", () => {
   test("renders collection and Skill nodes with exact commands", () => {
     const output = renderCatalog({ kind: "collection", id: "alpha" }, [entry, collection]);
-    expect(output).toContain(JSON.stringify(entry));
+    expect(output).toContain('<managed_skill_catalog scope="collection" id="alpha">');
+    expect(output).toContain("<collection>");
+    expect(output).toContain("<id>team/release</id>");
+    expect(output).toContain("<skill>");
+    expect(output).toContain('<selector>alpha:deploy"x</selector>');
+    expect(output).toContain("load it before planning or answering");
+    expect(output).toContain("Use only exact displayed IDs and selectors");
+    expect(output).toContain("without reading CLI help");
     for (const command of [
       "skill-cli agent browse <collection-id>",
       "skill-cli agent load <selector>",
@@ -26,6 +33,7 @@ describe("catalog prompt", () => {
       "skill-cli agent run <selector> -- <command> [args...]",
     ])
       expect(output).toContain(command);
+    expect(output).not.toContain(JSON.stringify(entry));
     expect(output).not.toContain("provenance");
   });
 

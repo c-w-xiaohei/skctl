@@ -179,6 +179,7 @@ export interface ConfigSourceView {
 }
 export interface CollectionView {
   readonly id: string;
+  readonly description?: string;
   readonly declared: readonly ConfigDeclarationOwner[];
   readonly repository: {
     readonly derived: boolean;

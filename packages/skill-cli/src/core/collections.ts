@@ -9,6 +9,7 @@ export interface InstalledIdentity extends SkillAddress {
   readonly repository?: string;
 }
 export interface CollectionDeclaration {
+  readonly description?: string;
   readonly members?: Readonly<Record<string, SkillAddress>>;
   readonly links?: readonly string[];
   readonly references?: Readonly<

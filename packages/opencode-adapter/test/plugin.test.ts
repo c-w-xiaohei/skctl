@@ -46,7 +46,8 @@ describe("OpenCode plugin", () => {
     const hooks = await plugin(input(root));
     const output = { system: [] as string[] };
     await hooks["experimental.chat.system.transform"]!({ model: {} as never }, output);
-    expect(output.system[0]).toContain('"id":"engineering"');
+    expect(output.system[0]).toContain("<id>engineering</id>");
+    expect(output.system[0]).toContain("<description>Engineering skills</description>");
     expect(output.system[0]).toContain("skill-cli agent browse <collection-id>");
   });
 
