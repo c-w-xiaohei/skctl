@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { arch, platform, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -19,7 +19,7 @@ if (!currentNative) throw new Error(`Unsupported native host ${platform()}-${arc
 export const buildMetadata = {
   nativeArtifact: currentNative.artifact,
   nativeTarget: currentNative.target,
-  pluginEntry: "dist/index.js",
+  pluginEntry: "opencode-adapter.js",
   pluginDeclaration: "dist/index.d.ts",
 } as const;
 export const pluginPackageFiles = [
@@ -84,6 +84,7 @@ const releaseMetadataFiles = ["SHA256SUMS", "release-metadata.json"] as const;
 const generatedReleaseFiles = [
   ...Object.values(nativeTargets).map((target) => target.artifact),
   "opencode-adapter.tgz",
+  "opencode-adapter.js",
   ...releaseMetadataFiles,
 ] as const;
 
@@ -93,15 +94,17 @@ async function prepareReleaseOutput(outputRoot: string): Promise<void> {
   const known = new Set<string>(generatedReleaseFiles);
   const foreign = files.filter((file) => !known.has(file));
   if (foreign.length) throw new Error(`Unexpected release output files: ${foreign.join(", ")}`);
-  await Promise.all([...known].map((file) => rm(join(outputRoot, file), { force: true })));
 }
 
-async function writeReleaseMetadata(outputRoot: string, files: readonly string[]): Promise<void> {
-  const actual = await regularFiles(outputRoot);
-  if (JSON.stringify(actual) !== JSON.stringify([...files].sort()))
-    throw new Error(`Unexpected generated release files: ${actual.join(", ")}`);
+async function writeReleaseMetadata(outputRoot: string): Promise<void> {
+  const actual = (await regularFiles(outputRoot)).filter(
+    (file) => !releaseMetadataFiles.includes(file as (typeof releaseMetadataFiles)[number]),
+  );
+  const known = new Set<string>(generatedReleaseFiles);
+  const foreign = actual.filter((file) => !known.has(file));
+  if (foreign.length) throw new Error(`Unexpected generated release files: ${foreign.join(", ")}`);
   const sums = await Promise.all(
-    files.map(async (file) => `${await sha256(join(outputRoot, file))}  ${file}`),
+    actual.map(async (file) => `${await sha256(join(outputRoot, file))}  ${file}`),
   );
   await writeFile(join(outputRoot, "SHA256SUMS"), `${sums.join("\n")}\n`);
   const app = JSON.parse(await readFile(appManifest, "utf8")) as { version: string };
@@ -118,7 +121,7 @@ async function writeReleaseMetadata(outputRoot: string, files: readonly string[]
         native,
         artifacts: Object.fromEntries(
           await Promise.all(
-            files.map(async (file) => [file, await sha256(join(outputRoot, file))]),
+            actual.map(async (file) => [file, await sha256(join(outputRoot, file))]),
           ),
         ),
       },
@@ -149,7 +152,7 @@ async function buildNative(outputRoot: string): Promise<void> {
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
-  await writeReleaseMetadata(outputRoot, [currentNative.artifact]);
+  await writeReleaseMetadata(outputRoot);
 }
 
 async function buildPlugin(outputRoot: string): Promise<void> {
@@ -204,6 +207,7 @@ async function buildPlugin(outputRoot: string): Promise<void> {
     if (JSON.stringify(files) !== JSON.stringify(pluginPackageFiles))
       throw new Error(`Unexpected plugin package contents: ${files.join(", ")}`);
     const tarball = join(outputRoot, "opencode-adapter.tgz");
+    await copyFile(join(dist, "index.js"), join(outputRoot, "opencode-adapter.js"));
     await run(["tar", "-C", staging, "-czf", tarball, "package"]);
     const tarContents = (await run(["tar", "-tzf", tarball])).stdout;
     const expected = pluginPackageFiles.map((file) => `package/${file}`).sort();
@@ -220,7 +224,7 @@ async function buildPlugin(outputRoot: string): Promise<void> {
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
-  await writeReleaseMetadata(outputRoot, ["opencode-adapter.tgz"]);
+  await writeReleaseMetadata(outputRoot);
 }
 
 if (import.meta.main) {

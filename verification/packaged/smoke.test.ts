@@ -23,7 +23,7 @@ describe("packaged release orchestration", () => {
     expect(buildMetadata.nativeTarget).toBe(
       `bun-${process.platform === "win32" ? "windows" : process.platform}-${process.arch}-modern`,
     );
-    expect(buildMetadata.pluginEntry).toBe("dist/index.js");
+    expect(buildMetadata.pluginEntry).toBe("opencode-adapter.js");
     expect(buildMetadata.pluginDeclaration).toBe("dist/index.d.ts");
     expect(pluginPackageFiles).toEqual([
       "dist/index.d.ts",
@@ -242,6 +242,7 @@ describe("packaged release orchestration", () => {
         pluginOutput,
       ]);
       expect(await build.exited).toBe(0);
+      expect((await stat(join(pluginOutput, "opencode-adapter.js"))).isFile()).toBe(true);
       const unpack = Bun.spawn([
         "tar",
         "-xzf",
@@ -268,7 +269,7 @@ describe("packaged release orchestration", () => {
     }
   });
 
-  test("rejects foreign release output and publishes only native generated files", async () => {
+  test("rejects foreign release output and preserves generated artifacts", async () => {
     const output = await mkdtemp(join(tmpdir(), "skill-cli-native-release-"));
     try {
       await writeFile(join(output, "foreign-artifact"), "foreign");
@@ -296,6 +297,18 @@ describe("packaged release orchestration", () => {
       const metadata = JSON.parse(await readFile(join(output, "release-metadata.json"), "utf8"));
       expect(Object.keys(metadata.artifacts)).toEqual([buildMetadata.nativeArtifact]);
       expect(await Bun.file(join(output, buildMetadata.nativeArtifact)).text()).not.toBe("stale");
+      const plugin = join(output, "opencode-adapter.js");
+      await writeFile(plugin, "plugin");
+      const rebuilt = Bun.spawn([
+        process.execPath,
+        "scripts/build.ts",
+        "native",
+        "--output-root",
+        output,
+      ]);
+      expect(await rebuilt.exited).toBe(0);
+      expect(await Bun.file(plugin).text()).toBe("plugin");
+      expect(await Bun.file(join(output, "SHA256SUMS")).text()).toContain("opencode-adapter.js");
     } finally {
       await rm(output, { recursive: true, force: true });
     }

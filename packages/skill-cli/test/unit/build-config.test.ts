@@ -85,8 +85,7 @@ test("build module preserves release, plugin packaging, and import-safe behavior
   expect(buildSource).toContain("export const pluginPackageFiles");
   expect(buildSource).toContain("async function buildPlugin");
   expect(buildSource).toContain('"opencode-adapter.tgz"');
-  expect(buildSource).toContain("await writeReleaseMetadata(outputRoot, [currentNative.artifact])");
-  expect(buildSource).toContain('await writeReleaseMetadata(outputRoot, ["opencode-adapter.tgz"])');
+  expect(buildSource).toContain("await writeReleaseMetadata(outputRoot)");
   expect(buildSource).toContain("if (import.meta.main)");
 });
 
