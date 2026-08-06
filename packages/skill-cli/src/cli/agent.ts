@@ -1,5 +1,6 @@
 import { SkillCliError, type SkillCliCore } from "../core/api";
 import { createSkillCliCore } from "../core/create-core";
+import { renderAgentCatalog, unavailableCatalogPrompt } from "./agent-prompt";
 
 type AgentOperation = "browse" | "search" | "load" | "read" | "download" | "run";
 
@@ -142,15 +143,10 @@ export async function runAgentCommand(
     if (parsed.operation === "browse") {
       const result = await core.catalog.browse({ collection: selector });
       if (result.value.status === "unavailable") {
-        stdout.write(`${JSON.stringify({ unavailable: true })}\n`);
+        stdout.write(`${unavailableCatalogPrompt}\n`);
         return 0;
       }
-      stdout.write(
-        `${JSON.stringify({
-          scope: result.value.scope,
-          items: result.value.items,
-        })}\n`,
-      );
+      stdout.write(renderAgentCatalog(result.value.scope, result.value.items));
     } else if (parsed.operation === "search") {
       const result = await core.catalog.search({
         query: selector!,

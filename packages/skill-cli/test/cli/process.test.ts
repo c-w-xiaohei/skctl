@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("CLI-002 process agent browse writes clean root catalog JSON", async () => {
+test("CLI-002 process agent browse writes an agent-ready root catalog", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-process-"));
   const state = join(root, "state");
   const configHome = join(root, "config");
@@ -15,7 +15,12 @@ test("CLI-002 process agent browse writes clean root catalog JSON", async () => 
       join(root, "skill-cli.jsonc"),
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
-        collections: { c: { members: { review: { source: "source", path: "review" } } } },
+        collections: {
+          c: {
+            description: "Code review workflows",
+            members: { review: { source: "source", path: "review" } },
+          },
+        },
         use: ["c"],
       }),
     );
@@ -48,10 +53,12 @@ test("CLI-002 process agent browse writes clean root catalog JSON", async () => 
     });
     expect(await command.exited).toBe(0);
     expect(await new Response(command.stderr).text()).toBe("");
-    expect(JSON.parse(await new Response(command.stdout).text())).toEqual({
-      scope: { kind: "root" },
-      items: [{ kind: "collection", id: "c", name: "c" }],
-    });
+    const stdout = await new Response(command.stdout).text();
+    expect(stdout).toContain("Managed Skills are progressively disclosed");
+    expect(stdout).toContain("skill-cli agent browse <collection-id>");
+    expect(stdout).toContain('<managed_skill_catalog scope="root">');
+    expect(stdout).toContain("<id>c</id>");
+    expect(stdout).toContain("<description>Code review workflows</description>");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

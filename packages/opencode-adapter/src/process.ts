@@ -2,23 +2,6 @@ import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { isAbsolute, join, resolve, win32 } from "node:path";
 
-export type CatalogItem =
-  | {
-      readonly kind: "collection";
-      readonly id: string;
-      readonly name: string;
-      readonly description?: string;
-    }
-  | {
-      readonly kind: "skill";
-      readonly selector: string;
-      readonly name: string;
-      readonly description: string;
-    };
-export type CatalogScope =
-  | { readonly kind: "root" }
-  | { readonly kind: "collection"; readonly id: string };
-
 export interface ChildProcess {
   readonly stdout: ReadableStream<Uint8Array> | null;
   readonly stderr: ReadableStream<Uint8Array> | null;
@@ -38,7 +21,6 @@ export class AdapterProcessError extends Error {
     readonly code: string,
     readonly status?: number | null,
     readonly stderr = "",
-    readonly hostProbe = false,
   ) {
     super(code);
   }
@@ -61,8 +43,6 @@ export interface ProcessClientOptions {
 }
 
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-const candidateHost = "1.18.4";
-
 function defaultRunner(): ProcessRunner {
   return {
     spawn(argv, options) {
@@ -232,113 +212,6 @@ function text(bytes: Uint8Array): string {
   }
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  return actual.length === keys.length && actual.every((key, index) => key === keys[index]);
-}
-
-function validSelector(value: unknown): value is string {
-  if (typeof value !== "string" || (value.match(/:/g) ?? []).length !== 1) return false;
-  const [collection, name] = value.split(":");
-  return validName(collection, true) && validName(name, false);
-}
-
-function validName(value: unknown, qualified: boolean): value is string {
-  if (typeof value !== "string" || !value) return false;
-  const segments = qualified ? value.split("/") : [value];
-  return segments.every(
-    (segment) =>
-      !!segment &&
-      Buffer.byteLength(segment) <= 128 &&
-      segment === segment.normalize("NFC") &&
-      segment !== "." &&
-      segment !== ".." &&
-      ![...segment].some(
-        (character) =>
-          /\s/u.test(character) ||
-          character.codePointAt(0)! < 32 ||
-          character.codePointAt(0) === 127 ||
-          ":\\/#".includes(character),
-      ),
-  );
-}
-
-function validText(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && Buffer.byteLength(value) <= 1_048_576;
-}
-
-function validItem(value: unknown): value is CatalogItem {
-  if (!isObject(value) || !validText(value.name)) return false;
-  if (value.kind === "skill")
-    return (
-      validSelector(value.selector) &&
-      validText(value.description) &&
-      hasExactKeys(value, ["description", "kind", "name", "selector"])
-    );
-  return (
-    value.kind === "collection" &&
-    validName(value.id, true) &&
-    (value.description === undefined || validText(value.description)) &&
-    hasExactKeys(
-      value,
-      value.description === undefined
-        ? ["id", "kind", "name"]
-        : ["description", "id", "kind", "name"],
-    )
-  );
-}
-
-type CatalogEnvelope =
-  | {
-      readonly type: "success";
-      readonly scope: CatalogScope;
-      readonly items: readonly CatalogItem[];
-    }
-  | { readonly type: "unavailable" }
-  | { readonly type: "error" };
-
-function parseCatalog(stdout: Uint8Array, status: number | null): CatalogEnvelope {
-  let value: unknown;
-  try {
-    value = JSON.parse(text(stdout));
-  } catch {
-    throw new AdapterProcessError("PROTOCOL");
-  }
-  if (
-    isObject(value) &&
-    hasExactKeys(value, ["unavailable"]) &&
-    value.unavailable === true &&
-    status === 0
-  )
-    return { type: "unavailable" };
-  if (
-    !isObject(value) ||
-    !hasExactKeys(value, ["items", "scope"]) ||
-    !Array.isArray(value.items) ||
-    !value.items.every(validItem) ||
-    !isObject(value.scope) ||
-    !(
-      (value.scope.kind === "root" && hasExactKeys(value.scope, ["kind"])) ||
-      (value.scope.kind === "collection" &&
-        validName(value.scope.id, true) &&
-        hasExactKeys(value.scope, ["id", "kind"]))
-    ) ||
-    status !== 0
-  )
-    throw new AdapterProcessError("PROTOCOL");
-  if (value.scope.kind !== "root" || value.items.some((item) => item.kind !== "collection"))
-    throw new AdapterProcessError("PROTOCOL");
-  return {
-    type: "success",
-    scope: value.scope as CatalogScope,
-    items: value.items as CatalogItem[],
-  };
-}
-
 const diagnosticLimit = 4096;
 const truncatedMarker = " [truncated]";
 
@@ -395,55 +268,15 @@ export function createProcessClient(options: ProcessClientOptions = {}) {
   const platform = options.platform ?? (process.platform === "win32" ? "win32" : "posix");
   const pathExt = options.pathExt ?? env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
   const skillCli = resolveFromPath("skill-cli", path, options.exists, platform, pathExt);
-  const host = resolveFromPath("opencode", path, options.exists, platform, pathExt);
-  let hostVersion: Promise<string> | undefined;
-
-  async function version(): Promise<string> {
-    if (!hostVersion)
-      hostVersion = (async () => {
-        try {
-          const executable = await host;
-          if (!executable) throw new AdapterProcessError("HOST_NOT_FOUND");
-          const result = await execute(runner, [executable, "--version"], {
-            env,
-            timeoutMs: 1_000,
-            stdoutLimit: 4_096,
-            stderrLimit: 4_096,
-            terminationGraceMs,
-            cleanupTimeoutMs,
-          });
-          if (result.status !== 0)
-            throw new AdapterProcessError("HOST_VERSION", result.status, text(result.stderr));
-          const output = text(result.stdout);
-          if (
-            !/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\n?$/.test(output) ||
-            output.trim() !== candidateHost
-          )
-            throw new AdapterProcessError("HOST_VERSION", result.status, text(result.stderr));
-          return output.trim();
-        } catch (error) {
-          if (error instanceof AdapterProcessError)
-            throw new AdapterProcessError(error.code, error.status, error.stderr, true);
-          throw new AdapterProcessError("HOST_VERSION", undefined, "", true);
-        }
-      })();
-    return hostVersion;
-  }
-
   return {
-    async browse(cwd: string): Promise<{
-      readonly scope: CatalogScope;
-      readonly items: readonly CatalogItem[];
-    }> {
+    async browse(cwd: string): Promise<string> {
       const executable = await skillCli;
       if (!executable) throw new AdapterProcessError("SKILL_CLI_NOT_FOUND");
-      const detectedVersion = await version();
       const result = await execute(runner, [executable, "agent", "browse"], {
         cwd,
         env: {
           ...env,
           SKILL_CLI_AGENT: "opencode",
-          SKILL_CLI_AGENT_VERSION: detectedVersion,
           NO_COLOR: "1",
           GIT_TERMINAL_PROMPT: "0",
         },
@@ -453,11 +286,11 @@ export function createProcessClient(options: ProcessClientOptions = {}) {
         terminationGraceMs,
         cleanupTimeoutMs,
       });
-      const envelope = parseCatalog(result.stdout, result.status);
-      if (envelope.type === "unavailable") throw new AdapterProcessError("CATALOG_UNAVAILABLE");
-      if (envelope.type === "error")
+      if (result.status !== 0)
         throw new AdapterProcessError("CATALOG_ERROR", result.status, text(result.stderr));
-      return { scope: envelope.scope, items: envelope.items };
+      const output = text(result.stdout);
+      if (!output.trim()) throw new AdapterProcessError("PROTOCOL");
+      return output;
     },
   };
 }

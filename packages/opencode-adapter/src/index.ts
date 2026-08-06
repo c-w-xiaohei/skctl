@@ -1,6 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin";
-import { AdapterProcessError, createProcessClient } from "./process.ts";
-import { UNAVAILABLE_NOTICE, renderCatalog } from "./prompt.ts";
+import { createProcessClient } from "./process.ts";
 
 function report(_error: unknown): void {
   // Adapter failures are not part of the managed Skill interface.
@@ -9,17 +8,14 @@ function report(_error: unknown): void {
 
 const SkillCliOpenCodePlugin: Plugin = async (input) => {
   const client = createProcessClient();
-  let reportedHostFailure = false;
+  let reportedFailure = false;
   return {
     "experimental.chat.system.transform": async (_request, output) => {
       try {
-        const catalog = await client.browse(input.directory);
-        output.system.push(renderCatalog(catalog.scope, catalog.items));
+        output.system.push(await client.browse(input.directory));
       } catch (error) {
-        const isHostFailure = error instanceof AdapterProcessError && error.hostProbe;
-        if (!isHostFailure || !reportedHostFailure) report(error);
-        if (isHostFailure) reportedHostFailure = true;
-        output.system.push(UNAVAILABLE_NOTICE);
+        if (!reportedFailure) report(error);
+        reportedFailure = true;
       }
     },
   };

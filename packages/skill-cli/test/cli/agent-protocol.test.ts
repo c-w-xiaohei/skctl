@@ -26,6 +26,7 @@ async function fixture() {
       sources: { source: { kind: "local", path: "./skills", root: "" } },
       collections: {
         gingiris: {
+          description: "Routing and specialist skills",
           members: { router: { source: "source", path: "router" } },
           references: {
             category: { collection: "category", description: "Specialists" },
@@ -67,24 +68,18 @@ test("agent browse returns only Use roots before progressively disclosing collec
     const result = await command(root, global, ["browse"]);
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual({
-      scope: { kind: "root" },
-      items: [{ kind: "collection", id: "gingiris", name: "gingiris" }],
-    });
+    expect(result.stdout).toContain('<managed_skill_catalog scope="root">');
+    expect(result.stdout).toContain("<id>gingiris</id>");
+    expect(result.stdout).toContain("<description>Routing and specialist skills</description>");
+    expect(result.stdout).not.toContain("gingiris:router");
     const collection = await command(root, global, ["browse", "gingiris"]);
-    expect(JSON.parse(collection.stdout)).toEqual({
-      scope: { kind: "collection", id: "gingiris" },
-      items: [
-        { kind: "skill", selector: "gingiris:router", name: "router", description: "router skill" },
-        {
-          kind: "collection",
-          id: "category",
-          name: "alsoCategory",
-          description: "Also specialists",
-        },
-        { kind: "collection", id: "category", name: "category", description: "Specialists" },
-      ],
-    });
+    expect(collection.stdout).toContain('<managed_skill_catalog scope="collection" id="gingiris">');
+    expect(collection.stdout).not.toContain("Managed Skills");
+    expect(collection.stdout.trim().split("\n")).toHaveLength(1);
+    expect(collection.stdout).toContain("<selector>gingiris:router</selector>");
+    expect(collection.stdout).toContain("<id>category</id>");
+    expect(collection.stdout).toContain("<description>Also specialists</description>");
+    expect(collection.stdout).toContain("<description>Specialists</description>");
     expect(collection.stdout).not.toContain("reference");
     expect(collection.stdout).not.toContain("provenance");
   } finally {
@@ -111,7 +106,12 @@ test("agent browse uses a global catalog outside a project", async () => {
       JSON.stringify({
         agents: { opencode: "managed" },
         sources: { source: { kind: "local", path: "./skills", root: "" } },
-        collections: { catalog: { members: { router: { source: "source", path: "router" } } } },
+        collections: {
+          catalog: {
+            description: "Routing skills",
+            members: { router: { source: "source", path: "router" } },
+          },
+        },
         use: ["catalog"],
       }),
     );
@@ -121,12 +121,9 @@ test("agent browse uses a global catalog outside a project", async () => {
 
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toEqual({
-      scope: { kind: "collection", id: "catalog" },
-      items: [
-        { kind: "skill", selector: "catalog:router", name: "router", description: "router skill" },
-      ],
-    });
+    expect(result.stdout).toContain('<managed_skill_catalog scope="collection" id="catalog">');
+    expect(result.stdout).toContain("<selector>catalog:router</selector>");
+    expect(result.stdout).toContain("<description>router skill</description>");
   } finally {
     if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
     else process.env.SKILL_CLI_STATE_DIR = previousState;
@@ -140,17 +137,9 @@ test("agent browse and load permit a reference-reachable category but reject an 
   try {
     const listed = await command(root, global, ["browse", "category"]);
     expect(listed.code).toBe(0);
-    expect(JSON.parse(listed.stdout)).toEqual({
-      scope: { kind: "collection", id: "category" },
-      items: [
-        {
-          kind: "skill",
-          selector: "category:specialist",
-          name: "specialist",
-          description: "specialist skill",
-        },
-      ],
-    });
+    expect(listed.stdout).toContain('<managed_skill_catalog scope="collection" id="category">');
+    expect(listed.stdout).toContain("<selector>category:specialist</selector>");
+    expect(listed.stdout).toContain("<description>specialist skill</description>");
 
     const loaded = await command(root, global, ["load", "category:specialist"]);
     expect(loaded.code).toBe(0);
@@ -252,10 +241,8 @@ test("agent loads a ready child Skill without requiring unrelated child members"
     );
     await new StateCoordinator(state).installLocal("source", "ready", ready);
     const browsed = await command(root, global, ["browse", "child"]);
-    expect(JSON.parse(browsed.stdout)).toEqual({
-      scope: { kind: "collection", id: "child" },
-      items: [{ kind: "skill", selector: "child:ready", name: "ready", description: "Ready" }],
-    });
+    expect(browsed.stdout).toContain('<managed_skill_catalog scope="collection" id="child">');
+    expect(browsed.stdout).toContain("<selector>child:ready</selector>");
     expect((await command(root, global, ["load", "child:ready"])).code).toBe(0);
     expect((await command(root, global, ["load", "child:missing"])).code).toBe(1);
   } finally {
@@ -292,7 +279,9 @@ test("agent refuses content when the host Use is incomplete", async () => {
       }),
     );
     await new StateCoordinator(state).installLocal("source", "ready", ready);
-    expect((await command(root, global, ["browse"])).stdout).toBe('{"unavailable":true}\n');
+    expect((await command(root, global, ["browse"])).stdout).toContain(
+      "managed catalog is unavailable",
+    );
     const loaded = await command(root, global, ["load", "root:ready"]);
     expect(loaded.code).toBe(1);
     expect(loaded.stderr).toContain("Collection Use is incomplete");
@@ -362,11 +351,11 @@ test("agent commands reject the removed list protocol and JSON flags", async () 
   }
 });
 
-test("agent reports unavailable catalogs as clean successful JSON", async () => {
+test("agent reports unavailable catalogs as agent-ready text", async () => {
   const result = await command("/tmp", "/missing", ["browse"]);
   expect(result.code).toBe(0);
   expect(result.stderr).toBe("");
-  expect(JSON.parse(result.stdout)).toEqual({ unavailable: true });
+  expect(result.stdout).toContain("managed catalog is unavailable");
 });
 
 test("agent rejects collection IDs and Skill Selectors in the wrong address positions before Core", async () => {

@@ -253,15 +253,15 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
       .map(({ content }) => content);
     expect(systemPrompts).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('"kind":"collection"'),
-        expect.stringContaining('"id":"engineering"'),
+        expect.stringContaining('<managed_skill_catalog scope="root">'),
+        expect.stringContaining("<id>engineering</id>"),
         expect.stringContaining("skill-cli agent browse <collection-id>"),
         expect.stringContaining("skill-cli agent load <selector>"),
       ]),
     );
-    expect(systemPrompts?.join("\n")).not.toContain(`"selector":"${selector}"`);
+    expect(systemPrompts?.join("\n")).not.toContain(`<selector>${selector}</selector>`);
     const browseOutput = llm.requests[1]?.messages?.find(({ role }) => role === "tool")?.content;
-    expect(browseOutput).toEqual(expect.stringContaining(`"selector":"${selector}"`));
+    expect(browseOutput).toEqual(expect.stringContaining(`<selector>${selector}</selector>`));
     const loadOutput = llm.requests[2]?.messages
       ?.filter(({ role }) => role === "tool")
       .at(-1)?.content;

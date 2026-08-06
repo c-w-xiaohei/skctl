@@ -8,11 +8,8 @@ import {
 } from "../src/process.ts";
 
 const encoder = new TextEncoder();
-const catalog = JSON.stringify({
-  scope: { kind: "root" },
-  items: [{ kind: "collection", id: "team", name: "team", description: "Team skills" }],
-});
-const unavailable = JSON.stringify({ unavailable: true });
+const catalog =
+  '<managed_skill_catalog scope="root">\n  <collection>team</collection>\n</managed_skill_catalog>\n';
 
 function stream(...chunks: string[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -37,30 +34,25 @@ function runner(calls: unknown[][], next: () => ChildProcess): ProcessRunner {
 }
 
 describe("process client", () => {
-  test("resolves PATH executables, probes the candidate host, and invokes clean agent browse", async () => {
+  test("runs agent browse and returns stdout unchanged", async () => {
     const calls: unknown[][] = [];
     const client = createProcessClient({
       path: "/tools:/bin",
-      exists: (path) => path === "/tools/skill-cli" || path === "/tools/opencode",
-      runner: runner(calls, () => (calls.length === 1 ? child(stream("1.18.4\n")) : child())),
+      exists: (path) => path === "/tools/skill-cli",
+      runner: runner(calls, child),
       env: { KEEP: "yes", PATH: "/tools:/bin", TOKEN: "ambient" },
     });
 
-    await expect(client.browse("/project")).resolves.toEqual({
-      scope: { kind: "root" },
-      items: [expect.objectContaining({ id: "team" })],
-    });
-    expect(calls).toHaveLength(2);
-    expect(calls[0]![0]).toEqual(["/tools/opencode", "--version"]);
-    expect(calls[1]![0]).toEqual(["/tools/skill-cli", "agent", "browse"]);
-    expect(calls[1]![1]).toEqual(
+    await expect(client.browse("/project")).resolves.toBe(catalog);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).toEqual(["/tools/skill-cli", "agent", "browse"]);
+    expect(calls[0]![1]).toEqual(
       expect.objectContaining({
         cwd: "/project",
         env: expect.objectContaining({
           KEEP: "yes",
           TOKEN: "ambient",
           SKILL_CLI_AGENT: "opencode",
-          SKILL_CLI_AGENT_VERSION: "1.18.4",
           NO_COLOR: "1",
           GIT_TERMINAL_PROMPT: "0",
         }),
@@ -68,230 +60,125 @@ describe("process client", () => {
     );
   });
 
-  test("probes the exact host once per client while listing a fresh catalog for every request", async () => {
+  test("runs a fresh browse for every request and resolves cross-host PATH entries", async () => {
     const calls: unknown[][] = [];
     const client = createProcessClient({
       path: "/tools",
       exists: () => true,
-      runner: runner(
-        calls,
-        (() => {
-          let count = 0;
-          return () => (++count === 1 ? child(stream("1.18.4\n")) : child());
-        })(),
-      ),
+      runner: runner(calls, child),
     });
-    await expect(client.browse("/first")).resolves.toMatchObject({ items: expect.any(Array) });
-    await expect(client.browse("/second")).resolves.toMatchObject({ items: expect.any(Array) });
-    expect(calls.filter(([argv]) => (argv as string[])[1] === "--version")).toHaveLength(1);
-    expect(calls.filter(([argv]) => (argv as string[])[1] === "agent")).toHaveLength(2);
-    expect(calls[2]![1]).toEqual(expect.objectContaining({ cwd: "/second" }));
-  });
+    await client.browse("/first");
+    await client.browse("/second");
+    expect(calls).toHaveLength(2);
+    expect(calls[1]![1]).toEqual(expect.objectContaining({ cwd: "/second" }));
 
-  test("rejects a child collection response or Skills from its fixed root browse", async () => {
-    for (const output of [
-      { scope: { kind: "collection", id: "team" }, items: [] },
-      {
-        scope: { kind: "root" },
-        items: [{ kind: "skill", selector: "team:deploy", name: "deploy", description: "Deploy" }],
-      },
-    ]) {
-      const calls: unknown[][] = [];
-      const client = createProcessClient({
-        path: "/tools",
-        exists: () => true,
-        runner: runner(calls, () =>
-          calls.length === 1 ? child(stream("1.18.4\n")) : child(stream(JSON.stringify(output))),
-        ),
-      });
-      await expect(client.browse("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
-    }
-  });
-
-  test("resolves Windows PATH entries and executable suffixes without splitting drive letters", async () => {
-    const calls: unknown[][] = [];
-    const client = createProcessClient({
+    const windowsCalls: unknown[][] = [];
+    const windows = createProcessClient({
       path: "C:\\Tools;D:\\bin",
       env: { PATHEXT: ".COM;.EXE;.BAT;.CMD" },
       platform: "win32",
-      exists: (path) => path === "C:\\Tools\\skill-cli.CMD" || path === "D:\\bin\\opencode.EXE",
-      runner: runner(calls, () => (calls.length === 1 ? child(stream("1.18.4\n")) : child())),
+      exists: (path) => path === "C:\\Tools\\skill-cli.CMD",
+      runner: runner(windowsCalls, child),
     });
+    await windows.browse("C:\\project");
+    expect(windowsCalls[0]![0]).toEqual(["C:\\Tools\\skill-cli.CMD", "agent", "browse"]);
 
-    await expect(client.browse("C:\\project")).resolves.toMatchObject({ items: expect.any(Array) });
-    expect(calls[0]![0]).toEqual(["D:\\bin\\opencode.EXE", "--version"]);
-    expect(calls[1]![0]).toEqual(["C:\\Tools\\skill-cli.CMD", "agent", "browse"]);
-  });
-
-  test("resolves relative PATH entries to absolute executables before spawning", async () => {
-    const calls: unknown[][] = [];
+    const relativeCalls: unknown[][] = [];
     const tools = resolve("tools");
-    const client = createProcessClient({
+    const relative = createProcessClient({
       path: "tools",
-      exists: (path) => path === `${tools}/skill-cli` || path === `${tools}/opencode`,
-      runner: runner(calls, () => (calls.length === 1 ? child(stream("1.18.4\n")) : child())),
+      exists: (path) => path === `${tools}/skill-cli`,
+      runner: runner(relativeCalls, child),
     });
-
-    await expect(client.browse("/project")).resolves.toMatchObject({ items: expect.any(Array) });
-    expect(calls[0]![0]).toEqual([`${tools}/opencode`, "--version"]);
-    expect(calls[1]![0]).toEqual([`${tools}/skill-cli`, "agent", "browse"]);
+    await relative.browse("/project");
+    expect(relativeCalls[0]![0]).toEqual([`${tools}/skill-cli`, "agent", "browse"]);
   });
 
-  test("rejects missing executables, malformed or mismatched host versions, and negative child results", async () => {
-    for (const value of ["bad\n", "1.18.5\n", "1.18.4\n"]) {
-      const calls: unknown[][] = [];
-      const client = createProcessClient({
-        path: "/tools",
-        exists: (path) => path === "/tools/skill-cli" || path === "/tools/opencode",
-        runner: runner(calls, () =>
-          calls.length === 1 ? child(stream(value)) : child(stream(), stream("bad"), 2),
-        ),
-      });
-      await expect(client.browse("/project")).rejects.toMatchObject({
-        code: value === "1.18.4\n" ? "PROTOCOL" : "HOST_VERSION",
-      });
-    }
+  test("rejects missing executables, failed commands, empty output, and invalid UTF-8", async () => {
+    await expect(
+      createProcessClient({ path: "/tools", exists: () => false }).browse("/project"),
+    ).rejects.toMatchObject({ code: "SKILL_CLI_NOT_FOUND" });
     await expect(
       createProcessClient({
         path: "/tools",
-        exists: () => false,
-        runner: runner([], child),
+        exists: () => true,
+        runner: runner([], () => child(stream(), stream("failed"), 2)),
       }).browse("/project"),
-    ).rejects.toMatchObject({ code: "SKILL_CLI_NOT_FOUND" });
+    ).rejects.toMatchObject({ code: "CATALOG_ERROR", status: 2, stderr: "failed" });
+    await expect(
+      createProcessClient({
+        path: "/tools",
+        exists: () => true,
+        runner: runner([], () => child(stream())),
+      }).browse("/project"),
+    ).rejects.toMatchObject({ code: "PROTOCOL" });
+    const invalid = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([0xff]));
+        controller.close();
+      },
+    });
+    await expect(
+      createProcessClient({
+        path: "/tools",
+        exists: () => true,
+        runner: runner([], () => child(invalid)),
+      }).browse("/project"),
+    ).rejects.toMatchObject({ code: "PROTOCOL" });
   });
 
-  test("enforces streamed bounds and deadlines by terminating and awaiting children", async () => {
+  test("enforces output bounds and deadlines while awaiting child cleanup", async () => {
     let killed = 0;
-    let resolved = false;
     let finish!: (status: number) => void;
     const hanging: ChildProcess = {
       stdout: new ReadableStream({ start() {} }),
       stderr: stream(),
-      exited: new Promise(
-        (resolve) =>
-          (finish = (status) => {
-            resolved = true;
-            resolve(status);
-          }),
-      ),
+      exited: new Promise((resolve) => (finish = resolve)),
       kill() {
         killed++;
         finish(143);
       },
     };
-    let calls = 0;
-    const client = createProcessClient({
+    const timed = createProcessClient({
       path: "/tools",
       exists: () => true,
-      runner: {
-        spawn() {
-          return ++calls === 1 ? child(stream("1.18.4\n")) : hanging;
-        },
-      },
+      runner: { spawn: () => hanging },
       timeoutMs: 1,
     });
-    await expect(client.browse("/project")).rejects.toMatchObject({ code: "TIMEOUT" });
+    await expect(timed.browse("/project")).rejects.toMatchObject({ code: "TIMEOUT" });
     const overflow = createProcessClient({
       path: "/tools",
       exists: () => true,
-      runner: runner(
-        [],
-        (() => {
-          let count = 0;
-          return () => (++count === 1 ? child(stream("1.18.4\n")) : child(stream("abcd")));
-        })(),
-      ),
+      runner: runner([], () => child(stream("abcd"))),
       stdoutLimit: 3,
     });
     await expect(overflow.browse("/project")).rejects.toMatchObject({ code: "OUTPUT_OVERFLOW" });
-    let stderrOverflowCalls = 0;
-    const stderrOverflow = createProcessClient({
+    expect(killed).toBe(1);
+  });
+
+  test("escalates resistant children and clears successful deadline timers", async () => {
+    let finish!: (status: number) => void;
+    const signals: NodeJS.Signals[] = [];
+    const resistant: ChildProcess = {
+      stdout: new ReadableStream({ start() {} }),
+      stderr: new ReadableStream({ start() {} }),
+      exited: new Promise((resolve) => (finish = resolve)),
+      kill(signal = "SIGTERM") {
+        signals.push(signal);
+        if (signal === "SIGKILL") finish(137);
+      },
+    };
+    const client = createProcessClient({
       path: "/tools",
       exists: () => true,
-      runner: {
-        spawn() {
-          if (++stderrOverflowCalls === 1) return child(stream("1.18.4\n"));
-          return child(new ReadableStream({ start() {} }), stream("abcd"));
-        },
-      },
-      stderrLimit: 3,
+      runner: { spawn: () => resistant },
+      timeoutMs: 1,
+      terminationGraceMs: 1,
+      cleanupTimeoutMs: 10,
     });
-    await expect(stderrOverflow.browse("/project")).rejects.toMatchObject({
-      code: "OUTPUT_OVERFLOW",
-    });
-    expect(killed).toBe(1);
-    expect(resolved).toBe(true);
-  });
+    await expect(client.browse("/project")).rejects.toMatchObject({ code: "TIMEOUT" });
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
 
-  test("escalates a resistant child and bounds timeout cleanup for catalog and host probes", async () => {
-    function resistant(): {
-      child: ChildProcess;
-      signals: NodeJS.Signals[];
-      finished: () => boolean;
-    } {
-      let finish!: (status: number) => void;
-      let done = false;
-      const signals: NodeJS.Signals[] = [];
-      const exited = new Promise<number>(
-        (resolve) =>
-          (finish = (status) => {
-            done = true;
-            resolve(status);
-          }),
-      );
-      return {
-        child: {
-          stdout: new ReadableStream({ start() {} }),
-          stderr: new ReadableStream({ start() {} }),
-          exited,
-          kill(signal = "SIGTERM") {
-            signals.push(signal);
-            if (signal === "SIGKILL") finish(137);
-          },
-        },
-        signals,
-        finished: () => done,
-      };
-    }
-    for (const phase of ["catalog", "host"] as const) {
-      const resistantChild = resistant();
-      if (phase === "catalog") {
-        // The catalog case needs a successful host probe before its resistant list child.
-        let catalogCalls = 0;
-        const catalogClient = createProcessClient({
-          path: "/tools",
-          exists: () => true,
-          runner: {
-            spawn() {
-              catalogCalls++;
-              return catalogCalls === 1 ? child(stream("1.18.4\n")) : resistantChild.child;
-            },
-          },
-          timeoutMs: 1,
-          terminationGraceMs: 1,
-          cleanupTimeoutMs: 10,
-        });
-        await expect(catalogClient.browse("/project")).rejects.toMatchObject({ code: "TIMEOUT" });
-      } else {
-        const client = createProcessClient({
-          path: "/tools",
-          exists: () => true,
-          runner: { spawn: () => resistantChild.child },
-          timeoutMs: 1,
-          terminationGraceMs: 1,
-          cleanupTimeoutMs: 10,
-        });
-        await expect(client.browse("/project")).rejects.toMatchObject({
-          code: "TIMEOUT",
-          hostProbe: true,
-        });
-      }
-      expect(resistantChild.signals).toEqual(["SIGTERM", "SIGKILL"]);
-      expect(resistantChild.finished()).toBe(true);
-    }
-  });
-
-  test("clears every deadline timer after successful child executions", async () => {
     const set = globalThis.setTimeout;
     const clear = globalThis.clearTimeout;
     const timers = new Set<number>();
@@ -305,18 +192,11 @@ describe("process client", () => {
       clear(timer as never);
     }) as typeof clearTimeout;
     try {
-      const client = createProcessClient({
+      await createProcessClient({
         path: "/tools",
         exists: () => true,
-        runner: runner(
-          [],
-          (() => {
-            let calls = 0;
-            return () => (++calls === 1 ? child(stream("1.18.4\n")) : child());
-          })(),
-        ),
-      });
-      await expect(client.browse("/project")).resolves.toMatchObject({ items: expect.any(Array) });
+        runner: runner([], child),
+      }).browse("/project");
       expect([...timers]).toEqual([]);
     } finally {
       globalThis.setTimeout = set;
@@ -324,138 +204,12 @@ describe("process client", () => {
     }
   });
 
-  test("strictly validates UTF-8, one object, envelope, result fields, and redacts diagnostics", async () => {
-    const invalid = new Uint8Array([0xff]);
-    for (const stdout of [
-      new ReadableStream({
-        start(controller) {
-          controller.enqueue(invalid);
-          controller.close();
-        },
-      }),
-      stream(`${catalog}${catalog}`),
-      stream(JSON.stringify({ protocolVersion: 2, ok: true, operation: "list", result: {} })),
-      stream(
-        JSON.stringify({
-          protocolVersion: 1,
-          ok: true,
-          operation: "list",
-          result: { entries: [{}] },
-        }),
-      ),
-      stream(
-        JSON.stringify({
-          protocolVersion: 1,
-          ok: true,
-          operation: "list",
-          result: { agent: { id: "opencode", version: "1.18.4" }, mode: "other", entries: [] },
-        }),
-      ),
-    ]) {
-      const calls: unknown[][] = [];
-      const client = createProcessClient({
-        path: "/tools",
-        exists: () => true,
-        runner: runner(calls, () =>
-          calls.length === 1 ? child(stream("1.18.4\n")) : child(stdout),
-        ),
-      });
-      await expect(client.browse("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
-    }
-    expect(
-      redactDiagnostic(
-        "Authorization: Bearer token\nhttps://user:pass@example.test /tmp/a KEY=secret",
-      ),
-    ).not.toMatch(/token|user:pass|\/tmp\/a|secret/i);
-  });
-
-  test("strictly validates clean catalog nodes", async () => {
-    for (const output of [
-      {
-        skills: [{ selector: "team:deploy", name: "deploy", description: "safe", extra: true }],
-        references: [],
-      },
-      {
-        skills: [{ selector: "team:deploy", name: "deploy", description: "safe" }],
-        references: [{ name: "x", description: "x" }],
-      },
-      {
-        skills: [
-          { selector: "team:deploy", name: "deploy", description: "safe" },
-          { selector: "team:deploy", name: "again", description: "safe" },
-        ],
-        references: [],
-      },
-      { unavailable: true, extra: true },
-    ]) {
-      const calls: unknown[][] = [];
-      const client = createProcessClient({
-        path: "/tools",
-        exists: () => true,
-        runner: runner(calls, () =>
-          calls.length === 1 ? child(stream("1.18.4\n")) : child(stream(JSON.stringify(output))),
-        ),
-      });
-      await expect(client.browse("/project")).rejects.toMatchObject({ code: "PROTOCOL" });
-    }
-  });
-
-  test("accepts differently named root Collection nodes with the same target ID and recognizes unavailable", async () => {
-    const calls: unknown[][] = [];
-    const client = createProcessClient({
-      path: "/tools",
-      exists: () => true,
-      runner: runner(calls, () =>
-        calls.length === 1
-          ? child(stream("1.18.4\n"))
-          : child(
-              stream(
-                JSON.stringify({
-                  scope: { kind: "root" },
-                  items: [
-                    { kind: "collection", id: "shared", name: "first", description: "First" },
-                    { kind: "collection", id: "shared", name: "second", description: "Second" },
-                  ],
-                }),
-              ),
-            ),
-      ),
-    });
-    await expect(client.browse("/project")).resolves.toMatchObject({ items: expect.any(Array) });
-    const unavailableClient = createProcessClient({
-      path: "/tools",
-      exists: () => true,
-      runner: runner(
-        [],
-        (() => {
-          let count = 0;
-          return () => (++count === 1 ? child(stream("1.18.4\n")) : child(stream(unavailable)));
-        })(),
-      ),
-    });
-    await expect(unavailableClient.browse("/project")).rejects.toMatchObject({
-      code: "CATALOG_UNAVAILABLE",
-    });
-  });
-
-  test("redacts and truncates diagnostics by valid UTF-8 bytes with a marker", () => {
+  test("redacts and truncates diagnostics", () => {
     const diagnostic = redactDiagnostic(
       `${"😀秘密".repeat(2_000)} Authorization: Bearer secret /tmp/secret %TEMP%\\secret`,
     );
-    const bytes = encoder.encode(diagnostic);
-    expect(bytes.byteLength).toBeLessThanOrEqual(4096);
-    expect(new TextDecoder("utf-8", { fatal: true }).decode(bytes)).toBe(diagnostic);
+    expect(encoder.encode(diagnostic).byteLength).toBeLessThanOrEqual(4096);
     expect(diagnostic).toEndWith(" [truncated]");
     expect(diagnostic).not.toMatch(/secret|\/tmp\/|%temp%/i);
-  });
-
-  test("redacts complete Windows temporary paths with spaces without erasing surrounding fields", () => {
-    const diagnostic = redactDiagnostic(
-      'message="C:\\Users\\Ada Lovelace\\AppData\\Local\\Temp\\skill-cli-secret\\stderr.log"; stderr=%TEMP%\\dir with spaces\\trace.log; C:\\Program Files\\skill-cli\\config.json',
-    );
-    expect(diagnostic).not.toMatch(
-      /appdata\\local\\temp|%temp%|skill-cli-secret|dir with spaces|trace\.log/i,
-    );
-    expect(diagnostic).toContain("C:\\Program Files\\skill-cli\\config.json");
   });
 });

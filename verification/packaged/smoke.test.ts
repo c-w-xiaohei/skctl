@@ -29,7 +29,6 @@ describe("packaged release orchestration", () => {
       "dist/index.d.ts",
       "dist/index.js",
       "dist/process.d.ts",
-      "dist/prompt.d.ts",
       "package.json",
     ]);
   });

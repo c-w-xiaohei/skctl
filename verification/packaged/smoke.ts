@@ -474,12 +474,11 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
         project,
         options.outputRoot,
       );
-      const rootBrowseBody = JSON.parse(text(rootBrowse.stdout));
       assert(
         rootBrowse.exitCode === 0 &&
           rootBrowse.stderr.length === 0 &&
-          rootBrowseBody.scope.kind === "root" &&
-          rootBrowseBody.items[0].id === "fixture-collection",
+          text(rootBrowse.stdout).includes('<managed_skill_catalog scope="root">') &&
+          text(rootBrowse.stdout).includes("<id>fixture-collection</id>"),
         "agent root browse differs",
       );
       const collectionBrowse = await invoke(
@@ -487,12 +486,13 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
         project,
         options.outputRoot,
       );
-      const collectionBrowseBody = JSON.parse(text(collectionBrowse.stdout));
       assert(
         collectionBrowse.exitCode === 0 &&
           collectionBrowse.stderr.length === 0 &&
-          collectionBrowseBody.scope.id === "fixture-collection" &&
-          collectionBrowseBody.items[0].selector === "fixture-collection:fixture",
+          text(collectionBrowse.stdout).includes(
+            '<managed_skill_catalog scope="collection" id="fixture-collection">',
+          ) &&
+          text(collectionBrowse.stdout).includes("<selector>fixture-collection:fixture</selector>"),
         "agent collection browse differs",
       );
       const load = await invoke(

@@ -11,9 +11,5 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.18.4"
-  },
-  "skillCli": {
-    "opencodeCandidate": "1.18.4",
-    "compatibility": "candidate-only-unverified"
   }
 }

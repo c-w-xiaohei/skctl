@@ -47,7 +47,7 @@ test("CLI-001 public setup discovers and installs a Local Skill into a managed c
       scope: { kind: "collection", id: "engineering" },
       items: [{ selector: "engineering:review" }],
     });
-    for (const argv of [["browse"], ["load", "engineering:review"]]) {
+    for (const argv of [["browse"], ["load", "engineering:review"]] as const) {
       let output = "";
       expect(
         await runAgentCommand(argv, {
@@ -57,7 +57,8 @@ test("CLI-001 public setup discovers and installs a Local Skill into a managed c
           stderr: { write() {} },
         }),
       ).toBe(0);
-      expect(JSON.parse(output)).toBeObject();
+      if (argv[0] === "browse") expect(output).toContain('<managed_skill_catalog scope="root">');
+      else expect(JSON.parse(output)).toBeObject();
     }
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
