@@ -166,13 +166,15 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
     .description("Register discovery boundaries and inspect their candidate Skill Roots.");
   const sourceRegister = source
     .command("register <kind> <id> <origin>")
-    .description("Declare a Source. Run discover next to inspect its candidate Skill Roots.")
+    .description(
+      "Declare a Source: local, git (Git protocol), or github (GitHub API with safe Git fallback). Remote Sources require --ref. Run discover next to inspect candidate Skill Roots.",
+    )
     .option(
       "--root <root>",
       "Origin root for local or remote sources; defaults to the origin root",
       "",
     )
-    .option("--ref <ref>");
+    .option("--ref <ref>", "Required tracked ref for remote git and github Sources.");
   scopeOptions(sourceRegister);
   sourceRegister.action((kind, id, origin, flags) => {
     const options = flagsOf(flags);
@@ -229,9 +231,9 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
   command
     .command("install <source> <path...>")
     .description(
-      "Install reviewed candidate Skill Roots from a Source at an exact remote revision.",
+      "Install reviewed candidate Skill Roots as machine-local content. Remote Sources require --revision with an exact 40-hex commit; install does not add a global catalog root.",
     )
-    .option("--revision <revision>")
+    .option("--revision <revision>", "Exact 40-hex remote commit to materialize.")
     .action(async (sourceId, paths, flags) => {
       const exactRevision =
         flagsOf(flags).revision === undefined ? undefined : revision(flagsOf(flags).revision);
@@ -318,13 +320,15 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
     .description("Manage reusable Config origins and their adopted declarations.");
   configs
     .command("register <kind> <id> <origin>")
-    .description("Declare a reusable Config origin; observe and adopt it separately.")
+    .description(
+      "Declare a reusable Config origin: local, git (Git protocol), or github (GitHub API with safe Git fallback). Remote Config Sources require --ref; observe and adopt separately.",
+    )
     .option(
       "--root <root>",
       "Origin root for local or remote config sources; defaults to the origin root",
       "",
     )
-    .option("--ref <ref>")
+    .option("--ref <ref>", "Required tracked ref for remote git and github Config Sources.")
     .action((kind, id, origin, flags) => {
       const options = flagsOf(flags);
       if (kind !== "local" && kind !== "git" && kind !== "github")
@@ -631,7 +635,9 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
   scopeOptions(use.commands.at(-1)!);
   use
     .command("add <id>")
-    .description("Add one direct catalog root at one scope.")
+    .description(
+      "Add one direct catalog root at one scope. Repository-derived Collections need this separately (use add <owner/repository> -g) to appear as global catalog roots.",
+    )
     .action((id, flags) =>
       changeUse({
         type: "use.add",

@@ -13,6 +13,12 @@ async function git(cwd: string, ...args: string[]) {
   return output.trim();
 }
 
+async function initBare(cwd: string, path: string) {
+  await git(cwd, "init", "--bare", path);
+  await git(cwd, `--git-dir=${path}`, "config", "uploadpack.allowFilter", "true");
+  await git(cwd, `--git-dir=${path}`, "config", "uploadpack.allowReachableSHA1InWant", "true");
+}
+
 test("MGMT-007 classifies Changed New Removed and unchanged while selecting only Changed for update", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-update-"));
   process.env.SKILL_CLI_STATE_DIR = join(root, "state");
@@ -171,7 +177,7 @@ test("MGMT-008 applies one reviewed Remote revision after the ref moves and pres
       );
     await git(work, "add", ".");
     await git(work, "commit", "-m", "one");
-    await git(root, "init", "--bare", bare);
+    await initBare(root, bare);
     await git(work, "remote", "add", "origin", bare);
     await git(work, "push", "origin", "HEAD:main");
     const core = createSkillCliCore({
@@ -314,7 +320,7 @@ test("MGMT-007 reports exact Git and GitHub Changed metadata at one observed rev
       );
       await git(work, "add", ".");
       await git(work, "commit", "-m", "one");
-      await git(root, "init", "--bare", bare);
+      await initBare(root, bare);
       await git(work, "remote", "add", "origin", bare);
       await git(work, "push", "origin", "HEAD:main");
       const origin = `https://example.test/${kind}.git`;
@@ -372,7 +378,7 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
     );
     await git(work, "add", ".");
     await git(work, "commit", "-m", "one");
-    await git(root, "init", "--bare", bare);
+    await initBare(root, bare);
     await git(work, "remote", "add", "origin", bare);
     await git(work, "push", "origin", "HEAD:main");
     const core = createSkillCliCore({ cwd: root, sourceTransport: () => bare });

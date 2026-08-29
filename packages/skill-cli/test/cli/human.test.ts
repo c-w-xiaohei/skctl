@@ -411,6 +411,29 @@ test("human help is written to stdout and succeeds without an error", async () =
   }
 });
 
+test("source, config-source, install, and global use help explain the remote workflow", async () => {
+  const help = async (argv: string[]) => {
+    const stdout: string[] = [];
+    expect(
+      await runHumanCommand(argv, {
+        cwd: "/tmp",
+        stdout: { write: (value) => stdout.push(String(value)) },
+        stderr: { write() {} },
+      }),
+    ).toBe(0);
+    return stdout.join("");
+  };
+  expect(await help(["source", "register", "--help"])).toContain("Remote Sources require --ref");
+  expect(await help(["source", "register", "--help"])).toContain("Git protocol");
+  expect(await help(["config-source", "register", "--help"])).toContain(
+    "Remote Config Sources require --ref",
+  );
+  expect(await help(["config-source", "register", "--help"])).toContain("Git protocol");
+  expect(await help(["install", "--help"])).toContain("machine-local content");
+  expect(await help(["install", "--help"])).toContain("exact 40-hex commit");
+  expect(await help(["use", "add", "--help"])).toContain("use add <owner/repository> -g");
+});
+
 test("use Help names declaration scope and accepts --scope as the primary option", async () => {
   const stdout: string[] = [];
   const stderr: string[] = [];

@@ -629,6 +629,12 @@ async function git(cwd: string, ...args: string[]) {
   return output.trim();
 }
 
+async function initBare(cwd: string, path: string) {
+  await git(cwd, "init", "--bare", path);
+  await git(cwd, `--git-dir=${path}`, "config", "uploadpack.allowFilter", "true");
+  await git(cwd, `--git-dir=${path}`, "config", "uploadpack.allowReachableSHA1InWant", "true");
+}
+
 test("MGMT-006 Remote discovery installs the reviewed exact commit after the tracked ref moves", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-managed-git-"));
   const work = join(root, "work");
@@ -647,7 +653,7 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
     await git(work, "add", ".");
     await git(work, "commit", "-m", "initial");
     const revision = await git(work, "rev-parse", "HEAD");
-    await git(root, "init", "--bare", bare);
+    await initBare(root, bare);
     await git(work, "remote", "add", "origin", bare);
     await git(work, "push", "origin", "HEAD:main");
     try {
@@ -723,7 +729,7 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
     );
     await git(work, "add", ".");
     await git(work, "commit", "-m", "initial");
-    await git(root, "init", "--bare", bare);
+    await initBare(root, bare);
     await git(work, "remote", "add", "origin", bare);
     await git(work, "push", "origin", "HEAD:main");
     const core = createSkillCliCore({
@@ -794,7 +800,7 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
     await git(work, "add", ".");
     await git(work, "commit", "-m", "initial");
     const revision = await git(work, "rev-parse", "HEAD");
-    await git(root, "init", "--bare", bare);
+    await initBare(root, bare);
     await git(work, "remote", "add", "origin", bare);
     await git(work, "push", "origin", "HEAD:main");
     const blob = createHash("sha1")
@@ -817,6 +823,21 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
               { path: "skills/review", mode: "040000", type: "tree", sha: "d".repeat(40) },
               {
                 path: "skills/review/SKILL.md",
+                mode: "100644",
+                type: "blob",
+                sha: blob,
+                size: Buffer.byteLength(skill),
+              },
+            ],
+          });
+        if (path === `/repos/acme/skills/git/trees/${"c".repeat(40)}`)
+          return Response.json({
+            sha: "c".repeat(40),
+            truncated: false,
+            tree: [
+              { path: "review", mode: "040000", type: "tree", sha: "d".repeat(40) },
+              {
+                path: "review/SKILL.md",
                 mode: "100644",
                 type: "blob",
                 sha: blob,

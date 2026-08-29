@@ -36,6 +36,8 @@ interface SnapshotBase {
   /** Entries always retain Source Root-relative paths; prefix only filters descendants. */
   list(prefix: string, signal?: AbortSignal): AsyncIterable<SourceEntry>;
   read(path: string, signal?: AbortSignal): Promise<SourceEntryContent>;
+  /** Acquires a bounded set of explicitly requested resources as one provider operation. */
+  readMany?(paths: readonly string[], signal?: AbortSignal): Promise<readonly SourceEntryContent[]>;
   close(): Promise<void>;
 }
 export interface LocalSnapshot extends SnapshotBase {
@@ -55,6 +57,7 @@ export async function openSource(
     | { readonly origin: "local"; readonly path: string; readonly text?: string }
     | {
         readonly origin: "git";
+        readonly kind?: "git" | "github";
         readonly url: string;
         readonly commit: string;
         readonly path: string;
@@ -72,7 +75,10 @@ export async function openSource(
     case "local":
       return openLocalSource(sourceName, locator.path, provenance);
     case "git": {
-      const api = await resolveGitHubApi(locator.url, signal, githubApiBaseUrl);
+      const api =
+        locator.kind === "git"
+          ? undefined
+          : await resolveGitHubApi(locator.url, signal, githubApiBaseUrl);
       return api
         ? openGitHubSource(
             sourceName,
@@ -109,17 +115,37 @@ export async function discoverSnapshotSkills(
 }> {
   const diagnostics: import("../api").Diagnostic[] = [];
   const skills: { root: string; name: string; description: string }[] = [];
-  const stopped = new Set<string>();
-  for (const entry of (await Array.fromAsync(snapshot.list("", signal))).sort((left, right) =>
+  const entries = (await Array.fromAsync(snapshot.list("", signal))).sort((left, right) =>
     Buffer.from(left.path).compare(Buffer.from(right.path)),
-  )) {
-    if (entry.kind !== "file" || !entry.path.endsWith("SKILL.md")) continue;
+  );
+  const skillEntries = entries.filter(
+    (entry) => entry.kind === "file" && entry.path.endsWith("SKILL.md"),
+  );
+  const candidates = skillEntries.filter((entry) => {
     const root = entry.path.slice(0, -"SKILL.md".length).replace(/\/$/u, "");
-    if ([...stopped].some((ancestor) => ancestor === "" || root.startsWith(`${ancestor}/`)))
-      continue;
-    stopped.add(root);
+    return !skillEntries.some(
+      (ancestor) =>
+        ancestor !== entry &&
+        (ancestor.path === "SKILL.md" ||
+          root.startsWith(ancestor.path.slice(0, -"SKILL.md".length))),
+    );
+  });
+  const contents = snapshot.readMany
+    ? new Map(
+        (
+          await snapshot.readMany(
+            candidates.map((entry) => entry.path),
+            signal,
+          )
+        ).map((item) => [item.entry.path, item]),
+      )
+    : undefined;
+  for (const entry of candidates) {
+    const root = entry.path.slice(0, -"SKILL.md".length).replace(/\/$/u, "");
     try {
-      const text = decodeStrictText((await snapshot.read(entry.path, signal)).bytes);
+      const text = decodeStrictText(
+        (contents?.get(entry.path) ?? (await snapshot.read(entry.path, signal))).bytes,
+      );
       const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1];
       const nameText = frontmatter && /^name:\s*(.+)$/mu.exec(frontmatter)?.[1];
       const description = frontmatter && /^description:\s*(.+)$/mu.exec(frontmatter)?.[1];

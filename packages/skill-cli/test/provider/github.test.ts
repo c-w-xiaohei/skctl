@@ -41,6 +41,8 @@ async function bareFixture() {
   await git(work, "commit", "-m", "initial");
   const pinned = await git(work, "rev-parse", "HEAD");
   await git(root, "init", "--bare", bare);
+  await git(root, `--git-dir=${bare}`, "config", "uploadpack.allowFilter", "true");
+  await git(root, `--git-dir=${bare}`, "config", "uploadpack.allowReachableSHA1InWant", "true");
   await git(work, "remote", "add", "origin", bare);
   await git(work, "push", "origin", "HEAD:main");
   return { bare, pinned };

@@ -39,6 +39,10 @@ async function git(cwd: string, ...args: string[]) {
   if (await child.exited) throw new Error(await new Response(child.stderr).text());
   return output.trim();
 }
+async function enableFiltering(remote: string) {
+  await git(remote, "config", "uploadpack.allowFilter", "true");
+  await git(remote, "config", "uploadpack.allowReachableSHA1InWant", "true");
+}
 
 test("MGMT-023 adopts the observed exact Remote Config commit after the tracked ref moves", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-config-publication-"));
@@ -50,6 +54,7 @@ test("MGMT-023 adopts the observed exact Remote Config commit after the tracked 
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), bytes);
@@ -96,6 +101,7 @@ test("MGMT-029 Config Source Adopt rejects a declaration changed after preview w
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), "{}\n");
@@ -155,6 +161,7 @@ test("Config adoption cancellation before publication preserves state and cache"
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), "{}\n");
@@ -243,6 +250,7 @@ test("MGMT-024 and MGMT-025 reject Config Source lifecycle changes that orphan a
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(
@@ -339,6 +347,7 @@ test("MGMT-024 previews exact Forget consequences while retaining the declaratio
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(
@@ -408,6 +417,7 @@ test("MGMT-025 removes an adopted Remote Config declaration and state atomically
   try {
     await mkdir(remote);
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), "{}\n");
@@ -444,6 +454,7 @@ test("MGMT-034 rejects tampered foreign or unavailable Config observations witho
   try {
     await mkdir(remote);
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), JSON.stringify({ collections: { team: {} } }));
@@ -590,6 +601,7 @@ test("MGMT-023 observes and previews Remote Config contributions at their Global
     process.env.SKILL_CLI_STATE_DIR = state;
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(
@@ -650,6 +662,7 @@ test("MGMT-023 re-adoption compares current immutable contributions with the pro
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(
@@ -735,6 +748,7 @@ test("MGMT-029 Forget uses current dependency facts, rejects a new blocker uncha
   try {
     await mkdir(remote);
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), JSON.stringify({ collections: { shared: {} } }));

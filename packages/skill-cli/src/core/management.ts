@@ -142,6 +142,19 @@ function configBindingFingerprint(declared: Awaited<ReturnType<typeof declaredCo
   });
 }
 
+async function snapshotCandidates(
+  snapshot: SourceSnapshot,
+  revision: string,
+  signal?: AbortSignal,
+) {
+  const result = await discoverSnapshotSkills(snapshot, signal);
+  return result.skills.map((skill) => ({
+    ...skill,
+    path: skill.root,
+    revision,
+  }));
+}
+
 async function candidates(
   binding: SourceBindingView,
   options: CoreFactoryOptions,
@@ -162,7 +175,13 @@ async function candidates(
     (await resolveGitRef(binding.origin, binding.ref!, signal, options.sourceTransport));
   const snapshot = await openSource(
     binding.id,
-    { origin: "git", url: binding.origin, commit: revision, path: binding.root },
+    {
+      origin: "git",
+      kind: binding.kind === "github" ? "github" : "git",
+      url: binding.origin,
+      commit: revision,
+      path: binding.root,
+    },
     {
       source: binding.id,
       origin: "git",
@@ -175,13 +194,7 @@ async function candidates(
     options.githubApiBaseUrl,
   );
   try {
-    const result = await discoverSnapshotSkills(snapshot, signal);
-    return result.skills.map((skill) => ({
-      ...skill,
-      path: skill.root,
-      root: skill.root,
-      revision,
-    }));
+    return await snapshotCandidates(snapshot, revision, signal);
   } finally {
     await snapshot.close();
   }
@@ -193,7 +206,18 @@ async function copyRemoteRoot(
   destination: string,
   signal?: AbortSignal,
 ) {
-  for await (const entry of snapshot.list(prefix, signal)) {
+  const entries = await Array.fromAsync(snapshot.list(prefix, signal));
+  const contents = snapshot.readMany
+    ? new Map(
+        (
+          await snapshot.readMany(
+            entries.filter((entry) => entry.kind === "file").map((entry) => entry.path),
+            signal,
+          )
+        ).map((item) => [item.entry.path, item]),
+      )
+    : undefined;
+  for (const entry of entries) {
     if (entry.kind === "directory") continue;
     if (entry.kind !== "file")
       throw new SkillCliError(
@@ -204,34 +228,17 @@ async function copyRemoteRoot(
     if (!relative || relative.startsWith("../")) continue;
     const target = join(destination, ...relative.split("/"));
     await mkdir(resolve(target, ".."), { recursive: true });
-    const content = await snapshot.read(entry.path, signal);
+    const content = contents?.get(entry.path) ?? (await snapshot.read(entry.path, signal));
     await writeFile(target, content.bytes, { mode: entry.executable ? 0o700 : 0o600 });
     if (entry.executable) await chmod(target, 0o700);
   }
 }
 
-async function remoteRoots(
-  binding: SourceBindingView,
+async function materializeRemoteRoots(
+  snapshot: SourceSnapshot,
   selected: readonly Candidate[],
-  options: CoreFactoryOptions,
   signal?: AbortSignal,
 ) {
-  const revision = selected[0]?.revision;
-  if (!revision) throw new SkillCliError("INTERNAL", "Remote revision is unavailable");
-  const snapshot = await openSource(
-    binding.id,
-    { origin: "git", url: binding.origin, commit: revision, path: binding.root },
-    {
-      source: binding.id,
-      origin: "git",
-      declaration: binding.provenance,
-      stability: "immutable",
-      revision,
-    },
-    signal,
-    options.sourceTransport,
-    options.githubApiBaseUrl,
-  );
   const stage = await mkdtemp(join(tmpdir(), "skill-cli-install-"));
   try {
     const roots: Candidate[] = [];
@@ -245,6 +252,39 @@ async function remoteRoots(
   } catch (error) {
     await rm(stage, { recursive: true, force: true });
     throw error;
+  }
+}
+
+async function remoteRoots(
+  binding: SourceBindingView,
+  selected: readonly Candidate[],
+  options: CoreFactoryOptions,
+  signal?: AbortSignal,
+) {
+  const revision = selected[0]?.revision;
+  if (!revision) throw new SkillCliError("INTERNAL", "Remote revision is unavailable");
+  const snapshot = await openSource(
+    binding.id,
+    {
+      origin: "git",
+      kind: binding.kind === "github" ? "github" : "git",
+      url: binding.origin,
+      commit: revision,
+      path: binding.root,
+    },
+    {
+      source: binding.id,
+      origin: "git",
+      declaration: binding.provenance,
+      stability: "immutable",
+      revision,
+    },
+    signal,
+    options.sourceTransport,
+    options.githubApiBaseUrl,
+  );
+  try {
+    return await materializeRemoteRoots(snapshot, selected, signal);
   } finally {
     await snapshot.close();
   }
@@ -328,6 +368,7 @@ export function createManagement(options: CoreFactoryOptions): ManagementCapabil
         id,
         {
           origin: "git",
+          kind: declared.binding.kind === "github" ? "github" : "git",
           url: declared.binding.origin,
           commit: exactRevision,
           path: declared.binding.root,
@@ -645,6 +686,7 @@ export function createManagement(options: CoreFactoryOptions): ManagementCapabil
         request.id,
         {
           origin: "git",
+          kind: declared.binding.kind === "github" ? "github" : "git",
           url: declared.binding.origin,
           commit: revision,
           path: declared.binding.root,
@@ -765,6 +807,7 @@ export function createManagement(options: CoreFactoryOptions): ManagementCapabil
         request.id,
         {
           origin: "git",
+          kind: declared.binding.kind === "github" ? "github" : "git",
           url: declared.binding.origin,
           commit: exactRevision,
           path: declared.binding.root,
@@ -853,25 +896,50 @@ export function createManagement(options: CoreFactoryOptions): ManagementCapabil
         (!request.exactRevision || !/^[a-f0-9]{40}$/u.test(request.exactRevision))
       )
         throw new SkillCliError("INVALID_ARGUMENT", "Remote Source requires an exact revision");
-      const available = await candidates(
-        binding,
-        options,
-        operation?.signal,
-        request.exactRevision,
-      );
-      const selected = request.paths.map((path) =>
-        available.find((candidate) => candidate.path === path),
-      );
-      if (!request.paths.length || selected.some((candidate) => !candidate))
-        throw new SkillCliError("SKILL_NOT_FOUND", "Selected Skill Root was not discovered");
-      if (new Set(request.paths).size !== request.paths.length)
-        throw new SkillCliError("INVALID_ARGUMENT", "Selected Skill Roots must be unique");
-      let materialized = selected as Candidate[];
-      const remote =
+      const snapshot =
         binding.kind === "local"
           ? undefined
-          : await remoteRoots(binding, materialized, options, operation?.signal);
-      if (remote) materialized = remote.roots;
+          : await openSource(
+              binding.id,
+              {
+                origin: "git",
+                kind: binding.kind === "github" ? "github" : "git",
+                url: binding.origin,
+                commit: request.exactRevision!,
+                path: binding.root,
+              },
+              {
+                source: binding.id,
+                origin: "git",
+                declaration: binding.provenance,
+                stability: "immutable",
+                revision: request.exactRevision!,
+              },
+              operation?.signal,
+              options.sourceTransport,
+              options.githubApiBaseUrl,
+            );
+      let materialized: Candidate[];
+      let remote: Awaited<ReturnType<typeof materializeRemoteRoots>> | undefined;
+      try {
+        const available = snapshot
+          ? await snapshotCandidates(snapshot, request.exactRevision!, operation?.signal)
+          : await candidates(binding, options, operation?.signal, request.exactRevision);
+        const selected = request.paths.map((path) =>
+          available.find((candidate) => candidate.path === path),
+        );
+        if (!request.paths.length || selected.some((candidate) => !candidate))
+          throw new SkillCliError("SKILL_NOT_FOUND", "Selected Skill Root was not discovered");
+        if (new Set(request.paths).size !== request.paths.length)
+          throw new SkillCliError("INVALID_ARGUMENT", "Selected Skill Roots must be unique");
+        materialized = selected as Candidate[];
+        remote = snapshot
+          ? await materializeRemoteRoots(snapshot, materialized, operation?.signal)
+          : undefined;
+        if (remote) materialized = remote.roots;
+      } finally {
+        await snapshot?.close();
+      }
       const digests = await Promise.all(
         materialized.map(
           async (candidate) =>
