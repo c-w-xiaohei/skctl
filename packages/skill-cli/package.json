@@ -1,19 +1,10 @@
 {
-  "name": "@skill-cli/app",
+  "name": "@skill-cli/cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@octokit/rest": "22.0.1",
-    "@opentui/core": "0.4.5",
-    "@opentui/solid": "0.4.5",
-    "@sinclair/typebox": "0.34.52",
-    "@tuiparts/core": "0.0.5",
-    "@tuiparts/solid": "0.0.5",
-    "ajv": "8.20.0",
-    "commander": "15.0.0",
-    "jsonc-parser": "3.3.1",
-    "solid-js": "1.9.12",
-    "yaml": "2.9.0"
+    "@skill-cli/core": "workspace:*",
+    "commander": "15.0.0"
   }
 }

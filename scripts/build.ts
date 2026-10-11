@@ -1,8 +1,16 @@
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { arch, platform, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import solidPlugin from "@opentui/solid/bun-plugin";
 
 const workspace = resolve(import.meta.dir, "..");
 const appManifest = join(workspace, "packages/skill-cli/package.json");
@@ -18,6 +26,7 @@ if (!currentNative) throw new Error(`Unsupported native host ${platform()}-${arc
 
 export const buildMetadata = {
   nativeArtifact: currentNative.artifact,
+  tuiArtifact: currentNative.artifact.replace("skill-cli-", "skill-tui-"),
   nativeTarget: currentNative.target,
   pluginEntry: "opencode-adapter.js",
   pluginDeclaration: "dist/index.d.ts",
@@ -29,12 +38,15 @@ export const pluginPackageFiles = [
   "package.json",
 ] as const;
 
-type BuildOptions = { readonly kind: "native" | "plugin"; readonly outputRoot: string };
+type BuildOptions = {
+  readonly kind: "cli" | "tui" | "native" | "plugin";
+  readonly outputRoot: string;
+};
 
 function parseArgs(argv: readonly string[]): BuildOptions {
   const kind = argv[0];
-  if (kind !== "native" && kind !== "plugin")
-    throw new Error("Usage: build.ts <native|plugin> [--output-root <absolute-path>]");
+  if (kind !== "cli" && kind !== "tui" && kind !== "native" && kind !== "plugin")
+    throw new Error("Usage: build.ts <cli|tui|native|plugin> [--output-root <absolute-path>]");
   let outputRoot = join(workspace, "dist");
   for (let index = 1; index < argv.length; index++) {
     if (argv[index] !== "--output-root") throw new Error(`Unknown option ${argv[index]}`);
@@ -82,6 +94,9 @@ async function regularFiles(root: string, prefix = ""): Promise<string[]> {
 const releaseMetadataFiles = ["SHA256SUMS", "release-metadata.json"] as const;
 const generatedReleaseFiles = [
   ...Object.values(nativeTargets).map((target) => target.artifact),
+  ...Object.values(nativeTargets).map((target) =>
+    target.artifact.replace("skill-cli-", "skill-tui-"),
+  ),
   "opencode-adapter.tgz",
   "opencode-adapter.js",
   ...releaseMetadataFiles,
@@ -107,17 +122,22 @@ async function writeReleaseMetadata(outputRoot: string): Promise<void> {
   );
   await writeFile(join(outputRoot, "SHA256SUMS"), `${sums.join("\n")}\n`);
   const app = JSON.parse(await readFile(appManifest, "utf8")) as { version: string };
-  const nativePath = join(outputRoot, currentNative.artifact);
-  const native = (await readFile(nativePath).catch(() => undefined))
-    ? { ...currentNative, path: currentNative.artifact, digest: await sha256(nativePath) }
-    : undefined;
+  const binaries: Record<string, unknown> = {};
+  for (const [kind, artifact] of [
+    ["cli", buildMetadata.nativeArtifact],
+    ["tui", buildMetadata.tuiArtifact],
+  ] as const) {
+    const path = join(outputRoot, artifact);
+    if (actual.includes(artifact))
+      binaries[kind] = { target: currentNative.target, path: artifact, digest: await sha256(path) };
+  }
   await writeFile(
     join(outputRoot, "release-metadata.json"),
     `${JSON.stringify(
       {
         version: app.version,
         host: `${platform()}-${arch()}`,
-        native,
+        binaries,
         artifacts: Object.fromEntries(
           await Promise.all(
             actual.map(async (file) => [file, await sha256(join(outputRoot, file))]),
@@ -130,13 +150,13 @@ async function writeReleaseMetadata(outputRoot: string): Promise<void> {
   );
 }
 
-async function buildNative(outputRoot: string): Promise<void> {
+async function buildNative(kind: "cli" | "tui", outputRoot: string): Promise<void> {
   await prepareReleaseOutput(outputRoot);
   const staging = await mkdtemp(join(tmpdir(), "skill-cli-native-build-"));
   try {
     const result = await Bun.build({
-      entrypoints: [join(workspace, "packages/skill-cli/src/main.ts")],
-      plugins: [solidPlugin],
+      entrypoints: [join(workspace, `packages/skill-${kind}/src/main.ts`)],
+      plugins: kind === "tui" ? [(await import("@opentui/solid/bun-plugin")).default] : [],
       compile: {
         target: currentNative.target,
         autoloadDotenv: false,
@@ -147,7 +167,10 @@ async function buildNative(outputRoot: string): Promise<void> {
     if (!result.success) throw new AggregateError(result.logs, "Native build failed");
     const output = result.outputs.find((item) => item.path.startsWith(staging));
     if (!output) throw new Error("Native build produced no staged executable");
-    await rename(output.path, join(outputRoot, currentNative.artifact));
+    await rename(
+      output.path,
+      join(outputRoot, kind === "cli" ? buildMetadata.nativeArtifact : buildMetadata.tuiArtifact),
+    );
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
@@ -228,6 +251,9 @@ async function buildPlugin(outputRoot: string): Promise<void> {
 
 if (import.meta.main) {
   const options = parseArgs(process.argv.slice(2));
-  if (options.kind === "native") await buildNative(options.outputRoot);
-  else await buildPlugin(options.outputRoot);
+  if (options.kind === "plugin") await buildPlugin(options.outputRoot);
+  else if (options.kind === "native") {
+    await buildNative("cli", options.outputRoot);
+    await buildNative("tui", options.outputRoot);
+  } else await buildNative(options.kind, options.outputRoot);
 }

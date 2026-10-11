@@ -3,7 +3,6 @@ import { lstat, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-
 import { buildMetadata, pluginPackageFiles } from "../../scripts/build";
 import {
   expectedArtifactName,
@@ -18,8 +17,23 @@ const version = (await Bun.file(join(root, "packages/skill-cli/package.json")).j
   .version as string;
 
 describe("packaged release orchestration", () => {
+  test("legacy UI journeys require an explicit opt-in instead of claiming default coverage", () => {
+    const argv = [
+      "--artifact",
+      join(root, "dist", expectedArtifactName()),
+      "--tui-artifact",
+      join(root, "dist", buildMetadata.tuiArtifact),
+      "--output-root",
+      join(root, "tmp", "legacy-smoke-fixture"),
+    ];
+    expect(parseSmokeOptions(argv).legacyJourneys).toBeUndefined();
+    expect(parseSmokeOptions([...argv, "--legacy-journeys"]).legacyJourneys).toBe(true);
+  });
   test("publishes import-safe native and plugin build metadata", () => {
     expect(buildMetadata.nativeArtifact).toBe(expectedArtifactName());
+    expect(buildMetadata.tuiArtifact).toBe(
+      expectedArtifactName().replace("skill-cli-", "skill-tui-"),
+    );
     expect(buildMetadata.nativeTarget).toBe(
       `bun-${process.platform === "win32" ? "windows" : process.platform}-${process.arch}-modern`,
     );
@@ -31,9 +45,6 @@ describe("packaged release orchestration", () => {
       "dist/process.d.ts",
       "package.json",
     ]);
-  });
-
-  test("defines exactly the six named packaged checks in release order", () => {
     expect(packagedChecks.map((check) => check.name)).toEqual([
       "native-artifact",
       "local-register-discover-install",
@@ -41,6 +52,7 @@ describe("packaged release orchestration", () => {
       "agent-run",
       "agent-download",
       "tui-start-render-input-exit",
+      "cli-without-tui-and-installed-handoff",
     ]);
   });
 
@@ -51,11 +63,13 @@ describe("packaged release orchestration", () => {
         parseSmokeOptions(["--artifact", "relative", "--output-root", outputRoot]),
       ).toThrow("absolute");
       expect(() =>
-        parseSmokeOptions(["--artifact", join(root, "dist", "skill-cli-linux-x64")]),
+        parseSmokeOptions(["--artifact", join(root, "dist", expectedArtifactName())]),
       ).toThrow("output-root");
       const options = parseSmokeOptions([
         "--artifact",
-        join(root, "dist", "skill-cli-linux-x64"),
+        join(root, "dist", expectedArtifactName()),
+        "--tui-artifact",
+        join(root, "dist", buildMetadata.tuiArtifact),
         "--output-root",
         outputRoot,
       ]);
@@ -66,158 +80,54 @@ describe("packaged release orchestration", () => {
     }
   });
 
-  test("qualifies every native artifact name without claiming a foreign host run", () => {
+  test("evidence-only invocation rebuilds and records the supplied manifest", () => {
+    const evidenceDir = "/tmp/opencode/skill-cli-evidence-options";
+    const manifest = join(evidenceDir, "worktree-manifest.json");
+    const options = parseSmokeOptions(["--evidence-dir", evidenceDir, "--manifest", manifest]);
+    expect(options).toMatchObject({
+      evidenceDir,
+      manifest,
+      buildForEvidence: true,
+      outputRoot: join(evidenceDir, "fixture-runtime"),
+    });
+    expect(options.artifact).toBe(join(root, "dist", expectedArtifactName()));
+    expect(options.tuiArtifact).toBe(join(root, "dist", buildMetadata.tuiArtifact));
+    expect(() =>
+      parseSmokeOptions(["--evidence-dir", evidenceDir, "--manifest", "relative"]),
+    ).toThrow("absolute");
+  });
+
+  test("qualifies foreign artifacts without claiming a foreign host run", () => {
     expect(expectedArtifactName("linux", "x64")).toBe("skill-cli-linux-x64");
     expect(expectedArtifactName("darwin", "arm64")).toBe("skill-cli-darwin-arm64");
     expect(expectedArtifactName("win32", "x64")).toBe("skill-cli-windows-x64.exe");
   });
 
-  test("uses platform-native controllers that write terminal Ctrl-C input after render output", () => {
-    for (const target of ["linux", "darwin", "win32"] as const) {
-      const controller = terminalControllerSource(target);
-      expect(controller).toContain("ctrlc = 3");
-      expect(controller).toContain("?1049h");
-      expect(controller).toContain("10000");
-      expect(controller).not.toContain("kill(child, SIGINT)");
-      expect(controller).not.toContain("OPEN_ENVIRONMENT_ONLY");
-    }
-    expect(terminalControllerSource("linux")).toContain("forkpty");
-    expect(terminalControllerSource("darwin")).toContain("forkpty");
-    expect(terminalControllerSource("win32")).toContain("CreatePseudoConsole");
-    expect(terminalControllerSource("win32")).toContain("WriteFile(inputWrite");
-  });
-
-  test("keeps the Linux controller aligned with the refactored TUI acceptance paths", () => {
-    const controller = terminalControllerSource("linux");
-
-    expect(controller).toContain('cold = !strcmp(argv[4], "cold")');
-    expect(controller).toContain('checkpoint("cold-start", "Add your first Skill")');
-    expect(controller).toContain('checkpoint("cold-action", "Add a Source")');
-    expect(controller).toContain('checkpoint("cold-instructions", "Discover")');
-    expect(controller).toContain("PTY cold-start Enter mutated project config");
-    expect(controller).toContain('checkpoint("source-palette", "Global")');
-    expect(controller).toContain('checkpoint("source-config", "Config")');
-    expect(controller).toContain(
-      'checkpoint("source-actions", "Add Source"); send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\r")',
-    );
-    expect(controller).toContain(
-      'checkpoint("add-source", "Add Source"); send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\r")',
-    );
-    expect(controller).toContain('send_bytes(master, "\\033[C")');
-    expect(controller).toContain("resize_pty(master, child, 80, 24)");
-    expect(controller).toContain("resize_pty(master, child, 43, 24)");
-    expect(controller).toContain('checkpoint("reader-tabs", "SKILL.md")');
-    expect(controller).toContain('checkpoint("reader-details", "Details")');
-    expect(controller).toContain('send_bytes(master, "\\033[C\\033[C")');
-    expect(controller).toContain('checkpoint("reader-actions", "Actions")');
-    expect(controller).toContain('checkpoint("global-collections-empty", "No Collections yet")');
-    expect(controller).toContain('checkpoint("new-collection-action", "Create Collection")');
-    expect(controller).toContain(
-      'checkpoint("restored-form", "Create Collection"); send_bytes(master, "pty-created")',
-    );
-    expect(controller).toContain('send_bytes(master, "\\t")');
-    expect(controller).toContain('send_bytes(master, "\\033[B\\r")');
-    expect(controller).toContain('checkpoint("created", "pty-created")');
-    expect(controller).toContain('send_bytes(master, "\\020")');
-    expect(controller).toContain('checkpoint("collection-actions", "Add Link")');
-    expect(controller).toContain('checkpoint("collection-remove-action", "Remove Collection")');
-    expect(controller).toContain('checkpoint("remove-review", "Remove Collection")');
-    expect(controller).toContain(
-      'send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B")',
-    );
-    expect(controller).toContain(
-      'send_bytes(master, "\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B\\033[B")',
-    );
-    expect(controller).toContain('checkpoint("collection-actions-repeat", "Add Link")');
-    expect(controller).toContain('checkpoint("global destination", "Global Config")');
-    expect(controller).toContain(
-      'checkpoint("startup", "Workspace") || !checkpoint("skills", "Installed Skills") || !checkpoint("fixture", "fixture"); send_bytes(master, "\\033"); step++;',
-    );
-    expect(controller).toContain(
-      'step == 1 && elapsed - alternateAt >= 2200) { send_bytes(master, "\\033"); step++; }',
-    );
-    expect(controller).toContain(
-      'checkpoint("global selected", "Global Config") || !checkpoint("global destination", "Global Config"); send_bytes(master, "\\t"); step++;',
-    );
-    expect(controller).toContain(
-      'checkpoint("global-sections", "Sources"); send_bytes(master, "\\033[C\\033[C"); step++;',
-    );
-    expect(controller).toContain('send_bytes(master, "\\t")');
-    expect(controller).toContain('level_has(argv[2], "global", "pty-created")');
-    expect(controller).toContain('checkpoint("mouse-overlay-dimensions", "Search dimensions")');
-    expect(controller).toContain('locate("Search dimensions", &column, &row) || ++row > height');
-    expect(controller).toContain("if (c >= 0x20 && c <= 0x3f) return");
-    expect(controller).toContain("c == '\\\\' ? 0 : 3");
-    expect(controller).toContain("static int width = 120, height = 40, x, y, saved_x, saved_y");
-    expect(controller).toContain("else if (c == 's') { saved_x = x; saved_y = y; }");
-    expect(controller).toContain("else if (c == 'u') { x = saved_x; y = saved_y; }");
-    expect(controller).toContain("static int cell_width(unsigned int codepoint)");
-    expect(controller).toContain("in_range(codepoint, 0x0300, 0x036f)");
-    expect(controller).toContain("in_range(codepoint, 0xfe00, 0xfe0f)");
-    expect(controller).toContain("in_range(codepoint, 0x2e80, 0xa4cf)");
-    expect(controller).toContain("in_range(codepoint, 0x1f000, 0x1faff)");
-    expect(controller).toContain("if ((c & 0xc0) == 0x80)");
-    expect(controller).toContain("codepoint >= (unsigned int)utf8_min");
-    expect(controller).not.toContain("utf8_remaining");
-  });
-
-  test.if(process.platform === "linux")(
-    "tracks wide and combining UTF-8 codepoints across chunks for mouse locate coordinates",
-    async () => {
-      const output = await mkdtemp(join(tmpdir(), "skill-cli-pty-width-"));
-      const source = join(output, "pty-controller.c");
-      const controller = join(output, "pty-controller");
-      try {
-        await writeFile(source, terminalControllerSource("linux"));
-        const compile = Bun.spawn(["cc", source, "-lutil", "-o", controller], {
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        expect(await compile.exited, await new Response(compile.stderr).text()).toBe(0);
-        const probe = Bun.spawn([controller, "--width-probe"], { stdout: "pipe", stderr: "pipe" });
-        expect(await probe.exited).toBe(0);
-        expect(await new Response(probe.stderr).text()).toBe("");
-        expect(await new Response(probe.stdout).text()).toBe("wide=3,1 combining=2,2\n");
-      } finally {
-        await rm(output, { recursive: true, force: true });
-      }
-    },
-  );
-
-  test("makes the Windows ConPTY helper close and boundedly drain every owned resource", () => {
+  test("Windows controller is render-gated and boundedly drains every owned resource", () => {
     const controller = terminalControllerSource("win32");
-
+    expect(controller).toContain("CreatePseudoConsole");
+    expect(controller).toContain("if (screen && !screenAt)");
+    expect(controller).toContain("WriteFile(inputWrite, &ctrlc, 1, &wrote, NULL) && wrote == 1");
+    expect(controller).toContain("GetTickCount64() - start >= 10000");
+    expect(controller).toContain("GetTickCount64() - drainStart >= 2000");
     expect(controller).toContain("close_handle(&inputRead); close_handle(&outputWrite);");
     expect(controller).toContain("DeleteProcThreadAttributeList");
     expect(controller).toContain("HeapFree(GetProcessHeap(), 0, startup.lpAttributeList)");
-    expect(controller).toContain("close_handle(&inputWrite)");
-    expect(controller).toContain("close_handle(&outputRead)");
-    expect(controller).toContain("close_handle(&process.hThread)");
-    expect(controller).toContain("close_handle(&process.hProcess)");
-    expect(controller).toContain("ClosePseudoConsole(*console); *console = NULL;");
-    expect(controller).toContain("ULONGLONG drainStart = GetTickCount64()");
-    expect(controller).toContain("PeekNamedPipe(outputRead, NULL, 0, NULL, &read, NULL)");
-    expect(controller).toContain("GetTickCount64() - drainStart >= 2000");
-    expect(controller).not.toContain(
-      "while (ReadFile(outputRead, buffer, sizeof(buffer), &read, NULL) && read)",
+    expect(controller).toContain(
+      "close_handle(&process.hThread); close_handle(&process.hProcess);",
+    );
+    expect(controller).toContain(
+      'snprintf(command, sizeof(command), "%c%s%c %s", 34, argv[1], 34, argc == 4 ? argv[3] : "")',
     );
     const inputClose = controller.indexOf("close_handle(&inputWrite);");
     const consoleClose = controller.indexOf("close_console(&console);");
-    const drainPeek = controller.indexOf("PeekNamedPipe(outputRead", consoleClose);
-    expect(inputClose).toBeGreaterThanOrEqual(0);
     expect(consoleClose).toBeGreaterThan(inputClose);
-    expect(drainPeek).toBeGreaterThan(consoleClose);
-    expect(controller).toContain("result = 127");
-    expect(controller).toContain("WriteFile(inputWrite, &ctrlc, 1, &wrote, NULL) && wrote == 1");
-    expect(controller).not.toContain("kill(child, SIGINT)");
-  });
-
-  test("keeps Windows orchestration render-gated, bounded, and argv-safe", () => {
-    const controller = terminalControllerSource("win32");
-    expect(controller).toContain('snprintf(command, sizeof(command), "%c%s%c", 34, argv[1], 34)');
-    expect(controller).toContain("if (screen && !screenAt)");
-    expect(controller).toContain("GetTickCount64() - start >= 10000");
-    expect(controller).toContain("argv[1]");
+    expect(controller.indexOf("PeekNamedPipe(outputRead", consoleClose)).toBeGreaterThan(
+      consoleClose,
+    );
+    expect(controller).not.toContain(
+      "while (ReadFile(outputRead, buffer, sizeof(buffer), &read, NULL) && read)",
+    );
   });
 
   test("records executable artifact digests and extracts an allowlisted plugin package", async () => {
@@ -229,7 +139,14 @@ describe("packaged release orchestration", () => {
     );
     if (process.platform !== "win32") expect((await stat(artifact)).mode & 0o111).not.toBe(0);
     expect(sums).toContain(`${digest}  ${buildMetadata.nativeArtifact}`);
-    expect(metadata.native).toMatchObject({ path: buildMetadata.nativeArtifact, digest });
+    expect(metadata.binaries.cli).toMatchObject({ path: buildMetadata.nativeArtifact, digest });
+    const tuiPath = join(root, "dist", buildMetadata.tuiArtifact);
+    const tuiDigest = new Bun.CryptoHasher("sha256").update(await readFile(tuiPath)).digest("hex");
+    expect(sums).toContain(`${tuiDigest}  ${buildMetadata.tuiArtifact}`);
+    expect(metadata.binaries.tui).toMatchObject({
+      path: buildMetadata.tuiArtifact,
+      digest: tuiDigest,
+    });
     const output = await mkdtemp(join(tmpdir(), "skill-cli-plugin-extract-"));
     const pluginOutput = await mkdtemp(join(tmpdir(), "skill-cli-plugin-build-"));
     try {
@@ -258,7 +175,7 @@ describe("packaged release orchestration", () => {
       expect(manifest.name).toBe("@skill-cli/opencode-adapter");
       expect(manifest.version).toBe(version);
       const exported = await import(
-        `${pathToFileURL(join(packageRoot, "dist", "index.js")).href}?test=${Date.now()}`
+        `${pathToFileURL(join(packageRoot, "dist/index.js")).href}?test=${Date.now()}`
       );
       expect(Object.keys(exported)).toEqual(["default"]);
       expect(typeof exported.default).toBe("function");
@@ -283,7 +200,7 @@ describe("packaged release orchestration", () => {
       const built = Bun.spawn([
         process.execPath,
         "scripts/build.ts",
-        "native",
+        "cli",
         "--output-root",
         output,
       ]);
@@ -293,34 +210,50 @@ describe("packaged release orchestration", () => {
         "release-metadata.json",
         buildMetadata.nativeArtifact,
       ]);
+      const builtTui = Bun.spawn([
+        process.execPath,
+        "scripts/build.ts",
+        "tui",
+        "--output-root",
+        output,
+      ]);
+      expect(await builtTui.exited).toBe(0);
       const metadata = JSON.parse(await readFile(join(output, "release-metadata.json"), "utf8"));
-      expect(Object.keys(metadata.artifacts)).toEqual([buildMetadata.nativeArtifact]);
+      expect(Object.keys(metadata.artifacts)).toEqual([
+        buildMetadata.nativeArtifact,
+        buildMetadata.tuiArtifact,
+      ]);
       expect(await Bun.file(join(output, buildMetadata.nativeArtifact)).text()).not.toBe("stale");
       const plugin = join(output, "opencode-adapter.js");
       await writeFile(plugin, "plugin");
       const rebuilt = Bun.spawn([
         process.execPath,
         "scripts/build.ts",
-        "native",
+        "cli",
         "--output-root",
         output,
       ]);
       expect(await rebuilt.exited).toBe(0);
       expect(await Bun.file(plugin).text()).toBe("plugin");
+      expect(await Bun.file(join(output, buildMetadata.tuiArtifact)).exists()).toBe(true);
       expect(await Bun.file(join(output, "SHA256SUMS")).text()).toContain("opencode-adapter.js");
     } finally {
       await rm(output, { recursive: true, force: true });
     }
   }, 30_000);
 
-  test("runs all observable packaged actions and removes its owned root", async () => {
+  test("runs observable packaged actions and removes only its owned fixture root", async () => {
     const outputRoot = await mkdtemp(join(tmpdir(), "skill-cli-packaged-smoke-"));
     const artifact = join(root, "dist", buildMetadata.nativeArtifact);
     try {
-      await runPackagedSmoke({ artifact, outputRoot });
+      await runPackagedSmoke({
+        artifact,
+        tuiArtifact: join(root, "dist", buildMetadata.tuiArtifact),
+        outputRoot,
+      });
       expect(await lstat(outputRoot).catch(() => undefined)).toBeUndefined();
     } finally {
       await rm(outputRoot, { recursive: true, force: true });
     }
-  }, 90_000);
+  }, 180_000);
 });

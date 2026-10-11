@@ -87,6 +87,9 @@ function createLlmServer(browseCommand: string, loadCommand: string, project: st
         );
       }
       if (requests.length === 3) return completion({ content: "loaded" });
+      if (requests.length === 4) return completion({ content: "compacted" });
+      if (requests.length === 5) return completion({ content: "continued" });
+      if (requests.length === 6) return completion({ content: "resumed" });
       return new Response("Unexpected model request", { status: 500 });
     },
   });
@@ -122,9 +125,9 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
   const errors: unknown[] = [];
   try {
     const release = (await Bun.file(join(workspace, "dist/release-metadata.json")).json()) as {
-      native: { path: string };
+      binaries: { cli: { path: string } };
     };
-    const native = resolve(workspace, "dist", release.native.path);
+    const native = resolve(workspace, "dist", release.binaries.cli.path);
     expect((await fs.stat(native)).isFile()).toBe(true);
 
     const pluginDir = join(root, "plugin");
@@ -145,6 +148,7 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
       OPENCODE_CONFIG_DIR: join(root, "opencode-config"),
       OPENCODE_DB: join(root, "opencode.db"),
       OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+      OPENCODE_SERVER_PASSWORD: "",
     };
     const baseEnv = { ...process.env, ...isolatedEnv } as Record<string, string>;
     const candidate = await fs.realpath(join(workspace, "node_modules/.bin/opencode"));
@@ -193,6 +197,7 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
       [...inProject, "source", "register", "local", "local", "./source"],
       [...inProject, "source", "discover", "local"],
       [...inProject, "install", "local", "review"],
+      [...inProject, "collection", "create", "engineering", "--scope", "project"],
       [...inProject, "collection", "member", "add", "engineering", "review", "local", "review"],
       [...inProject, "use", "set", "engineering"],
       [...inProject, "managed", "set"],
@@ -266,6 +271,51 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
       ?.filter(({ role }) => role === "tool")
       .at(-1)?.content;
     expect(loadOutput).toEqual(expect.stringContaining(token));
+
+    const summarized = await host.client.session.summarize({
+      path: { id: sessionID },
+      query: { directory: project },
+      body: { providerID: "test", modelID: "test-model", auto: true },
+    });
+    expect(summarized.data).toBe(true);
+    expect(llm.requests).toHaveLength(5);
+    const compactionRequest = llm.requests[3];
+    expect(
+      compactionRequest?.messages?.some(
+        ({ role, content }) =>
+          role !== "system" &&
+          typeof content === "string" &&
+          content.includes('<managed_skill_catalog scope="root">'),
+      ),
+    ).toBe(true);
+    const continuedSystemPrompts = llm.requests[4]?.messages
+      ?.filter(({ role, content }) => role === "system" && typeof content === "string")
+      .map(({ content }) => content);
+    expect(continuedSystemPrompts).toEqual(
+      expect.arrayContaining([expect.stringContaining('<managed_skill_catalog scope="root">')]),
+    );
+
+    const resumed = await host.client.session.prompt({
+      path: { id: sessionID },
+      query: { directory: project },
+      body: {
+        model: { providerID: "test", modelID: "test-model" },
+        parts: [{ type: "text", text: "Continue using the managed review Skill." }],
+      },
+    });
+    expect(
+      resumed.data.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join(""),
+    ).toBe("resumed");
+    expect(llm.requests).toHaveLength(6);
+    const resumedSystemPrompts = llm.requests[5]?.messages
+      ?.filter(({ role, content }) => role === "system" && typeof content === "string")
+      .map(({ content }) => content);
+    expect(resumedSystemPrompts).toEqual(
+      expect.arrayContaining([expect.stringContaining('<managed_skill_catalog scope="root">')]),
+    );
 
     const records = await Promise.all(
       (await fs.readdir(audit)).map((file) => fs.readFile(join(audit, file), "utf8")),

@@ -1,0 +1,113 @@
+import { SelectRenderable } from "@opentui/core";
+import { useRenderer, type SelectProps } from "@opentui/solid";
+import { createSignal, onCleanup, onMount, splitProps } from "solid-js";
+import { selectScrollOffset } from "../select-scroll";
+import { selectColors } from "./theme";
+import { useTheme } from "./use-theme";
+import { fitColumn, formatColumns, inlineNameColumnWidth } from "./list-text";
+
+export interface DataListProps extends Omit<SelectProps, "ref"> {
+  readonly ref?: (target: SelectRenderable) => void;
+  readonly inlineDescription?: boolean;
+}
+
+/** Selection keeps a fixed gutter; only its color changes with physical focus. */
+export function DataList(props: DataListProps) {
+  const [callbacks, options] = splitProps(props, [
+    "ref",
+    "options",
+    "onMouseDown",
+    "inlineDescription",
+  ]);
+  const renderer = useRenderer();
+  const tokens = useTheme();
+  const [focused, setFocused] = createSignal(false);
+  const [width, setWidth] = createSignal(0);
+  let target: SelectRenderable | undefined;
+  const focus = () => setFocused(true);
+  const blur = () => setFocused(false);
+  // Native Select overrides onResize without emitting the base resize event.
+  // Observe computed geometry after frames; unchanged widths do not update Solid.
+  const measureWidth = () => setWidth(target?.width ?? 0);
+  renderer.on("frame", measureWidth);
+  onMount(() => {
+    setFocused(renderer.currentFocusedRenderable === target);
+    measureWidth();
+  });
+  onCleanup(() => {
+    target?.off("focused", focus);
+    target?.off("blurred", blur);
+    renderer.off("frame", measureWidth);
+  });
+  return (
+    <select
+      {...options}
+      wrapSelection={false}
+      options={callbacks.options?.map((option) =>
+        width() > 5
+          ? {
+              ...option,
+              name: callbacks.inlineDescription
+                ? formatColumns(
+                    option.name,
+                    option.description,
+                    width(),
+                    inlineNameColumnWidth(width()),
+                  )
+                : fitColumn(option.name, width() - 5),
+              description: callbacks.inlineDescription
+                ? option.description
+                : fitColumn(option.description, width() - 5),
+            }
+          : option,
+      )}
+      {...selectColors(tokens())}
+      selectedBackgroundColor={focused() ? tokens().colors.primary : tokens().colors.surface}
+      selectedTextColor={focused() ? tokens().colors.primaryForeground : tokens().colors.foreground}
+      selectedDescriptionColor={
+        focused() ? tokens().colors.primaryForeground : tokens().colors.mutedForeground
+      }
+      showSelectionIndicator
+      onMouseDown={(event) => {
+        if (event.button !== 0 || !target) {
+          if (target) callbacks.onMouseDown?.call(target, event);
+          return;
+        }
+
+        // Select uses one text row plus its optional description and configured gap.
+        // `scrollOffset` has no public OpenTUI accessor in 0.5.14; use the existing
+        // compatibility facade rather than reaching into SelectRenderable here.
+        const linesPerItem = (target.showDescription ? 2 : 1) + (options.itemSpacing ?? 0);
+        const localY = event.y - target.screenY;
+        const visibleRow = Math.floor(localY / linesPerItem);
+        const index = selectScrollOffset(target) + visibleRow;
+        if (
+          localY < 0 ||
+          localY >= target.height ||
+          visibleRow * linesPerItem + (target.showDescription ? 2 : 1) > target.height ||
+          localY % linesPerItem >= (target.showDescription ? 2 : 1) ||
+          index < 0 ||
+          index >= target.options.length
+        ) {
+          callbacks.onMouseDown?.call(target, event);
+          return;
+        }
+
+        // Consume a valid list-row press instead of forwarding it to legacy
+        // per-list mouse handlers that activate the selected object. Enter
+        // remains the explicit open action.
+        event.preventDefault();
+        event.stopPropagation();
+        target.focus();
+        target.setSelectedIndex(index);
+      }}
+      ref={(value: SelectRenderable) => {
+        target = value;
+        value.on("focused", focus);
+        value.on("blurred", blur);
+        measureWidth();
+        callbacks.ref?.(value);
+      }}
+    />
+  );
+}

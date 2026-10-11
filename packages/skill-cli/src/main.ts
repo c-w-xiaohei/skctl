@@ -1,6 +1,7 @@
-import { createHumanCommand, runHumanCommand } from "./cli/human";
-import { runAgentCommand } from "./cli/agent";
-import { createSkillCliCore } from "./core/create-core";
+import { createHumanCommand, runHumanCommand } from "./human";
+import { runAgentCommand } from "./agent";
+import { parseMainArgs } from "./dispatch";
+import { launchInstalledTui } from "./tui-launcher";
 
 type Output = { write(chunk: string): unknown };
 export interface MainOptions {
@@ -9,6 +10,7 @@ export interface MainOptions {
   readonly stdoutIsTTY?: boolean;
   readonly stdout?: Output;
   readonly stderr?: Output;
+  readonly launchTui?: typeof launchInstalledTui;
 }
 
 export async function runMain(argv: readonly string[], options: MainOptions = {}): Promise<number> {
@@ -17,36 +19,26 @@ export async function runMain(argv: readonly string[], options: MainOptions = {}
   const stdoutIsTTY = options.stdoutIsTTY ?? process.stdout.isTTY === true;
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
-  if (argv.length !== 0) {
-    const agentIndex = argv.indexOf("agent");
-    if (agentIndex !== -1) {
-      let project: string | undefined;
-      for (let index = 0; index < agentIndex; index++) {
-        const option = argv[index];
-        const value = argv[index + 1];
-        if (option === "--project") project = value;
-        if (option?.startsWith("--")) index++;
-      }
-      return runAgentCommand(argv.slice(agentIndex + 1), {
-        cwd,
-        project,
-        stdout,
-        stderr,
-      });
-    }
-    return runHumanCommand(argv, { cwd, stdout, stderr });
-  }
-  if (!stdinIsTTY || !stdoutIsTTY) {
-    const command = createHumanCommand({ cwd, stdout, stderr });
-    await command.outputHelp();
-    return 0;
-  }
   try {
-    const { runTui } = await import("./tui/app");
-    await runTui(createSkillCliCore({ cwd }));
-    return 0;
+    const parsed = parseMainArgs(argv);
+    if (parsed.kind === "agent")
+      return runAgentCommand(parsed.args, { cwd, project: parsed.project, stdout, stderr });
+    if (parsed.kind === "human") return runHumanCommand(argv, { cwd, stdout, stderr });
+    if (parsed.help) {
+      stdout.write(
+        "Usage: skill-cli tui [--project <path>]\nOpen the installed skill-tui in an interactive terminal.\n",
+      );
+      return 0;
+    }
+    if (!stdinIsTTY || !stdoutIsTTY) {
+      if (parsed.explicit)
+        throw new Error("skill-tui requires an interactive input/output terminal.");
+      createHumanCommand({ cwd, stdout, stderr }).outputHelp();
+      return 0;
+    }
+    return await (options.launchTui ?? launchInstalledTui)({ cwd, project: parsed.project });
   } catch (error) {
-    stderr.write(`${error instanceof Error ? error.message : "Internal error"}\n`);
+    stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
 }
