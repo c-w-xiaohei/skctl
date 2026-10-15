@@ -7,6 +7,9 @@ import plugin from "../src/index.ts";
 
 const roots: string[] = [];
 const originalPath = process.env.PATH;
+const catalog =
+  "Use `skill-cli agent browse <collection-id>` to inspect a Collection and `skill-cli agent load <selector>` to load a Skill.\n" +
+  '<managed_skill_catalog scope="root"><collection><id>engineering</id><name>engineering</name><description>Code review</description></collection></managed_skill_catalog>\n';
 
 afterEach(async () => {
   process.env.PATH = originalPath;
@@ -29,17 +32,45 @@ function input(directory: string): PluginInput {
 }
 
 describe("OpenCode plugin", () => {
-  test("renders root Collection nodes from the clean catalog", async () => {
-    const catalog =
-      '<managed_skill_catalog scope="root">\n<collection>engineering</collection>\n</managed_skill_catalog>\n';
+  test("passes the root browse prompt through unchanged", async () => {
     const root = await fixture(catalog);
     const hooks = await plugin(input(root));
     const output = { system: [] as string[] };
     await hooks["experimental.chat.system.transform"]!({ model: {} as never }, output);
     expect(output.system).toEqual([catalog]);
+    await hooks["experimental.chat.system.transform"]!({ model: {} as never }, output);
+    expect(output.system).toHaveLength(1);
   });
 
-  test("fails open without exposing malformed catalog output", async () => {
+  test("preserves the managed catalog in compaction context", async () => {
+    const root = await fixture(catalog);
+    const hooks = await plugin(input(root));
+    const output = { context: [] as string[], prompt: undefined };
+
+    await hooks["experimental.session.compacting"]!({ sessionID: "session" }, output);
+
+    expect(output.context).toEqual([catalog]);
+  });
+
+  test("refreshes the root prompt for compaction and subsequent chat requests", async () => {
+    const root = await fixture(catalog);
+    const hooks = await plugin(input(root));
+    const initial = { system: [] as string[] };
+    await hooks["experimental.chat.system.transform"]!({ model: {} as never }, initial);
+
+    const refreshed = catalog.replace("Code review", "Deployment review");
+    await writeFile(join(root, "catalog.json"), refreshed);
+    const compacted = { context: [] as string[], prompt: undefined };
+    await hooks["experimental.session.compacting"]!({ sessionID: "session" }, compacted);
+    const continued = { system: [] as string[] };
+    await hooks["experimental.chat.system.transform"]!({ model: {} as never }, continued);
+
+    expect(initial.system).toEqual([catalog]);
+    expect(compacted.context).toEqual([refreshed]);
+    expect(continued.system).toEqual([refreshed]);
+  });
+
+  test("both hooks fail open and report only once", async () => {
     const root = await mkdtemp(join(tmpdir(), "skill-cli-adapter-test-"));
     roots.push(root);
     process.env.PATH = root;
@@ -48,9 +79,14 @@ describe("OpenCode plugin", () => {
     console.error = (value) => diagnostics.push(String(value));
     try {
       const hooks = await plugin(input(root));
-      const output = { system: [] as string[] };
-      await hooks["experimental.chat.system.transform"]!({ model: {} as never }, output);
-      expect(output.system).toEqual([]);
+      const chatOutput = { system: [] as string[] };
+      const compactionOutput = { context: [] as string[], prompt: undefined };
+
+      await hooks["experimental.chat.system.transform"]!({ model: {} as never }, chatOutput);
+      await hooks["experimental.session.compacting"]!({ sessionID: "session" }, compactionOutput);
+
+      expect(chatOutput.system).toEqual([]);
+      expect(compactionOutput.context).toEqual([]);
       expect(diagnostics).toEqual(["skill-cli managed catalog is unavailable"]);
     } finally {
       console.error = log;

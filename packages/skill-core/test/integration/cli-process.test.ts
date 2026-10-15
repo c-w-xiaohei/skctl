@@ -59,11 +59,11 @@ test("CLI-002 process agent browse writes an agent-ready root catalog", async ()
     expect(await command.exited).toBe(0);
     expect(await new Response(command.stderr).text()).toBe("");
     const stdout = await new Response(command.stdout).text();
-    expect(stdout).toContain("Managed Skills are progressively disclosed");
-    expect(stdout).toContain("skill-cli agent browse <collection-id>");
     expect(stdout).toContain('<managed_skill_catalog scope="root">');
     expect(stdout).toContain("<id>c</id>");
     expect(stdout).toContain("<description>Code review workflows</description>");
+    expect(stdout).toContain("skill-cli agent browse <collection-id>");
+    expect(stdout).toContain("skill-cli agent load <selector>");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

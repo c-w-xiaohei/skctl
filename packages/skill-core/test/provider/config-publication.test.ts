@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
 import { StateCoordinator } from "../../src/internal/state";
 import { setManagementPublicationHookForTest } from "../../src/management";
+import { createExecutableFixture } from "../executable-fixture";
 
 function assertPublicConfigImpact(value: unknown) {
   const forbidden = new Set([
@@ -110,6 +111,7 @@ test("MGMT contains adopted reusable Config bindings that escape their remote ho
   try {
     await mkdir(join(remote, "host"), { recursive: true });
     await git(remote, "init", "-b", "main");
+    await enableFiltering(remote);
     await git(remote, "config", "user.email", "test@skill-cli.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(
@@ -283,14 +285,29 @@ test("Config adoption cancellation before publication preserves state and cache"
 test("Config observation cancels a blocked real Git child without publication", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-config-observe-cancel-"));
   const state = join(root, "state");
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   const ready = join(root, "ready");
   const pid = join(root, "pid");
-  await mkdir(bin);
-  await writeFile(
-    join(bin, "git"),
-    `#!/bin/sh
-if [ "$3" = "init" ]; then
+  const previousPath = process.env.PATH;
+  const controller = new AbortController();
+  let pending: Promise<unknown> | undefined;
+  try {
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "git"),
+      `#!/bin/sh
+command() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -c) shift 2 ;;
+      --git-dir=*) shift ;;
+      *) [ "$1" = "ls-remote" ]; return ;;
+    esac
+  done
+  return 1
+}
+if command "$@"; then
   : > "${ready}"
   printf '%s' "$$" > "${pid}"
   trap '' TERM
@@ -299,18 +316,15 @@ if [ "$3" = "init" ]; then
 fi
 exec /usr/bin/git "$@"
 `,
-    { mode: 0o755 },
-  );
-  const previousPath = process.env.PATH;
-  process.env.PATH = `${bin}:${previousPath}`;
-  try {
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${bin}:${previousPath}`;
     await writeFile(
       join(root, "skill-cli.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
     process.env.SKILL_CLI_STATE_DIR = state;
-    const controller = new AbortController();
-    const pending = createSkillCliCore({ cwd: root }).management.observeConfig(
+    pending = createSkillCliCore({ cwd: root }).management.observeConfig(
       { id: "remote" },
       { signal: controller.signal },
     );
@@ -328,6 +342,9 @@ exec /usr/bin/git "$@"
   } finally {
     process.env.PATH = previousPath;
     delete process.env.SKILL_CLI_STATE_DIR;
+    controller.abort();
+    await pending?.catch(() => {});
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });

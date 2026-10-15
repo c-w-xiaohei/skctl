@@ -64,6 +64,29 @@ export const isPlainNavKey = (key: {
 const matchesCommand = (command: CommandRecord, key: NavKey): boolean =>
   command.keys.includes(key.name) || (key.char !== undefined && command.keys.includes(key.char));
 
+export function matchesCommandShortcut(command: CommandRecord, key: NavKey): boolean {
+  if (!command.shortcut) return false;
+  const parts = command.shortcut.toLowerCase().split("+");
+  const name = parts.pop()!;
+  const expected = parseNavKey({
+    name,
+    ctrl: parts.includes("ctrl"),
+    shift: parts.includes("shift"),
+    alt: parts.includes("alt"),
+  });
+  return (
+    key.name === expected.name &&
+    key.char === expected.char &&
+    key.ctrl === expected.ctrl &&
+    key.shift === expected.shift &&
+    key.alt === expected.alt &&
+    !key.meta &&
+    !key.option &&
+    !key.super &&
+    !key.hyper
+  );
+}
+
 /**
  * The renderer calls this once per key. A declined layer alone permits the next
  * layer to run; blocked and consumed results stop background delivery.
@@ -152,11 +175,13 @@ export interface NavFacts {
   readonly browserAvailable?: boolean;
   readonly activeInput?: boolean;
   readonly readerActive: boolean;
+  readonly readerInline?: boolean;
   readonly readerTab: ReaderState["tab"];
   readonly readerResourceLevel?: "list" | "content";
   readonly collectionFilterOpen: boolean;
   readonly collectionFilterDimension: boolean;
   readonly collectionInspectorOpen?: boolean;
+  readonly collectionBrowserOpen?: boolean;
   readonly workspaceShell?: boolean;
   readonly configSourceSurface?: boolean;
   readonly configIntegrationSurface?: boolean;
@@ -189,6 +214,7 @@ export type NavEvent =
   | { readonly type: "collections.filter.back" }
   | { readonly type: "collections.filter.close" }
   | { readonly type: "collections.inspector.back" }
+  | { readonly type: "workspace.collections.close" }
   | { readonly type: "config.surface.back" }
   | { readonly type: "config.integration.back" };
 
@@ -222,7 +248,15 @@ const resolveTab = (facts: NavFacts, key: NavKey): NavDecision => {
 
 export const resolveEscape = (facts: NavFacts): NavDecision => {
   if (facts.activeInput)
-    return events({ type: "focus.request", focus: facts.readerActive ? "reader" : "browser" });
+    return events({
+      type: "focus.request",
+      focus: facts.readerActive && facts.focus === "input" ? "reader" : "browser",
+    });
+  if (facts.collectionBrowserOpen)
+    return events(
+      { type: "workspace.collections.close" },
+      { type: "focus.request", focus: "browser" },
+    );
   if (facts.collectionFilterOpen)
     return facts.collectionFilterDimension
       ? events(
@@ -235,6 +269,8 @@ export const resolveEscape = (facts: NavFacts): NavDecision => {
   if (facts.collectionInspectorOpen) return events({ type: "collections.inspector.back" });
   if (
     facts.readerActive &&
+    facts.focus !== undefined &&
+    readerOwnsFocus(facts.focus) &&
     facts.readerTab === "resources" &&
     facts.readerResourceLevel === "content"
   )
@@ -246,6 +282,8 @@ export const resolveEscape = (facts: NavFacts): NavDecision => {
       { type: "focus.request", focus: "reader-resource-list" },
     );
   // A route frame owns its predecessor even while a filtered browser is underneath it.
+  if (facts.readerActive && facts.readerInline && facts.focus && readerOwnsFocus(facts.focus))
+    return events({ type: "narrow.show-work-area" }, { type: "focus.request", focus: "browser" });
   if (facts.canReturn) return events({ type: "route.back" });
   if (!facts.focus) return null;
   if (facts.focus === "browser") return events({ type: "focus.request", focus: "local-nav" });
@@ -267,6 +305,7 @@ export const resolveEscape = (facts: NavFacts): NavDecision => {
   )
     return events({ type: "narrow.show-work-area" }, { type: "focus.request", focus: "browser" });
   if (facts.focus === "skills-views") return browserLanding(facts);
+  if (facts.focus === "agent-preview") return browserLanding(facts);
   if (
     !facts.readerActive &&
     (facts.focus === "inspector" || facts.focus === "collection-relationships")

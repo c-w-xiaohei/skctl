@@ -1,10 +1,20 @@
 import { readdir, lstat, readFile } from "node:fs/promises";
 import { basename, isAbsolute, normalize, relative, resolve, sep } from "node:path";
-import { parseDocument } from "yaml";
+import { isAlias, isMap, parseDocument, visit } from "yaml";
 import { SkillCliError, type Diagnostic } from "../api";
 
 export { SkillCliError } from "../api";
 export const textLimit = 1_048_576;
+/** A bounded provider read can report real size without returning an oversized buffer. */
+export class SourceContentLimitError extends SkillCliError {
+  constructor(readonly byteLength: number) {
+    super("TEXT_TOO_LARGE", "Source content exceeds the requested read limit");
+  }
+}
+export function assertSourceContentLimit(byteLength: number, maxBytes?: number) {
+  if (maxBytes !== undefined && byteLength > maxBytes)
+    throw new SourceContentLimitError(byteLength);
+}
 const fail = (code: SkillCliError["code"], message: string): never => {
   throw new SkillCliError(code, message);
 };
@@ -56,6 +66,11 @@ export interface SourceBinding {
   readonly root: string;
   readonly path?: string;
   readonly ref?: string;
+}
+/** Identity of the full Origin-relative Skill Root at its adopted SHA-1 commit. */
+export interface GitTreeIdentity {
+  readonly objectFormat: "sha1";
+  readonly objectId: string;
 }
 export function canonicalRemoteOrigin(value: string): string {
   let url: URL;
@@ -113,9 +128,8 @@ export function parseSkillAddress(
   if (!source) return fail("INVALID_ARGUMENT", "Skill address must use a registered source ID");
   const path = value.slice(source.length + 1);
   if (
-    !path ||
     path.startsWith("/") ||
-    path.split("/").some((part) => part === "." || part === ".." || !part)
+    (path !== "" && path.split("/").some((part) => part === "." || part === ".." || !part))
   )
     return fail("INVALID_ARGUMENT", "Invalid Skill address path");
   return { source, path };
@@ -134,6 +148,33 @@ export interface DiscoveredSkill {
   readonly name: string;
   readonly description: string;
 }
+export function parseSkillFrontmatter(header: string): Record<string, unknown> {
+  const document = parseDocument(header, { uniqueKeys: true });
+  if (document.errors.length || !isMap(document.contents))
+    throw new SkillCliError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
+  // Inspect YAML syntax, not punctuation inside scalar text or comments. Reject
+  // aliases before toJS can expand them; anchors and explicit tags remain disallowed.
+  visit(document, {
+    Node(_key, node) {
+      if (isAlias(node) || node.anchor || node.tag)
+        throw new SkillCliError(
+          "CONFIG_INVALID",
+          "SKILL.md frontmatter cannot use YAML aliases, anchors or tags",
+        );
+    },
+  });
+  return document.toJS({ maxAliasCount: 0 });
+}
+export function parseSkillMetadata(text: string): { name: string; description: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(text);
+  if (!match) throw new SkillCliError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
+  const data = parseSkillFrontmatter(match[1]!);
+  if (typeof data.name !== "string" || !data.name.trim())
+    throw new SkillCliError("CONFIG_INVALID", "SKILL.md name must be a non-empty string");
+  if (typeof data.description !== "string" || !data.description.trim())
+    throw new SkillCliError("CONFIG_INVALID", "SKILL.md description must be a non-empty string");
+  return { name: parseNameSegment(data.name.trim()), description: data.description.trim() };
+}
 export async function discoverLocalSkills(
   root: string,
 ): Promise<{ skills: readonly DiscoveredSkill[]; diagnostics: readonly Diagnostic[] }> {
@@ -147,29 +188,14 @@ export async function discoverLocalSkills(
       if (stat.isFile() && !stat.isSymbolicLink()) {
         try {
           const text = decodeStrictText(await readFile(skillFile));
-          const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(text);
-          if (!match || /(^|\s)[*!&][^\s]*/u.test(match[1]!))
-            throw new Error("invalid frontmatter");
-          const document = parseDocument(match[1]!, { uniqueKeys: true });
-          if (document.errors.length) throw new Error("invalid frontmatter");
-          const data = document.toJS();
-          if (
-            !data ||
-            Array.isArray(data) ||
-            typeof data.name !== "string" ||
-            !data.name ||
-            typeof data.description !== "string" ||
-            !data.description
-          )
-            throw new Error("invalid frontmatter");
-          const name = parseNameSegment(data.name);
+          const { name, description } = parseSkillMetadata(text);
           if (names.has(name)) fail("DUPLICATE_SKILL_NAME", `Duplicate Skill name: ${name}`);
           names.add(name);
           skills.push({
             root: directory,
             relativeRoot: relative(root, directory).split(sep).join("/"),
             name,
-            description: data.description,
+            description,
           });
         } catch (error) {
           if (error instanceof SkillCliError && error.code === "DUPLICATE_SKILL_NAME") throw error;

@@ -15,7 +15,7 @@ export type ReadInstalledResource = Awaited<
 
 export const destinations = ["workspace", "global", "project", "local"] as const;
 export type Destination = (typeof destinations)[number];
-export type WorkspaceSection = "skills" | "collections" | "sources";
+export type WorkspaceSection = "skills" | "collections" | "sources" | "updates";
 export type WorkspaceScope =
   | "current-exposure"
   | "all-installed-skills"
@@ -36,6 +36,8 @@ export type FocusOwner =
   | "local-nav"
   | "skills-views"
   | "browser"
+  | "collection-tree"
+  | "agent-preview"
   | "reader"
   | "reader-tabs"
   | "reader-raw"
@@ -55,6 +57,8 @@ export type FocusOwner =
   | "palette"
   | "input"
   | "skills-query"
+  | "source-updates-query"
+  | "updates-query"
   | "skills-filter-open"
   | "skills-filter-clear"
   | "skills-filter-clear-all"
@@ -74,9 +78,15 @@ export type FocusOwner =
 export interface CommandRecord {
   readonly id: string;
   readonly keys: readonly string[];
+  /** Direct page binding, shared by dispatch, buttons and the Actions list. */
+  readonly shortcut?: string;
   readonly verb: string;
   readonly destination: string;
-  readonly scope: "lifecycle" | "modal" | "widget" | "route" | "shell" | "page";
+  readonly scope: "lifecycle" | "modal" | "widget" | "route" | "shell" | "page" | "task";
+  /** Hide an inline alias when its authoritative task command is already discoverable. */
+  readonly palette?: boolean;
+  /** Discovery order within the same scope; lower values are shown first. */
+  readonly priority?: number;
   readonly enabled: boolean;
   readonly disabledReason?: string;
   readonly danger: boolean;
@@ -136,6 +146,8 @@ export interface ReaderState {
   readonly match: number;
   readonly scroll: number;
   readonly detailsScroll: number;
+  readonly detailsManagementOpen?: boolean;
+  readonly detailsDescriptionOpen?: boolean;
   readonly focus?: FocusOwner;
   readonly text?: string;
   readonly rawText?: string;
@@ -222,7 +234,7 @@ export const sectionFor = (destination: Destination): Section =>
   destination === "workspace" ? "skills" : "sources";
 export const validSections = (destination: Destination): readonly Section[] =>
   destination === "workspace"
-    ? ["skills", "collections", "sources"]
+    ? ["skills", "collections", "sources", "updates"]
     : ["sources", "config-sources", "collections", "integrations"];
 
 export const projectionOwnerExists = (

@@ -72,7 +72,10 @@ export async function superviseTui(
     const status = await child.exited;
     return status !== 0 || !child.signalCode
       ? status
-      : 128 + (osConstants.signals[child.signalCode] ?? 1);
+      : 128 +
+          (typeof child.signalCode === "number"
+            ? child.signalCode
+            : (osConstants.signals[child.signalCode] ?? 1));
   } finally {
     live = false;
     for (const { signal, handler } of handlers) signals.removeListener(signal, handler);

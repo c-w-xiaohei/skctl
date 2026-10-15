@@ -1,3 +1,5 @@
+import { skillAddressKey, type CollectionView } from "@skill-cli/core";
+import { collectionDescendants } from "./collections/collection-filter-tree";
 import type { InstalledSkill } from "./types";
 
 export interface SkillsFilterState {
@@ -5,6 +7,8 @@ export interface SkillsFilterState {
   readonly source?: string;
   readonly filters?: Readonly<Record<string, string>>;
   readonly agentStatus?: "available" | "unavailable";
+  /** Effective Reference graph; omit to preserve exact-membership filtering. */
+  readonly collectionViews?: readonly CollectionView[];
 }
 
 const matches = (value: string, query: string) => value.toLocaleLowerCase().includes(query);
@@ -91,12 +95,42 @@ export function filterSkills(
   state: SkillsFilterState,
 ): readonly InstalledSkill[] {
   const query = state.query?.trim().toLocaleLowerCase();
+  const filters = Object.entries(state.filters ?? {});
+  const collection = state.filters?.Collection;
+  const descendants =
+    collection && state.collectionViews
+      ? collectionDescendants(state.collectionViews, collection)
+      : undefined;
+  const memberAddresses = descendants
+    ? new Set(
+        state.collectionViews!.flatMap((view) =>
+          descendants.has(view.id)
+            ? view.members.map((member) => skillAddressKey(member.address))
+            : [],
+        ),
+      )
+    : undefined;
+  const seen = new Set<string>();
   return skills.filter((skill) => {
     if (state.source && skill.address.source !== state.source) return false;
     if (query && !searchableValues(skill).some(({ value }) => matches(value, query))) return false;
-    return Object.entries(state.filters ?? {}).every(([dimension, value]) =>
-      value ? matchesDimension(skill, dimension, value, state.agentStatus) : true,
-    );
+    const accepted = filters.every(([dimension, value]) => {
+      if (!value) return true;
+      if (dimension === "Collection" && descendants)
+        return (
+          skill.collections.some((membership) => descendants.has(membership.id)) ||
+          memberAddresses!.has(skillAddressKey(skill.address))
+        );
+      return matchesDimension(skill, dimension, value, state.agentStatus);
+    });
+    if (!accepted) return false;
+    // Multiple Reference routes still identify one installed Skill; retain original row objects.
+    if (descendants) {
+      const key = skillAddressKey(skill.address);
+      if (seen.has(key)) return false;
+      seen.add(key);
+    }
+    return true;
   });
 }
 
@@ -104,8 +138,12 @@ export function filterValues(
   skills: readonly InstalledSkill[],
   dimension: string,
   agentStatus?: SkillsFilterState["agentStatus"],
+  state: Pick<SkillsFilterState, "collectionViews" | "filters"> = {},
 ): readonly string[] {
   const values = new Set<string>();
+  // All effective Collections remain discoverable, including parents with no direct members.
+  if (dimension === "Collection")
+    state.collectionViews?.forEach((collection) => values.add(collection.id));
   for (const skill of skills) {
     if (dimension === "Collection")
       skill.collections.forEach((collection) => values.add(collection.id));
@@ -116,7 +154,11 @@ export function filterValues(
     }
   }
   if (dimension === "For agents")
-    return agentStatus === "unavailable" ? ["Unavailable"] : ["Available", "Not disclosed"];
-  if (dimension === "Problems") return ["Has problems"];
+    (agentStatus === "unavailable" ? ["Unavailable"] : ["Available", "Not disclosed"]).forEach(
+      (value) => values.add(value),
+    );
+  if (dimension === "Problems") values.add("Has problems");
+  const applied = state.filters?.[dimension];
+  if (applied) values.add(applied);
   return [...values].sort();
 }

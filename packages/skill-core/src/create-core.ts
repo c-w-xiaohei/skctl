@@ -14,6 +14,7 @@ import {
 import { createContent } from "./content";
 import { getWorkspace } from "./workspace";
 import { createManagement } from "./management";
+import { createUpdates } from "./updates";
 export function createSkillCliCore(options: CoreFactoryOptions): SkillCliCore {
   return {
     workspace: { get: (operation) => getWorkspace(options, operation) },
@@ -33,7 +34,7 @@ export function createSkillCliCore(options: CoreFactoryOptions): SkillCliCore {
       previewCollectionRemoval: (request, operation) =>
         previewCollectionRemoval(options, request, operation),
     },
-    management: createManagement(options),
+    management: { ...createManagement(options), ...createUpdates(options) },
     catalog: createCatalog(options),
     content: createContent(options),
   };

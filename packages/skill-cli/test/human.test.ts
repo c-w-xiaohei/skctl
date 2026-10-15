@@ -45,6 +45,7 @@ function core(calls: unknown[]): SkillCliCore {
       previewCollectionRemoval: async () => ({ value: {} as never, diagnostics: [] }),
     },
     management: {
+      getUpdateBaseline: async () => ({ value: "fixture-baseline", diagnostics: [] }),
       previewSourceRemoval: async () => ({ value: {} as never, diagnostics: [] }),
       removeSource: async () => ({ value: undefined, diagnostics: [] }),
       previewUninstall: async () => ({ value: {} as never, diagnostics: [] }),

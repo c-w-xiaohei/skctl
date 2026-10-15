@@ -7,7 +7,10 @@ import { useTheme } from "./use-theme";
 export interface PaneProps {
   readonly id: string;
   readonly title?: string;
+  readonly borderTitle?: string;
+  readonly borderBottomTitle?: string;
   readonly active?: boolean;
+  readonly border?: boolean;
   readonly width?: number | `${number}%`;
   readonly children: JSXElement;
 }
@@ -32,8 +35,16 @@ export function Pane(props: PaneProps) {
       flexGrow={1}
       minHeight={0}
       minWidth={0}
-      border
-      borderColor={(props.active ?? focused()) ? tokens().colors.focus : tokens().colors.border}
+      border={props.border ?? true}
+      title={props.borderTitle}
+      bottomTitle={props.borderBottomTitle}
+      borderColor={
+        props.border === false
+          ? undefined
+          : (props.active ?? focused())
+            ? tokens().colors.focus
+            : tokens().colors.border
+      }
       paddingX={1}
     >
       <Show when={props.title}>

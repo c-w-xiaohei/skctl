@@ -1,8 +1,7 @@
 {
-  "$id": "https://skill-cli.dev/schema.json",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "anyOf": [
-    {
+  "$comment": "Only the user/global file may contain network. Runtime selects the schema by owner scope; the editor root accepts any document form.",
+  "$defs": {
+    "localConfig": {
       "additionalProperties": false,
       "properties": {
         "$schema": {
@@ -230,7 +229,235 @@
       },
       "type": "object"
     },
-    {
+    "projectConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "$schema": {
+          "const": "https://skill-cli.dev/schema.json",
+          "type": "string"
+        },
+        "agents": {
+          "additionalProperties": false,
+          "properties": {
+            "opencode": {
+              "const": "managed",
+              "type": "string"
+            }
+          },
+          "required": ["opencode"],
+          "type": "object"
+        },
+        "collections": {
+          "patternProperties": {
+            "^(.*)$": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "links": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "members": {
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["source", "path"],
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "references": {
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "collection": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["collection", "description"],
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "configSources": {
+          "patternProperties": {
+            "^(.*)$": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "path", "root"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "git",
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "origin", "root", "ref"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "github",
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "repository": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "origin", "root", "ref"],
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "sources": {
+          "patternProperties": {
+            "^(.*)$": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "path", "root"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "git",
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "origin", "root", "ref"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "github",
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "repository": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "origin", "root", "ref"],
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "use": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "reusableConfig": {
       "additionalProperties": false,
       "properties": {
         "collections": {
@@ -364,6 +591,261 @@
         }
       },
       "type": "object"
+    },
+    "userConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "$schema": {
+          "const": "https://skill-cli.dev/schema.json",
+          "type": "string"
+        },
+        "agents": {
+          "additionalProperties": false,
+          "properties": {
+            "opencode": {
+              "const": "managed",
+              "type": "string"
+            }
+          },
+          "required": ["opencode"],
+          "type": "object"
+        },
+        "collections": {
+          "patternProperties": {
+            "^(.*)$": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "links": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "members": {
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["source", "path"],
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "references": {
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "collection": {
+                          "type": "string"
+                        },
+                        "description": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["collection", "description"],
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "configSources": {
+          "patternProperties": {
+            "^(.*)$": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "path", "root"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "git",
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "origin", "root", "ref"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "github",
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "repository": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "origin", "root", "ref"],
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "network": {
+          "additionalProperties": false,
+          "properties": {
+            "proxy": {
+              "format": "http-proxy-url",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "sources": {
+          "patternProperties": {
+            "^(.*)$": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "local",
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "path", "root"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "git",
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "origin", "root", "ref"],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "github",
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "repository": {
+                      "type": "string"
+                    },
+                    "root": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["kind", "origin", "root", "ref"],
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "use": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://skill-cli.dev/schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/userConfig"
+    },
+    {
+      "$ref": "#/$defs/projectConfig"
+    },
+    {
+      "$ref": "#/$defs/localConfig"
+    },
+    {
+      "$ref": "#/$defs/reusableConfig"
     }
   ]
 }

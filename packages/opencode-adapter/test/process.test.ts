@@ -9,7 +9,9 @@ import {
 
 const encoder = new TextEncoder();
 const catalog =
-  '<managed_skill_catalog scope="root">\n  <collection>team</collection>\n</managed_skill_catalog>\n';
+  '<managed_skill_catalog scope="root"><collection id="team">Team workflows</collection>\n' +
+  "Use `skill-cli agent browse <collection-id>` to inspect a Collection and `skill-cli agent load <selector>` to load a Skill.\n" +
+  "</managed_skill_catalog>\n";
 
 function stream(...chunks: string[]): ReadableStream<Uint8Array> {
   return new ReadableStream({

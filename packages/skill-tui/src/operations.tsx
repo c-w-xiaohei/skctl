@@ -1,5 +1,4 @@
 import type { Renderable } from "@opentui/core";
-import type { ActionRecord } from "./actions";
 import type { CommandRecord } from "./types";
 import type { SourceRemovalReview } from "./effects";
 import type { DiscoveryReview, UpdateReview } from "./effects";
@@ -10,6 +9,8 @@ import type { ConfigDeclarationOwner } from "@skill-cli/core";
 import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { createEffect, createSignal, Index, onMount, type JSX } from "solid-js";
 import { CommandControl } from "./command-control";
+import { Input } from "./ui/input";
+import { DataList } from "./ui/data-list";
 import { useTerminalDimensions } from "@opentui/solid";
 import {
   createModalControlRegistry,
@@ -283,7 +284,7 @@ export function RebindSourceOverlay(props: {
     <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
       <ModalBody>
         <text>Rebind Skill</text>
-        <select
+        <DataList
           id="rebind-source-choice"
           ref={(value: SelectRenderable) => {
             registerSource(value);
@@ -299,7 +300,7 @@ export function RebindSourceOverlay(props: {
             if (option) setOwner(option.value);
           }}
         />
-        <input
+        <Input
           id="rebind-owner-path"
           ref={(value: InputRenderable) => {
             registerPath(value);
@@ -357,7 +358,7 @@ export function CollectionHandoffOverlay(props: {
     <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
       <ModalBody>
         <text>Add to collection</text>
-        <select
+        <DataList
           id="collection-handoff-choice"
           focused={true}
           showDescription
@@ -403,7 +404,7 @@ export function InstalledSkillChooserOverlay(props: {
     <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
       <ModalBody>
         <text>Select Installed Skill</text>
-        <select
+        <DataList
           id="installed-skill-choice"
           focused={true}
           height={Math.max(1, Math.min(props.skills.length * 2, 6))}
@@ -471,7 +472,7 @@ export function CollectionCreateOverlay(
       <ModalBody>
         <text>Create Collection</text>
         {selectable ? (
-          <select
+          <DataList
             id="collection-create-level"
             height={Math.min(allowedLevels.length * 2, 6)}
             flexShrink={0}
@@ -496,7 +497,7 @@ export function CollectionCreateOverlay(
         {props.fixed ? (
           <text>{`Collection ID: ${collection()}`}</text>
         ) : (
-          <input
+          <Input
             id="collection-create-id"
             ref={(value: InputRenderable) => {
               idInput = value;
@@ -559,7 +560,7 @@ export function MembershipAddOverlay(props: {
       <ModalBody>
         <text>Add Membership</text>
         <text>{`Address: ${props.address.source}/${props.address.path}`}</text>
-        <input
+        <Input
           id="membership-add-name"
           ref={(value: InputRenderable) => {
             nameInput = value;
@@ -639,7 +640,7 @@ export function MembershipBatchDraftOverlay(props: {
           {(item, index) => (
             <box flexDirection="column">
               <text>{`Address: ${item().address.source}/${item().address.path}`}</text>
-              <input
+              <Input
                 id={`membership-batch-name-${index}`}
                 ref={(value: InputRenderable) => {
                   useModalControl(`membership-batch-name-${index}`, controls)(value);
@@ -806,7 +807,7 @@ export function SourceRegistrationOverlay(props: {
         {props.level ? (
           <text>{`Config level: ${props.level}`}</text>
         ) : (
-          <select
+          <DataList
             id="source-register-level"
             height={3}
             flexShrink={0}
@@ -826,7 +827,7 @@ export function SourceRegistrationOverlay(props: {
             }
           />
         )}
-        <select
+        <DataList
           id="source-register-kind"
           height={3}
           flexShrink={0}
@@ -857,7 +858,7 @@ export function SourceRegistrationOverlay(props: {
             option && setKind(option.value as "local" | "git" | "github")
           }
         />
-        <input
+        <Input
           id="source-register-id"
           ref={registerId}
           focused={false}
@@ -866,7 +867,7 @@ export function SourceRegistrationOverlay(props: {
           onInput={setId}
         />
         {kind() !== "github" && (
-          <input
+          <Input
             id="source-register-origin"
             ref={(value: InputRenderable) => {
               registerOrigin(value);
@@ -879,7 +880,7 @@ export function SourceRegistrationOverlay(props: {
         )}
         {kind() === "github" && (
           <>
-            <input
+            <Input
               id="source-register-github-owner"
               ref={(value: InputRenderable) => {
                 registerOwner(value);
@@ -889,7 +890,7 @@ export function SourceRegistrationOverlay(props: {
               placeholder="GitHub owner"
               onInput={setOwner}
             />
-            <input
+            <Input
               id="source-register-github-repository"
               ref={(value: InputRenderable) => {
                 registerRepository(value);
@@ -902,7 +903,7 @@ export function SourceRegistrationOverlay(props: {
           </>
         )}
         {kind() !== "local" && (
-          <input
+          <Input
             id="source-register-ref"
             ref={(value: InputRenderable) => {
               registerRef(value);
@@ -913,7 +914,7 @@ export function SourceRegistrationOverlay(props: {
             onInput={setRef}
           />
         )}
-        <input
+        <Input
           id="source-register-root"
           ref={(value: InputRenderable) => {
             registerRoot(value);
@@ -1010,7 +1011,7 @@ export function CollectionImportOverlay(props: {
     <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
       <ModalBody>
         <text>Import Collection</text>
-        <input
+        <Input
           id="collection-import-from"
           ref={(value: InputRenderable) => {
             registerFrom(value);
@@ -1020,7 +1021,7 @@ export function CollectionImportOverlay(props: {
           placeholder="From collection"
           onInput={setFrom}
         />
-        <input
+        <Input
           id="collection-import-into"
           ref={(value: InputRenderable) => {
             registerInto(value);
@@ -1089,7 +1090,7 @@ export function ReferenceOverlay(props: {
     <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
       <ModalBody>
         <text>{verb}</text>
-        <input
+        <Input
           id="reference-name"
           ref={(value: InputRenderable) => {
             registerName(value);
@@ -1099,7 +1100,7 @@ export function ReferenceOverlay(props: {
           placeholder="Reference name"
           onInput={setName}
         />
-        <input
+        <Input
           id="reference-target"
           ref={(value: InputRenderable) => {
             registerTarget(value);
@@ -1110,7 +1111,7 @@ export function ReferenceOverlay(props: {
           onInput={setTarget}
         />
         {!props.remove && (
-          <input
+          <Input
             id="reference-description"
             ref={(value: InputRenderable) => {
               registerDescription(value);
@@ -1179,7 +1180,7 @@ export function LinkChangeOverlay(props: {
     <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
       <ModalBody>
         <text>{verb}</text>
-        <input
+        <Input
           id="link-target"
           ref={(value: InputRenderable) => {
             registerTarget(value);
@@ -1245,7 +1246,7 @@ export function CollectionUseOverlay(props: {
     <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
       <ModalBody>
         <text>Set Collection Use</text>
-        <input
+        <Input
           id="collection-use-values"
           ref={(value: InputRenderable) => {
             registerCollections(value);
@@ -1436,74 +1437,6 @@ export function CollectionReviewOverlay(props: {
   );
 }
 
-export function CommandPalette(props: {
-  readonly actions: readonly (ActionRecord | CommandRecord)[];
-  readonly onSelect: (record: ActionRecord | CommandRecord) => void;
-  readonly onClose: () => void;
-}) {
-  const controls = createModalControlRegistry();
-  const registerChoices = useModalControl("palette-choices", controls);
-  const actions = () => props.actions.filter((record) => record.enabled);
-  useModalControlTraversal(controls, props.onClose);
-  return (
-    <box
-      id="command-palette"
-      position="absolute"
-      left={0}
-      top={0}
-      width="100%"
-      height="100%"
-      backgroundColor="#111111"
-      onMouseDown={(event) => {
-        event.stopPropagation();
-        event.preventDefault();
-      }}
-    >
-      <box
-        border
-        borderStyle="rounded"
-        margin={1}
-        padding={1}
-        flexDirection="column"
-        flexGrow={1}
-        minHeight={0}
-      >
-        <text>Command Palette</text>
-        {actions().length > 0 && (
-          <select
-            id="palette-choices"
-            ref={registerChoices}
-            focused
-            flexGrow={1}
-            minHeight={1}
-            showDescription
-            showScrollIndicator
-            wrapSelection={false}
-            options={actions().map((record) => ({
-              name: record.verb,
-              description: record.destination,
-              value: record,
-            }))}
-            onSelect={(_index, option) => {
-              const record = option?.value;
-              if (record && props.actions.includes(record) && record.enabled)
-                props.onSelect(record);
-            }}
-          />
-        )}
-        <ModalCommand
-          id="palette-close"
-          controls={controls}
-          record={modalCommand("palette.close", "Close", "Return to the previous surface")}
-          initialFocus={!props.actions.some((record) => record.enabled)}
-          execute={props.onClose}
-        />
-        <text>↑↓ move between controls · Enter select · Esc close</text>
-      </box>
-    </box>
-  );
-}
-
 export function SourceSelectionOverlay(props: {
   readonly review: DiscoveryReview | UpdateReview;
   readonly installed: ReadonlySet<string>;
@@ -1579,7 +1512,7 @@ export function SourceSelectionOverlay(props: {
         {props.review.observation.exactRevision && (
           <text>{`Revision: ${props.review.observation.exactRevision}`}</text>
         )}
-        <select
+        <DataList
           id="source-operation-selection"
           ref={registerCandidates}
           focused={true}

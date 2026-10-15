@@ -2,27 +2,16 @@ import { expect, test } from "bun:test";
 import { InputRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
-import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
+import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
 import {
   enterLive,
+  openAllInstalledSkills,
   openReaderTab,
   parsedEnter,
   readerTab,
   selectedReaderTab,
 } from "./reader-test-controls";
-
-type Setup = Awaited<ReturnType<typeof testRender>>;
-
-async function openAllInstalledSkills(setup: Setup) {
-  await setup.waitFor(() =>
-    setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills"),
-  );
-  await setup.waitFor(() => setup.renderer.root.findDescendantById("installed-skill-browser"));
-  const browser = setup.renderer.root.findDescendantById("installed-skill-browser")!;
-  browser.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
-}
 
 test("RENDER Skills browser owns slash query and updates its local result count", async () => {
   const setup = await testRender(
@@ -61,13 +50,29 @@ test("RENDER Skills browser owns slash query and updates its local result count"
 
 test("RENDER filtering selected A reconciles Reader and Details Actions to visible B", async () => {
   const loads: string[] = [];
+  const checks: string[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
           loadInstalled: async ({ address }) => {
             loads.push(address.path);
-            return { value: readerContent, diagnostics: [] };
+            return { value: { ...readerContent, address, name: address.path }, diagnostics: [] };
+          },
+          checkUpdate: async ({ source }) => {
+            checks.push(source);
+            return {
+              value: {
+                source,
+                kind: "github",
+                exactRevision: "a".repeat(40),
+                changed: [{ path: "reference", name: "reference", description: "reference" }],
+                added: [],
+                removed: [],
+                unchanged: [],
+              },
+              diagnostics: [],
+            };
           },
         })}
         exit={() => {}}
@@ -93,10 +98,6 @@ test("RENDER filtering selected A reconciles Reader and Details Actions to visib
     browser.focus();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-    );
-    await openReaderFromInspector(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-scrollbox"));
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
     expect(loads.at(-1)).toBe("reference");
@@ -105,15 +106,11 @@ test("RENDER filtering selected A reconciles Reader and Details Actions to visib
     const detailsTab = readerTab(setup, 2);
     expect(selectedReaderTab(setup)).toBe(2);
     expect(setup.renderer.currentFocusedRenderable).toBe(detailsTab);
-    expect(setup.captureCharFrame()).toContain("team-main/reference");
-    await enterLive(setup, "reader-details-action-skill-check-updates");
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("source-operation-selection"),
-    );
-    const operation = setup.captureCharFrame();
-    expect(operation).toContain("Check Updates");
-    expect(operation).toContain("Source: team-main");
-    expect(loads).toEqual(["reference"]);
+    expect(setup.captureCharFrame()).toContain("reference");
+    await enterLive(setup, "reader-action-skill-check-updates");
+    await setup.waitFor(() => checks.length === 1);
+    expect(loads).toEqual(["guide", "reference"]);
+    expect(checks).toEqual(["team-main"]);
   } finally {
     setup.renderer.destroy();
   }

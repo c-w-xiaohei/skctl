@@ -2,74 +2,112 @@ import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
-import { readerProjection } from "./installed-reader.fixture";
-import { focusLive, parsedEnter } from "./reader-test-controls";
+import { readerContent, readerProjection, readerResources } from "./installed-reader.fixture";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import {
+  enterLive,
+  focusLive,
+  openAllInstalledSkills,
+  openReaderTab,
+  parsedEnter,
+} from "./reader-test-controls";
+
+async function mount(width: number, height = 30) {
+  await mkdir("/tmp/opencode", { recursive: true });
+  const cache = await mkdtemp("/tmp/opencode/keyboard-guidance-");
+  const prior = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
+  process.env.SKILL_TUI_UPDATE_CACHE_DIR = cache;
+  let loads = 0;
+  let updates = 0;
+  const core = directSourceCore(readerProjection(), {
+    loadInstalled: async () => {
+      loads++;
+      return { value: readerContent, diagnostics: [] };
+    },
+    listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
+    update: async () => {
+      updates++;
+      return { value: undefined, diagnostics: [] };
+    },
+  });
+  let setup: Awaited<ReturnType<typeof testRender>> | undefined;
+  const dispose = async () => {
+    setup?.renderer.destroy();
+    if (prior === undefined) delete process.env.SKILL_TUI_UPDATE_CACHE_DIR;
+    else process.env.SKILL_TUI_UPDATE_CACHE_DIR = prior;
+    await rm(cache, { recursive: true, force: true });
+  };
+  try {
+    setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
+    await openAllInstalledSkills(setup);
+    await enterLive(setup, "installed-skill-browser");
+    await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("reader-scrollbox"));
+    return { setup, loads: () => loads, updates: () => updates, dispose };
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
+}
 
 test("Skill controls expose their actual Enter action and Tab moves without executing", async () => {
-  const setup = await testRender(
-    () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
-    {
-      width: 100,
-      height: 30,
-    },
-  );
+  const mounted = await mount(100);
+  const { setup } = mounted;
   try {
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-    );
-    await focusLive(setup, "skill-inspector-open-reader");
+    const loadsAfterOpen = mounted.loads();
+    await focusLive(setup, "reader-raw");
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Enter Read SKILL.md");
-    expect(setup.captureCharFrame()).toContain("Tab/Shift+Tab panels");
+    expect(setup.captureCharFrame()).toContain("Enter Raw");
+    expect(setup.captureCharFrame()).toContain("Tab panels");
     setup.mockInput.pressTab();
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "top-navigation-tab-workspace",
+      () => setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-skills",
     );
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("←→ change context");
-    expect(setup.renderer.root.findDescendantById("reader-tabs-tab-skill")).toBeUndefined();
+    setup.mockInput.pressTab();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "shell-scope-select");
+    await setup.waitForFrame((frame) => frame.includes("Enter Change Scope"));
+    expect(setup.renderer.root.findDescendantById("scope-choices")).toBeUndefined();
+    expect(setup.renderer.root.findDescendantById("reader-tabs-tab-skill")).toBeDefined();
+    expect(mounted.loads()).toBe(loadsAfterOpen);
+    expect(mounted.updates()).toBe(0);
     setup.mockInput.pressTab({ shift: true });
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
+      () => setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-skills",
     );
+    setup.mockInput.pressTab({ shift: true });
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-raw");
     await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-tabs-tab-skill"));
+    await setup.waitForFrame((frame) => frame.includes("Enter Prose"));
+    expect(mounted.loads()).toBe(loadsAfterOpen);
     await focusLive(setup, "reader-tabs-tab-skill");
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("←→ change Reader view");
-    setup.mockInput.pressArrow("right");
-    await setup.waitForFrame((frame) => frame.includes("Reader / Resources"));
-    setup.mockInput.pressArrow("right");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
-    await focusLive(setup, "reader-details-action-skill-check-updates");
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Enter Check / update Skill");
+    await setup.waitForFrame((frame) => frame.includes("←→ move"));
+    await openReaderTab(setup, 1);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
+    await openReaderTab(setup, 2);
+    await focusLive(setup, "reader-action-skill-check-updates");
+    await setup.waitForFrame((frame) => frame.includes("Enter Update"));
+    expect(mounted.updates()).toBe(0);
   } finally {
-    setup.renderer.destroy();
+    await mounted.dispose();
   }
 });
 
-test("narrow Skill details retains specific Enter guidance and arrow selection", async () => {
-  const setup = await testRender(
-    () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
-    {
-      width: 43,
-      height: 30,
-    },
-  );
+test("narrow Reader retains specific Enter guidance and native tab selection", async () => {
+  const mounted = await mount(43);
+  const { setup } = mounted;
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-    await focusLive(setup, "installed-skill-browser");
-    await parsedEnter(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-    );
-    await focusLive(setup, "workspace-action-skill-check-updates");
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Enter Check / update Skill");
-    expect(setup.captureCharFrame()).toContain("Tab/Shift+Tab panels");
+    const loadsAfterOpen = mounted.loads();
+    await focusLive(setup, "reader-action-skill-check-updates");
+    await setup.waitForFrame((frame) => frame.includes("Enter Update"));
+    expect(setup.renderer.root.findDescendantById("command-status")!.height).toBe(1);
     expect(setup.captureCharFrame()).not.toContain("Enter details");
+    expect(mounted.loads()).toBe(loadsAfterOpen);
+    expect(mounted.updates()).toBe(0);
+    await focusLive(setup, "reader-tabs-tab-skill");
+    await openReaderTab(setup, 1);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
+    expect(mounted.loads()).toBe(loadsAfterOpen);
+    expect(mounted.updates()).toBe(0);
   } finally {
-    setup.renderer.destroy();
+    await mounted.dispose();
   }
 });

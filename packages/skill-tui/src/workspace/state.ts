@@ -9,12 +9,8 @@ import {
   type WorkspaceSection,
 } from "../types";
 import { filterSkills } from "../skills-filter";
-import {
-  exposureHierarchy,
-  exposurePathKey,
-  unassignedSkills,
-  type ExposurePath,
-} from "../collections/state";
+import { exposurePathKey, unassignedSkills, type ExposurePath } from "../collections/state";
+import { deriveAgentAccessTree, isAgentAccessPathValid } from "../collections/agent-access-tree";
 import type { ConfigDeclarationOwner, Diagnostic } from "@skill-cli/core";
 import type { SkillAddress } from "@skill-cli/core";
 
@@ -30,11 +26,22 @@ export interface WorkspaceSnapshot {
   readonly selectedSkills: readonly SkillAddress[];
   readonly selectedExposurePath?: string;
   readonly expandedExposurePaths: Readonly<Record<string, boolean>>;
+  readonly selectedCollectionPath?: string;
+  readonly expandedCollectionPaths?: Readonly<Record<string, boolean>>;
+  readonly collectionBrowserOpen?: boolean;
   readonly readerOpen: boolean;
   readonly query: string;
   readonly filters: Readonly<Record<string, string>>;
   readonly sourceFilter?: string;
   readonly scrolls: Readonly<Record<string, number>>;
+  readonly sourceUpdatesView?: {
+    readonly source: string;
+    readonly query: string;
+    readonly filter: "all" | "updates";
+  };
+  readonly sourceUpdatesViews: Readonly<
+    Record<string, { readonly query: string; readonly filter: "all" | "updates" }>
+  >;
 }
 
 export interface ProblemRow {
@@ -270,6 +277,24 @@ const nearest = (
   return values[Math.min(values.length - 1, Math.max(0, index))];
 };
 
+const expandedPathFromKey = (key: string): ExposurePath | undefined => {
+  try {
+    const values = JSON.parse(key) as unknown;
+    if (!Array.isArray(values) || !values.length) return undefined;
+    const segments = values.map((value) => {
+      if (!Array.isArray(value) || typeof value[0] !== "string") return undefined;
+      const reference = value[1];
+      return {
+        collection: value[0],
+        ...(reference && typeof reference === "object" ? { reference } : {}),
+      };
+    });
+    return segments.every(Boolean) ? { segments: segments as ExposurePath["segments"] } : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const skillScopes = new Set<WorkspaceScope>(["all-installed-skills", "unassigned", "problems"]);
 
 const scopeForSection = (current: WorkspaceSnapshot, section: WorkspaceSection): WorkspaceScope => {
@@ -278,22 +303,28 @@ const scopeForSection = (current: WorkspaceSnapshot, section: WorkspaceSection):
       ? current.scope
       : "all-installed-skills";
   if (section === "collections") return "collections";
-  return "sources";
+  return section === "sources" ? "sources" : current.scope;
 };
 
 /** Durable Workspace browser state captured and restored by the route owner. */
 export function createWorkspaceState(
   onReconciledSkill?: (selectedSkill: SkillAddress | undefined) => void,
 ) {
+  // Navigation frames intentionally restore durable workspace snapshots. Source
+  // query/filter state is session-local UI context, so an older predecessor
+  // frame must never rewind it after a Source → Skill → Back round-trip.
+  const sourceUpdatesViews = new Map<string, { query: string; filter: "all" | "updates" }>();
   const [snapshot, setSnapshot] = createSignal<WorkspaceSnapshot>({
-    scope: "all-installed-skills",
+    scope: "current-exposure",
     section: "skills",
     readerOpen: false,
     selectedSkills: [],
     query: "",
     filters: {},
     scrolls: {},
+    sourceUpdatesViews: {},
     expandedExposurePaths: {},
+    expandedCollectionPaths: {},
   });
   const [narrowLevel, setNarrowLevel] = createSignal<NarrowLevel>("list");
   const update = (change: (current: WorkspaceSnapshot) => WorkspaceSnapshot) =>
@@ -304,7 +335,14 @@ export function createWorkspaceState(
   return {
     snapshot,
     restore(next: WorkspaceSnapshot) {
-      setSnapshot(structuredClone(next));
+      let restored = structuredClone(next);
+      const active = restored.sourceUpdatesView;
+      if (active) {
+        const retained = sourceUpdatesViews.get(active.source);
+        if (retained)
+          restored = { ...restored, sourceUpdatesView: { source: active.source, ...retained } };
+      }
+      setSnapshot(restored);
     },
     scope: () => snapshot().scope,
     section: () => snapshot().section,
@@ -317,10 +355,14 @@ export function createWorkspaceState(
     selectedSkills: () => snapshot().selectedSkills,
     selectedExposurePath: () => snapshot().selectedExposurePath,
     expandedExposurePaths: () => snapshot().expandedExposurePaths,
+    selectedCollectionPath: () => snapshot().selectedCollectionPath,
+    expandedCollectionPaths: () => snapshot().expandedCollectionPaths ?? {},
+    collectionBrowserOpen: () => snapshot().collectionBrowserOpen ?? false,
     readerOpen: () => snapshot().readerOpen,
     query: () => snapshot().query,
     filters: () => snapshot().filters,
     sourceFilter: () => snapshot().sourceFilter,
+    sourceUpdatesView: () => snapshot().sourceUpdatesView,
     scroll: (surface: string) => snapshot().scrolls[surface] ?? 0,
     narrowLevel,
     openWorkArea() {
@@ -421,11 +463,22 @@ export function createWorkspaceState(
     selectExposurePath(selectedExposurePath?: string) {
       update((current) => ({ ...current, selectedExposurePath }));
     },
+    selectCollectionPath(selectedCollectionPath?: string) {
+      update((current) => ({ ...current, selectedCollectionPath }));
+    },
+    setCollectionBrowserOpen(collectionBrowserOpen: boolean) {
+      update((current) => ({ ...current, collectionBrowserOpen }));
+    },
+    setCollectionPathExpanded(key: string, expanded: boolean) {
+      update((current) => ({
+        ...current,
+        expandedCollectionPaths: { ...current.expandedCollectionPaths, [key]: expanded },
+      }));
+    },
     toggleExposurePath(path: ExposurePath) {
       const key = exposurePathKey(path);
       update((current) => {
-        const defaultExpanded = path.segments.length === 1;
-        const expanded = current.expandedExposurePaths[key] ?? defaultExpanded;
+        const expanded = current.expandedExposurePaths[key] ?? false;
         const next = { ...current.expandedExposurePaths };
         if (expanded) next[key] = false;
         else next[key] = true;
@@ -440,7 +493,7 @@ export function createWorkspaceState(
       }));
     },
     isExposurePathExpanded(path: ExposurePath) {
-      return snapshot().expandedExposurePaths[exposurePathKey(path)] ?? path.segments.length === 1;
+      return snapshot().expandedExposurePaths[exposurePathKey(path)] ?? false;
     },
     toggleSkill(address: SkillAddress) {
       update((current) => ({
@@ -490,7 +543,68 @@ export function createWorkspaceState(
         section: "skills",
         sourceFilter: source,
         readerOpen: false,
+        collectionBrowserOpen: false,
       }));
+    },
+    showSourceUpdates(source: string) {
+      update((current) => ({
+        ...current,
+        section: "updates",
+        readerOpen: false,
+        sourceUpdatesView: {
+          source,
+          ...(sourceUpdatesViews.get(source) ?? { query: "", filter: "updates" }),
+        },
+      }));
+    },
+    clearSourceUpdatesView() {
+      update((current) =>
+        current.sourceUpdatesView ? { ...current, sourceUpdatesView: undefined } : current,
+      );
+    },
+    setSourceUpdatesQuery(query: string) {
+      const source = snapshot().sourceUpdatesView?.source;
+      if (source) {
+        const current = sourceUpdatesViews.get(source) ?? { query: "", filter: "updates" as const };
+        sourceUpdatesViews.set(source, { ...current, query });
+      }
+      update((current) =>
+        current.sourceUpdatesView
+          ? {
+              ...current,
+              sourceUpdatesView: { ...current.sourceUpdatesView, query },
+              sourceUpdatesViews: {
+                ...current.sourceUpdatesViews,
+                [current.sourceUpdatesView.source]: {
+                  ...current.sourceUpdatesViews[current.sourceUpdatesView.source],
+                  query,
+                },
+              },
+            }
+          : current,
+      );
+    },
+    setSourceUpdatesFilter(filter: "all" | "updates") {
+      const source = snapshot().sourceUpdatesView?.source;
+      if (source) {
+        const current = sourceUpdatesViews.get(source) ?? { query: "", filter: "updates" as const };
+        sourceUpdatesViews.set(source, { ...current, filter });
+      }
+      update((current) =>
+        current.sourceUpdatesView
+          ? {
+              ...current,
+              sourceUpdatesView: { ...current.sourceUpdatesView, filter },
+              sourceUpdatesViews: {
+                ...current.sourceUpdatesViews,
+                [current.sourceUpdatesView.source]: {
+                  ...current.sourceUpdatesViews[current.sourceUpdatesView.source],
+                  filter,
+                },
+              },
+            }
+          : current,
+      );
     },
     clearSourceFilter() {
       update((current) => ({
@@ -530,10 +644,18 @@ export function createWorkspaceState(
           const values = filterSkills(currentSkills, {
             ...options,
             agentStatus: current.effective.agent.status,
+            collectionViews:
+              current.effective.status === "complete"
+                ? current.effective.collectionsView
+                : undefined,
           }).map((skill) => skill.address);
           const prior = filterSkills(previousSkills, {
             ...options,
             agentStatus: previous?.effective.agent.status,
+            collectionViews:
+              previous?.effective.status === "complete"
+                ? previous.effective.collectionsView
+                : undefined,
           }).map((skill) => skill.address);
           const problemOptions = filterProblemRows(
             problemRows(current),
@@ -553,14 +675,24 @@ export function createWorkspaceState(
             nextProblemRow?.intent?.kind === "installed-skill"
               ? nextProblemRow.intent.address
               : undefined;
+          const exposure =
+            state.scope === "current-exposure"
+              ? deriveAgentAccessTree(current, state.expandedExposurePaths).rows.find(
+                  (row) => row.key === state.selectedExposurePath,
+                )
+              : undefined;
           const nextSkill =
-            state.scope === "problems"
-              ? problemSkill &&
-                state.selectedSkill &&
-                sameSkillAddress(state.selectedSkill, problemSkill)
-                ? state.selectedSkill
-                : problemSkill
-              : nearestSkill(state.selectedSkill, values, prior);
+            state.scope === "current-exposure"
+              ? exposure?.kind === "skill" && exposure.availability.status === "available"
+                ? exposure.address
+                : undefined
+              : state.scope === "problems"
+                ? problemSkill &&
+                  state.selectedSkill &&
+                  sameSkillAddress(state.selectedSkill, problemSkill)
+                  ? state.selectedSkill
+                  : problemSkill
+                : nearestSkill(state.selectedSkill, values, prior);
           const next = {
             ...state,
             selectedSource: nearest(
@@ -573,12 +705,13 @@ export function createWorkspaceState(
             readerOpen:
               state.readerOpen && (state.scope !== "problems" || problemSkill !== undefined),
             selectedSkills: state.selectedSkills.filter((selected) =>
-              currentSkills.some((skill) => sameSkillAddress(skill.address, selected)),
+              current.installedSkills.some((skill) => sameSkillAddress(skill.address, selected)),
             ),
             expandedExposurePaths: Object.fromEntries(
-              Object.entries(state.expandedExposurePaths).filter(([key]) =>
-                exposureHierarchy(current).some((row) => row.key === key),
-              ),
+              Object.entries(state.expandedExposurePaths).filter(([key]) => {
+                const path = expandedPathFromKey(key);
+                return !!path && isAgentAccessPathValid(current, path);
+              }),
             ),
           };
           if (
@@ -613,6 +746,9 @@ export type WorkspaceReadonly = Pick<
   | "selectedSkills"
   | "selectedExposurePath"
   | "expandedExposurePaths"
+  | "selectedCollectionPath"
+  | "expandedCollectionPaths"
+  | "collectionBrowserOpen"
   | "isExposurePathExpanded"
   | "expandExposurePath"
   | "toggleExposurePath"
@@ -620,6 +756,7 @@ export type WorkspaceReadonly = Pick<
   | "query"
   | "filters"
   | "sourceFilter"
+  | "sourceUpdatesView"
   | "scroll"
   | "narrowLevel"
 >;
@@ -651,6 +788,10 @@ export type WorkspaceCommands = Pick<
   | "clearFilter"
   | "clearFilters"
   | "showInstalledSkillsFromSource"
+  | "showSourceUpdates"
+  | "clearSourceUpdatesView"
+  | "setSourceUpdatesQuery"
+  | "setSourceUpdatesFilter"
   | "clearSourceFilter"
   | "setScroll"
   | "reconcile"

@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { afterEach, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
+import { InputRenderable } from "@opentui/core";
 import { createSignal } from "solid-js";
 import { Badge } from "../../src/ui/badge";
 import { Button } from "../../src/ui/button";
@@ -184,4 +185,27 @@ test("W1 Dialog is controlled, contains focus, and requests Escape dismissal", a
   await dialogSetup.renderOnce();
   expect(changes).toEqual(["false:escape"]);
   expect(open()).toBe(false);
+});
+
+test("Dialog geometry updates retain the same child, editing draft and focus", async () => {
+  const [width, setWidth] = createSignal(44);
+  setup = await testRender(
+    () => (
+      <Dialog open>
+        <DialogContent width={width()}>
+          <Input id="dialog-draft" value="Draft" />
+        </DialogContent>
+      </Dialog>
+    ),
+    { width: 70, height: 18 },
+  );
+  const input = setup.renderer.root.findDescendantById("dialog-draft")!;
+  input.focus();
+  await setup.mockInput.typeText(" changed");
+  const before = setup.renderer.currentFocusedRenderable;
+  setWidth(36);
+  await setup.renderOnce();
+  expect(setup.renderer.root.findDescendantById("dialog-draft") === input).toBe(true);
+  expect(setup.renderer.currentFocusedRenderable === before).toBe(true);
+  expect((input as InputRenderable).value).toBe("Draft changed");
 });

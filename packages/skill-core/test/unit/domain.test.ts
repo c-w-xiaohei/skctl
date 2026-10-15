@@ -8,6 +8,7 @@ import {
   parseNameSegment,
   parseResourcePath,
   parseSelector,
+  parseSkillMetadata,
   SkillCliError,
 } from "../../src/internal/domain";
 
@@ -55,6 +56,10 @@ describe("domain identity", () => {
   });
 
   test("uses the longest registered source ID when parsing an address", () => {
+    expect(parseSkillAddress("team/core/", ["team", "team/core"])).toEqual({
+      source: "team/core",
+      path: "",
+    });
     expect(parseSkillAddress("team/core/review", ["team", "team/core"])).toEqual({
       source: "team/core",
       path: "review",
@@ -78,4 +83,39 @@ describe("domain identity", () => {
       expect(parse).toThrow(SkillCliError);
     }
   });
+});
+
+test("Skill metadata accepts ordinary punctuation in YAML strings and ignores it in comments", () => {
+  expect(
+    parseSkillMetadata(`---
+name: placement-exclusion-manager
+description: 'Build a content-suitability & sensitive-topic block list.'
+metadata: { note: "Use *literal* text, & labels and ! punctuation" }
+# &not-an-anchor *not-an-alias !not-a-tag
+---
+# Placement Exclusion Manager
+`),
+  ).toEqual({
+    name: "placement-exclusion-manager",
+    description: "Build a content-suitability & sensitive-topic block list.",
+  });
+  expect(
+    parseSkillMetadata(
+      "---\nname: review\ndescription: |\n  *Review* evidence & flag ! unsupported claims.\n---\n",
+    ),
+  ).toEqual({ name: "review", description: "*Review* evidence & flag ! unsupported claims." });
+});
+
+test("Skill metadata still rejects actual YAML aliases, anchors, tags, duplicates and invalid required fields", () => {
+  for (const header of [
+    "name: review\ndescription: &shared Review\nmetadata: { repeat: *shared }",
+    "name: review\ndescription: Review\nmetadata: { repeat: *missing }",
+    "name: review\ndescription: Review\nmetadata: { nested: &unused [safe] }",
+    "name: review\ndescription: !!str Review",
+    "name: review\ndescription: Review\nmetadata: { nested: !custom safe }",
+    "name: review\nname: duplicate\ndescription: Review",
+    "name: review\ndescription: []",
+    "name: review\ndescription: ' '",
+  ])
+    expect(() => parseSkillMetadata(`---\n${header}\n---\n`)).toThrow(SkillCliError);
 });

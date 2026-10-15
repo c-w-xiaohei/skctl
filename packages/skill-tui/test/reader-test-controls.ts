@@ -1,8 +1,39 @@
 import { expect } from "bun:test";
 import type { testRender } from "@opentui/solid";
-import { SelectRenderable, type Renderable } from "@opentui/core";
+import {
+  CodeRenderable,
+  SelectRenderable,
+  type BaseRenderable,
+  type Renderable,
+} from "@opentui/core";
+import { TabsTabRenderable } from "@tuiparts/core/tabs";
 
 export type ReaderSetup = Awaited<ReturnType<typeof testRender>>;
+
+export function readerPublicDiagnostic(setup: ReaderSetup) {
+  const ids = (node: Renderable): string[] => [
+    ...(node.id ? [node.id] : []),
+    ...node
+      .getChildren()
+      .flatMap((child) => ("getChildren" in child ? ids(child as Renderable) : [])),
+  ];
+  const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
+  return JSON.stringify({
+    frame: setup.captureCharFrame(),
+    focused: setup.renderer.currentFocusedRenderable?.id,
+    readerTabIds: ["skill", "resources", "details"].map((value) => ({
+      id: `reader-tabs-tab-${value}`,
+      mounted: !!setup.renderer.root.findDescendantById(`reader-tabs-tab-${value}`),
+    })),
+    readerControls: ids(setup.renderer.root).filter(
+      (id) => id.startsWith("reader-") || id === "resource-browser",
+    ),
+    browser:
+      browser instanceof SelectRenderable
+        ? { selectedOption: browser.getSelectedOption()?.value }
+        : undefined,
+  });
+}
 
 export function live(setup: ReaderSetup, id: string) {
   if (id === "reader-tabs") return selectedReaderTabRenderable(setup);
@@ -14,10 +45,11 @@ export function live(setup: ReaderSetup, id: string) {
 const readerTabValues = ["skill", "resources", "details"] as const;
 
 export function selectedReaderTab(setup: ReaderSetup): 0 | 1 | 2 {
-  const frame = setup.captureCharFrame();
-  const labels = ["SKILL.md", "Resources", "Details"];
-  const selected = labels.findIndex((label) => frame.includes(`[ ${label} ]`));
-  if (selected < 0) throw new Error("No Reader tab is selected");
+  const selected = readerTabValues.findIndex((value) => {
+    const tab = setup.renderer.root.findDescendantById(`reader-tabs-tab-${value}`);
+    return tab instanceof TabsTabRenderable && tab.getState().selected;
+  });
+  if (selected < 0) throw new Error(`No Reader tab is selected\n${readerPublicDiagnostic(setup)}`);
   return selected as 0 | 1 | 2;
 }
 
@@ -79,6 +111,38 @@ export async function enterLive(setup: ReaderSetup, id: string) {
   await parsedEnter(setup);
 }
 
+/** Native Markdown highlighting settles independently of the installed-content read. */
+export async function waitForReaderBody(setup: ReaderSetup, text: string, visible = true) {
+  const descendants = (node: BaseRenderable): BaseRenderable[] => [
+    node,
+    ...node.getChildren().flatMap(descendants),
+  ];
+  await setup.waitFor(() =>
+    descendants(setup.renderer.root).some(
+      (node) => node instanceof CodeRenderable && node.plainText.includes(text),
+    ),
+  );
+  for (const node of descendants(setup.renderer.root))
+    if (node instanceof CodeRenderable) await node.highlightingDone;
+  await setup.flush();
+  if (visible) {
+    if (!setup.captureCharFrame().includes(text))
+      console.error(
+        "Reader native body geometry",
+        descendants(setup.renderer.root)
+          .filter((node): node is CodeRenderable => node instanceof CodeRenderable)
+          .map((node) => ({
+            id: node.id,
+            width: node.width,
+            height: node.height,
+            y: node.screenY,
+            text: node.plainText,
+          })),
+      );
+    expect(setup.captureCharFrame()).toContain(text);
+  }
+}
+
 export async function clickLive(setup: ReaderSetup, id: string, x = 1, y = 0) {
   const target = live(setup, id);
   await setup.mockMouse.click(target.screenX + x, target.screenY + y);
@@ -87,8 +151,11 @@ export async function clickLive(setup: ReaderSetup, id: string, x = 1, y = 0) {
 }
 
 export async function openAllInstalledSkills(setup: ReaderSetup) {
-  // Workspace now opens on All Skills. Wait for its production browser rather
-  // than activating the obsolete wide-layout tab as a setup shortcut.
+  await setup.waitFor(
+    () => !!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills"),
+  );
+  await focusLive(setup, "skills-view-tab-all-installed-skills");
+  await parsedEnter(setup);
   await setup.waitFor(() => {
     const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
     return !!browser && !browser.isDestroyed && !!browser.parent;
@@ -148,12 +215,23 @@ export async function enterInstalledAddress(
 }
 
 export async function enterReaderDetailsAction(setup: ReaderSetup, actionId: string) {
+  await openReaderManagement(setup);
   await setup.waitFor(
     () =>
       !!setup.renderer.root.findDescendantById("reader-details") &&
       !!setup.renderer.root.findDescendantById(`reader-details-action-${actionId}`),
   );
   await enterLive(setup, `reader-details-action-${actionId}`);
+}
+
+export async function openReaderManagement(setup: ReaderSetup) {
+  if (
+    !setup.renderer.root.findDescendantById("reader-reload") &&
+    !setup.renderer.root.findDescendantById("reader-details-action-skill-add-to-collection")
+  ) {
+    await focusLive(setup, "reader-details-manage");
+    await parsedEnter(setup);
+  }
 }
 
 export async function enterReaderDetailsRelationship(setup: ReaderSetup, value: string) {

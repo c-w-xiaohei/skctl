@@ -56,6 +56,7 @@ export type SkillCliErrorCode =
   | "PINNED_COMMIT_UNAVAILABLE"
   | "PROVIDER_AUTH_FAILED"
   | "PROVIDER_UNAVAILABLE"
+  | "PROVIDER_TIMEOUT"
   | "PROVIDER_INTEGRITY_FAILED"
   | "DESTINATION_EXISTS"
   | "ATOMIC_PUBLICATION_UNSUPPORTED"
@@ -865,12 +866,37 @@ export interface DiscoveryObservation {
 export interface UpdateObservation {
   readonly source: string;
   readonly kind: "local" | "git" | "github";
+  /** Opaque installed-comparison snapshot; retain and pass to update unchanged when present. */
+  readonly baseline?: string;
   readonly exactRevision?: string;
   readonly changed: readonly DiscoveredSkillCandidate[];
   readonly added: readonly DiscoveredSkillCandidate[];
   readonly removed: readonly DiscoveredSkillCandidate[];
   readonly unchanged: readonly DiscoveredSkillCandidate[];
 }
+export interface UpdateFileChange {
+  /** Path relative to this Skill Root, not the Source or workspace. */
+  readonly path: string;
+  readonly status: "added" | "modified" | "deleted";
+  readonly before?: { readonly bytes: number; readonly executable: boolean };
+  /** Byte size may be unknown when content was not acquired under the preview limit. */
+  readonly after?: { readonly bytes?: number; readonly executable: boolean };
+  readonly content:
+    | { readonly kind: "text"; readonly before: string; readonly after: string }
+    | { readonly kind: "unavailable"; readonly reason: "binary" | "too-large" | "preview-limit" };
+}
+export type UpdatePreview = {
+  readonly address: { readonly source: string; readonly path: string };
+} & (
+  | { readonly status: "unavailable"; readonly reason: "local-live-content" }
+  | {
+      readonly status: "ready";
+      readonly installedRevision?: string;
+      readonly targetRevision: string;
+      readonly removed: boolean;
+      readonly files: readonly UpdateFileChange[];
+    }
+);
 export interface ConfigSourceObservation {
   readonly id: string;
   readonly kind: "local" | "git" | "github";
@@ -965,12 +991,33 @@ export interface ManagementCapability {
     request: { readonly source: string },
     options?: OperationOptions,
   ): Promise<OperationResult<UpdateObservation>>;
+  /** Read-only installed-snapshot comparison. Never resolves a moving ref or publishes content. */
+  previewUpdate(
+    request: {
+      readonly source: string;
+      readonly path: string;
+      readonly exactRevision?: string;
+      readonly expectedBaseline: string;
+    },
+    options?: OperationOptions,
+  ): Promise<OperationResult<UpdatePreview>>;
+  /**
+   * Reads the current source binding and installed-comparison snapshot without
+   * contacting the source. The returned token is stable across Core instances
+   * while that snapshot remains unchanged.
+   */
+  getUpdateBaseline(
+    request: { readonly source: string },
+    options?: OperationOptions,
+  ): Promise<OperationResult<string>>;
   update(
     request: {
       readonly source: string;
       readonly paths: readonly string[];
       readonly remove?: readonly string[];
       readonly exactRevision?: string;
+      /** Reject if the installed comparison snapshot changed after checkUpdate. */
+      readonly expectedBaseline?: string;
     },
     options?: OperationOptions,
   ): Promise<OperationResult<void>>;

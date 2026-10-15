@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { MarkdownRenderable, ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
+import {
+  MarkdownRenderable,
+  ScrollBoxRenderable,
+  SelectRenderable,
+  TextRenderable,
+} from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { SkillCliError } from "@skill-cli/core";
@@ -13,6 +18,7 @@ import {
 } from "./installed-reader.fixture";
 import {
   focusLive,
+  openAllInstalledSkills,
   openReaderTab,
   parsedEnter,
   parsedEscape,
@@ -74,6 +80,7 @@ async function awaitParsedEscape(setup: Setup) {
 }
 
 async function openResources(setup: Setup, allowUnsettled = false) {
+  await openAllInstalledSkills(setup);
   await openReaderFromInspector(setup);
   await setup.renderOnce();
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
@@ -138,7 +145,7 @@ test.serial("RENDER resource content exposes the Back command record", async () 
 });
 
 test.serial(
-  "RENDER Resources lists exact structural descriptors with mounted pending and empty states",
+  "RENDER Resources lists paths with selected structural information, pending and empty states",
   async () => {
     let resolveList:
       | ((value: { value: typeof readerResources; diagnostics: [] }) => void)
@@ -166,12 +173,26 @@ test.serial(
       expect(calls).toEqual([{ address: readerAddress }]);
       await setup.waitForFrame((frame) => frame.includes("Loading resources"));
       resolveList!({ value: readerResources, diagnostics: [] });
-      await setup.waitForFrame(
-        (frame) =>
-          frame.includes("docs  directory") &&
-          frame.includes("bin/run  file 4 bytes executable") &&
-          frame.includes("submodule  gitlink deadbeef"),
+      await setup.waitForFrame((frame) => frame.includes("docs/") && frame.includes("bin/run"));
+      const browser = await resourceBrowser(setup);
+      expect(browser.options.map((option) => option.value)).toEqual(
+        readerResources.map((resource) => resource.path),
       );
+      expect(
+        (setup.renderer.root.findDescendantById("reader-resource-info") as TextRenderable)
+          .plainText,
+      ).toBe("Directory");
+      await chooseResource(setup, "bin/run");
+      expect(
+        (setup.renderer.root.findDescendantById("reader-resource-info") as TextRenderable)
+          .plainText,
+      ).toBe("Executable · 4 B");
+      await chooseResource(setup, "submodule");
+      expect(
+        (setup.renderer.root.findDescendantById("reader-resource-info") as TextRenderable)
+          .plainText,
+      ).toBe("Gitlink");
+      expect(setup.captureCharFrame()).not.toContain("deadbeef");
     } finally {
       setup.renderer.destroy();
     }
@@ -424,7 +445,7 @@ test.serial(
 );
 
 test.serial(
-  "RENDER Resources uses returned formats, keeps false executable metadata, and keyboard entry gates non-files",
+  "RENDER Resources uses returned formats, omits ordinary executable metadata, and keyboard entry gates non-files",
   async () => {
     const reads: unknown[] = [];
     const resources = [
@@ -470,7 +491,8 @@ test.serial(
     );
     try {
       await openResourcesWithKeys(setup);
-      await setup.waitForFrame((frame) => frame.includes("plain.md  file not executable"));
+      await setup.waitForFrame((frame) => frame.includes("plain.md"));
+      expect(setup.captureCharFrame()).not.toContain("not executable");
       for (const path of ["docs", "link", "submodule"]) {
         await chooseResource(setup, path);
         await parsedEnter(setup);
@@ -639,8 +661,8 @@ test.serial(
       await backToResources(setup);
       expect(setup.renderer.root.findDescendantById("resource-browser")).toBeDefined();
       await awaitParsedEscape(setup);
-      expect(setup.renderer.root.findDescendantById("skill-inspector-open-reader")).toBeDefined();
-      await awaitParsedEscape(setup);
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
+      expect(setup.renderer.root.findDescendantById("reader-views")).toBeDefined();
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
       );
@@ -650,6 +672,15 @@ test.serial(
       await focusLive(setup, "installed-skill-browser");
       setup.mockInput.pressArrow("down");
       await setup.waitFor(() => skills.getSelectedOption()?.value === '["team-main","reference"]');
+      await setup.waitFor(() => selectedReaderTab(setup) === 0);
+      await setup.waitFor(
+        () =>
+          (setup.renderer.root.findDescendantById("reader-identity") as TextRenderable)
+            ?.plainText === "reference",
+      );
+      await setup.waitForFrame((frame) => frame.includes("Reference"));
+      await openReaderTab(setup, 2);
+      await setup.waitForFrame((frame) => /Address\s+team-main\/reference/.test(frame));
       await openResourcesWithKeys(setup);
       await openSelectedResource(setup, "guide");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
@@ -657,7 +688,6 @@ test.serial(
       expect(reads).toEqual(["guide", "reference"]);
       await setup.waitFor(() => reads.includes("reference"));
       await backToResources(setup);
-      await awaitParsedEscape(setup);
       await awaitParsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
@@ -672,6 +702,12 @@ test.serial(
           guideSkills.getSelectedOption()?.value ===
           skillAddressKey({ source: "team-main", path: "guide" }),
       );
+      await setup.waitFor(() => selectedReaderTab(setup) === 0);
+      await setup.waitFor(
+        () =>
+          (setup.renderer.root.findDescendantById("reader-identity") as TextRenderable)
+            ?.plainText === "guide",
+      );
       await openResourcesWithKeys(setup);
       await openSelectedResource(setup, "guide");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
@@ -684,6 +720,8 @@ test.serial(
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
       setup.resize(120, 40);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
+      await setup.renderOnce();
+      await setup.waitFor(() => selectedReaderTab(setup) === 1);
       await focusLive(setup, "resource-content");
       expect(selectedReaderTab(setup)).toBe(1);
       expect(

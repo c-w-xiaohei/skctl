@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { ScrollBoxRenderable, SelectRenderable, TextBufferRenderable } from "@opentui/core";
+import {
+  ScrollBoxRenderable,
+  SelectRenderable,
+  TextBufferRenderable,
+  TextRenderable,
+} from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import type {
@@ -14,7 +19,9 @@ import {
   enterReaderDetailsRelationship,
   focusLive,
   live,
+  openAllInstalledSkills,
   openReaderTab,
+  openReaderManagement,
   parsedEnter,
   parsedEscape,
   selectedReaderTab,
@@ -401,8 +408,10 @@ async function openDetailsActions(
   setup: Awaited<ReturnType<typeof testRender>>,
   focusAction = true,
 ) {
+  await openAllInstalledSkills(setup);
   await openReaderFromInspector(setup);
   await openReaderTab(setup, 2);
+  await openReaderManagement(setup);
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("reader-details-action-skill-add-to-collection"),
   );
@@ -417,6 +426,7 @@ async function chooseCollection(setup: Awaited<ReturnType<typeof testRender>>, c
 }
 
 async function openRelationships(setup: Awaited<ReturnType<typeof testRender>>, value: string) {
+  await openAllInstalledSkills(setup);
   await openReaderFromInspector(setup);
   await openReaderTab(setup, 2);
   await enterReaderDetailsRelationship(setup, value);
@@ -440,7 +450,7 @@ async function returnToReaderDetails(
   expect(selectedReaderTab(setup)).toBe(2);
   expect((live(setup, "reader-details") as ScrollBoxRenderable).scrollTop).toBe(0);
   expect(renderableText(live(setup, "reader-details"))).toContain(
-    `Address  ${expectedAddress.source}/${expectedAddress.path}`,
+    `Address\n${expectedAddress.source}/${expectedAddress.path}`,
   );
 }
 
@@ -645,7 +655,7 @@ test("Details Add to collection owner cancellation leaves membership unchanged a
   }
 });
 
-test("Details disables Add to collection when no direct Collection exists", async () => {
+test("Details disables Add to collection when no editable Collection destination exists", async () => {
   const noChoices = projection();
   const setup = await testRender(
     () => (
@@ -659,20 +669,11 @@ test("Details disables Add to collection when no direct Collection exists", asyn
           effective: {
             status: "complete",
             sources: noChoices.effective.sources,
-            collections: ["derived"],
+            collections: [],
             use: [],
             managed: false,
             agent: noChoices.effective.agent,
-            collectionsView: [
-              {
-                id: "derived",
-                declared: [],
-                repository: { derived: true, producers: [address] },
-                members: [],
-                references: [],
-                links: [],
-              },
-            ],
+            collectionsView: [],
           },
         })}
         exit={() => {}}
@@ -683,13 +684,24 @@ test("Details disables Add to collection when no direct Collection exists", asyn
   try {
     await openDetailsActions(setup, false);
     const action = live(setup, "reader-details-action-skill-add-to-collection");
-    expect(action.focused).toBe(false);
-    const details = live(setup, "reader-details") as ScrollBoxRenderable;
-    details.scrollTop = 20;
+    expect(action.focusable).toBe(false);
+    setup.mockInput.pressKey("p", { ctrl: true });
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+    const choices = live(setup, "palette-choices") as SelectRenderable;
+    const disabled = choices.options.find(
+      (option) => option.value.id === "skill-add-to-collection",
+    );
+    expect(disabled?.value.enabled).toBe(false);
+    expect(disabled?.value.disabledReason).toContain("No direct or repository-derived Collection");
+    const disabledIndex = choices.options.findIndex(
+      (option) => option.value.id === "skill-add-to-collection",
+    );
+    expect(disabledIndex).toBeGreaterThanOrEqual(0);
+    choices.setSelectedIndex(disabledIndex);
     await setup.renderOnce();
-    const frame = setup.captureCharFrame();
-    expect(frame).toContain("No direct Collection");
-    expect(frame).toContain("available for this Installed Skill");
+    expect((live(setup, "palette-action-reason") as TextRenderable).plainText).toContain(
+      disabled!.value.disabledReason!,
+    );
     expect(setup.renderer.root.findDescendantById("collection-handoff-choice")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
@@ -716,26 +728,32 @@ test("Details direct Config relationship mounts its exact declaration owner", as
   }
 });
 
-test("Details direct Source relationship focuses its mounted Inspector", async () => {
+test("Details direct Source relationship focuses its selected Source surface", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
     { width: 120, height: 40 },
   );
   try {
     await openRelationships(setup, "source");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-command-config",
+      () => setup.renderer.currentFocusedRenderable?.id === "source-actions-toggle",
     );
-    expect(setup.renderer.root.findDescendantById("source-browser")).toBeUndefined();
+    expect(
+      (
+        setup.renderer.root.findDescendantById("source-browser") as SelectRenderable
+      ).getSelectedOption()?.value,
+    ).toBe("team-main");
     expect(setup.captureCharFrame()).toContain("team-main");
-    expect(setup.captureCharFrame()).toContain("Open owning Config -> project");
+    expect(setup.renderer.root.findDescendantById("source-actions-toggle")).toBeDefined();
+    expect(setup.renderer.root.findDescendantById("source-command-config")).toBeUndefined();
     await returnToReaderDetails(setup, "source");
   } finally {
     setup.renderer.destroy();
   }
 });
 
-test("Task 7 source relationship bounds preserve the mounted inspector", async () => {
+test("Task 7 source relationship bounds preserve the mounted selected Source surface", async () => {
   for (const [width, height] of [
     [80, 24],
     [43, 30],
@@ -746,11 +764,12 @@ test("Task 7 source relationship bounds preserve the mounted inspector", async (
     );
     try {
       await openRelationships(setup, "source");
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
       await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "source-command-config",
+        () => setup.renderer.currentFocusedRenderable?.id === "source-actions-toggle",
       );
-      expect(setup.renderer.root.findDescendantById("source-browser")).toBeUndefined();
-      expect(setup.renderer.root.findDescendantById("source-command-config")).toBeDefined();
+      expect(setup.renderer.root.findDescendantById("source-actions-toggle")).toBeDefined();
+      expect(setup.renderer.root.findDescendantById("source-command-config")).toBeUndefined();
     } finally {
       setup.renderer.destroy();
     }
@@ -764,20 +783,21 @@ test("Details relationship writes its opened transition only after the keyboard 
   );
   try {
     await openRelationships(setup, "source");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-command-config",
+      () => setup.renderer.currentFocusedRenderable?.id === "source-actions-toggle",
     );
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Opened Workspace > Sources");
+    expect(setup.captureCharFrame()).toContain("team-main");
     await returnToReaderDetails(setup, "source");
-    expect(setup.captureCharFrame()).not.toContain("Back to Details");
-    expect(setup.captureCharFrame()).toContain("Address  team-main/guide");
+    expect(renderableText(live(setup, "reader-details-summary"))).toContain(
+      "Address\nteam-main/guide",
+    );
   } finally {
     setup.renderer.destroy();
   }
 });
 
-test("Details Source relationship returns through its exact Reader command before the Skill Inspector", async () => {
+test("Details Source relationship returns through its exact Reader command and then to the Skill list", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
     { width: 120, height: 40 },
@@ -790,8 +810,9 @@ test("Details Source relationship returns through its exact Reader command befor
     );
     await parsedEscape(setup);
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
+    expect(setup.renderer.root.findDescendantById("reader-views")).toBeDefined();
   } finally {
     setup.renderer.destroy();
   }
@@ -817,7 +838,11 @@ test("Details contributed Config Source relationship mounts exact provenance", a
     setup.renderer.root.findDescendantById("config-command-config-remove")!.focus();
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Config Source  team-config");
-    expect(frame).toContain("Owner  /home/user/.config/skill-cli.jsonc /");
+    expect(frame).toContain("Config Source host");
+    const metadata = live(setup, "config-declaration-metadata");
+    expect(renderableText(metadata)).toContain(
+      "Config Source host  /home/user/.config/skill-cli.jsonc /configSources/team-config",
+    );
     expect(frame).toContain("configSources/team-config");
     expect(frame).toContain("Contributed Source  team-config/lark");
     expect(frame).toContain("Contributed declaration  /sources/lark");
@@ -840,20 +865,25 @@ test("Details discloses the Local Config Source contributed declaration file", a
     await focusLive(setup, "reader-details-metadata");
     await parsedEnter(setup);
     const details = setup.renderer.root.findDescendantById("reader-details") as ScrollBoxRenderable;
-    details.scrollTop = 20;
+    const labels = (
+      node: import("@opentui/core").BaseRenderable,
+    ): import("@opentui/core").BaseRenderable[] => [node, ...node.getChildren().flatMap(labels)];
+    const declaration = labels(details).find(
+      (node) => node instanceof TextRenderable && node.plainText === "Contributed declaration file",
+    )!;
+    details.scrollChildIntoView(declaration.id);
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("Config Source ID  local-team");
-    expect(frame).toContain("Host level  project");
-    expect(frame).toContain("Host file");
-    expect(frame).toContain("Host pointer");
-    expect(frame).toContain("Contributed declaration file");
-    expect(frame).toContain("Contributed declaration  /sources/lark");
-    expect(frame).toContain("Namespace  local-team");
-    expect(renderableText(details)).toContain("Host file  /workspace/skill-cli/skill-cli.jsonc");
-    expect(renderableText(details)).toContain("Host pointer  /configSources/local-team");
+    expect(renderableText(details)).toContain("Config Source ID\nlocal-team");
+    expect(renderableText(details)).toContain("Host level\nproject");
+    expect(frame).toContain("Contributed");
+    expect(frame).toContain("/workspace/shared-skills/skill-cli.jsonc");
+    expect(renderableText(details)).toContain("Contributed declaration\n/sources/lark");
+    expect(renderableText(details)).toContain("Namespace\nlocal-team");
+    expect(renderableText(details)).toContain("Host file\n/workspace/skill-cli/skill-cli.jsonc");
+    expect(renderableText(details)).toContain("Host pointer\n/configSources/local-team");
     expect(renderableText(details)).toContain(
-      "Contributed declaration file  /workspace/shared-skills/skill-cli.jsonc",
+      "Contributed declaration file\n/workspace/shared-skills/skill-cli.jsonc",
     );
   } finally {
     setup.renderer.destroy();
@@ -930,21 +960,25 @@ test("Details Collection relation routes to its owning contributed Config Source
   }
 });
 
-test("Details contributed Source relationship focuses the mounted Inspector with the exact Source ID", async () => {
+test("Details contributed Source relationship focuses the mounted Source surface with the exact Source ID", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(contributedProjection())} exit={() => {}} />,
     { width: 120, height: 40 },
   );
   try {
     await openRelationships(setup, "source");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-command-config-source",
+      () => setup.renderer.currentFocusedRenderable?.id === "source-actions-toggle",
     );
-    expect(setup.renderer.root.findDescendantById("source-browser")).toBeUndefined();
+    expect(
+      (
+        setup.renderer.root.findDescendantById("source-browser") as SelectRenderable
+      ).getSelectedOption()?.value,
+    ).toBe("team-config/lark");
     expect(setup.captureCharFrame()).toContain("team-config/lark");
-    expect(setup.captureCharFrame()).toContain(
-      "Open owning Config Source -> /configSources/team-config",
-    );
+    expect(setup.renderer.root.findDescendantById("source-actions-toggle")).toBeDefined();
+    expect(setup.renderer.root.findDescendantById("source-command-config-source")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
   }

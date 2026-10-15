@@ -1,11 +1,10 @@
 import { InputRenderable, Renderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
-import { createMemo, For, onCleanup, Show, untrack } from "solid-js";
-import { useRenderer } from "@opentui/solid";
+import { createMemo, createSignal, onCleanup, Show, untrack } from "solid-js";
+import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { restoreSelectScroll, selectScrollOffset, trackSelectScroll } from "./select-scroll";
 import type { CollectionView, ConfigDeclarationOwner, ManagementProjection } from "@skill-cli/core";
 import type { MemberOriginPath } from "@skill-cli/core";
 import {
-  collectionContributionText,
   collectionFilterDimensions,
   collectionFilterValues,
   filterCollections,
@@ -20,10 +19,10 @@ import type {
   LayoutMode,
 } from "./types";
 import { CommandControl } from "./command-control";
+import { Input } from "./ui/input";
 import { useTheme } from "./ui/use-theme";
 import { DataList } from "./ui/data-list";
 import { Pane } from "./ui/pane";
-import { MetadataGrid } from "./ui/metadata-grid";
 import {
   collectionMemberKey,
   collectionOriginKey,
@@ -33,6 +32,7 @@ import { SectionTabs } from "./components/section-tabs";
 import type { FocusRegistry, FocusTarget } from "./focus";
 import {
   RelationshipInspector,
+  collectionRelationKey,
   type CollectionMemberOriginRow,
   type CollectionRelationRow,
   type CollectionRelationshipIntent,
@@ -49,6 +49,14 @@ const ownerProvenanceText = (owner: ConfigDeclarationOwner): string | undefined 
 
 const ownerKey = (owner: ConfigDeclarationOwner): string =>
   JSON.stringify([owner.level, owner.file, owner.pointer, owner.namespace, owner.contribution]);
+
+const relationKey = (
+  kind: CollectionRelationRow["kind"],
+  collection: string,
+  target: string | undefined,
+  owner: ConfigDeclarationOwner | undefined,
+  name?: string,
+): string => JSON.stringify([kind, collection, name, target, owner ? ownerKey(owner) : undefined]);
 
 export const collectionRelationRows = (
   collectionId: string,
@@ -76,6 +84,7 @@ export const collectionRelationRows = (
     ).values(),
   ];
   const rows: CollectionRelationRow[] = useOwners.map((owner) => ({
+    key: relationKey("collection-use", collectionId, collectionId, owner),
     kind: "collection-use",
     label: "Collection Use",
     owner,
@@ -85,6 +94,7 @@ export const collectionRelationRows = (
   }));
   if (effective.use.includes(collectionId) && useOwners.length === 0)
     rows.push({
+      key: relationKey("collection-use", collectionId, collectionId, undefined),
       kind: "collection-use",
       label: "Collection Use",
       target: collectionId,
@@ -92,6 +102,13 @@ export const collectionRelationRows = (
     });
   rows.push(
     ...collection.references.map((reference) => ({
+      key: relationKey(
+        "collection-reference",
+        collectionId,
+        reference.collection,
+        reference.owner,
+        reference.name,
+      ),
       kind: "collection-reference" as const,
       label: `Reference ${reference.name}`,
       target: reference.collection,
@@ -125,6 +142,7 @@ export const collectionRelationRows = (
           : [],
       );
       return {
+        key: relationKey("collection-link", collectionId, link.collection, link.owner),
         kind: "collection-link" as const,
         label: `Link ${link.collection}`,
         target: link.collection,
@@ -303,6 +321,7 @@ export function CollectionsPage(props: {
   readonly onAction?: (id: ActionRecord["id"]) => void;
 }) {
   const renderer = useRenderer();
+  const terminal = useTerminalDimensions();
   const tokens = useTheme();
   const commandsIn = (pane: string) => {
     const commands: Renderable[] = [];
@@ -431,7 +450,7 @@ export function CollectionsPage(props: {
       agentUse: agentUse(),
       installedSkills: props.projection()?.installedSkills,
     });
-  const selected = () => collections().find((item) => item.id === props.collections.selected());
+  const selected = () => effective().find((item) => item.id === props.collections.selected());
   const tab = (): CollectionTab => (selected() ? props.collections.tab(selected()!.id) : "entries");
   const filterState = props.collections.filter;
   const filterDimension = () => filterState().dimension as CollectionFilterDimension | undefined;
@@ -464,7 +483,7 @@ export function CollectionsPage(props: {
       : matching(collectionFilterDimensions);
     return (
       <box flexDirection="column" border paddingLeft={1}>
-        <input
+        <Input
           id="collections-filter-search"
           ref={(value: InputRenderable) => {
             bind("collections-filter-search", value);
@@ -493,9 +512,19 @@ export function CollectionsPage(props: {
             } else props.onFilterDimension(value as CollectionFilterDimension);
           }}
         />
-        <box onMouseDown={dimension ? () => props.onFilterDimension() : props.onFilterClose}>
-          <text selectable>{dimension ? "Back" : "Close"}</text>
-        </box>
+        {commandZone(
+          "collections-filter-back",
+          {
+            id: "collections.filter.back",
+            keys: ["enter"],
+            verb: dimension ? "Back" : "Close",
+            destination: dimension ? "Filter categories" : "Collections",
+            scope: "page",
+            enabled: true,
+            danger: false,
+          },
+          dimension ? () => props.onFilterDimension() : props.onFilterClose,
+        )}
       </box>
     );
   };
@@ -504,7 +533,12 @@ export function CollectionsPage(props: {
     if (!collection)
       return (
         <box flexDirection="column" flexGrow={1} paddingLeft={1}>
-          {effective().length === 0 ? (
+          {props.surface === "detail" ? (
+            <>
+              <text>Collection unavailable.</text>
+              <text>Return to Collections to choose an available Collection.</text>
+            </>
+          ) : effective().length === 0 ? (
             <>
               <text>Collections group Skills for reuse and agent disclosure.</text>
               <text>Create a Collection here, or install one supplied by a repository.</text>
@@ -515,6 +549,7 @@ export function CollectionsPage(props: {
         </box>
       );
     const selectedTab = createMemo(() => tab());
+    const [showCollectionActions, setShowCollectionActions] = createSignal(false);
     let relationshipSelect: SelectRenderable | undefined;
     const memberOrigins: CollectionMemberOriginRow[] = collection.members.flatMap((member) =>
       (member.paths.length ? member.paths : [undefined]).map((path, index) => ({
@@ -558,8 +593,24 @@ export function CollectionsPage(props: {
         origins,
       };
     });
-    const originCount = memberOrigins.length;
     const relationRows = collectionRelationRows(collection.id, props.projection()!);
+    const inspector = () => props.collections.inspector();
+    const workAreaTitle = () => {
+      const current = inspector();
+      if (!current || current.collection !== collection.id) return "Collection details";
+      if (current.kind === "membership")
+        return (
+          collection.members.find(
+            (member) =>
+              collectionMemberKey(member) === current.member ||
+              `${member.name}:0` === current.member,
+          )?.name ?? "Membership details"
+        );
+      return (
+        relationRows.find((relation) => collectionRelationKey(relation) === current.relation)
+          ?.label ?? "Relationship details"
+      );
+    };
     const entryAddress = (row: {
       readonly name: string;
       readonly address: { readonly source: string; readonly path: string };
@@ -591,9 +642,9 @@ export function CollectionsPage(props: {
             ],
             destination: "Membership details" as const,
           }))
-        : relationRows.map((row, index) => ({
-            key: `${row.kind}:${index}`,
-            value: `${row.kind}:${index}`,
+        : relationRows.map((row) => ({
+            key: collectionRelationKey(row),
+            value: collectionRelationKey(row),
             domain: row,
             cells: [
               row.label,
@@ -608,6 +659,28 @@ export function CollectionsPage(props: {
             destination: "Relationship details" as const,
           })),
     );
+    const compactSelectionDescription = () => {
+      const rows = relationRowsForTable();
+      const selectedValue = props.collections.selectedRow(collection.id, selectedTab());
+      const row = rows.find((candidate) => candidate.value === selectedValue) ?? rows[0];
+      if (!row) return undefined;
+      if (selectedTab() === "entries") {
+        const member = row.domain as (typeof memberRows)[number];
+        return (
+          props
+            .projection()
+            ?.installedSkills.find(
+              (skill) =>
+                skill.address.source === member.address.source &&
+                skill.address.path === member.address.path,
+            )?.description ?? "Skill description unavailable."
+        );
+      }
+      const relation = row.domain as CollectionRelationRow;
+      return relation.intent?.kind === "collection-reference"
+        ? relation.intent.description
+        : relation.effect;
+    };
     const toggleSelectedEntryOrigins = (index: number) => {
       if (selectedTab() !== "entries") return false;
       const row = relationRowsForTable()[index];
@@ -622,14 +695,7 @@ export function CollectionsPage(props: {
       return true;
     };
     return (
-      <Pane id="collection-detail-pane" title="Collection details">
-        <text wrapMode="word">
-          <strong>{collection.id}</strong>
-        </text>
-        <text
-          fg={tokens().colors.mutedForeground}
-          wrapMode="word"
-        >{`${collection.members.length} Skills · ${originCount} origins · ${collectionContributionText(collection)}`}</text>
+      <Pane id="collection-detail-pane" title={inspector() ? workAreaTitle() : collection.id}>
         <Show when={!props.collections.inspector()}>
           <SectionTabs
             id="collection-tabs"
@@ -657,16 +723,80 @@ export function CollectionsPage(props: {
           />
           <Show when={relationRowsForTable().length === 0}>
             <text fg={tokens().colors.mutedForeground}>
-              {selectedTab() === "entries" ? "Empty Collection" : "No Relations"}
+              {selectedTab() === "entries"
+                ? collection.references.length
+                  ? "Skills are organized through referenced Collections. View Relations to open them."
+                  : "Empty Collection"
+                : "No Relations"}
             </text>
           </Show>
-          <Show when={selectedTab() === "entries"}>
+          <Show
+            when={
+              selectedTab() === "entries" &&
+              relationRowsForTable().length === 0 &&
+              collection.references.length > 0
+            }
+          >
+            {commandZone(
+              "collection-open-relations",
+              {
+                id: "collection.open-relations",
+                keys: ["enter", "return"],
+                verb: "View Relations",
+                destination: "Collection Relations",
+                scope: "page",
+                enabled: true,
+                danger: false,
+              },
+              () => {
+                props.onTab(collection.id, "relations");
+                queueMicrotask(() => focus("collection-relationships"));
+              },
+            )}
+          </Show>
+          <Show when={selectedTab() === "entries" && terminal().height > 16}>
             <text fg={tokens().colors.mutedForeground}>
               Space selects entries · Enter shows ownership
             </text>
             <Show when={props.collections.selectedOrigins(collection.id).length > 0}>
               <text>{`${props.collections.selectedOrigins(collection.id).length} origins selected`}</text>
-              <Show when={!props.collections.inspector()}>
+            </Show>
+          </Show>
+          <box flexDirection="row" height={1} flexShrink={0}>
+            <Show when={terminal().height <= 16 && compactSelectionDescription()}>
+              {(description) => (
+                <text
+                  flexGrow={1}
+                  minWidth={0}
+                  wrapMode="none"
+                  fg={tokens().colors.mutedForeground}
+                >
+                  {description()}
+                </text>
+              )}
+            </Show>
+            {commandZone(
+              "collection-actions-toggle",
+              {
+                id: "collection.actions.toggle",
+                keys: ["enter", "return"],
+                verb: showCollectionActions() ? "Hide actions" : "Actions",
+                destination: "Collection management actions",
+                scope: "page",
+                enabled: true,
+                danger: false,
+              },
+              () => setShowCollectionActions((visible) => !visible),
+            )}
+          </box>
+          <Show when={showCollectionActions()}>
+            <scrollbox id="collection-actions-scroll" height={3} flexShrink={0} width="100%">
+              <Show
+                when={
+                  selectedTab() === "entries" &&
+                  props.collections.selectedOrigins(collection.id).length > 0
+                }
+              >
                 {commandZone(
                   "remove-from-collection",
                   {
@@ -687,7 +817,12 @@ export function CollectionsPage(props: {
                     ),
                 )}
               </Show>
-            </Show>
+              {managedAction("collection-check-updates", "Check Collection updates…")}
+              {managedAction("add-membership", "Add Skills to Collection…")}
+              {managedAction("add-reference", "Add discovery reference…")}
+              {managedAction("add-link", "Link another Collection's Skills…")}
+              {managedAction("remove-collection", "Remove Collection declaration…")}
+            </scrollbox>
           </Show>
           <DataList
             id="collection-relationships"
@@ -738,12 +873,12 @@ export function CollectionsPage(props: {
               description: row.cells.slice(1).join(" · "),
               value: row.value,
             }))}
-            showDescription
+            showDescription={terminal().height > 16}
             showSelectionIndicator
             showScrollIndicator
             width="100%"
             flexGrow={1}
-            minHeight={0}
+            minHeight={terminal().height > 16 ? 2 : 1}
             onChange={(index) => {
               const option = relationRowsForTable()[index];
               if (option) props.collections.selectRow(collection.id, selectedTab(), option.value);
@@ -775,6 +910,24 @@ export function CollectionsPage(props: {
           collection={collection}
           memberOrigins={memberOrigins}
           relationRows={relationRows}
+          memberDescription={(address) =>
+            props
+              .projection()
+              ?.installedSkills.find(
+                (skill) =>
+                  skill.address.source === address.source && skill.address.path === address.path,
+              )?.description
+          }
+          memberAvailable={(address) => {
+            const skill = props
+              .projection()
+              ?.installedSkills.find(
+                (candidate) =>
+                  candidate.address.source === address.source &&
+                  candidate.address.path === address.path,
+              );
+            return skill?.owner.health === "healthy";
+          }}
           collections={props.collections}
           focusRegistry={props.focusRegistry}
           bind={bind}
@@ -782,18 +935,6 @@ export function CollectionsPage(props: {
           registerCommand={props.registerCommand}
           executeCommand={props.executeCommand}
         />
-        <box
-          flexDirection="column"
-          flexShrink={0}
-          border={["top"]}
-          borderColor={tokens().colors.border}
-        >
-          <text fg={tokens().colors.mutedForeground}>MANAGE COLLECTION</text>
-          {managedAction("add-membership", "Add Skills to Collection…")}
-          {managedAction("add-reference", "Add discovery reference…")}
-          {managedAction("add-link", "Link another Collection's Skills…")}
-          {managedAction("remove-collection", "Remove Collection declaration…")}
-        </box>
       </Pane>
     );
   };
@@ -806,7 +947,7 @@ export function CollectionsPage(props: {
       {managedAction("new-collection", "New Collection…")}
       <Show when={effective().length > 0}>
         <box flexDirection="row" gap={1} height={1} flexShrink={0} marginBottom={1}>
-          <input
+          <Input
             id="collections-query"
             ref={(value: InputRenderable) => {
               bind("collections-query", value);
@@ -849,13 +990,7 @@ export function CollectionsPage(props: {
           const clear = () => props.onClear(dimension);
           const id = `clear-collections-filter-${dimension}`;
           return (
-            <box
-              id={id}
-              onMouseDown={(event) => {
-                event.stopPropagation();
-                clear();
-              }}
-            >
+            <box id={id}>
               {commandZone(
                 `${id}-keyboard`,
                 {
@@ -873,13 +1008,7 @@ export function CollectionsPage(props: {
           );
         })}
         <Show when={Boolean(query()) || Object.keys(filters()).length > 0}>
-          <box
-            id="clear-all-collections-filters"
-            onMouseDown={(event) => {
-              event.stopPropagation();
-              props.onClearAll();
-            }}
-          >
+          <box id="clear-all-collections-filters">
             {commandZone(
               "clear-all-collections-filters-keyboard",
               {
@@ -970,66 +1099,13 @@ export function CollectionsPage(props: {
               ref={(target) => bind("inspector", target)}
             >
               <text wrapMode="word" fg={tokens().colors.mutedForeground}>
-                A reusable group of Skills. Enter opens membership and relationship details.
+                {collection().description ?? "Description unavailable."}
               </text>
-              <box flexDirection="column" marginTop={1} marginBottom={1}>
-                <MetadataGrid
-                  fields={[
-                    {
-                      label: "Skills",
-                      value: String(collection().members.length),
-                      priority: 1,
-                      wrap: "word",
-                      narrow: "stack",
-                    },
-                    {
-                      label: "Origin",
-                      value: collectionContributionText(collection()),
-                      priority: 1,
-                      wrap: "word",
-                      narrow: "stack",
-                    },
-                    {
-                      label: "Agent access",
-                      value: agentUse().includes(collection().id)
-                        ? "Used directly"
-                        : "Not used directly",
-                      priority: 1,
-                      wrap: "word",
-                      narrow: "stack",
-                    },
-                    {
-                      label: "Links",
-                      value: String(collection().links.length),
-                      priority: 1,
-                      wrap: "word",
-                      narrow: "stack",
-                    },
-                    {
-                      label: "References",
-                      value: String(collection().references.length),
-                      priority: 1,
-                      wrap: "word",
-                      narrow: "stack",
-                    },
-                  ]}
-                />
-              </box>
-              <text fg={tokens().colors.mutedForeground}>SKILLS</text>
-              <For each={collection().members}>
-                {(member) => (
-                  <box flexDirection="column" marginTop={1}>
-                    <text wrapMode="word">{member.name}</text>
-                    <text
-                      wrapMode="word"
-                      fg={tokens().colors.mutedForeground}
-                    >{`${member.address.source}/${member.address.path}`}</text>
-                  </box>
-                )}
-              </For>
-              <Show when={!collection().members.length}>
-                <text fg={tokens().colors.mutedForeground}>No members yet.</text>
-              </Show>
+              <text wrapMode="word" marginTop={1}>
+                {collection().members.length
+                  ? `${collection().members.length} member${collection().members.length === 1 ? "" : "s"} · Enter for Entries and Relations.`
+                  : "No members yet · Enter for Entries and Relations."}
+              </text>
             </scrollbox>
           </>
         )}
@@ -1044,9 +1120,7 @@ export function CollectionsPage(props: {
           <BrowserList />
           <Show when={props.mode === "wide"}>
             <box width="57%" flexGrow={1} minHeight={0} minWidth={0} flexDirection="column">
-              <Show when={selected()} keyed fallback={<CollectionPreview />}>
-                {(_collection) => detail()}
-              </Show>
+              <CollectionPreview />
             </box>
           </Show>
         </box>
@@ -1056,12 +1130,8 @@ export function CollectionsPage(props: {
     </Show>
   );
   const content = (
-    <Show
-      when={props.mode !== "wide" && props.surface === "detail" && selected()}
-      keyed
-      fallback={<CollectionList />}
-    >
-      {(_collection) => detail()}
+    <Show when={props.surface === "detail"} keyed fallback={<CollectionList />}>
+      {(_detail) => detail()}
     </Show>
   );
   return content;

@@ -152,7 +152,7 @@ async function writeReleaseMetadata(outputRoot: string): Promise<void> {
 
 async function buildNative(kind: "cli" | "tui", outputRoot: string): Promise<void> {
   await prepareReleaseOutput(outputRoot);
-  const staging = await mkdtemp(join(tmpdir(), "skill-cli-native-build-"));
+  const staging = await mkdtemp(join(outputRoot, ".skill-cli-native-build-"));
   try {
     const result = await Bun.build({
       entrypoints: [join(workspace, `packages/skill-${kind}/src/main.ts`)],
@@ -250,6 +250,44 @@ async function buildPlugin(outputRoot: string): Promise<void> {
 }
 
 if (import.meta.main) {
+  const cgroupRoot = "/sys/fs/cgroup";
+  const readCgroupLimit = async (name: string): Promise<string> =>
+    (await readFile(join(cgroupRoot, name), "utf8")).trim();
+  const requireLimit = (name: string, value: string, maximum: bigint): void => {
+    if (value === "max" || BigInt(value) <= 0n || BigInt(value) > maximum)
+      throw new Error(`Unsafe Docker resource limit ${name}=${value}; expected 1..${maximum}`);
+  };
+  try {
+    const dockerMarker = await readFile("/.dockerenv").then(
+      () => true,
+      () => false,
+    );
+    if (!dockerMarker) throw new Error("/.dockerenv is missing");
+    const memory = await readCgroupLimit("memory.max");
+    const swap = await readCgroupLimit("memory.swap.max");
+    const cpu = (await readCgroupLimit("cpu.max")).split(/\s+/);
+    const pids = await readCgroupLimit("pids.max");
+    if (cpu.length !== 2) throw new Error(`Invalid cpu.max=${cpu.join(" ")}`);
+    requireLimit("memory.max", memory, 2_147_483_648n);
+    if (swap !== "0")
+      throw new Error(`Unsafe Docker resource limit memory.swap.max=${swap}; expected 0`);
+    if (
+      cpu[0] === "max" ||
+      BigInt(cpu[0]) <= 0n ||
+      BigInt(cpu[1]) <= 0n ||
+      BigInt(cpu[0]) > BigInt(cpu[1])
+    )
+      throw new Error(
+        `Unsafe Docker resource limit cpu.max=${cpu.join(" ")}; maximum allowed is 1 CPU`,
+      );
+    requireLimit("pids.max", pids, 128n);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Refusing to run build.ts outside a verified resource-limited Docker container (${reason}).\n` +
+        "Run: scripts/resource-run.sh bun scripts/build.ts <cli|tui|native|plugin>",
+    );
+  }
   const options = parseArgs(process.argv.slice(2));
   if (options.kind === "plugin") await buildPlugin(options.outputRoot);
   else if (options.kind === "native") {

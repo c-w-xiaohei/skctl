@@ -10,7 +10,13 @@ import type {
 } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
-import { enterLive, focusLive, openReaderTab, parsedEnter } from "./reader-test-controls";
+import {
+  enterLive,
+  focusLive,
+  openAllInstalledSkills,
+  openReaderTab,
+  parsedEnter,
+} from "./reader-test-controls";
 
 const address = { source: "team-main", path: "guide" };
 const membershipOwner = {
@@ -128,6 +134,7 @@ function textIn(renderable: { getChildren(): readonly unknown[] }): string {
 }
 
 async function openDetailsActions(setup: Awaited<ReturnType<typeof testRender>>) {
+  await openAllInstalledSkills(setup);
   await openReaderFromInspector(setup);
   await openReaderTab(setup, 2);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
@@ -138,6 +145,8 @@ async function chooseAction(
   setup: Awaited<ReturnType<typeof testRender>>,
   id: "skill-uninstall" | "skill-rebind",
 ) {
+  if (!setup.renderer.root.findDescendantById(`reader-details-action-${id}`))
+    await enterLive(setup, "reader-details-manage");
   await enterLive(setup, `reader-details-action-${id}`);
 }
 
@@ -155,7 +164,7 @@ async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.renderOnce();
 }
 
-test.each([[120, 40, "Enter select · Tab next control · Esc cancel"]] as const)(
+test.each([[120, 40, "Tab controls · Esc close"]] as const)(
   "App gives the executing review overlay Esc cancel at %ix%i",
   async (width, height, expectedHelp) => {
     const executing = deferred<OperationResult<void>>();
@@ -248,7 +257,7 @@ test("App returns an Installed Skill execution failure to its live review and ca
     await enterLive(setup, "installed-skill-review-confirm");
     await setup.waitForFrame((frame) => frame.includes("INTERNAL: disk full"));
     expect(setup.captureCharFrame()).toContain("Uninstall Skill");
-    expect(textIn(setup.renderer.root)).toContain("Enter select · Tab next control · Esc close");
+    expect(textIn(setup.renderer.root)).toContain("Tab controls · Esc close");
     await enterLive(setup, "installed-skill-review-confirm");
     await setup.waitFor(() => executions === 2);
   } finally {
@@ -324,7 +333,7 @@ test("App retries an operation-specific Installed Skill preview failure", async 
     await openDetailsActions(setup);
     await chooseAction(setup, "skill-uninstall");
     await setup.waitForFrame((frame) => frame.includes("Uninstall Skill preview failed"));
-    expect(textIn(setup.renderer.root)).toContain("Enter select · Tab next control · Esc close");
+    expect(textIn(setup.renderer.root)).toContain("Tab controls · Esc close");
     await enterLive(setup, "installed-skill-preview-failure-retry");
     await setup.waitForFrame((frame) => frame.includes("Uninstall Skill preview"));
     retry.resolve(
@@ -339,7 +348,7 @@ test("App retries an operation-specific Installed Skill preview failure", async 
       }),
     );
     await setup.waitForFrame((frame) => frame.includes("Uninstall Skill"));
-    expect(textIn(setup.renderer.root)).toContain("Enter select · Tab next control · Esc close");
+    expect(textIn(setup.renderer.root)).toContain("Tab controls · Esc close");
   } finally {
     setup.renderer.destroy();
   }
@@ -450,7 +459,8 @@ test("App routes blocked Uninstall reference resolution by Collection ID with ex
     expect(frame).toContain("Uninstall Membership handoff");
     expect(frame).toContain("team-main/guide");
     expect(frame).toContain("/workspace/skill-cli/skill-cli.jsonc");
-    expect(frame).toContain("/collections/engineering/members/guide");
+    expect(textIn(setup.renderer.root)).toContain("/collections/engineering/members/guide");
+    expect(frame).toContain("engineering/members/guide");
     expect(frame).toContain("engineering");
     await parsedEscape(setup);
   } finally {
@@ -557,7 +567,8 @@ test("App routes the selected blocked Uninstall owner to its exact selector Memb
     expect(frame).toContain("documentation");
     expect(frame).toContain("guide-copy");
     expect(frame).toContain("/home/user/.config/skill-cli.jsonc");
-    expect(frame).toContain("/collections/documentation/members/guide-copy");
+    expect(textIn(setup.renderer.root)).toContain("/collections/documentation/members/guide-copy");
+    expect(frame).toContain("documentation/members/guide-copy");
     expect(frame).not.toContain("Collection  engineering");
   } finally {
     setup.renderer.destroy();

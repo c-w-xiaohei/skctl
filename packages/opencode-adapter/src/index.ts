@@ -8,15 +8,24 @@ function report(_error: unknown): void {
 
 const SkillCliOpenCodePlugin: Plugin = async (input) => {
   const client = createProcessClient();
-  let reportedFailure = false;
+  let hasReportedFailure = false;
+  const appendFreshCatalog = async (target: string[]) => {
+    try {
+      const prompt = await client.browse(input.directory);
+      if (!target.includes(prompt)) target.push(prompt);
+    } catch (error) {
+      if (hasReportedFailure) return;
+      report(error);
+      hasReportedFailure = true;
+    }
+  };
+
   return {
     "experimental.chat.system.transform": async (_request, output) => {
-      try {
-        output.system.push(await client.browse(input.directory));
-      } catch (error) {
-        if (!reportedFailure) report(error);
-        reportedFailure = true;
-      }
+      await appendFreshCatalog(output.system);
+    },
+    "experimental.session.compacting": async (_request, output) => {
+      await appendFreshCatalog(output.context);
     },
   };
 };

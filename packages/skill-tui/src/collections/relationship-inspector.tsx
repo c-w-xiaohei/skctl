@@ -4,11 +4,12 @@ import {
   SelectRenderable,
   type BaseRenderable,
 } from "@opentui/core";
-import { Show } from "solid-js";
+import { createEffect, createSignal, Show } from "solid-js";
+import { useTerminalDimensions } from "@opentui/solid";
 import type { CollectionView, ConfigDeclarationOwner } from "@skill-cli/core";
 import type { MemberOriginPath } from "@skill-cli/core";
-import { MetadataGrid } from "../ui/metadata-grid";
 import { CommandControl } from "../command-control";
+import { DataList } from "../ui/data-list";
 import { collectionMemberKey, type CollectionsReadonly } from "./state";
 import { relationshipCommands, type RelationshipCommand } from "./relationship-commands";
 import type { FocusRegistry, FocusTarget } from "../focus";
@@ -90,6 +91,8 @@ export type CollectionRelationshipIntent =
     };
 
 export interface CollectionRelationRow {
+  /** Structural relationship identity; never a rendered row position. */
+  readonly key?: string;
   readonly kind: "collection-use" | "collection-reference" | "collection-link";
   readonly label: string;
   readonly target?: string;
@@ -98,6 +101,23 @@ export interface CollectionRelationRow {
   readonly provenance?: string;
   readonly intent?: CollectionRelationshipIntent;
 }
+
+export const collectionRelationKey = (relation: CollectionRelationRow): string =>
+  relation.key ??
+  JSON.stringify([
+    relation.kind,
+    relation.intent?.kind === "collection-reference" ? relation.intent.collection : undefined,
+    relation.intent?.kind === "collection-reference" ? relation.intent.name : undefined,
+    relation.target,
+    relation.owner
+      ? [
+          relation.owner.level,
+          relation.owner.file,
+          relation.owner.pointer,
+          relation.owner.namespace,
+        ]
+      : undefined,
+  ]);
 export interface CollectionMemberOriginRow {
   readonly kind: "member";
   readonly name: string;
@@ -123,6 +143,14 @@ export function RelationshipInspector(props: {
   readonly collection: CollectionView;
   readonly memberOrigins: readonly CollectionMemberOriginRow[];
   readonly relationRows: readonly CollectionRelationRow[];
+  readonly memberDescription: (address: {
+    readonly source: string;
+    readonly path: string;
+  }) => string | undefined;
+  readonly memberAvailable: (address: {
+    readonly source: string;
+    readonly path: string;
+  }) => boolean;
   readonly collections: CollectionsReadonly;
   readonly focusRegistry?: FocusRegistry;
   readonly bind: (
@@ -133,7 +161,25 @@ export function RelationshipInspector(props: {
   readonly registerCommand?: CommandRegistration;
   readonly executeCommand?: CommandExecution;
 }) {
+  const terminal = useTerminalDimensions();
   const inspector = () => props.collections.inspector();
+  const [showActions, setShowActions] = createSignal(false);
+  const [showDetails, setShowDetails] = createSignal(false);
+  createEffect((previousKey?: string) => {
+    const current = inspector();
+    const key = current
+      ? JSON.stringify(
+          current.kind === "membership"
+            ? [current.kind, current.collection, current.member]
+            : [current.kind, current.collection, current.relation],
+        )
+      : undefined;
+    if (previousKey !== key) {
+      setShowActions(false);
+      setShowDetails(false);
+    }
+    return key;
+  });
   const targets: Renderable[] = [];
   const focusControl = (target: Renderable | undefined) => {
     const owner = target && props.focusRegistry?.ownerOf(target);
@@ -171,7 +217,10 @@ export function RelationshipInspector(props: {
         keys: ["enter", "return"],
         enabled: true,
         danger: false,
-        intent: { kind: "collection-inspector-back", collection: props.collection.id },
+        intent: {
+          kind: "collection-inspector-back",
+          collection: props.collection.id,
+        },
       },
       primary,
     );
@@ -201,6 +250,45 @@ export function RelationshipInspector(props: {
       />
     );
   };
+  const toggle = (id: string, label: string, change: () => void) => (
+    <CommandControl
+      id={id}
+      record={{
+        id,
+        verb: label,
+        destination: "Membership details",
+        scope: "page",
+        keys: ["enter", "return"],
+        enabled: true,
+        danger: false,
+      }}
+      keyboard={!props.executeCommand}
+      register={(target) => {
+        props.bind(`command:${id}`, target);
+        targets.push(target);
+        target.once("destroyed", () => {
+          const index = targets.indexOf(target);
+          if (index >= 0) targets.splice(index, 1);
+        });
+        mode(target);
+        return props.registerCommand?.(
+          {
+            id,
+            verb: label,
+            destination: "Membership details",
+            scope: "page",
+            keys: ["enter", "return"],
+            enabled: true,
+            danger: false,
+          },
+          `command:${id}`,
+          id,
+          change,
+        );
+      }}
+      execute={() => (props.executeCommand ? props.executeCommand(id) : change())}
+    />
+  );
   return (
     <Show when={inspector()?.collection === props.collection.id}>
       {(() => {
@@ -226,7 +314,7 @@ export function RelationshipInspector(props: {
           const selected = origins.find((origin) => origin.key === current.origin) ?? origins[0];
           const commands = relationshipCommands(props.collection.id, {
             kind: "membership",
-            member,
+            member: { ...member, available: props.memberAvailable(member.address) },
             origin: selected?.path,
           });
           return (
@@ -241,89 +329,69 @@ export function RelationshipInspector(props: {
                 if (!origins.length) props.bind("inspector", target);
               }}
             >
-              <text>{`Membership ${member.name}`}</text>
-              <text>{`Collection ${props.collection.id}`}</text>
-              <MetadataGrid
-                fields={[
-                  {
-                    label: "Kind",
-                    value: "Membership",
-                    priority: 1,
-                    wrap: "none",
-                    narrow: "stack",
-                  },
-                  {
-                    label: "Target",
-                    value: compactAddress(member.address),
-                    priority: 1,
-                    wrap: "path",
-                    narrow: "stack",
-                  },
-                  {
-                    label: "Owner",
-                    value:
-                      selected?.path?.kind === "direct"
-                        ? ownerWithProvenance(selected.path.owner, "Owner unavailable")
-                        : (selected?.origin ?? "Owner unavailable"),
-                    priority: 1,
-                    wrap: "path",
-                    narrow: "stack",
-                  },
-                  {
-                    label: "Defined at",
-                    value:
-                      selected?.path?.kind === "direct" && selected.path.owner
-                        ? ownerText(selected.path.owner)
-                        : "Unavailable",
-                    priority: 1,
-                    wrap: "path",
-                    narrow: "stack",
-                  },
-                  {
-                    label: "Effect",
-                    value: selected?.description ?? "Origin unavailable",
-                    priority: 1,
-                    wrap: "word",
-                    narrow: "description",
-                  },
-                ]}
-              />
-              <text>Origin</text>
-              <select
-                id="collection-membership-origin"
-                height={Math.max(1, Math.min(origins.length, 4))}
-                flexShrink={0}
-                ref={(value: SelectRenderable) => {
-                  props.bind("inspector", value);
-                  mode(value, true);
-                }}
-                selectedIndex={Math.max(
-                  0,
-                  origins.findIndex((origin) => origin.key === current.origin),
-                )}
-                options={origins.map((origin) => ({
-                  name: `${origin.origin}  ${origin.address.source}/${origin.address.path}`,
-                  description: origin.description,
-                  value: origin.key,
-                }))}
-                showDescription={false}
-                onChange={(index) => {
-                  const origin = origins[index];
-                  if (origin) props.collections.selectMembershipOrigin(origin.key);
-                }}
-                onSelect={(index) => {
-                  const origin = origins[index];
-                  if (origin) props.collections.selectMembershipOrigin(origin.key);
-                }}
-              />
-              <box flexDirection="column">
-                {commands.map((record) => command(record))}
-                {back()}
-              </box>
+              <text wrapMode="word">
+                {props.memberDescription(member.address) ?? "Skill description unavailable."}
+              </text>
+              <Show when={terminal().height > 16}>
+                <text wrapMode="word">{`In ${props.collection.id} · ${selected?.origin ?? "Origin unavailable"}`}</text>
+              </Show>
+              <Show when={origins.length > 1}>
+                <text>Origin</text>
+                <DataList
+                  id="collection-membership-origin"
+                  height={Math.max(1, Math.min(origins.length, 4))}
+                  flexShrink={0}
+                  ref={(value: SelectRenderable) => {
+                    props.bind("inspector", value);
+                    mode(value, true);
+                  }}
+                  selectedIndex={Math.max(
+                    0,
+                    origins.findIndex((origin) => origin.key === current.origin),
+                  )}
+                  options={origins.map((origin) => ({
+                    name: `${origin.origin}  ${origin.address.source}/${origin.address.path}`,
+                    description: origin.description,
+                    value: origin.key,
+                  }))}
+                  showDescription={false}
+                  onChange={(index) => {
+                    const origin = origins[index];
+                    if (origin) props.collections.selectMembershipOrigin(origin.key);
+                  }}
+                  onSelect={(index) => {
+                    const origin = origins[index];
+                    if (origin) props.collections.selectMembershipOrigin(origin.key);
+                  }}
+                />
+              </Show>
+              {commands[0] && command(commands[0])}
+              <Show when={commands.length > 1}>
+                <Show when={commands.length > 1}>
+                  {toggle("collection-membership-actions", "Actions", () =>
+                    setShowActions(!showActions()),
+                  )}
+                </Show>
+              </Show>
+              {toggle("collection-membership-details", "Details", () =>
+                setShowDetails(!showDetails()),
+              )}
+              <Show when={showActions()}>{commands.slice(1).map((record) => command(record))}</Show>
+              <Show when={showDetails()}>
+                <text>{`Target ${compactAddress(member.address)}`}</text>
+                <text>
+                  {selected?.path?.kind === "direct"
+                    ? ownerWithProvenance(selected.path.owner, "Owner unavailable")
+                    : (selected?.origin ?? "Owner unavailable")}
+                </text>
+              </Show>
+              {back()}
             </scrollbox>
           );
         }
-        const relation = props.relationRows[Number(current.relation.split(":")[1] ?? -1)];
+        const relation = props.relationRows.find(
+          (item) => collectionRelationKey(item) === current.relation,
+        );
         if (!relation)
           return (
             <box flexDirection="column">
@@ -331,13 +399,10 @@ export function RelationshipInspector(props: {
               {back(true)}
             </box>
           );
-        const commands = relationshipCommands(props.collection.id, { kind: "relation", relation });
-        const title =
-          relation.kind === "collection-use"
-            ? `Collection Use ${props.collection.id}`
-            : relation.kind === "collection-reference"
-              ? `Reference ${relation.intent?.kind === "collection-reference" ? relation.intent.name : (relation.target ?? "unavailable")}`
-              : `Link ${relation.target ?? "unavailable"}`;
+        const commands = relationshipCommands(props.collection.id, {
+          kind: "relation",
+          relation,
+        });
         return (
           <scrollbox
             flexGrow={1}
@@ -349,56 +414,27 @@ export function RelationshipInspector(props: {
               mode(target, true);
             }}
           >
-            <text>{title}</text>
-            <text>{`Collection ${props.collection.id}`}</text>
-            <MetadataGrid
-              fields={[
-                {
-                  label: "Kind",
-                  value:
-                    relation.kind === "collection-use"
-                      ? "Collection Use"
-                      : relation.kind === "collection-reference"
-                        ? "Reference"
-                        : "Link",
-                  priority: 1,
-                  wrap: "none",
-                  narrow: "stack",
-                },
-                {
-                  label: "Target",
-                  value: relation.target ?? props.collection.id,
-                  priority: 1,
-                  wrap: "word",
-                  narrow: "stack",
-                },
-                {
-                  label: "Owner",
-                  value: ownerWithProvenance(relation.owner, "Owner unavailable"),
-                  priority: 1,
-                  wrap: "path",
-                  narrow: "stack",
-                },
-                {
-                  label: "Defined at",
-                  value: relation.owner ? ownerText(relation.owner) : "Unavailable",
-                  priority: 1,
-                  wrap: "path",
-                  narrow: "stack",
-                },
-                {
-                  label: "Effect",
-                  value: relation.effect,
-                  priority: 1,
-                  wrap: "word",
-                  narrow: "description",
-                },
-              ]}
-            />
-            <box flexDirection="column">
-              {commands.map((record) => command(record))}
-              {back()}
-            </box>
+            <text>
+              {relation.intent?.kind === "collection-reference"
+                ? relation.intent.description
+                : relation.effect}
+            </text>
+            <text>{`Relation in ${props.collection.id}`}</text>
+            {commands[0] && command(commands[0])}
+            <Show when={commands.length > 1}>
+              <Show when={commands.length > 1}>
+                {toggle("collection-relation-actions", "Actions", () =>
+                  setShowActions(!showActions()),
+                )}
+              </Show>
+            </Show>
+            {toggle("collection-relation-details", "Details", () => setShowDetails(!showDetails()))}
+            <Show when={showActions()}>{commands.slice(1).map((record) => command(record))}</Show>
+            <Show when={showDetails()}>
+              <text>{`Target ${relation.target ?? props.collection.id}`}</text>
+              <text>{ownerWithProvenance(relation.owner, "Owner unavailable")}</text>
+            </Show>
+            {back()}
           </scrollbox>
         );
       })()}

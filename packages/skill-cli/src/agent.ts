@@ -1,6 +1,23 @@
 import { SkillCliError, type SkillCliCore } from "@skill-cli/core";
 import { createSkillCliCore } from "@skill-cli/core";
+import { constants } from "node:os";
+import { resolve } from "node:path";
 import { renderAgentCatalog, unavailableCatalogPrompt } from "./agent-prompt";
+
+const defaultSearchLimit = 10;
+const help: Record<AgentOperation, string> = {
+  browse:
+    "Usage: skill-cli agent browse [collection-id]\nReturn a system-prompt-ready XML catalog. Root browse includes discovery and loading instructions; collection browse returns only its immediate Skills and child Collections. Use displayed collection IDs; selectors are not accepted.\n",
+  search:
+    "Usage: skill-cli agent search <query> [--limit <count>] [--in <collection-id>]\nSearch Use-root members only; References are not traversed. --in searches one reachable Collection. Default: 10 results; truncated:true means more matches exist.\n",
+  load: "Usage: skill-cli agent load <selector>\nReturn the complete SKILL.md as text. Use a displayed Skill selector, not a collection ID.\n",
+  read: "Usage: skill-cli agent read <selector> <root-relative-path>\nReturn one UTF-8 text resource. Paths are relative to the Skill Root; binary assets use download.\n",
+  download:
+    "Usage: skill-cli agent download <selector> <root-relative-path> --output <host-path> [--force]\nCopy one resource; return its absolute output path. --force replaces an existing regular file, never a symlink.\n",
+  run: "Usage: skill-cli agent run <selector> -- <command> [args...]\nRun in a temporary copy of the Skill Root, deleted after exit. Write persistent outputs to absolute paths. Child output and exit status pass through. This is not a sandbox: commands may access the host and network.\n",
+};
+
+const agentHelp = `Usage: skill-cli [--project <path>] agent <command>\n\nCommands:\n  browse [collection-id]  Discover Collections or their immediate contents.\n  search <query>         Find Skill metadata (default: 10 results).\n  load <selector>        Read SKILL.md.\n  read <selector> <path> Read one text resource.\n  download <selector> <path> --output <path> [--force]\n  run <selector> -- <command> [args...]\n\nCollection IDs address browse; Skill selectors (<collection-id>:<entry-name>) address content. Use displayed addresses.\nBrowse/search/load/read use installed content without network acquisition. Run executes host commands; download writes the requested file.\nDetails: skill-cli agent <command> --help (or -h).\n`;
 
 type AgentOperation = "browse" | "search" | "load" | "read" | "download" | "run";
 
@@ -113,24 +130,16 @@ export async function runAgentCommand(
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   try {
-    if (argv.length === 1 && argv[0] === "--help") {
-      stdout.write(
-        `skill-cli agent exposes installed managed Skills without network access or configuration changes.\n\nBrowse returns collection nodes or Skill nodes. A collection ID is a slash-qualified name from browse; a Skill Selector is <collection-id>:<entry-name> from a Skill node.\n\nUse collection nodes with: skill-cli agent browse <collection-id>\nUse Skill nodes with: skill-cli agent load <selector>, read, download, or run.\n\nWorkflow:\n  skill-cli agent browse\n  skill-cli agent browse engineering\n  skill-cli agent load engineering:review\n  skill-cli agent read engineering:review references/checklist.md\n\nCommands:\n  browse [collection-id]  Browse Use roots, or one reachable collection. Collection IDs come from collection nodes; selectors are not accepted.\n  search <query> [--in <collection-id>]  Search disclosed Skills. --in accepts a reachable collection ID and does not traverse References.\n  load <selector>  Load SKILL.md for a disclosed Skill Selector; collection IDs are not accepted.\n  read <selector> <path>  Read a root-relative resource for a disclosed Skill Selector.\n  download <selector> <path> --output <path>  Download a resource for a disclosed Skill Selector.\n  run <selector> -- <command> [args...]  Run a command with a disclosed Skill Selector.\n`,
-      );
+    if (!argv.length || (argv.length === 1 && ["--help", "-h"].includes(argv[0]!))) {
+      stdout.write(agentHelp);
       return 0;
     }
-    if (argv.length === 2 && argv[1] === "--help" && operations.has(argv[0] as AgentOperation)) {
-      const help: Record<AgentOperation, string> = {
-        browse:
-          "Usage: skill-cli agent browse [collection-id]\nBrowse Use roots or one Reference-reachable collection. collection-id comes from a collection node; Skill Selectors are not accepted.\n",
-        search:
-          "Usage: skill-cli agent search <query> [--limit <count>] [--in <collection-id>]\nSearch disclosed Skills. --in accepts a browse collection ID and does not traverse References; Skill Selectors are not accepted.\n",
-        load: "Usage: skill-cli agent load <selector>\nLoad SKILL.md for a disclosed Skill Selector from a Skill node. Collection IDs are not accepted.\n",
-        read: "Usage: skill-cli agent read <selector> <root-relative-path>\nRead a resource for a disclosed Skill Selector from a Skill node. Collection IDs are not accepted.\n",
-        download:
-          "Usage: skill-cli agent download <selector> <root-relative-path> --output <host-path>\nDownload a resource for a disclosed Skill Selector from a Skill node. Collection IDs are not accepted.\n",
-        run: "Usage: skill-cli agent run <selector> -- <command> [args...]\nRun a command with a disclosed Skill Selector from a Skill node. Collection IDs are not accepted.\n",
-      };
+    const separator = argv.indexOf("--");
+    const ownArgs = separator === -1 ? argv : argv.slice(0, separator);
+    if (
+      operations.has(argv[0] as AgentOperation) &&
+      ownArgs.slice(1).some((arg) => arg === "--help" || arg === "-h")
+    ) {
       stdout.write(help[argv[0] as AgentOperation]);
       return 0;
     }
@@ -150,50 +159,62 @@ export async function runAgentCommand(
     } else if (parsed.operation === "search") {
       const result = await core.catalog.search({
         query: selector!,
-        limit: parsed.limit,
+        limit: (parsed.limit ?? defaultSearchLimit) + 1,
         collection: parsed.collection,
       });
       stdout.write(
         `${JSON.stringify({
-          query: result.value.query,
-          results: result.value.results.map(({ kind, rank, selector, name, description }) => ({
-            kind,
-            rank,
-            selector,
-            name,
-            description,
-          })),
+          results: result.value.results
+            .slice(0, parsed.limit ?? defaultSearchLimit)
+            .map(({ selector, name, description }) => ({
+              selector,
+              name,
+              description,
+            })),
+          ...(result.value.results.length > (parsed.limit ?? defaultSearchLimit)
+            ? { truncated: true }
+            : {}),
         })}\n`,
       );
     } else if (parsed.operation === "load") {
       const result = await core.content.load({ selector: selector! });
-      const { selector: loadedSelector, name, description, path: loadedPath, text } = result.value;
-      stdout.write(
-        `${JSON.stringify({ selector: loadedSelector, name, description, path: loadedPath, text })}\n`,
-      );
+      stdout.write(result.value.text);
     } else if (parsed.operation === "read") {
       const result = await core.content.read({ selector: selector!, path: path! });
-      const { selector: readSelector, path: readPath, text } = result.value;
-      stdout.write(`${JSON.stringify({ selector: readSelector, path: readPath, text })}\n`);
+      stdout.write(result.value.text);
     } else if (parsed.operation === "download") {
       const result = await core.content.download({
         selector: selector!,
         path: path!,
-        output: parsed.output!,
+        output: resolve(options.cwd, parsed.output!),
         force: parsed.force,
       });
-      const {
-        selector: downloadedSelector,
-        path: downloadedPath,
-        output,
-        bytesWritten,
-      } = result.value;
-      stdout.write(
-        `${JSON.stringify({ selector: downloadedSelector, path: downloadedPath, output, bytesWritten })}\n`,
-      );
+      stdout.write(`${JSON.stringify({ output: result.value.output })}\n`);
     } else {
-      const result = await core.content.run({ selector: selector!, argv: parsed.child! });
-      stdout.write(`${JSON.stringify(result.value)}\n`);
+      const controller = new AbortController();
+      let interrupted: NodeJS.Signals | undefined;
+      const signals: NodeJS.Signals[] =
+        process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
+      const handlers = signals.map((signal) => {
+        const handler = () => {
+          interrupted = signal;
+          controller.abort();
+        };
+        process.on(signal, handler);
+        return { signal, handler };
+      });
+      try {
+        const result = await core.content.run(
+          { selector: selector!, argv: parsed.child! },
+          { signal: controller.signal },
+        );
+        const signal = interrupted ?? result.value.signal;
+        return signal
+          ? 128 + (constants.signals[signal as NodeJS.Signals] ?? 1)
+          : (result.value.exitCode ?? 1);
+      } finally {
+        for (const { signal, handler } of handlers) process.removeListener(signal, handler);
+      }
     }
     return 0;
   } catch (error) {

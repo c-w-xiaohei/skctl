@@ -14,7 +14,8 @@ const cancel: CommandRecord = {
   danger: false,
 };
 
-test("Tab and Shift+Tab stay inside the focused modal control", async () => {
+test("Tab and Shift+Tab traverse modal controls without escaping or activating them", async () => {
+  let cancelled = 0;
   function Field() {
     const register = useModalControl("field");
     return <input id="field" ref={register} focused value="abc" />;
@@ -24,7 +25,7 @@ test("Tab and Shift+Tab stay inside the focused modal control", async () => {
       <ModalControlScope>
         <box flexDirection="column">
           <Field />
-          <ModalCommand id="cancel" record={cancel} execute={() => {}} />
+          <ModalCommand id="cancel" record={cancel} execute={() => cancelled++} />
         </box>
       </ModalControlScope>
     ),
@@ -34,10 +35,11 @@ test("Tab and Shift+Tab stay inside the focused modal control", async () => {
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "field");
     await setup.mockInput.pressTab();
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("field");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("cancel");
     await setup.mockInput.pressTab({ shift: true });
     await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("field");
+    expect(cancelled).toBe(0);
   } finally {
     setup.renderer.destroy();
   }

@@ -227,6 +227,7 @@ export function traverseModalControls(
     return true;
   }
   if (key === "tab") {
+    if (!registry.focusNext(current, event.shift, allowUnregistered)) return false;
     event.preventDefault();
     event.stopPropagation();
     return true;

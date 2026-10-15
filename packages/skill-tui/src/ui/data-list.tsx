@@ -9,6 +9,11 @@ import { fitColumn, formatColumns, inlineNameColumnWidth } from "./list-text";
 export interface DataListProps extends Omit<SelectProps, "ref"> {
   readonly ref?: (target: SelectRenderable) => void;
   readonly inlineDescription?: boolean;
+  /** Lets a composite claim a rendered row press before ordinary row selection. */
+  readonly onRowPress?: (
+    event: Parameters<NonNullable<SelectProps["onMouseDown"]>>[0],
+    row: { readonly index: number; readonly x: number; readonly y: number },
+  ) => boolean;
 }
 
 /** Selection keeps a fixed gutter; only its color changes with physical focus. */
@@ -17,6 +22,9 @@ export function DataList(props: DataListProps) {
     "ref",
     "options",
     "onMouseDown",
+    "onChange",
+    "onSelect",
+    "onRowPress",
     "inlineDescription",
   ]);
   const renderer = useRenderer();
@@ -42,6 +50,8 @@ export function DataList(props: DataListProps) {
   return (
     <select
       {...options}
+      onChange={callbacks.onChange}
+      onSelect={callbacks.onSelect}
       wrapSelection={false}
       options={callbacks.options?.map((option) =>
         width() > 5
@@ -93,8 +103,26 @@ export function DataList(props: DataListProps) {
           return;
         }
 
-        // Consume a valid list-row press instead of forwarding it to legacy
-        // per-list mouse handlers that activate the selected object. Enter
+        if (callbacks.onRowPress?.(event, { index, x: event.x - target.screenX, y: localY })) {
+          event.preventDefault();
+          event.stopPropagation();
+          target.focus();
+          return;
+        }
+
+        // A pointer row press always selects but never opens an object. Composite
+        // lists can additionally claim a narrow sub-target (such as a tree
+        // disclosure glyph) through onRowPress above; all other lists retain
+        // this same select-only contract.
+        if (!callbacks.onRowPress) {
+          event.preventDefault();
+          event.stopPropagation();
+          target.focus();
+          target.setSelectedIndex(index);
+          return;
+        }
+
+        // A composite row press selects but never opens its object. Enter
         // remains the explicit open action.
         event.preventDefault();
         event.stopPropagation();

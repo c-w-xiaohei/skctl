@@ -1,5 +1,7 @@
 /** @jsxImportSource @opentui/solid */
-import { BoxRenderable, type KeyEvent, type ScrollBoxRenderable } from "@opentui/core";
+import { type KeyEvent, type ScrollBoxRenderable } from "@opentui/core";
+import { Tabs } from "@tuiparts/solid/tabs";
+import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { useRenderer } from "@opentui/solid";
 import { createEffect, createSignal, For, onCleanup, onMount } from "solid-js";
 import type { FocusRegistry, FocusTarget } from "../focus";
@@ -14,7 +16,7 @@ export interface SectionTabOption<Value extends string> {
 }
 
 /**
- * A native, controlled tab strip. Each physical tab is a focusable Box; the
+ * A controlled TuiParts tab strip. Each physical trigger is a native Tab; the
  * focus registry is rebound to whichever one physically owns focus so the
  * strip remains one semantic Tab stop.
  */
@@ -32,12 +34,14 @@ export function SectionTabs<Value extends string>(props: {
   readonly commandForDirection?: (direction: "previous" | "next") => CommandRecord;
   readonly onNavigate: (value: Value, record?: CommandRecord) => void;
   readonly activationMode?: "automatic" | "manual";
+  /** A view strip may keep pointer selection separate from entering its content. */
+  readonly activateOnReselect?: boolean;
   readonly onActivate?: (value: Value) => void;
 }) {
   const renderer = useRenderer();
   const tokens = useTheme();
   const [focusedValue, setFocusedValue] = createSignal<Value>();
-  const tabs = new Map<Value, BoxRenderable>();
+  const tabs = new Map<Value, TabsTabRenderable>();
   let viewport: ScrollBoxRenderable | undefined;
   let registered: FocusTarget | undefined;
   let unregisterFocus: (() => void) | undefined;
@@ -49,8 +53,7 @@ export function SectionTabs<Value extends string>(props: {
 
   const labelFor = (option: SectionTabOption<Value>) =>
     props.compact ? (option.compactLabel ?? option.label) : option.label;
-  const tabText = (option: SectionTabOption<Value>) =>
-    props.value === option.value ? `[ ${labelFor(option)} ]` : `  ${labelFor(option)}  `;
+  const tabText = (option: SectionTabOption<Value>) => `  ${labelFor(option)}  `;
   const rowWidth = () =>
     props.options.reduce((width, option) => width + Bun.stringWidth(tabText(option)), 0);
   const selectedTab = () => tabs.get(props.value);
@@ -65,6 +68,9 @@ export function SectionTabs<Value extends string>(props: {
   // coalescing prevents resize bursts from accumulating stale callbacks.
   const revealSelected = (value = focusedValue() ?? props.value) => {
     revealValue = value;
+    // Native Tabs adds a List ancestor. Apply known scroll geometry before the
+    // next frame so its nested triggers do not remain clipped for one key turn.
+    if (viewport && !viewport.isDestroyed) viewport.scrollChildIntoView(`${props.id}-tab-${value}`);
     if (revealQueued) return;
     revealQueued = true;
     queueMicrotask(() => {
@@ -81,7 +87,7 @@ export function SectionTabs<Value extends string>(props: {
     });
   };
 
-  const bindOwner = (target: BoxRenderable) => {
+  const bindOwner = (target: TabsTabRenderable) => {
     if (registered === target) return;
     unregisterFocus?.();
     unregisterMode?.();
@@ -93,6 +99,10 @@ export function SectionTabs<Value extends string>(props: {
   const focusTab = (value: Value) => {
     const target = tabs.get(value);
     if (!target || target.isDestroyed) return;
+    // OpenTUI cannot blur a trigger after the roving store has made it
+    // non-focusable. Release the previous focus before moving the tab stop.
+    const current = renderer.currentFocusedRenderable;
+    if (current && current !== target) current.blur();
     target.focus();
     revealSelected(value);
   };
@@ -106,32 +116,27 @@ export function SectionTabs<Value extends string>(props: {
   };
 
   const moveFocus = (current: Value, key: "left" | "right" | "home" | "end") => {
-    const currentIndex = props.options.findIndex((option) => option.value === current);
-    if (currentIndex < 0 || props.options.length === 0) return false;
-    const nextIndex =
-      key === "home"
-        ? 0
-        : key === "end"
-          ? props.options.length - 1
-          : Math.max(
-              0,
-              Math.min(props.options.length - 1, currentIndex + (key === "left" ? -1 : 1)),
-            );
-    const next = props.options[nextIndex]?.value;
-    if (!next) return false;
-    if (props.owner === "local-nav" && key === "left" && currentIndex === 0) return false;
-    focusTab(next);
-    if ((props.activationMode ?? "automatic") === "automatic" && next !== props.value) {
-      props.onNavigate(next, props.commandForDirection?.(directionTo(next, props.value)));
-      focusAfterNavigation(next);
+    const tab = tabs.get(current);
+    if (!tab) return false;
+    const next = tab.store.getNavigationTarget(
+      tab.key,
+      key === "home" ? "first" : key === "end" ? "last" : key === "left" ? "previous" : "next",
+    );
+    if (!next || (props.owner === "local-nav" && key === "left" && next.key === tab.key))
+      return false;
+    if (next.key !== tab.key) renderer.currentFocusedRenderable?.blur();
+    next.focus();
+    if ((props.activationMode ?? "automatic") === "automatic") {
+      const state = tab.store.getItemState(next.key);
+      if (state) tab.store.select(state.value, { source: "focus" });
     }
+    revealSelected();
     return true;
   };
 
   const activateFocused = (value: Value) => {
     if (value !== props.value) {
-      props.onNavigate(value, props.commandForDirection?.(directionTo(value, props.value)));
-      focusAfterNavigation(value);
+      tabs.get(value)?.select();
     }
     props.onActivate?.(value);
   };
@@ -166,13 +171,33 @@ export function SectionTabs<Value extends string>(props: {
     event.stopPropagation();
   };
 
-  const mountTab = (value: Value, target: BoxRenderable | undefined) => {
+  const mountTab = (value: Value, target: TabsTabRenderable | undefined) => {
     if (!target) {
       tabs.delete(value);
       if (focusedValue() === value) setFocusedValue();
       return;
     }
     tabs.set(value, target);
+    const nativeFocus = target.focus;
+    const focusTab = () => {
+      const previous = renderer.currentFocusedRenderable;
+      // TuiParts changes the roving stop before Core blurs the previous target.
+      // Core refuses to blur a now-nonfocusable tab, leaving a live key listener.
+      const state = target.getState();
+      if (
+        state.available &&
+        !state.disabled &&
+        previous !== target &&
+        previous instanceof TabsTabRenderable &&
+        [...tabs.values()].includes(previous)
+      )
+        previous.blur();
+      nativeFocus.call(target);
+    };
+    target.focus = focusTab;
+    onCleanup(() => {
+      if (target.focus === focusTab) target.focus = nativeFocus;
+    });
     if (value === props.value) bindOwner(target);
     const focused = () => {
       setFocusedValue(() => value);
@@ -212,7 +237,7 @@ export function SectionTabs<Value extends string>(props: {
   });
   onMount(() => {
     const current = renderer.currentFocusedRenderable;
-    if (current instanceof BoxRenderable) {
+    if (current instanceof TabsTabRenderable) {
       const value = [...tabs.entries()].find(([, tab]) => tab === current)?.[0];
       if (value) {
         setFocusedValue(() => value);
@@ -228,8 +253,17 @@ export function SectionTabs<Value extends string>(props: {
   });
 
   return (
-    <box
+    <Tabs.Root
       id={props.panelId}
+      value={props.value}
+      activationMode={props.activationMode ?? "automatic"}
+      loopFocus={false}
+      onValueChange={(value) => {
+        const next = props.options.find((option) => option.value === value)?.value;
+        if (!next || next === props.value) return;
+        props.onNavigate(next, props.commandForDirection?.(directionTo(next, props.value)));
+        focusAfterNavigation(next);
+      }}
       flexDirection="row"
       width="100%"
       height={1}
@@ -265,55 +299,59 @@ export function SectionTabs<Value extends string>(props: {
         contentOptions={{ width: rowWidth(), maxWidth: rowWidth(), flexDirection: "row" }}
         horizontalScrollbarOptions={{ visible: false }}
       >
-        <For each={props.options.map((option) => option.value)}>
-          {(value) => {
-            const option = () => props.options.find((option) => option.value === value)!;
-            return (
-              <box
-                id={`${props.id}-tab-${value}`}
-                ref={(target: BoxRenderable) => mountTab(value, target)}
-                width={Bun.stringWidth(tabText(option()))}
-                height={1}
-                flexShrink={0}
-                focusable
-                backgroundColor={
-                  focusedValue() === value
-                    ? tokens().colors.primary
-                    : props.value === value
-                      ? tokens().colors.surface
-                      : "transparent"
-                }
-                onKeyDown={(event) => handleStandaloneKey(value, event)}
-                onMouseDown={(event) => {
-                  if (event.button !== 0) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  props.onPrimaryPointerEntry?.(value);
-                  focusTab(value);
-                  if (value === props.value) props.onActivate?.(value);
-                  else {
-                    props.onNavigate(
-                      value,
-                      props.commandForDirection?.(directionTo(value, props.value)),
-                    );
-                    focusAfterNavigation(value);
-                  }
-                }}
-              >
-                <text
-                  content={tabText(option())}
-                  selectable={false}
-                  fg={
+        <Tabs.List width={rowWidth()} height={1} flexDirection="row">
+          <For each={props.options.map((option) => option.value)}>
+            {(value) => {
+              const option = () => props.options.find((option) => option.value === value)!;
+              let pointerWasSelected = false;
+              return (
+                <Tabs.Tab
+                  id={`${props.id}-tab-${value}`}
+                  value={value}
+                  ref={(target) => mountTab(value, target)}
+                  width={Bun.stringWidth(tabText(option()))}
+                  height={1}
+                  flexShrink={0}
+                  backgroundColor={
                     focusedValue() === value
-                      ? tokens().colors.primaryForeground
-                      : tokens().colors.foreground
+                      ? tokens().colors.primary
+                      : props.value === value
+                        ? tokens().colors.surface
+                        : "transparent"
                   }
-                />
-              </box>
-            );
-          }}
-        </For>
+                  onKeyDown={(event) => handleStandaloneKey(value, event)}
+                  onMouseDown={(event) => {
+                    if (event.button !== 0) return;
+                    event.stopPropagation();
+                    pointerWasSelected = value === props.value;
+                    props.onPrimaryPointerEntry?.(value);
+                    focusTab(value);
+                  }}
+                  onMouseUp={(event) => {
+                    if (
+                      event.button === 0 &&
+                      !event.defaultPrevented &&
+                      pointerWasSelected &&
+                      props.activateOnReselect !== false
+                    )
+                      props.onActivate?.(value);
+                  }}
+                >
+                  <text
+                    content={tabText(option())}
+                    selectable={false}
+                    fg={
+                      focusedValue() === value
+                        ? tokens().colors.primaryForeground
+                        : tokens().colors.foreground
+                    }
+                  />
+                </Tabs.Tab>
+              );
+            }}
+          </For>
+        </Tabs.List>
       </scrollbox>
-    </box>
+    </Tabs.Root>
   );
 }

@@ -16,6 +16,16 @@ const titles: Record<string, string> = {
   "collection-preview-pane": "Collection overview",
   "config-work-area": "Config",
   "config-metadata-pane": "Declaration details",
+  "updates-page": "Updates",
+  "source-updates-page": "Updates",
+  "updates-actions-pane": "Update actions",
+  "source-updates-actions-pane": "Update actions",
+  "updates-data-pane": "Sources",
+  "source-updates-data-pane": "Skills",
+  "updates-query-pane": "Search Sources",
+  "source-updates-query-pane": "Search Skills",
+  "updates-feedback-pane": "Update feedback",
+  "source-updates-feedback-pane": "Update feedback",
 };
 
 export const isMounted = (target: unknown): target is Renderable =>
@@ -69,6 +79,7 @@ export function createPanelNavigation(
           (owner) => pane.id === "skill-inspector" && owner === "command:skill.open-skill-md",
         ) ??
         candidates.find((owner) => owner === "browser") ??
+        candidates.find((owner) => owner === "agent-preview" || owner === "collection-tree") ??
         candidates.find((owner) => ["top-nav", "local-nav", "skills-views"].includes(owner)) ??
         candidates.find((owner) => owner.startsWith("command:")) ??
         candidates[0]!,

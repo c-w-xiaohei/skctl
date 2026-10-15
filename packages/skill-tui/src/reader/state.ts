@@ -17,8 +17,12 @@ const epochKey = (address: ReaderAddress, request: ReaderRequest) =>
 
 export type ReaderEvent =
   | { readonly type: "select"; readonly address: ReaderAddress; readonly surface?: "details" }
+  | { readonly type: "restore"; readonly value: ReaderState }
   | { readonly type: "patch"; readonly value: Partial<ReaderState> }
   | { readonly type: "resource-abandon" }
+  | { readonly type: "content.cancel"; readonly address: ReaderAddress; readonly epoch: number }
+  // No address means an explicit refresh of all installed payloads, including Local files.
+  | { readonly type: "content.invalidate"; readonly address?: ReaderAddress }
   | { readonly type: "content.start"; readonly address: ReaderAddress; readonly epoch: number }
   | { readonly type: "resources.start"; readonly address: ReaderAddress; readonly epoch: number }
   | {
@@ -110,6 +114,62 @@ export function reduceReaderEvent(
         : reader;
     return { state: { ...replace(state, key, active), activeKey: key }, accepted: true };
   }
+  if (event.type === "restore") {
+    const saved = event.value;
+    if (!saved.address) return { state, accepted: false };
+    const key = skillAddressKey(saved.address);
+    const reader = state.cache[key] ?? initialReader(saved.address);
+    // Route frames own interaction history, not installed bytes or request lifetime.
+    const restored: ReaderState = {
+      ...reader,
+      tab: saved.tab,
+      raw: saved.raw,
+      find: saved.find,
+      match: saved.match,
+      scroll: saved.scroll,
+      detailsScroll: saved.detailsScroll,
+      detailsManagementOpen: saved.detailsManagementOpen,
+      detailsDescriptionOpen: saved.detailsDescriptionOpen,
+      focus: saved.focus,
+      selectedResource: saved.selectedResource,
+      resourceLevel:
+        saved.resourceLevel === "content" &&
+        reader.resource !== undefined &&
+        reader.resource.path === saved.selectedResource
+          ? "content"
+          : "list",
+    };
+    return { state: { ...replace(state, key, restored), activeKey: key }, accepted: true };
+  }
+  if (event.type === "content.invalidate") {
+    const keys = event.address ? [skillAddressKey(event.address)] : Object.keys(state.cache);
+    const cache = { ...state.cache };
+    const epochs = { ...state.epochs };
+    let accepted = false;
+    for (const key of keys) {
+      const reader = cache[key];
+      if (!reader?.address) continue;
+      accepted = true;
+      // Keep reading preferences/positions, but never treat an old installed payload as fresh.
+      cache[key] = {
+        ...reader,
+        text: undefined,
+        rawText: undefined,
+        loading: false,
+        error: undefined,
+        resources: [],
+        resourcesLoaded: false,
+        resourceLoading: false,
+        resource: undefined,
+        resourceLevel: "list",
+      };
+      for (const request of ["content", "resource"] as const) {
+        const lane = epochKey(reader.address, request);
+        epochs[lane] = (epochs[lane] ?? 0) + 1;
+      }
+    }
+    return { state: accepted ? { ...state, cache, epochs } : state, accepted };
+  }
   const active = activeReader(state);
   if (event.type === "patch") {
     if (!active || !state.activeKey) return { state, accepted: false };
@@ -137,6 +197,17 @@ export function reduceReaderEvent(
   const key = skillAddressKey(event.address);
   const reader = state.cache[key];
   if (!reader) return { state, accepted: false };
+  if (event.type === "content.cancel") {
+    const lane = epochKey(event.address, "content");
+    if (state.epochs[lane] !== event.epoch) return { state, accepted: false };
+    return {
+      state: {
+        ...replace(state, key, { ...reader, loading: false }),
+        epochs: { ...state.epochs, [lane]: event.epoch + 1 },
+      },
+      accepted: true,
+    };
+  }
   if (event.type === "content.start")
     return {
       state: {

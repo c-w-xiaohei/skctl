@@ -3,7 +3,10 @@
 import { Input as InputPrimitive } from "@tuiparts/solid/input";
 import { tint } from "./theme";
 import { useTheme } from "./use-theme";
-export interface InputProps extends InputPrimitive.Props {}
+export interface InputProps extends InputPrimitive.Props {
+  /** OpenTUI Solid's render-level focus binding, also supported by the primitive's spread adapter. */
+  readonly focused?: boolean;
+}
 export function Input(props: InputProps) {
   const tokens = useTheme();
   return (

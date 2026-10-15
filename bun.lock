@@ -6,7 +6,7 @@
       "name": "skill-cli-workspace",
       "devDependencies": {
         "@opencode-ai/sdk": "1.18.4",
-        "@types/bun": "1.3.14",
+        "@types/bun": "1.4.3",
         "husky": "9.1.7",
         "opencode-ai": "1.18.4",
         "oxfmt": "0.59.0",
@@ -49,6 +49,7 @@
         "@skill-cli/core": "workspace:*",
         "@tuiparts/core": "0.0.6",
         "@tuiparts/solid": "0.0.6",
+        "diff": "9.0.0",
         "solid-js": "1.9.12",
       },
     },
@@ -278,7 +279,7 @@
 
     "@tuiparts/solid": ["@tuiparts/solid@0.0.6", "", { "dependencies": { "@tuiparts/core": "^0.0.6" }, "peerDependencies": { "@opentui/core": "^0.4.3", "@opentui/solid": "^0.4.3", "solid-js": "1.9.12" } }, "sha512-JHHW7vyYkNuRN+2NOGvoQggDF+F0Nq2Zrz/mjVY8O6hMSa4IBfHPe4NfbIRw/5xaQJ1ARLj07/neX5hMabqx1A=="],
 
-    "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
+    "@types/bun": ["@types/bun@1.4.3", "", { "dependencies": { "bun-types": "1.4.3" } }, "sha512-N67Pqy8JXbAY/j0tNraS3V5mubGvc6rrrNDmDCtZLlFzccbUJPDb0tvgUBC5q4m8ybkP93Jcn1QB+RYQ6PvBhw=="],
 
     "@types/node": ["@types/node@26.1.1", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-nxAkRSVkN1Y0JC1W8ky/fTfkGsMmcrRsbx+3XoZE+rMOX71kLYTV7fLXpqud1GpbpP5TuffXFqfX7fH2GgZREw=="],
 
@@ -344,7 +345,7 @@
 
     "bun-ffi-structs": ["bun-ffi-structs@0.3.1", "", { "peerDependencies": { "typescript": "^5" } }, "sha512-3gM7PpVWLyrwxWjcilSiGuhWanhZivvo6l0u573NziPH6f/gwk6McbaYgn7oJWov6pKGRTDbrg94W5DcJsKTtQ=="],
 
-    "bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
+    "bun-types": ["bun-types@1.4.3", "", { "dependencies": { "@types/node": "*", "undici-types": "*" } }, "sha512-tinRJNGOmUN+tEAsn2y2e942n9JHRHR42iUYzDH75NmhJqVBokGSQkkfSFdNWwsANIdrK6ACH9t01M452YyTwg=="],
 
     "caniuse-lite": ["caniuse-lite@1.0.30001806", "", {}, "sha512-72Cuvd95zbSYPKq6Fhg8eDJRlzgWDf7/mtoZv6Qe/DYNCEBdNxoA3+rZAU2ZhGCpZlns3EssFavaZomckT5Uuw=="],
 

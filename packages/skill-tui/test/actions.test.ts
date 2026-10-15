@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
+import type { ManagementProjection, SkillAddress } from "@skill-cli/core";
 import {
   actionIntent,
   installedSkillContext,
   reachableActions,
+  skillCollectionTargets,
   skillSourceIntent,
   sourceOperationIntent,
   sourceRouteIntent,
@@ -10,12 +12,13 @@ import {
 } from "../src/actions";
 import { createCollectionsState } from "../src/collections/state";
 import { configDeclarationOwnerKey, createConfigState } from "../src/config/state";
-import { createWorkspaceState } from "../src/workspace/state";
+import { createWorkspaceState, problemRowKey, problemRows } from "../src/workspace/state";
 import { parseNavKey, resolve, type NavFacts } from "../src/navigation";
 import { configSourceOwner, directOwner, workspaceProjection } from "./direct-source.fixture";
 
 function pages() {
   const workspace = createWorkspaceState();
+  workspace.selectScope("all-installed-skills");
   const collections = createCollectionsState();
   const config = createConfigState();
   const facts = {
@@ -29,6 +32,382 @@ function pages() {
   };
   return { workspace, collections, config, facts };
 }
+
+function collectionTargetProjection(
+  addresses: readonly SkillAddress[] = [
+    { source: "team-main", path: "a" },
+    { source: "team-main", path: "b" },
+    { source: "team-main", path: "c" },
+  ],
+): ManagementProjection {
+  const base = workspaceProjection();
+  if (base.effective.status !== "complete") throw new Error("Expected a complete test projection");
+  return {
+    ...base,
+    effective: {
+      ...base.effective,
+      status: "complete",
+      collectionsView: [
+        {
+          id: "team",
+          declared: [{ ...directOwner, pointer: "/collections/team" }],
+          repository: { derived: false, producers: [] },
+          members: [],
+          references: [],
+          links: [],
+        },
+      ],
+    },
+    installedSkills: addresses.map((address): ManagementProjection["installedSkills"][number] => ({
+      address,
+      name: address.path,
+      description: `Skill ${address.path}`,
+      owner: { source: address.source, health: "healthy" },
+      source: base.effective.sources.find((source) => source.id === address.source),
+      collections: [],
+      selectors: [],
+      selectorViews: { status: "complete", values: [] },
+      aliases: [],
+      problems: [],
+    })),
+  };
+}
+
+test("K6 current B Collection and update actions never inherit checked A/C targets", () => {
+  const projection = collectionTargetProjection();
+  const [a, b, c] = projection.installedSkills.map((skill) => skill.address);
+  const owners = pages();
+  owners.workspace.selectSkill(b!);
+  owners.workspace.toggleSkill(a!);
+  owners.workspace.toggleSkill(c!);
+
+  expect(
+    skillCollectionTargets("skill-add-to-collection", "workspace", projection, owners.facts),
+  ).toEqual({ addresses: [b] });
+  expect(
+    skillCollectionTargets(
+      "skill-add-selected-to-collection",
+      "workspace",
+      projection,
+      owners.facts,
+    ),
+  ).toEqual({ addresses: [a, c] });
+  expect(skillSourceIntent("workspace", projection, owners.facts)).toEqual({
+    kind: "source-update",
+    source: b!.source,
+    path: b!.path,
+  });
+  expect(installedSkillContext("workspace", projection, owners.facts)?.skill.address).toEqual(b);
+  const currentActions = selectedSkillActions("workspace", projection, owners.facts);
+  expect(currentActions.map((action) => action.id)).not.toContain(
+    "skill-add-selected-to-collection",
+  );
+  expect(currentActions.find((action) => action.id === "skill-add-to-collection")).toMatchObject({
+    enabled: true,
+    description: `Add only the current Installed Skill ${JSON.stringify(b)}; choose a destination Collection`,
+  });
+  expect(
+    reachableActions("workspace", projection, owners.facts).find(
+      (action) => action.id === "skill-add-selected-to-collection",
+    ),
+  ).toMatchObject({
+    verb: "Add 2 selected to Collection",
+    destination: "Collection chooser",
+    enabled: true,
+    description: `Add exactly the checked Installed Skills, including targets hidden by this view: ${JSON.stringify(a)}, ${JSON.stringify(c)}; choose a destination Collection`,
+  });
+});
+
+test("K6/K7 hidden checked targets remain reachable with no current visible row", () => {
+  const projection = collectionTargetProjection();
+  const [a, b, c] = projection.installedSkills.map((skill) => skill.address);
+  const owners = pages();
+  owners.workspace.selectSkill(b!);
+  owners.workspace.toggleSkill(a!);
+  owners.workspace.toggleSkill(c!);
+  owners.workspace.setQuery("b");
+  expect(
+    skillCollectionTargets(
+      "skill-add-selected-to-collection",
+      "workspace",
+      projection,
+      owners.facts,
+    ),
+  ).toEqual({ addresses: [a, c] });
+
+  owners.workspace.setQuery("no results");
+  expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
+  expect(selectedSkillActions("workspace", projection, owners.facts)).toEqual([]);
+  expect(() => skillSourceIntent("workspace", projection, owners.facts)).toThrow(
+    "No Installed Skill is selected",
+  );
+  expect(
+    skillCollectionTargets("skill-add-to-collection", "workspace", projection, owners.facts),
+  ).toEqual({ addresses: [], reason: "No current visible Installed Skill is selected" });
+  expect(reachableActions("workspace", projection, owners.facts)).toEqual([
+    expect.objectContaining({
+      id: "skill-add-selected-to-collection",
+      verb: "Add 2 selected to Collection",
+      enabled: true,
+    }),
+  ]);
+  owners.workspace.selectSkill(undefined);
+  expect(
+    skillCollectionTargets(
+      "skill-add-selected-to-collection",
+      "workspace",
+      projection,
+      owners.facts,
+    ),
+  ).toEqual({ addresses: [a, c] });
+});
+
+test("K6 absent or stale checked targets reject the batch instead of falling back to current B", () => {
+  const projection = collectionTargetProjection();
+  const [a, b, c] = projection.installedSkills.map((skill) => skill.address);
+  const owners = pages();
+  owners.workspace.selectSkill(b!);
+  expect(
+    skillCollectionTargets(
+      "skill-add-selected-to-collection",
+      "workspace",
+      projection,
+      owners.facts,
+    ),
+  ).toEqual({ addresses: [], reason: "No Installed Skills are checked" });
+  owners.workspace.toggleSkill(a!);
+  owners.workspace.toggleSkill(c!);
+  const stale = { ...projection, installedSkills: projection.installedSkills.slice(0, 2) };
+  const reason = `Checked Installed Skills are no longer installed: ${JSON.stringify(c)}; clear or reselect the checked set`;
+  expect(
+    skillCollectionTargets("skill-add-selected-to-collection", "workspace", stale, owners.facts),
+  ).toEqual({ addresses: [], reason });
+  expect(
+    reachableActions("workspace", stale, owners.facts).find(
+      (action) => action.id === "skill-add-selected-to-collection",
+    ),
+  ).toMatchObject({ enabled: false, disabledReason: reason, verb: "Add 2 selected to Collection" });
+  expect(
+    skillCollectionTargets("skill-add-to-collection", "workspace", stale, owners.facts),
+  ).toEqual({ addresses: [b] });
+  expect(
+    skillCollectionTargets(
+      "skill-add-selected-to-collection",
+      "workspace",
+      { ...projection, installedSkills: [] },
+      owners.facts,
+    ),
+  ).toMatchObject({ addresses: [], reason: expect.stringContaining(JSON.stringify(a)) });
+});
+
+test("K7 current-object eligibility respects Source and dimension filters, not the checked set", () => {
+  const projection = collectionTargetProjection();
+  const b = projection.installedSkills[1]!.address;
+  const owners = pages();
+  owners.workspace.selectSkill(b);
+  owners.workspace.toggleSkill(b);
+  owners.workspace.showInstalledSkillsFromSource("other-source");
+  expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
+  expect(
+    skillCollectionTargets(
+      "skill-add-selected-to-collection",
+      "workspace",
+      projection,
+      owners.facts,
+    ),
+  ).toEqual({ addresses: [b] });
+  owners.workspace.showInstalledSkillsFromSource("team-main");
+  owners.workspace.setFilter("Problems", "Has problems");
+  expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
+  expect(selectedSkillActions("workspace", projection, owners.facts)).toEqual([]);
+  owners.workspace.clearFilters();
+  expect(installedSkillContext("workspace", projection, owners.facts)?.skill.address).toEqual(b);
+});
+
+test("K6 structural Collection targets do not confuse slash-colliding addresses", () => {
+  const a = { source: "team/config", path: "nested/guide" };
+  const b = { source: "team", path: "config/nested/guide" };
+  const projection = collectionTargetProjection([a, b]);
+  const owners = pages();
+  owners.workspace.selectSkill({ ...b });
+  owners.workspace.toggleSkill({ ...a });
+  expect(
+    skillCollectionTargets("skill-add-to-collection", "workspace", projection, owners.facts),
+  ).toEqual({ addresses: [b] });
+  expect(
+    skillCollectionTargets(
+      "skill-add-selected-to-collection",
+      "workspace",
+      projection,
+      owners.facts,
+    ),
+  ).toEqual({ addresses: [a] });
+  const stale = { ...projection, installedSkills: [projection.installedSkills[1]!] };
+  expect(
+    skillCollectionTargets("skill-add-selected-to-collection", "workspace", stale, owners.facts),
+  ).toMatchObject({ addresses: [], reason: expect.stringContaining(JSON.stringify(a)) });
+  expect(
+    reachableActions("workspace", projection, owners.facts).find(
+      (action) => action.id === "skill-add-selected-to-collection",
+    )?.description,
+  ).toContain(JSON.stringify(a));
+});
+
+test("K7 Unassigned eligibility excludes assigned cursor memory but preserves checked targets", () => {
+  const base = collectionTargetProjection();
+  const b = base.installedSkills[1]!;
+  const projection: ManagementProjection = {
+    ...base,
+    installedSkills: base.installedSkills.map((skill) =>
+      skill === b
+        ? {
+            ...skill,
+            collections: [
+              {
+                id: "team",
+                entry: "b",
+                paths: [{ kind: "direct", collection: "team", entryName: "b", owner: directOwner }],
+              },
+            ],
+          }
+        : skill,
+    ),
+  };
+  const owners = pages();
+  owners.workspace.selectSkill(b.address);
+  owners.workspace.toggleSkill(b.address);
+  owners.workspace.selectScope("unassigned");
+  expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
+  expect(selectedSkillActions("workspace", projection, owners.facts)).toEqual([]);
+  expect(
+    skillCollectionTargets(
+      "skill-add-selected-to-collection",
+      "workspace",
+      projection,
+      owners.facts,
+    ),
+  ).toEqual({ addresses: [b.address] });
+  owners.workspace.selectSkill(projection.installedSkills[0]!.address);
+  expect(installedSkillContext("workspace", projection, owners.facts)?.skill.address).toEqual(
+    projection.installedSkills[0]!.address,
+  );
+});
+
+test("K7 Problems eligibility follows the selected visible diagnostic's exact Installed Skill", () => {
+  const base = collectionTargetProjection();
+  const a = base.installedSkills[0]!.address;
+  const b = base.installedSkills[1]!.address;
+  const projection: ManagementProjection = {
+    ...base,
+    diagnostics: [
+      {
+        code: "SKILL_NOT_FOUND",
+        severity: "warning",
+        message: "B diagnostic",
+        subject: { kind: "installed-skill", address: b },
+      },
+      { code: "CONFIG_INVALID", severity: "warning", message: "Workspace diagnostic" },
+    ],
+  };
+  const owners = pages();
+  owners.workspace.selectScope("problems");
+  owners.workspace.selectSkill(b);
+  owners.workspace.selectProblem(problemRowKey(problemRows(projection)[0]!));
+  expect(installedSkillContext("workspace", projection, owners.facts)?.skill.address).toEqual(b);
+  owners.workspace.selectSkill(a);
+  expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
+  owners.workspace.selectSkill(b);
+  owners.workspace.setFilter("Severity", "error");
+  expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
+  owners.workspace.clearFilters();
+  owners.workspace.setQuery("no diagnostic matches");
+  expect(selectedSkillActions("workspace", projection, owners.facts)).toEqual([]);
+  owners.workspace.setQuery("");
+  owners.workspace.selectProblem(problemRowKey(problemRows(projection)[1]!));
+  expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
+});
+
+test("explicit semantic Skill detail may own a filtered object, but not an uninstalled object", () => {
+  const projection = collectionTargetProjection();
+  const b = projection.installedSkills[1]!.address;
+  const owners = pages();
+  owners.workspace.selectSkill(b);
+  owners.workspace.setQuery("no results");
+  owners.workspace.openReader();
+  expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
+  const explicit = { ...owners.facts, explicitSkillDetail: true };
+  expect(installedSkillContext("workspace", projection, explicit)?.skill.address).toEqual(b);
+  const stale = { ...projection, installedSkills: [] };
+  expect(installedSkillContext("workspace", stale, explicit)).toBeUndefined();
+  expect(installedSkillContext("project", projection, explicit)).toBeUndefined();
+});
+
+test("Collection chooser eligibility preserves repository-derived destinations and rejects unavailable views", () => {
+  const base = collectionTargetProjection();
+  if (base.effective.status !== "complete") throw new Error("Expected a complete test projection");
+  const projection: ManagementProjection = {
+    ...base,
+    effective: {
+      ...base.effective,
+      status: "complete",
+      collectionsView: [
+        {
+          id: "derived",
+          declared: [],
+          repository: { derived: true, producers: [] },
+          members: [],
+          references: [],
+          links: [],
+        },
+      ],
+    },
+  };
+  if (projection.effective.status !== "complete")
+    throw new Error("Expected a complete test projection");
+  const owners = pages();
+  const b = projection.installedSkills[1]!.address;
+  owners.workspace.selectSkill(b);
+  owners.workspace.toggleSkill(b);
+  for (const id of ["skill-add-to-collection", "skill-add-selected-to-collection"] as const) {
+    expect(skillCollectionTargets(id, "workspace", projection, owners.facts)).toEqual({
+      addresses: [b],
+    });
+    expect(skillCollectionTargets(id, "project", projection, owners.facts).reason).toBeDefined();
+    expect(skillCollectionTargets(id, "workspace", undefined, owners.facts).reason).toBeDefined();
+    const emptyCollections = {
+      ...projection,
+      effective: { ...projection.effective, status: "complete" as const, collectionsView: [] },
+    };
+    expect(skillCollectionTargets(id, "workspace", emptyCollections, owners.facts).reason).toBe(
+      "No direct or repository-derived Collection is available for these targets",
+    );
+    const unavailable: ManagementProjection = {
+      ...projection,
+      effective: {
+        status: "unavailable",
+        reasons: [],
+        sources: projection.effective.sources,
+        collections: [],
+        agent: projection.effective.agent,
+      },
+    };
+    expect(skillCollectionTargets(id, "workspace", unavailable, owners.facts).reason).toBe(
+      "No direct or repository-derived Collection is available for these targets",
+    );
+  }
+  owners.workspace.selectSection("sources");
+  expect(
+    reachableActions("workspace", projection, owners.facts).map((action) => action.id),
+  ).not.toContain("skill-add-selected-to-collection");
+  expect(
+    skillCollectionTargets(
+      "skill-add-selected-to-collection",
+      "workspace",
+      projection,
+      owners.facts,
+    ),
+  ).toMatchObject({ addresses: [], reason: expect.any(String) });
+});
 
 const nativeSelectFacts: NavFacts = {
   destination: "workspace",
@@ -262,7 +641,7 @@ test("Task6 command mappings preserve visible enabled, danger, and next-surface 
       expect.objectContaining({
         id: "check-updates",
         verb: "Check Updates",
-        destination: "Update review",
+        destination: "Updates",
         enabled: true,
         danger: false,
       }),
@@ -322,7 +701,7 @@ test("MGMT-004 Source actions use the selected Project direct or contributed Sou
   });
 });
 
-test("Collection actions expose only direct editable and repository contribution paths", () => {
+test("Collection actions retain read-only update access while edits use direct or contribution paths", () => {
   const owner = {
     level: "project" as const,
     file: "skill-cli.jsonc",
@@ -376,6 +755,7 @@ test("Collection actions expose only direct editable and repository contribution
   expect(
     reachableActions("workspace", projection, owners.facts).map((action) => action.id),
   ).toEqual([
+    "collection-check-updates",
     "new-collection",
     "add-membership",
     "import-collection",
@@ -386,7 +766,7 @@ test("Collection actions expose only direct editable and repository contribution
   owners.collections.select("derived");
   expect(
     reachableActions("workspace", projection, owners.facts).map((action) => action.id),
-  ).toEqual(["new-collection", "add-membership"]);
+  ).toEqual(["collection-check-updates", "new-collection", "add-membership"]);
 });
 
 test("Config integration Actions open an inherited owner instead of enabling the current Config", () => {

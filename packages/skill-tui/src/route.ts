@@ -18,6 +18,7 @@ import type { WorkspaceSnapshot, WorkspaceState } from "./workspace/state";
 import type { ConfigSnapshot, ConfigState } from "./config/state";
 import type { CollectionsSnapshot, CollectionsState } from "./collections/state";
 import { configDeclarationOwnerKey } from "./config/state";
+import type { UpdatesState } from "./updates/state";
 
 export type RouteTarget =
   | {
@@ -61,6 +62,8 @@ export interface NavigationFrame {
   readonly collections?: CollectionsSnapshot;
   readonly narrowLevel?: import("./types").NarrowLevel;
   readonly reader?: ReaderState;
+  /** Effects owns this draft; routes retain only its current identity for Back. */
+  readonly updatesState?: UpdatesState;
   readonly recovery?: "unavailable";
 }
 
@@ -100,6 +103,8 @@ export function createRoute(
   landWorkspaceSkill: (selection: SkillAddress | undefined) => void = (selection) =>
     pages.workspace.land("skills", selection),
   restoreReaderState: (state: ReaderState | undefined) => void = () => {},
+  updatesState: Accessor<UpdatesState | undefined> = () => undefined,
+  restoreUpdatesState: (state: UpdatesState) => void = () => {},
 ) {
   const objectFor = (context: NavigationContext, section: RouteTarget["section"]) => {
     if (context === "workspace")
@@ -107,7 +112,9 @@ export function createRoute(
         ? pages.workspace.selectedSkill()
         : section === "sources"
           ? pages.workspace.selectedSource()
-          : pages.collections?.selected();
+          : section === "collections"
+            ? pages.collections?.selected()
+            : undefined;
     return pages.config.selection(context, section as ConfigSection);
   };
   const capture = (
@@ -136,7 +143,12 @@ export function createRoute(
     },
     ...(pages.collections ? { collections: structuredClone(pages.collections.snapshot()) } : {}),
     narrowLevel: pages.workspace.narrowLevel(),
-    ...(surface === "reader" && reader() ? { reader: structuredClone(reader()!) } : {}),
+    ...(context === "workspace" && section === "skills" && pages.workspace.readerOpen() && reader()
+      ? { reader: structuredClone(reader()!) }
+      : {}),
+    ...(context === "workspace" && section === "updates" && updatesState()
+      ? { updatesState: updatesState() }
+      : {}),
   });
   const [snapshot, setSnapshot] = createSignal<RouteSnapshot>({
     current: capture("workspace", pages.workspace.section()),
@@ -177,15 +189,21 @@ export function createRoute(
     landTarget = () => land(target),
     retainPrevious = true,
   ) => {
-    const previous = capture(
-      snapshot().current.context,
-      snapshot().current.section,
-      snapshot().current.object,
-      snapshot().current.handoff,
-      snapshot().current.surface,
-      snapshot().current.region,
-      snapshot().current.focus,
-    );
+    const previous = {
+      ...capture(
+        snapshot().current.context,
+        snapshot().current.section,
+        snapshot().current.object,
+        snapshot().current.handoff,
+        snapshot().current.surface,
+        snapshot().current.region,
+        snapshot().current.focus,
+      ),
+      // A navigation action may select a new update draft before it pushes the
+      // destination. Keep the frame's actual predecessor draft, not whichever
+      // effects draft happened to become active in that same event turn.
+      ...(snapshot().current.updatesState ? { updatesState: snapshot().current.updatesState } : {}),
+    };
     const surface: NavigationSurface =
       target.surface ?? (target.handoff?.kind === "agent-producer" ? "inspector" : "browser");
     batch(() => {
@@ -219,15 +237,22 @@ export function createRoute(
       pages.config.restore("project", frame.config.project);
       pages.config.restore("local", frame.config.local);
       if (frame.collections && pages.collections) pages.collections.restore(frame.collections);
-      if (frame.surface === "reader" && frame.reader?.address) {
+      if (frame.reader?.address) {
         restoreReader(frame.reader.address, frame.reader.tab === "details" ? "details" : undefined);
         if (frame.reader.tab === "details") pages.workspace.openReader();
         restoreReaderState(frame.reader);
       }
+      if (frame.updatesState) restoreUpdatesState(frame.updatesState);
+      const restoredFocus =
+        frame.focus === "reader-resource-content" &&
+        reader()?.tab === "resources" &&
+        reader()?.resourceLevel !== "content"
+          ? "reader"
+          : frame.focus;
       setSnapshot((current) => {
         const result = revise(current, {
           ...current,
-          current: frame,
+          current: { ...frame, focus: restoredFocus },
           stack,
           destination: frame.context,
           ...(frame.handoff ? { handoff: frame.handoff } : {}),
@@ -238,7 +263,7 @@ export function createRoute(
       if (frame.narrowLevel === "list") pages.workspace.showList();
       else if (frame.narrowLevel === "work-area") pages.workspace.showWorkArea();
       else if (frame.narrowLevel === "detail") pages.workspace.openDetail();
-      requestFocus(frame.focus);
+      requestFocus(restoredFocus);
     });
   };
   const syncCurrent = (
@@ -276,6 +301,9 @@ export function createRoute(
         ...(surface === "reader" && reader()
           ? { reader: structuredClone(reader()!) }
           : { reader: undefined }),
+        ...(context === "workspace" && section === "updates" && updatesState()
+          ? { updatesState: updatesState() }
+          : { updatesState: undefined }),
       };
       const result = { ...current, current: next };
       return result;
@@ -421,7 +449,6 @@ export function createRoute(
       pages.workspace.openReader();
       // Capture Reader Details before the destination replaces its native control.
       this.syncCurrent({
-        surface: "reader",
         region: "content",
         focus: target.returnFocus,
       });

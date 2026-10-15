@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { ModalControlScope } from "../src/modal-controls";
-import { CommandPalette, ModalCommand } from "../src/operations";
+import { ModalCommand } from "../src/operations";
+import { CommandPalette } from "../src/command-palette";
 import type { CommandRecord } from "../src/types";
 
 const records = (count: number): CommandRecord[] =>
@@ -78,7 +79,7 @@ test("mounted ModalControlScope clamps eight commands without activating the bou
   }
 });
 
-test("reverse Tab stays inside the mounted modal panel", async () => {
+test("reverse Tab from an unregistered field enters the last live modal control", async () => {
   const commands = records(3);
   const setup = await testRender(
     () => (
@@ -97,7 +98,7 @@ test("reverse Tab stays inside the mounted modal panel", async () => {
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "unregistered-field");
     setup.mockInput.pressTab({ shift: true });
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("unregistered-field");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("choice-2");
   } finally {
     setup.renderer.destroy();
   }
@@ -106,12 +107,12 @@ test("reverse Tab stays inside the mounted modal panel", async () => {
 test("short palette scrolls one native list and invokes exactly the selected authoritative record", async () => {
   const commands = records(20);
   commands[1] = { ...commands[1]!, enabled: false };
-  const enabled = commands.filter((record) => record.enabled);
   const activated: CommandRecord[] = [];
   let closed = 0;
   const setup = await testRender(
     () => (
       <CommandPalette
+        open
         actions={commands}
         onSelect={(record) => activated.push(record)}
         onClose={() => closed++}
@@ -127,12 +128,20 @@ test("short palette scrolls one native list and invokes exactly the selected aut
       throw new Error("Palette must mount its native Select");
     setup.mockInput.pressArrow("up");
     await setup.renderOnce();
-    expect(choices.getSelectedOption()?.value).toBe(enabled[0]);
-    for (let index = 0; index < enabled.length - 1; index++) {
+    // Up at the list boundary returns to its filter; Down enters results again.
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-query");
+    setup.mockInput.pressArrow("down");
+    await setup.renderOnce();
+    expect(choices.getSelectedOption()?.value).toBe(commands[0]);
+    setup.mockInput.pressArrow("down");
+    setup.mockInput.pressEnter();
+    await setup.renderOnce();
+    expect(activated).toEqual([]);
+    for (let index = 1; index < commands.length - 1; index++) {
       setup.mockInput.pressArrow("down");
       await setup.renderOnce();
     }
-    expect(choices.getSelectedOption()?.value).toBe(enabled.at(-1));
+    expect(choices.getSelectedOption()?.value).toBe(commands.at(-1));
     setup.mockInput.pressArrow("down");
     await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-close");
@@ -153,8 +162,8 @@ test("short palette scrolls one native list and invokes exactly the selected aut
     expect(activated).toEqual([]);
     setup.mockInput.pressEnter();
     await setup.renderOnce();
-    expect(activated).toEqual([enabled.at(-1)!]);
-    expect(choices.height).toBeLessThan(enabled.length * 2);
+    expect(activated).toEqual([commands.at(-1)!]);
+    expect(choices.height).toBeLessThan(commands.length);
     setup.mockInput.pressArrow("left");
     await setup.renderOnce();
     expect(closed).toBe(1);

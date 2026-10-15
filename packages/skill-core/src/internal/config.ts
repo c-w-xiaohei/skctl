@@ -29,6 +29,7 @@ import {
 } from "./domain";
 import { StateCoordinator, type InstalledMaterialization, type PrivateState } from "./state";
 import { runProviderChild } from "./source-git";
+import type { SourceNetwork } from "./source-network";
 import {
   resolveCollections,
   CollectionResolutionError,
@@ -103,39 +104,90 @@ const collection = Type.Object(
   },
   { additionalProperties: false },
 );
-const host = Type.Object(
+const declarationProperties = {
+  sources: Type.Optional(Type.Record(Type.String(), binding)),
+  collections: Type.Optional(Type.Record(Type.String(), collection)),
+};
+const hostProperties = {
+  $schema: Type.Optional(Type.Literal(schemaId)),
+  agents: Type.Optional(
+    Type.Object({ opencode: Type.Literal("managed") }, { additionalProperties: false }),
+  ),
+  configSources: Type.Optional(Type.Record(Type.String(), configSource)),
+  ...declarationProperties,
+  use: Type.Optional(Type.Array(Type.String())),
+};
+const reusable = Type.Object(declarationProperties, { additionalProperties: false });
+export const userConfigSchema = Type.Object(
   {
-    $schema: Type.Optional(Type.Literal(schemaId)),
-    agents: Type.Optional(
-      Type.Object({ opencode: Type.Literal("managed") }, { additionalProperties: false }),
+    ...hostProperties,
+    network: Type.Optional(
+      Type.Object(
+        {
+          proxy: Type.Optional(Type.String({ minLength: 1, format: "http-proxy-url" })),
+        },
+        { additionalProperties: false },
+      ),
     ),
-    configSources: Type.Optional(Type.Record(Type.String(), configSource)),
-    sources: Type.Optional(Type.Record(Type.String(), binding)),
-    collections: Type.Optional(Type.Record(Type.String(), collection)),
-    use: Type.Optional(Type.Array(Type.String())),
   },
   { additionalProperties: false },
 );
-const reusable = Type.Object(
-  {
-    sources: Type.Optional(Type.Record(Type.String(), binding)),
-    collections: Type.Optional(Type.Record(Type.String(), collection)),
-  },
-  { additionalProperties: false },
-);
-export const userProjectConfigSchema = host;
-export const localConfigSchema = host;
+export const projectConfigSchema = Type.Object(hostProperties, { additionalProperties: false });
+export const localConfigSchema = Type.Object(hostProperties, { additionalProperties: false });
 export const configModuleSchema = reusable;
-export const persistedConfigSchema = Type.Union([host, reusable], {
+export const persistedConfigSchema = {
   $id: schemaId,
   $schema: "https://json-schema.org/draft/2020-12/schema",
-});
-export type ConfigDocument = Static<typeof host>;
+  $comment:
+    "Only the user/global file may contain network. Runtime selects the schema by owner scope; the editor root accepts any document form.",
+  anyOf: ["userConfig", "projectConfig", "localConfig", "reusableConfig"].map((name) => ({
+    $ref: `#/$defs/${name}`,
+  })),
+  $defs: {
+    userConfig: userConfigSchema,
+    projectConfig: projectConfigSchema,
+    localConfig: localConfigSchema,
+    reusableConfig: reusable,
+  },
+};
+export type ConfigDocument = Static<typeof userConfigSchema>;
 type ReusableConfigDocument = Static<typeof reusable>;
 const ajv = new Ajv2020({ allErrors: true, strict: true });
-export const userProjectConfigValidator = ajv.compile(host);
-export const localConfigValidator = userProjectConfigValidator;
+ajv.addFormat("http-proxy-url", (value: string) => {
+  const literal = /^https?:\/\/([^/?#]+)\/?$/iu.exec(value);
+  if (
+    !literal ||
+    literal[1]!.endsWith(":") ||
+    // eslint-disable-next-line no-control-regex -- Reject control bytes in proxy URLs.
+    /\s|[\u0000-\u001f\u007f]/u.test(value) ||
+    value.includes("\\")
+  )
+    return false;
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      !!url.hostname &&
+      !value.includes("?") &&
+      !value.includes("#") &&
+      url.pathname === "/"
+    );
+  } catch {
+    return false;
+  }
+});
+export const userConfigValidator = ajv.compile(userConfigSchema);
+export const projectConfigValidator = ajv.compile(projectConfigSchema);
+export const localConfigValidator = ajv.compile(localConfigSchema);
 export const configModuleValidator = ajv.compile(reusable);
+type DocumentScope = ConfigLevel | "reusable";
+const validatorFor = (scope: DocumentScope) =>
+  ({
+    global: userConfigValidator,
+    project: projectConfigValidator,
+    local: localConfigValidator,
+    reusable: configModuleValidator,
+  })[scope];
 const sort = (value: unknown): unknown =>
   Array.isArray(value)
     ? value.map(sort)
@@ -161,6 +213,8 @@ interface WorkspaceCapture {
   readonly state: PrivateState;
   readonly resolved: ReturnType<typeof resolveCollections>;
   readonly sources: ReadonlyMap<string, InternalSourceBinding>;
+  /** Frozen user policy, absent on an invalid user capture. Never projected publicly. */
+  readonly network?: SourceNetwork;
 }
 type InternalSourceBinding = SourceBindingView & { readonly bindingDigest: string };
 const captures = new WeakMap<WorkspaceView, WorkspaceCapture>();
@@ -199,8 +253,10 @@ export async function resolveProjectRoot(
   }
   throw new SkillCliError("PROJECT_NOT_FOUND", "Project not found");
 }
-async function document(path: string, reusable = false): Promise<ConfigDocument> {
-  const stat = await lstat(path).catch(() => undefined);
+async function document(path: string, scope: DocumentScope): Promise<ConfigDocument> {
+  const stat = await lstat(path).catch((error: NodeJS.ErrnoException) =>
+    error.code === "ENOENT" ? undefined : Promise.reject(error),
+  );
   if (!stat) return {};
   if (!stat.isFile() || stat.isSymbolicLink())
     throw new SkillCliError(
@@ -223,7 +279,7 @@ async function document(path: string, reusable = false): Promise<ConfigDocument>
     throw invalidConfig(path, "Configuration syntax is invalid", `/@${errors[0]!.offset}`);
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw invalidConfig(path, "Configuration must be an object");
-  const validator = reusable ? configModuleValidator : userProjectConfigValidator;
+  const validator = validatorFor(scope);
   if (!validator(value)) {
     const error = validator.errors?.[0];
     const pointer = error
@@ -240,8 +296,29 @@ async function document(path: string, reusable = false): Promise<ConfigDocument>
     );
   }
   validateDocumentNames(value as ConfigDocument, path);
-  validateDocumentBindings(value as ConfigDocument, path, reusable);
+  validateDocumentBindings(value as ConfigDocument, path, scope === "reusable");
   return value as ConfigDocument;
+}
+
+function userConfigFile(options: ReadWorkspaceOptions): string {
+  return (
+    options.userConfigPath ??
+    join(
+      process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"),
+      "skill-cli",
+      "config.jsonc",
+    )
+  );
+}
+const networkFrom = (value: ConfigDocument): SourceNetwork => Object.freeze({ ...value.network });
+/** One coherent user-document read per remote operation; never compose project policy. */
+export async function readUserNetwork(
+  options: ReadWorkspaceOptions,
+  coordinator = new StateCoordinator(),
+): Promise<SourceNetwork> {
+  return coordinator.withLock(async () =>
+    networkFrom(await document(userConfigFile(options), "global")),
+  );
 }
 
 function invalidConfig(
@@ -444,7 +521,7 @@ export async function declaredConfigSource(
     { level: "local" as const, file: join(project.root, "skill-cli.local.jsonc") },
   ]) {
     if (requestedLevel && level !== requestedLevel) continue;
-    const binding = (await document(file)).configSources?.[id];
+    const binding = (await document(file, level)).configSources?.[id];
     if (!binding) continue;
     if (found)
       throw new SkillCliError("CONFIG_CONFLICT", `Config Source is declared more than once: ${id}`);
@@ -471,7 +548,7 @@ export async function forgetConfigSource(options: MutationOptions, id: string): 
     if (dependencies.length)
       throw new SkillCliError("CONFIG_CONFLICT", "Config Source has effective graph dependencies");
     const nextState = {
-      version: 2,
+      version: 3,
       generation: state.generation + 1,
       installed,
       configs: Object.fromEntries(Object.entries(state.configs).filter(([name]) => name !== id)),
@@ -514,7 +591,7 @@ export async function removeConfigSource(
     const original = decodeConfig(await readFile(declared.file), declared.file);
     const next = edit(original, ["configSources", id], undefined);
     const proposed = parse(next, [], { allowTrailingComma: true });
-    if (!userProjectConfigValidator(proposed))
+    if (!validatorFor(declared.level)(proposed))
       throw new SkillCliError("CONFIG_INVALID", "Invalid declaration edit");
     await coordinator.publish(
       [
@@ -522,7 +599,7 @@ export async function removeConfigSource(
         {
           target: join(coordinator.root, "state.json"),
           bytes: `${JSON.stringify({
-            version: 2,
+            version: 3,
             generation: state.generation + 1,
             installed,
             configs: Object.fromEntries(
@@ -596,7 +673,7 @@ export async function removeDirectSource(
         source.provenance.file!,
       );
       const next = edit(original, ["sources", id], undefined);
-      if (!userProjectConfigValidator(parse(next, [], { allowTrailingComma: true })))
+      if (!validatorFor(source.provenance.level!)(parse(next, [], { allowTrailingComma: true })))
         throw new SkillCliError("CONFIG_INVALID", "Invalid declaration edit");
       await coordinator.publish([{ target: source.provenance.file!, bytes: next }]);
       return;
@@ -619,7 +696,7 @@ export async function removeDirectSource(
     if (state.installed.some((item) => item.source === id))
       throw new SkillCliError("CONFIG_CONFLICT", "Installed Skills still belong to this Source");
     const next = edit(original, ["sources", id], undefined);
-    if (!userProjectConfigValidator(parse(next, [], { allowTrailingComma: true })))
+    if (!validatorFor(level)(parse(next, [], { allowTrailingComma: true })))
       throw new SkillCliError("CONFIG_INVALID", "Invalid declaration edit");
     await coordinator.publish([{ target: file, bytes: next }]);
   });
@@ -729,13 +806,7 @@ export async function readWorkspaceUnlocked(
           return { root: resolve(options.cwd), resolution: "global-only" as const };
         throw error;
       });
-  const user =
-    options.userConfigPath ??
-    join(
-      process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"),
-      "skill-cli",
-      "config.jsonc",
-    );
+  const user = userConfigFile(options);
   const inputs = [
     { level: "global" as const, file: user },
     ...(project.resolution === "global-only"
@@ -759,12 +830,14 @@ export async function readWorkspaceUnlocked(
   let managed = false;
   const diagnostics: import("../api").Diagnostic[] = [];
   let incomplete = false;
+  let network: SourceNetwork | undefined;
   for (const input of inputs) {
     let value: ConfigDocument | undefined;
     let file: WorkspaceView["configs"][number]["file"];
     try {
       const stat = await lstat(input.file).catch(() => undefined);
-      value = await document(input.file);
+      value = await document(input.file, input.level);
+      if (input.level === "global") network = networkFrom(value);
       file = stat ? { status: "valid", file: input.file } : { status: "missing", file: input.file };
     } catch (error) {
       incomplete = true;
@@ -825,6 +898,8 @@ export async function readWorkspaceUnlocked(
     for (const [id, binding] of Object.entries(value.configSources ?? {})) {
       try {
         const override = remoteConfigOverride?.id === id ? remoteConfigOverride : undefined;
+        if (override && !configModuleValidator(override.value))
+          throw invalidConfig(input.file, "Invalid reusable Config override");
         const reusable =
           binding.kind === "local"
             ? await document(
@@ -833,7 +908,7 @@ export async function readWorkspaceUnlocked(
                   binding.root,
                   "config.jsonc",
                 ),
-                true,
+                "reusable",
               )
             : override
               ? override.value
@@ -1395,7 +1470,12 @@ export async function readWorkspaceUnlocked(
     installedSkills,
     diagnostics,
   };
-  captures.set(value, { state, resolved: resolved ?? resolveCollections({}, new Set()), sources });
+  captures.set(value, {
+    state,
+    resolved: resolved ?? resolveCollections({}, new Set()),
+    sources,
+    network,
+  });
   return {
     value,
     diagnostics,
@@ -1497,13 +1577,7 @@ export async function resolveEffectiveCollections(
   coordinator: StateCoordinator,
   override?: { readonly file: string; readonly value: ConfigDocument },
 ) {
-  const user =
-    options.userConfigPath ??
-    join(
-      process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"),
-      "skill-cli",
-      "config.jsonc",
-    );
+  const user = userConfigFile(options);
   const declarations: CollectionContribution[] = [];
   const files = [
     { level: "global" as const, file: user },
@@ -1515,7 +1589,13 @@ export async function resolveEffectiveCollections(
         ]),
   ];
   for (const { level, file } of files) {
-    const host = override?.file === file ? override.value : await document(file);
+    let host: ConfigDocument;
+    if (override?.file === file) {
+      host = override.value;
+      if (!validatorFor(level)(host)) throw invalidConfig(file, "Invalid declaration override");
+    } else {
+      host = await document(file, level);
+    }
     for (const [id, declaration] of Object.entries(host.collections ?? {})) {
       declarations.push({
         kind: "declared",
@@ -1529,7 +1609,7 @@ export async function resolveEffectiveCollections(
         binding.kind === "local"
           ? await document(
               join(canonicalLocalOrigin(binding.path, dirname(file)), binding.root, "config.jsonc"),
-              true,
+              "reusable",
             )
           : state.configs[configId]
             ? await cachedConfig(configId, state, coordinator)
@@ -1633,7 +1713,7 @@ export async function previewLinkChangeImpact(
           project.root,
           request.level === "project" ? "skill-cli.jsonc" : "skill-cli.local.jsonc",
         );
-  const host = await document(file);
+  const host = await document(file, request.level);
   const declaration = host.collections?.[request.collection];
   if (!declaration) {
     const view = workspace.value.effective.collectionsView.find(
@@ -1798,7 +1878,7 @@ async function cachedConfig(
     throw new SkillCliError("CONFIG_INVALID", `Remote Config Source is not adopted: ${id}`);
   return document(
     join(coordinator.root, "configs", applied.digest, "config.jsonc"),
-    true,
+    "reusable",
   ) as Promise<ReusableConfigDocument>;
 }
 async function contributionIds(
@@ -1815,18 +1895,23 @@ async function contributionIds(
       "config.jsonc",
     );
   const inputs = [
-    user,
-    ...(project ? [join(project, "skill-cli.jsonc"), join(project, "skill-cli.local.jsonc")] : []),
+    { file: user, level: "global" as const },
+    ...(project
+      ? [
+          { file: join(project, "skill-cli.jsonc"), level: "project" as const },
+          { file: join(project, "skill-cli.local.jsonc"), level: "local" as const },
+        ]
+      : []),
   ];
   const ids = new Set<string>();
-  for (const file of inputs) {
-    const host = await document(file);
+  for (const { file, level } of inputs) {
+    const host = await document(file, level);
     for (const [configId, binding] of Object.entries(host.configSources ?? {})) {
       const reusable =
         binding.kind === "local"
           ? await document(
               join(canonicalLocalOrigin(binding.path, dirname(file)), binding.root, "config.jsonc"),
-              true,
+              "reusable",
             )
           : state.configs[configId]
             ? await cachedConfig(configId, state, coordinator)
@@ -1897,7 +1982,7 @@ export async function mutateConfiguration(
       if (immutableContributions.has(change.id))
         throw new SkillCliError("INVALID_ARGUMENT", "Config Source contributions are immutable");
       const key = change.type === "source.register" ? "sources" : "configSources";
-      const existing = (await document(file))[key]?.[change.id];
+      const existing = (await document(file, change.level))[key]?.[change.id];
       if (existing)
         throw new SkillCliError(
           "CONFIG_CONFLICT",
@@ -1910,7 +1995,7 @@ export async function mutateConfiguration(
       });
     } else if (change.type === "collection.create") {
       parseQualifiedName(change.collection);
-      if ((await document(file)).collections?.[change.collection])
+      if ((await document(file, change.level)).collections?.[change.collection])
         throw new SkillCliError("CONFIG_CONFLICT", "Collection already exists");
       next = edit(next, ["collections", change.collection], {});
     } else if (change.type === "collection.remove") {
@@ -1925,7 +2010,8 @@ export async function mutateConfiguration(
         .find((item) => item.level === change.level)
         ?.direct.collections.find((item) => item.id === change.collection);
       if (!direct) throw directlyDeclaredCollectionError(change.collection);
-      const outgoing = (await document(file)).collections?.[change.collection]?.links ?? [];
+      const outgoing =
+        (await document(file, change.level)).collections?.[change.collection]?.links ?? [];
       const dependent =
         outgoing.length > 0 ||
         workspace.value.configs.some((item) =>
@@ -1942,7 +2028,7 @@ export async function mutateConfiguration(
     } else if (change.type === "collection.member.set") {
       parseQualifiedName(change.collection);
       parseNameSegment(change.name);
-      const collection = (await document(file)).collections?.[change.collection];
+      const collection = (await document(file, change.level)).collections?.[change.collection];
       if (!collection) throw directlyDeclaredCollectionError(change.collection);
       const current = collection.members?.[change.name];
       if (
@@ -1954,7 +2040,7 @@ export async function mutateConfiguration(
     } else if (change.type === "collection.member.remove") {
       parseQualifiedName(change.collection);
       parseNameSegment(change.name);
-      const collection = (await document(file)).collections?.[change.collection];
+      const collection = (await document(file, change.level)).collections?.[change.collection];
       if (!collection) throw directlyDeclaredCollectionError(change.collection);
       const member = collection.members?.[change.name];
       if (!member)
@@ -1988,7 +2074,7 @@ export async function mutateConfiguration(
           );
         names.add(entry.name);
       }
-      const collection = (await document(file)).collections?.[change.collection];
+      const collection = (await document(file, change.level)).collections?.[change.collection];
       if (!collection) throw directlyDeclaredCollectionError(change.collection);
       const members = { ...collection.members } as Record<string, SkillAddress>;
       for (const entry of removals) {
@@ -2047,7 +2133,7 @@ export async function mutateConfiguration(
       const source = resolved.members.get(change.from);
       if (!source)
         throw new SkillCliError("REFERENCE_NOT_FOUND", `Collection not found: ${change.from}`);
-      const targetDeclaration = (await document(file)).collections?.[change.into];
+      const targetDeclaration = (await document(file, change.level)).collections?.[change.into];
       if (!targetDeclaration) throw directlyDeclaredCollectionError(change.into);
       const target = (targetDeclaration.members ?? {}) as Record<string, SkillAddress>;
       for (const [name, address] of source) {
@@ -2063,7 +2149,7 @@ export async function mutateConfiguration(
       change.type === "use.add" ||
       change.type === "use.remove"
     ) {
-      const before = [...((await document(file)).use ?? [])];
+      const before = [...((await document(file, change.level)).use ?? [])];
       let collections: string[];
       if (change.type === "use.set") collections = [...change.collections];
       else if (change.type === "use.add")
@@ -2105,7 +2191,7 @@ export async function mutateConfiguration(
       parseQualifiedName(change.collection);
       parseQualifiedName(change.target);
       parseNameSegment(change.name);
-      const declaration = (await document(file)).collections?.[change.collection];
+      const declaration = (await document(file, change.level)).collections?.[change.collection];
       if (!declaration) throw directlyDeclaredCollectionError(change.collection);
       if (declaration.references?.[change.name])
         throw new SkillCliError("CONFIG_CONFLICT", "Reference name already exists");
@@ -2116,11 +2202,10 @@ export async function mutateConfiguration(
     } else if (change.type === "collection.reference.remove") {
       parseQualifiedName(change.collection);
       parseNameSegment(change.name);
-      if (!(await document(file)).collections?.[change.collection])
+      if (!(await document(file, change.level)).collections?.[change.collection])
         throw directlyDeclaredCollectionError(change.collection);
-      const reference = (await document(file)).collections?.[change.collection]?.references?.[
-        change.name
-      ];
+      const reference = (await document(file, change.level)).collections?.[change.collection]
+        ?.references?.[change.name];
       if (!reference) throw new SkillCliError("REFERENCE_NOT_FOUND", "Reference not found");
       if (
         change.expected &&
@@ -2132,7 +2217,7 @@ export async function mutateConfiguration(
     } else if (change.type === "collection.link.set") {
       parseQualifiedName(change.collection);
       parseQualifiedName(change.target);
-      const declaration = (await document(file)).collections?.[change.collection];
+      const declaration = (await document(file, change.level)).collections?.[change.collection];
       if (!declaration) throw directlyDeclaredCollectionError(change.collection);
       const existing = (declaration.links ?? []).indexOf(change.target);
       if ((change.linked && existing >= 0) || (!change.linked && existing < 0))
@@ -2150,7 +2235,7 @@ export async function mutateConfiguration(
     } else if (change.type === "agent.managed.set")
       next = edit(next, ["agents"], change.managed ? { opencode: "managed" } : undefined);
     const proposed = parse(next, [], { allowTrailingComma: true });
-    if (!userProjectConfigValidator(proposed))
+    if (!validatorFor(change.level)(proposed))
       throw new SkillCliError("CONFIG_INVALID", "Invalid declaration edit");
     validateDocumentNames(proposed as ConfigDocument, file);
     validateDocumentBindings(proposed as ConfigDocument, file, false);

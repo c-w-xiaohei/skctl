@@ -2,16 +2,25 @@ import type {
   ConfigDeclarationOwner,
   ConfigSourceContributionRef,
   ManagementProjection,
+  SkillAddress,
 } from "@skill-cli/core";
 import { filterSkills } from "./skills-filter";
+import { deriveAgentAccessTree } from "./collections/agent-access-tree";
 import { sameSkillAddress, type CommandRecord, type Destination } from "./types";
-import type { WorkspaceSnapshot } from "./workspace/state";
-import type { CollectionsSnapshot } from "./collections/state";
+import {
+  filterProblemRows,
+  problemRowKey,
+  problemRows,
+  type WorkspaceSnapshot,
+} from "./workspace/state";
+import { unassignedSkills, type CollectionsSnapshot } from "./collections/state";
 import { configDeclarationOwnerKey, type ConfigSnapshot } from "./config/state";
 import type { MemberOriginPath } from "@skill-cli/core";
 
 export interface PageActionFacts {
   readonly workspace: WorkspaceSnapshot;
+  /** Semantic navigation owns this detail; an inline Reader or stale browser cursor must not set it. */
+  readonly explicitSkillDetail?: boolean;
   readonly collections: CollectionsSnapshot;
   readonly config: (destination: Exclude<Destination, "workspace">) => ConfigSnapshot;
 }
@@ -20,6 +29,7 @@ export const actionIds = [
   "open-palette",
   "add-skills",
   "check-updates",
+  "collection-check-updates",
   "view-installed-skills",
   "open-config",
   "open-config-source",
@@ -35,6 +45,7 @@ export const actionIds = [
   "set-collection-use",
   "remove-collection",
   "skill-add-to-collection",
+  "skill-add-selected-to-collection",
   "skill-open-collection-use",
   "skill-open-source",
   "skill-check-updates",
@@ -60,7 +71,11 @@ interface ActionIntent {
 }
 
 /** A generic action's visible command and its dispatch identifier are one record. */
-export type ActionRecord = CommandRecord & { readonly id: ActionId };
+export type ActionRecord = CommandRecord & {
+  readonly id: ActionId;
+  /** Exact current-object or checked-set scope for Collection chooser actions. */
+  readonly description?: string;
+};
 
 export function selectedConfigIntegrationOwner(
   projection: ManagementProjection,
@@ -162,13 +177,94 @@ export function installedSkillContext(
   if (!projection || destination !== "workspace" || workspace.section !== "skills")
     return undefined;
   const selected = workspace.selectedSkill;
-  const skill = filterSkills(projection.installedSkills, {
-    query: workspace.query,
-    filters: workspace.filters,
-    source: workspace.sourceFilter,
-    agentStatus: projection.effective.agent.status,
-  }).find((item) => selected && sameSkillAddress(item.address, selected));
+  if (!selected) return undefined;
+  let candidates = projection.installedSkills;
+  if (!pages.explicitSkillDetail) {
+    if (workspace.scope === "problems") {
+      const problem = filterProblemRows(
+        problemRows(projection),
+        workspace.query,
+        workspace.filters,
+      ).find((row) => problemRowKey(row) === workspace.selectedProblem);
+      if (
+        problem?.intent?.kind !== "installed-skill" ||
+        !sameSkillAddress(problem.intent.address, selected)
+      )
+        return undefined;
+    } else if (workspace.scope === "current-exposure") {
+      const row = deriveAgentAccessTree(projection, workspace.expandedExposurePaths).rows.find(
+        (candidate) => candidate.key === workspace.selectedExposurePath,
+      );
+      if (
+        row?.kind !== "skill" ||
+        row.availability.status !== "available" ||
+        !sameSkillAddress(row.address, selected)
+      )
+        return undefined;
+    } else {
+      if (workspace.scope !== "all-installed-skills" && workspace.scope !== "unassigned")
+        return undefined;
+      candidates = filterSkills(
+        workspace.scope === "unassigned" ? unassignedSkills(projection) : candidates,
+        {
+          query: workspace.query,
+          filters: workspace.filters,
+          source: workspace.sourceFilter,
+          agentStatus: projection.effective.agent.status,
+          collectionViews:
+            projection.effective.status === "complete"
+              ? projection.effective.collectionsView
+              : undefined,
+        },
+      );
+    }
+  }
+  const skill = candidates.find((item) => sameSkillAddress(item.address, selected));
   return skill ? { skill } : undefined;
+}
+
+/** Resolve an exact Collection chooser target set; never fall back between current and checked. */
+export function skillCollectionTargets(
+  id: "skill-add-to-collection" | "skill-add-selected-to-collection",
+  destination: Destination,
+  projection: ManagementProjection | undefined,
+  pages: PageActionFacts,
+): { readonly addresses: readonly SkillAddress[]; readonly reason?: string } {
+  if (!projection || destination !== "workspace" || pages.workspace.section !== "skills")
+    return { addresses: [], reason: "Installed Skills are not available in this view" };
+  let addresses: readonly SkillAddress[];
+  if (id === "skill-add-to-collection") {
+    const context = installedSkillContext(destination, projection, pages);
+    if (!context)
+      return { addresses: [], reason: "No current visible Installed Skill is selected" };
+    addresses = [context.skill.address];
+  } else {
+    addresses = pages.workspace.selectedSkills;
+    if (!addresses.length) return { addresses: [], reason: "No Installed Skills are checked" };
+    const missing = addresses.filter(
+      (address) =>
+        !projection.installedSkills.some((skill) => sameSkillAddress(skill.address, address)),
+    );
+    if (missing.length)
+      return {
+        addresses: [],
+        reason: `Checked Installed Skills are no longer installed: ${missing
+          .map((address) => JSON.stringify(address))
+          .join(", ")}; clear or reselect the checked set`,
+      };
+  }
+  const available =
+    projection.effective.status === "complete" &&
+    projection.effective.collectionsView.some(
+      (collection) =>
+        collection.declared.some((owner) => !owner.contribution) || collection.repository.derived,
+    );
+  return available
+    ? { addresses }
+    : {
+        addresses,
+        reason: "No direct or repository-derived Collection is available for these targets",
+      };
 }
 
 export function selectedSourceContext(
@@ -245,6 +341,12 @@ function reachableActionIntents(
     );
     const direct = collection?.declared.find((owner) => !owner.contribution);
     return [
+      {
+        id: "collection-check-updates" as const,
+        title: "Check Collection updates",
+        description: `Check installed Skills reachable from ${collection?.id ?? "this Collection"}`,
+        enabled: !!collection,
+      },
       {
         id: "new-collection",
         title: "New Collection",
@@ -466,7 +568,10 @@ function reachableActionIntents(
             enabled: true,
           },
         ]
-      : selectedSkillActionIntents(destination, projection, pages);
+      : [
+          ...selectedSkillActionIntents(destination, projection, pages),
+          ...checkedSkillActionIntents(destination, projection, pages),
+        ];
   const common = [
     {
       id: "add-skills" as const,
@@ -544,13 +649,12 @@ function selectedSkillActionIntents(
   const source = skill.source;
   const healthy = skill.owner.health === "healthy";
   const sourceReason = source ? undefined : `Source ${skill.address.source} is not available`;
-  const collectionReason =
-    projection.effective.status === "complete" &&
-    projection.effective.collectionsView.some((collection) =>
-      collection.declared.some((owner) => !owner.contribution),
-    )
-      ? undefined
-      : "No direct Collection is available for this Installed Skill";
+  const collectionTargets = skillCollectionTargets(
+    "skill-add-to-collection",
+    destination,
+    projection,
+    pages,
+  );
   const handoff = (title: string, enabled: boolean, reason?: string): ActionIntent => ({
     id: `skill-${title.toLowerCase().replaceAll(" ", "-")}` as ActionId,
     title,
@@ -559,7 +663,13 @@ function selectedSkillActionIntents(
     reason,
   });
   return [
-    handoff("Add to collection", !collectionReason, collectionReason),
+    {
+      id: "skill-add-to-collection",
+      title: "Add to collection",
+      description: `Add only the current Installed Skill ${JSON.stringify(skill.address)}; choose a destination Collection`,
+      enabled: !collectionTargets.reason,
+      reason: collectionTargets.reason,
+    },
     {
       id: "skill-open-collection-use",
       title: "Collection Use",
@@ -579,13 +689,44 @@ function selectedSkillActionIntents(
     },
     {
       id: "skill-check-updates",
-      title: "Check updates",
-      description: `Check updates for Source ${skill.address.source}`,
+      title: "Update Skill",
+      description: `Check and update ${skill.address.source}/${skill.address.path}`,
       enabled: !!source && healthy,
       reason: sourceReason ?? (healthy ? undefined : `Owner is ${skill.owner.health}`),
     },
     handoff("Rebind", true),
     handoff("Uninstall", true),
+  ];
+}
+
+function checkedSkillActionIntents(
+  destination: Destination,
+  projection: ManagementProjection | undefined,
+  pages: PageActionFacts,
+): readonly ActionIntent[] {
+  if (
+    !projection ||
+    destination !== "workspace" ||
+    pages.workspace.section !== "skills" ||
+    !pages.workspace.selectedSkills.length
+  )
+    return [];
+  const targets = skillCollectionTargets(
+    "skill-add-selected-to-collection",
+    destination,
+    projection,
+    pages,
+  );
+  return [
+    {
+      id: "skill-add-selected-to-collection",
+      title: `Add ${pages.workspace.selectedSkills.length} selected to Collection`,
+      description: `Add exactly the checked Installed Skills, including targets hidden by this view: ${pages.workspace.selectedSkills
+        .map((address) => JSON.stringify(address))
+        .join(", ")}; choose a destination Collection`,
+      enabled: !targets.reason,
+      reason: targets.reason,
+    },
   ];
 }
 
@@ -600,7 +741,8 @@ const actionDestination = (id: ActionId): string => {
       return "Source selection";
     case "check-updates":
     case "skill-check-updates":
-      return "Update review";
+    case "collection-check-updates":
+      return "Updates";
     case "view-installed-skills":
       return "Installed Skills";
     case "remove-source":
@@ -622,6 +764,7 @@ const actionDestination = (id: ActionId): string => {
     case "set-collection-use":
       return "Collection Use form";
     case "skill-add-to-collection":
+    case "skill-add-selected-to-collection":
       return "Collection chooser";
     case "skill-open-collection-use":
       return "Collection Use";
@@ -667,6 +810,11 @@ const commandRecord = (intent: ActionIntent): ActionRecord => ({
   verb: intent.title,
   destination: actionDestination(intent.id),
   scope: "page",
+  ...(intent.id === "skill-add-to-collection" ||
+  intent.id === "skill-add-selected-to-collection" ||
+  intent.id === "collection-check-updates"
+    ? { description: intent.description }
+    : {}),
   enabled: intent.enabled,
   ...(intent.reason ? { disabledReason: intent.reason } : {}),
   danger: dangerousAction(intent.id),
@@ -677,7 +825,31 @@ export function reachableActions(
   projection: ManagementProjection | undefined,
   pages: PageActionFacts,
 ): readonly ActionRecord[] {
-  return reachableActionIntents(destination, projection, pages).map(commandRecord);
+  const intents = [...reachableActionIntents(destination, projection, pages)];
+  if (
+    destination === "workspace" &&
+    pages.workspace.section === "skills" &&
+    pages.workspace.scope === "current-exposure" &&
+    projection?.effective.status === "complete"
+  ) {
+    const row = deriveAgentAccessTree(projection, pages.workspace.expandedExposurePaths).rows.find(
+      (candidate) => candidate.key === pages.workspace.selectedExposurePath,
+    );
+    if (row && row.kind !== "skill") {
+      const collection = row.kind === "reference" ? row.target : row.collection;
+      const available =
+        !row.missingReason &&
+        projection.effective.collectionsView.some((view) => view.id === collection);
+      intents.push({
+        id: "collection-check-updates",
+        title: "Check Collection updates",
+        description: `Check installed Skills reachable from ${collection}`,
+        enabled: available,
+        reason: available ? undefined : (row.missingReason ?? "Collection is unavailable"),
+      });
+    }
+  }
+  return intents.map(commandRecord);
 }
 
 export function selectedSkillActions(

@@ -160,8 +160,13 @@ export function shellSelectionInvariants(text: string) {
   const selectedContextCount = [
     ...lines[0].matchAll(/\[\s*(Workspace|Global|Project|Local)(?=\s|\]|$)/g),
   ].length;
-  const sections = "Skills|Sources|Config Sources|Collections|Integrations";
+  const sections = "Skills|Sources|Config Sources|Collections|Integrations|Updates";
   const sidebarMounted = lines.slice(2, 12).some((line) => /^\s*PAGES\s*│/.test(line));
+  // Current tabs use background color, not punctuation. This text-only screen
+  // cannot attest to color selection; retain strict checks for older textual
+  // cues and the still-textual sidebar, without inventing selected counts.
+  const tabCues = `${lines[0]} ${sidebarMounted ? "" : (lines[2] ?? "")}`;
+  const colorOnly = !tabCues.includes("[") && !tabCues.includes("]");
   const selectedSectionCount = sidebarMounted
     ? lines.slice(2, -3).filter((line) => {
         const separator = line.indexOf("│");
@@ -173,9 +178,10 @@ export function shellSelectionInvariants(text: string) {
       }).length
     : [...(lines[2] ?? "").matchAll(new RegExp(`\\[\\s*(${sections})\\s*\\]`, "g"))].length;
   return {
-    selectedContextCount,
-    selectedSectionCount,
+    selectedContextCount: colorOnly ? null : selectedContextCount,
+    selectedSectionCount: colorOnly && !sidebarMounted ? null : selectedSectionCount,
     sectionCue: sidebarMounted ? "sidebar" : "compact-navigation",
+    ...(colorOnly ? { tabSelectionEvidence: "unavailable-in-text" as const } : {}),
   };
 }
 
@@ -233,7 +239,8 @@ export async function nativeTerminal(
       const invariants = shellSelectionInvariants(screen.text());
       if (
         "selectedContextCount" in invariants &&
-        (invariants.selectedContextCount !== 1 || invariants.selectedSectionCount !== 1)
+        ((invariants.selectedContextCount !== null && invariants.selectedContextCount !== 1) ||
+          (invariants.selectedSectionCount !== null && invariants.selectedSectionCount !== 1))
       )
         throw new Error(`Native shell selection invariant failed at ${name}\n${screen.text()}`);
       const file = join(

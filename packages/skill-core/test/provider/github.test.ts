@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openSource } from "../../src/internal/sources";
 import { openGitHubSource, resolveGitHubApi } from "../../src/internal/source-github";
+import { createExecutableFixture } from "../executable-fixture";
 
 const test = bunTest.serial;
 const commit = "a".repeat(40);
@@ -61,20 +62,25 @@ test("GitHub reads pinned tree metadata and requested blob bytes through its API
         return Response.json({
           sha: "b".repeat(40),
           truncated: false,
+          tree: [{ path: "nested", mode: "040000", type: "tree", sha: "c".repeat(40) }],
+        });
+      if (path === `/repos/acme/skills/git/trees/${"c".repeat(40)}`)
+        return Response.json({
+          sha: "c".repeat(40),
+          truncated: false,
           tree: [
-            { path: "nested", mode: "040000", type: "tree", sha: "c".repeat(40) },
             {
-              path: "nested/SKILL.md",
+              path: "SKILL.md",
               mode: "100644",
               type: "blob",
               sha: "d".repeat(40),
               size: 35,
             },
-            { path: "nested/run", mode: "100755", type: "blob", sha: runObject, size: 9 },
-            { path: "nested/link", mode: "120000", type: "blob", sha: "f".repeat(40), size: 6 },
-            { path: "nested/module", mode: "160000", type: "commit", sha: "1".repeat(40) },
+            { path: "run", mode: "100755", type: "blob", sha: runObject, size: 9 },
+            { path: "link", mode: "120000", type: "blob", sha: "f".repeat(40), size: 6 },
+            { path: "module", mode: "160000", type: "commit", sha: "1".repeat(40) },
             {
-              path: "nested/pointer",
+              path: "pointer",
               mode: "100644",
               type: "blob",
               sha: "2".repeat(40),
@@ -107,7 +113,6 @@ test("GitHub reads pinned tree metadata and requested blob bytes through its API
       server.url.toString(),
     );
     expect(await Array.fromAsync(snapshot.list("nested"))).toEqual([
-      { kind: "directory", path: "nested" },
       {
         kind: "file",
         path: "nested/SKILL.md",
@@ -133,6 +138,7 @@ test("GitHub reads pinned tree metadata and requested blob bytes through its API
     expect(requests).toEqual([
       `/repos/acme/skills/commits/${commit}`,
       `/repos/acme/skills/git/trees/${"b".repeat(40)}`,
+      `/repos/acme/skills/git/trees/${"c".repeat(40)}`,
       `/repos/acme/skills/git/blobs/${runObject}`,
     ]);
     await snapshot.close();
@@ -160,9 +166,15 @@ test("GitHub reads only the declared Source Root tree", async () => {
         return Response.json({
           sha: "b".repeat(40),
           truncated: false,
+          tree: [{ path: "only", mode: "040000", type: "tree", sha: "d".repeat(40) }],
+        });
+      if (path === `/repos/acme/skills/git/trees/${"d".repeat(40)}`)
+        return Response.json({
+          sha: "d".repeat(40),
+          truncated: false,
           tree: [
             {
-              path: "only/SKILL.md",
+              path: "SKILL.md",
               mode: "100644",
               type: "blob",
               sha: "c".repeat(40),
@@ -183,6 +195,7 @@ test("GitHub reads only the declared Source Root tree", async () => {
       server.url.toString(),
     );
     expect(await Array.fromAsync(snapshot.list(""))).toEqual([
+      { kind: "directory", path: "only" },
       {
         kind: "file",
         path: "only/SKILL.md",
@@ -195,6 +208,7 @@ test("GitHub reads only the declared Source Root tree", async () => {
       `/repos/acme/skills/commits/${commit}`,
       `/repos/acme/skills/git/trees/${"a".repeat(40)}`,
       `/repos/acme/skills/git/trees/${"b".repeat(40)}`,
+      `/repos/acme/skills/git/trees/${"d".repeat(40)}`,
     ]);
     await snapshot.close();
   } finally {
@@ -213,30 +227,32 @@ test("GitHub fallback is eligible only for incomplete or unavailable API operati
 
 test("GitHub.com auth token child is cancelled and drained", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-gh-abort-"));
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   const ready = join(root, "ready");
   const pid = join(root, "pid");
-  await mkdir(bin);
-  await writeFile(
-    join(bin, "gh"),
-    `#!/bin/sh
+  const previousPath = process.env.PATH;
+  const previousGitHubToken = process.env.GITHUB_TOKEN;
+  const previousGhToken = process.env.GH_TOKEN;
+  const controller = new AbortController();
+  let pending: Promise<unknown> | undefined;
+  try {
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "gh"),
+      `#!/bin/sh
 : > "${ready}"
 printf '%s' "$$" > "${pid}"
 trap '' TERM
 i=0; while [ "$i" -lt 8192 ]; do printf 'blocked stderr %s\\n' "$i" >&2; i=$((i + 1)); done
 while :; do sleep 1; done
 `,
-    { mode: 0o755 },
-  );
-  const previousPath = process.env.PATH;
-  const previousGitHubToken = process.env.GITHUB_TOKEN;
-  const previousGhToken = process.env.GH_TOKEN;
-  process.env.PATH = `${bin}:${previousPath}`;
-  delete process.env.GITHUB_TOKEN;
-  delete process.env.GH_TOKEN;
-  try {
-    const controller = new AbortController();
-    const pending = resolveGitHubApi("https://github.com/acme/skills", controller.signal);
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${bin}:${previousPath}`;
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    pending = resolveGitHubApi("https://github.com/acme/skills", controller.signal);
     for (let attempt = 0; attempt < 50; attempt++) {
       if (
         await readFile(ready)
@@ -261,30 +277,34 @@ while :; do sleep 1; done
     else process.env.GITHUB_TOKEN = previousGitHubToken;
     if (previousGhToken === undefined) delete process.env.GH_TOKEN;
     else process.env.GH_TOKEN = previousGhToken;
+    controller.abort();
+    await pending?.catch(() => {});
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("GitHub.com resolves API tokens without exposing test APIs to gh", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-gh-token-"));
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   const invocation = join(root, "invocation");
-  await mkdir(bin);
-  await writeFile(
-    join(bin, "gh"),
-    `#!/bin/sh
-printf '%s\\n' "$*" >> "${invocation}"
-printf '%s\\n' gh-token
-`,
-    { mode: 0o755 },
-  );
   const previousPath = process.env.PATH;
   const previousGitHubToken = process.env.GITHUB_TOKEN;
   const previousGhToken = process.env.GH_TOKEN;
-  process.env.PATH = `${bin}:${previousPath}`;
-  delete process.env.GITHUB_TOKEN;
-  delete process.env.GH_TOKEN;
   try {
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "gh"),
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "${invocation}"
+printf '%s\\n' gh-token
+`,
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${bin}:${previousPath}`;
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
     await expect(resolveGitHubApi("https://github.com/acme/skills")).resolves.toEqual({
       baseUrl: "https://api.github.com",
       token: "gh-token",
@@ -361,6 +381,7 @@ printf '%s\\n' gh-token
     else process.env.GITHUB_TOKEN = previousGitHubToken;
     if (previousGhToken === undefined) delete process.env.GH_TOKEN;
     else process.env.GH_TOKEN = previousGhToken;
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -599,7 +620,7 @@ test("GitHub fallback closes its temporary Generic Git snapshot after a successf
   }
 });
 
-test("GitHub request timeout falls back without exposing transport details", async () => {
+test("GitHub request timeout is authoritative and never falls back", async () => {
   const fixture = await bareFixture();
   const server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
   try {
@@ -613,9 +634,9 @@ test("GitHub request timeout falls back without exposing transport details", asy
       { baseUrl: server.url.toString(), timeout: 25 },
       fixture.bare,
     );
-    expect((await Array.fromAsync(snapshot.list(""))).map((entry) => entry.path)).toEqual([
-      "SKILL.md",
-    ]);
+    await expect(Array.fromAsync(snapshot.list(""))).rejects.toMatchObject({
+      code: "PROVIDER_TIMEOUT",
+    });
     await snapshot.close();
   } finally {
     server.stop(true);

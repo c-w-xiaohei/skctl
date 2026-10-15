@@ -39,6 +39,43 @@ test("native shell selection checks whitespace contexts and bounded sidebar or c
   });
 });
 
+test("native shell selection accepts Updates in sidebar and compact navigation cues", () => {
+  const sidebar =
+    " skill-cli [ Workspace ] Global\n────\n                     │ Workspace / Updates\n PAGES               │\n   ▶ Updates         │ ▶ Collections\nfooter\nfooter\nfooter";
+  expect(shellSelectionInvariants(sidebar)).toMatchObject({
+    selectedContextCount: 1,
+    selectedSectionCount: 1,
+    sectionCue: "sidebar",
+  });
+
+  const compact = "skill-cli [ Workspace ]\n────\n[ Updates ] Collections\nWorkspace / Updates";
+  expect(shellSelectionInvariants(compact)).toMatchObject({
+    selectedContextCount: 1,
+    selectedSectionCount: 1,
+    sectionCue: "compact-navigation",
+  });
+});
+
+test("text-only terminal evidence does not invent selection counts for color-only tabs", () => {
+  expect(
+    shellSelectionInvariants(
+      "skill-cli  Workspace  Global\n────\nSkills  Collections\nWorkspace / Skills",
+    ),
+  ).toMatchObject({
+    selectedContextCount: null,
+    selectedSectionCount: null,
+    tabSelectionEvidence: "unavailable-in-text",
+  });
+  expect(
+    shellSelectionInvariants(
+      "skill-cli  Workspace  Global\n────\n │ Workspace / Skills\n PAGES               │\n   ▶ Skills          │\nfooter\nfooter\nfooter",
+    ),
+  ).toMatchObject({
+    selectedContextCount: null,
+    selectedSectionCount: 1,
+  });
+});
+
 test("native screen tracks cursor moves, split ANSI/UTF-8, wide cells and combining text", () => {
   const screen = new TerminalScreen(40, 8);
   const bytes = new TextEncoder().encode("\x1b[2J\x1b[2;1H中Wide\r\néCombining\x1b[4;3H>Command<");

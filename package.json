@@ -1,6 +1,9 @@
 {
   "name": "skill-cli-workspace",
   "private": true,
+  "engines": {
+    "bun": ">=1.4.3"
+  },
   "workspaces": [
     "packages/skill-core",
     "packages/skill-cli",
@@ -9,7 +12,7 @@
   ],
   "scripts": {
     "format:check": "oxfmt --check",
-    "typecheck": "bunx tsc -p packages/skill-core/tsconfig.json --noEmit && bunx tsc -p packages/skill-cli/tsconfig.json --noEmit && bunx tsc -p packages/skill-tui/tsconfig.json --noEmit && bunx tsc -p packages/opencode-adapter/tsconfig.json --noEmit",
+    "typecheck": "./scripts/resource-run.sh sh -c 'bun node_modules/typescript/bin/tsc -p packages/skill-core/tsconfig.json --noEmit && bun node_modules/typescript/bin/tsc -p packages/skill-cli/tsconfig.json --noEmit && bun node_modules/typescript/bin/tsc -p packages/skill-tui/tsconfig.json --noEmit && bun node_modules/typescript/bin/tsc -p packages/opencode-adapter/tsconfig.json --noEmit'",
     "lint": "oxlint --deny-warnings",
     "schema:write": "bun scripts/schema.ts write",
     "schema:check": "bun scripts/schema.ts check",
@@ -20,19 +23,19 @@
     "test:providers": "bun test packages/skill-core/test/provider",
     "test:integration": "bun test packages/skill-core/test/integration",
     "test:cli": "bun test packages/skill-cli/test",
-    "test:tui": "bun test --preload @opentui/solid/preload --preload ./packages/skill-tui/test/test-renderer-preload.ts packages/skill-tui/test",
+    "test:tui": "./scripts/resource-run.sh bun test --max-concurrency=1 --preload @opentui/solid/preload --preload ./packages/skill-tui/test/test-renderer-preload.ts packages/skill-tui/test",
     "dev:tui": "bun --preload @opentui/solid/preload packages/skill-tui/src/main.ts",
     "test:interfaces": "bun run test:cli && bun run test:tui && bun test packages/opencode-adapter/test",
     "test:packaged": "bun test verification/packaged",
     "smoke:packaged": "bun verification/packaged/smoke.ts",
-    "build:cli": "bun scripts/build.ts cli",
-    "build:tui": "bun scripts/build.ts tui",
-    "build:native": "bun scripts/build.ts native",
-    "pack:plugin": "bun scripts/build.ts plugin"
+    "build:cli": "./scripts/resource-run.sh bun scripts/build.ts cli",
+    "build:tui": "./scripts/resource-run.sh bun scripts/build.ts tui",
+    "build:native": "./scripts/resource-run.sh bun scripts/build.ts native",
+    "pack:plugin": "./scripts/resource-run.sh bun scripts/build.ts plugin"
   },
   "devDependencies": {
     "@opencode-ai/sdk": "1.18.4",
-    "@types/bun": "1.3.14",
+    "@types/bun": "1.4.3",
     "husky": "9.1.7",
     "opencode-ai": "1.18.4",
     "oxfmt": "0.59.0",

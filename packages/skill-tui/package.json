@@ -9,6 +9,7 @@
     "@skill-cli/core": "workspace:*",
     "@tuiparts/core": "0.0.6",
     "@tuiparts/solid": "0.0.6",
+    "diff": "9.0.0",
     "solid-js": "1.9.12"
   }
 }

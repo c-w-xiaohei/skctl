@@ -1,6 +1,6 @@
 import { cp, lstat, open, readFile, readlink, readdir, rename, unlink } from "node:fs/promises";
+import { constants } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { parseDocument } from "yaml";
 import type {
   ContentCapability,
   CoreFactoryOptions,
@@ -13,6 +13,8 @@ import {
   decodeStrictText,
   parseNameSegment,
   parseResourcePath,
+  parseSkillFrontmatter,
+  parseSkillMetadata,
   textLimit,
 } from "./internal/domain";
 import { StateCoordinator } from "./internal/state";
@@ -105,13 +107,7 @@ function installedSkillText(
   if (rawText.startsWith("---") && !frontmatter)
     throw new SkillCliError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
   if (!frontmatter) return { ...fallback, rawText, markdownText: rawText };
-  if (/(^|\s)[*!&][^\s]*/u.test(frontmatter[1]!))
-    throw new SkillCliError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
-  const document = parseDocument(frontmatter[1]!, { uniqueKeys: true });
-  const fields = document.toJS();
-  if (document.errors.length || !fields || Array.isArray(fields) || typeof fields !== "object")
-    throw new SkillCliError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
-  const values = fields as Record<string, unknown>;
+  const values = parseSkillFrontmatter(frontmatter[1]!);
   const field = (name: "name" | "description", fallbackValue: string) => {
     const value = values[name];
     if (value === undefined) return fallbackValue;
@@ -309,12 +305,10 @@ export function createContent(_factory: CoreFactoryOptions): ContentCapability {
       const text = await withContentUse(found, async () =>
         decodeStrictText(await readFile(await safeFile(found.root, "SKILL.md"))),
       );
-      const fields = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1] ?? "";
       return {
         value: {
           selector: request.selector,
-          name: /^name:\s*(.+)$/mu.exec(fields)?.[1] ?? "",
-          description: /^description:\s*(.+)$/mu.exec(fields)?.[1] ?? "",
+          ...parseSkillMetadata(text),
           path: "SKILL.md",
           text,
           provenance: found.provenance,
@@ -449,18 +443,28 @@ export function createContent(_factory: CoreFactoryOptions): ContentCapability {
             options.signal!.addEventListener("abort", abort!, { once: true });
             if (options.signal!.aborted) abort();
           });
-        const result = await (cancelled ? Promise.race([child.exited, cancelled]) : child.exited);
-        if (abort) options!.signal!.removeEventListener("abort", abort);
-        const wasCancelled = options?.signal?.aborted === true;
-        return {
-          value: {
-            selector: request.selector,
-            exitCode: result,
-            signal: wasCancelled ? "SIGTERM" : null,
-            cancelled: wasCancelled,
-          },
-          diagnostics: [],
-        };
+        try {
+          const result = await (cancelled ? Promise.race([child.exited, cancelled]) : child.exited);
+          const wasCancelled = options?.signal?.aborted === true;
+          const signalCode = child.signalCode;
+          const signal =
+            typeof signalCode === "number"
+              ? (Object.entries(constants.signals).find(
+                  ([, number]) => number === signalCode,
+                )?.[0] ?? String(signalCode))
+              : (signalCode ?? (wasCancelled ? "SIGTERM" : null));
+          return {
+            value: {
+              selector: request.selector,
+              exitCode: result,
+              signal,
+              cancelled: wasCancelled,
+            },
+            diagnostics: [],
+          };
+        } finally {
+          if (abort) options!.signal!.removeEventListener("abort", abort);
+        }
       });
     },
   };

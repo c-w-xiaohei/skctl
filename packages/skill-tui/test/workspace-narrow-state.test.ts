@@ -126,6 +126,42 @@ test("workspace reconciliation drops expansion paths that disappeared", () => {
   expect(workspace.expandedExposurePaths()).toEqual({});
 });
 
+test("workspace reconciliation retains a valid expanded descendant hidden by its collapsed ancestor", () => {
+  const workspace = createWorkspaceState();
+  const base = readerProjection();
+  if (base.effective.status !== "complete") throw new Error("expected complete projection");
+  const owner = { level: "project" as const, file: "/project.jsonc", pointer: "/collections/root" };
+  const root: ExposurePath = { segments: [{ collection: "root" }] };
+  const child: ExposurePath = {
+    segments: [
+      { collection: "root" },
+      { collection: "child", reference: { name: "child", target: "child" } },
+    ],
+  };
+  const current = {
+    ...base,
+    effective: {
+      ...base.effective,
+      managed: true,
+      use: ["root"],
+      collectionsView: ["root", "child"].map((id, index) => ({
+        id,
+        declared: [owner],
+        repository: { derived: false, producers: [] },
+        members: [],
+        references:
+          index === 0 ? [{ name: "child", collection: "child", description: "", owner }] : [],
+        links: [],
+      })),
+    },
+  };
+
+  workspace.expandExposurePath(child);
+  workspace.reconcile(undefined, current);
+  expect(workspace.isExposurePathExpanded(child)).toBe(true);
+  expect(workspace.isExposurePathExpanded(root)).toBe(false);
+});
+
 test("workspace scope selection keeps its work area section coherent", () => {
   const workspace = createWorkspaceState();
   workspace.selectScope("sources");

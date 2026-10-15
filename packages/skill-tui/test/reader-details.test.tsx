@@ -7,7 +7,7 @@ import {
   openReaderFromInspector,
   workspaceProjection,
 } from "./direct-source.fixture";
-import { openReaderTab } from "./reader-test-controls";
+import { openAllInstalledSkills, openReaderTab } from "./reader-test-controls";
 
 const address = { source: "team-main", path: "guide" };
 const globalCollectionOwner = {
@@ -190,6 +190,7 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     { width: 120, height: 40 },
   );
   try {
+    await openAllInstalledSkills(setup);
     await openReaderFromInspector(setup);
     await openReaderTab(setup, 2);
     await setup.waitForFrame((frame) => frame.includes("Summary"));

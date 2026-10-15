@@ -497,6 +497,7 @@ test("Workspace selection and reconciliation retain colliding structural Skill a
   };
   const workspace = createWorkspaceState();
   workspace.selectSkill(second);
+  workspace.selectScope("all-installed-skills");
   workspace.reconcile(colliding, colliding);
   expect(workspace.selectedSkill()).toEqual(second);
 });

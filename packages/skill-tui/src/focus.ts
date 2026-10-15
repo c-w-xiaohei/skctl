@@ -10,6 +10,8 @@ export type FocusVersionListener = (version: number) => void;
 
 export interface FocusRegistry {
   register(owner: FocusOwner, target: FocusTarget): () => void;
+  /** A physical child aliases this exact canonical registration, never a later root. */
+  registerMember(owner: FocusOwner, target: FocusTarget, origin: FocusTarget): () => void;
   target(owner: FocusOwner): FocusTarget | undefined;
   ownerOf(target: FocusTarget): FocusOwner | undefined;
   version(): number;
@@ -61,8 +63,34 @@ export function createFocus(initial?: FocusOwner): Focus {
 
 export function createFocusRegistry(): FocusRegistry {
   const bindings = new Map<FocusOwner, { readonly token: object; readonly target: FocusTarget }>();
+  const members = new WeakMap<
+    FocusTarget,
+    {
+      readonly token: object;
+      readonly owner: FocusOwner;
+      readonly origin: FocusTarget;
+      readonly registrationToken: object;
+      active: boolean;
+    }
+  >();
   const listeners = new Set<FocusVersionListener>();
-  const modeHandlers = new WeakMap<FocusTarget, (key: NavKey) => DispatchResult>();
+  const modeHandlers = new WeakMap<
+    FocusTarget,
+    { readonly handler: (key: NavKey) => DispatchResult; readonly memberToken?: object }
+  >();
+  const isDestroyed = (target: FocusTarget) =>
+    "isDestroyed" in target && target.isDestroyed === true;
+  const liveMember = (target: FocusTarget) => {
+    const member = members.get(target);
+    const binding = member && bindings.get(member.owner);
+    return member?.active &&
+      binding?.token === member.registrationToken &&
+      binding.target === member.origin &&
+      !isDestroyed(member.origin) &&
+      !isDestroyed(target)
+      ? member
+      : undefined;
+  };
   let version = 0;
   const bump = () => {
     version += 1;
@@ -80,6 +108,25 @@ export function createFocusRegistry(): FocusRegistry {
         }
       };
     },
+    registerMember(owner, target, origin) {
+      const binding = bindings.get(owner);
+      if (!binding || binding.target !== origin || target === origin) return () => {};
+      const member = {
+        token: {},
+        owner,
+        origin,
+        registrationToken: binding.token,
+        active: true,
+      };
+      members.set(target, member);
+      bump();
+      return () => {
+        if (members.get(target)?.token !== member.token || !member.active) return;
+        // Keep a weak tombstone: an explicit handler must not revive a released member.
+        member.active = false;
+        bump();
+      };
+    },
     target: (owner) => bindings.get(owner)?.target,
     ownerOf(target) {
       let content: FocusOwner | undefined;
@@ -88,7 +135,7 @@ export function createFocusRegistry(): FocusRegistry {
         if (owner !== "work-area") return owner;
         content = owner;
       }
-      return content;
+      return liveMember(target)?.owner ?? content;
     },
     version: () => version,
     subscribe(listener) {
@@ -100,20 +147,26 @@ export function createFocusRegistry(): FocusRegistry {
     applyFocus(owner) {
       const binding = bindings.get(owner);
       if (!binding) return false;
-      if ("isDestroyed" in binding.target && binding.target.isDestroyed === true) return false;
+      if (isDestroyed(binding.target)) return false;
       binding.target.focus();
       return !("focused" in binding.target) || binding.target.focused === true;
     },
     registerModeHandler(target, handler) {
-      modeHandlers.set(target, handler);
+      const entry = { handler, memberToken: members.get(target)?.token };
+      modeHandlers.set(target, entry);
       return () => {
-        if (modeHandlers.get(target) === handler) modeHandlers.delete(target);
+        if (modeHandlers.get(target) === entry) modeHandlers.delete(target);
       };
     },
     dispatchMode(target, key) {
-      return target && isPlainNavKey(key)
-        ? (modeHandlers.get(target)?.(key) ?? "declined")
-        : "declined";
+      if (!target || !isPlainNavKey(key)) return "declined";
+      const member = liveMember(target);
+      if (members.has(target) && !member) return "declined";
+      const explicit = modeHandlers.get(target);
+      const current =
+        explicit && (!member || explicit.memberToken === member.token) ? explicit : undefined;
+      const entry = current ?? (member && modeHandlers.get(member.origin));
+      return entry?.handler(key) ?? "declined";
     },
   };
 }

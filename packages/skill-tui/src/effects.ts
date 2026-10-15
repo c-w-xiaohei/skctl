@@ -19,15 +19,27 @@ import {
   type RebindImpact,
   type UninstallImpact,
   type UpdateObservation,
+  type ManagementProjection,
   type WorkspaceCapability,
   type ConfigDeclarationOwner,
 } from "@skill-cli/core";
+import { createSignal } from "solid-js";
 import type { DirectSourceIntent, SourceOperationIntent } from "./actions";
 import type { OperationState } from "./operation-state";
 import type { Diagnostic } from "@skill-cli/core";
-import type { ReaderEvent, ReaderRequest } from "./reader/state";
+import type { ReaderAddress, ReaderEvent, ReaderRequest } from "./reader/state";
 import type { ProjectionOutcomes } from "./projection";
 import type { TaskState } from "./types";
+import {
+  buildUpdateScope,
+  createUpdatesState,
+  type UpdateAddress,
+  type UpdateScopeEntry,
+} from "./updates/model";
+import { createUpdateController, type UpdateController } from "./updates/controller";
+import type { UpdatesState } from "./updates/state";
+import { createUpdateCheckService, type SourceUpdateCheck } from "./updates/check-service";
+import { isFreshUpdateCheck } from "./updates/check-cache";
 
 interface ForegroundRequest {
   readonly id: string;
@@ -44,6 +56,7 @@ export interface TuiCore {
     | "discover"
     | "install"
     | "checkUpdate"
+    | "previewUpdate"
     | "update"
     | "previewUninstall"
     | "uninstall"
@@ -56,7 +69,13 @@ export interface TuiCore {
     | "forgetConfig"
     | "previewRemoveConfig"
     | "removeConfig"
-  >;
+  > & {
+    /** Optional while existing test fakes transition to Core's baseline capability. */
+    readonly getUpdateBaseline?: (
+      request: { readonly source: string },
+      options?: { readonly signal?: AbortSignal },
+    ) => ReturnType<ManagementCapability["getUpdateBaseline"]>;
+  };
   readonly content: Pick<
     ContentCapability,
     "loadInstalled" | "listInstalledResources" | "readInstalled"
@@ -265,13 +284,19 @@ export function createTuiEffects(
   },
 ) {
   let refreshController: AbortController | undefined;
-  let readerContentController: AbortController | undefined;
+  let readerContentRequest:
+    | {
+        readonly controller: AbortController;
+        readonly address: ReaderAddress;
+        readonly epoch: number;
+      }
+    | undefined;
   let readerResourceController: AbortController | undefined;
   let foreground:
     | {
         readonly id: string;
         readonly controller: AbortController;
-        readonly kind: "preview" | "observe" | "execute";
+        readonly kind: "preview" | "observe" | "execute" | "updates";
       }
     | undefined;
   let liveReview: SourceRemovalReview | undefined;
@@ -281,7 +306,65 @@ export function createTuiEffects(
   let liveCollectionReview: CollectionReview | undefined;
   let sequence = 0;
   let closed = false;
+  let latestProjection: ManagementProjection | undefined;
+  const [updates, setUpdates] = createSignal<UpdatesState>();
+  const [updatesBlockedReason, setUpdatesBlockedReason] = createSignal<string>();
+  const [updateTask, setUpdateTask] = createSignal<{
+    readonly state: UpdatesState;
+    readonly entry: UpdateScopeEntry;
+    readonly controller: UpdateController;
+  }>();
+  const updatesActive = () => {
+    const run = updateTask()?.controller.run();
+    return !closed && run !== undefined && run.phase !== "settled";
+  };
+  const activeUpdateState = () => (updatesActive() ? updateTask()?.state : undefined);
+  const [checkRevision, setCheckRevision] = createSignal(0);
+  /** Bounded route-restorable drafts only; controllers/tasks are never retained per scope. */
+  const updateDrafts = new Map<string, UpdatesState>();
+  const submittingUpdateSources = new Set<string>();
+  const applyUpdateCheck = (check: SourceUpdateCheck) => {
+    const snapshot = latestProjection;
+    for (const draft of updateDrafts.values()) {
+      if (!draft.scope.sources.includes(check.source)) continue;
+      // Preserve the exact reviewed observation the active controller is about to
+      // submit. The service/cache and every other draft are still invalidated.
+      if (draft === activeUpdateState() && submittingUpdateSources.has(check.source)) continue;
+      draft.applyCheck(check);
+      if (snapshot && check.observation && !check.stale)
+        draft.rebaseCheckedScope(buildUpdateScope(snapshot, draft.scope.entry), check.source);
+    }
+  };
+  const updateChecks = createUpdateCheckService(core.management, {
+    onChange: (check) => {
+      if (closed) return;
+      applyUpdateCheck(check);
+      setCheckRevision((revision) => revision + 1);
+    },
+    onActivity: () => {
+      if (!closed) setCheckRevision((revision) => revision + 1);
+    },
+  });
   const next = () => `${++sequence}`;
+  const reconcileDraftWithSnapshot = (draft: UpdatesState, snapshot: ManagementProjection) => {
+    const fresh = buildUpdateScope(snapshot, draft.scope.entry);
+    // Compare against the prior displayed/guarded facts before replacing current
+    // membership. Otherwise a stale binding/revision could be hidden by a cached
+    // Source observation replayed immediately after reconciliation.
+    const invalidated = draft.reconcileRestoredScope(fresh);
+    draft.reconcileCurrentScope(fresh);
+    for (const source of fresh.sources) {
+      if (invalidated.includes(source)) continue;
+      const check = updateChecks.check(source);
+      if (check) draft.applyCheck(check);
+    }
+  };
+  const reconcileUpdateDraftScopes = (snapshot: ManagementProjection) => {
+    for (const draft of updateDrafts.values()) {
+      if (draft === activeUpdateState()) continue;
+      reconcileDraftWithSnapshot(draft, snapshot);
+    }
+  };
   const report = (next: Diagnostic) => operation.report(next);
   const start = (task: TaskState) => operation.start(task);
   const settle = (id: string, status: string, error?: Diagnostic) =>
@@ -297,6 +380,9 @@ export function createTuiEffects(
     reportCancellation = true,
   ): Promise<T> => {
     if (closed || foreground) return fallback;
+    // Mutations win over session-owned, read-only checks. Their late result must not
+    // re-authorize a draft after installation facts may have changed.
+    if (kind === "execute") updateChecks.pause();
     const id = next();
     const controller = new AbortController();
     const current = { id, controller, kind };
@@ -323,6 +409,7 @@ export function createTuiEffects(
       return fallback;
     } finally {
       if (foreground === current) foreground = undefined;
+      if (kind === "execute") updateChecks.resume();
     }
   };
 
@@ -334,7 +421,11 @@ export function createTuiEffects(
     projection.loading();
     try {
       const result = await core.workspace.get({ signal: controller.signal });
-      if (!closed && refreshController === controller) projection.applyProjection(result.value);
+      if (!closed && refreshController === controller) {
+        latestProjection = result.value;
+        reconcileUpdateDraftScopes(result.value);
+        projection.applyProjection(result.value);
+      }
       return result;
     } catch (error) {
       if (!closed && refreshController === controller && !cancelled(error))
@@ -344,34 +435,194 @@ export function createTuiEffects(
       if (refreshController === controller) refreshController = undefined;
     }
   };
+  const releaseUpdates = (current: NonNullable<typeof foreground>) => () => {
+    if (foreground === current) foreground = undefined;
+    submittingUpdateSources.clear();
+    updateChecks.resume();
+  };
+  const updateScopeKey = (entry: UpdateScopeEntry) => JSON.stringify(entry);
+  const createTaskController = (state: UpdatesState) => {
+    const entry = state.scope.entry;
+    const origin: UpdateScopeEntry = Object.freeze(
+      entry.kind === "skill"
+        ? { ...entry, address: Object.freeze({ ...entry.address }) }
+        : { ...entry },
+    );
+    let created!: UpdateController;
+    let checked = new Map<string, SourceUpdateCheck>();
+    created = createUpdateController(core, state, {
+      foreground: {
+        request: () => {
+          if (closed || foreground) return undefined;
+          const currentForeground = {
+            id: next(),
+            controller: new AbortController(),
+            kind: "updates" as const,
+          };
+          foreground = currentForeground;
+          setUpdateTask({ state, entry: origin, controller: created });
+          return releaseUpdates(currentForeground);
+        },
+      },
+      onProjection: (snapshot) => {
+        latestProjection = snapshot;
+        reconcileUpdateDraftScopes(snapshot);
+        projection.applyProjection(snapshot);
+      },
+      onSubmissionStarted: (addresses) => {
+        checked = new Map(
+          addresses.flatMap((address) => {
+            const observation = updateChecks.check(address.source);
+            return observation ? [[address.source, observation] as const] : [];
+          }),
+        );
+        // This controller owns a mutation rather than a check. Pause the entire
+        // session queue until its sequential source batches settle.
+        const sources = [...new Set(addresses.map((address) => address.source))];
+        for (const source of sources) {
+          submittingUpdateSources.add(source);
+          for (const retained of updateDrafts.values()) {
+            if (retained === state) continue;
+            const group = retained.group(source);
+            if (!group?.observation || group.status === "succeeded") continue;
+            retained.invalidateCheck(
+              source,
+              "failed",
+              "Source was submitted from another scope; check updates again",
+            );
+          }
+        }
+        updateChecks.pause(sources);
+      },
+      observation: async (source, signal) => {
+        const check = checked.get(source);
+        if (
+          !check?.observation ||
+          check.stale ||
+          check.checkedAt === undefined ||
+          !isFreshUpdateCheck(
+            {
+              source,
+              observation: check.observation,
+              baseline: check.observation.baseline ?? "",
+              checkedAt: check.checkedAt,
+            },
+            Date.now(),
+          )
+        )
+          return undefined;
+        if (core.management.getUpdateBaseline) {
+          const baseline = (await core.management.getUpdateBaseline({ source }, { signal })).value;
+          if (baseline !== check.observation.baseline) return undefined;
+        }
+        return check.observation;
+      },
+    });
+    return created;
+  };
+  const activateUpdatesState = (state: UpdatesState) => {
+    setUpdates(state);
+    return state;
+  };
+  const selectUpdatesScope = (
+    entry: UpdateScopeEntry,
+    snapshot?: import("@skill-cli/core").ManagementProjection,
+  ) => {
+    const current = updates();
+    const projectionSnapshot = snapshot;
+    if (!projectionSnapshot || closed) return undefined;
+    const nextScope = buildUpdateScope(projectionSnapshot, entry);
+    if (current && updateScopeKey(current.scope.entry) === updateScopeKey(entry)) {
+      if (current !== activeUpdateState()) reconcileDraftWithSnapshot(current, projectionSnapshot);
+      void updateChecks.revalidate(current.scope.sources);
+      return current;
+    }
+    const draftKey = updateScopeKey(entry);
+    const retained = updateDrafts.get(draftKey);
+    if (retained) {
+      if (retained !== activeUpdateState()) {
+        reconcileDraftWithSnapshot(retained, projectionSnapshot);
+      }
+      setUpdatesBlockedReason(undefined);
+      return activateUpdatesState(retained);
+    }
+    const state = createUpdatesState(nextScope);
+    for (const source of nextScope.sources) {
+      const serviceCheck = updateChecks.check(source);
+      if (serviceCheck) state.applyCheck(serviceCheck);
+    }
+    setUpdatesBlockedReason(undefined);
+    updateDrafts.set(draftKey, state);
+    void updateChecks.revalidate(nextScope.sources);
+    return activateUpdatesState(state);
+  };
+  const restoreUpdatesScope = (
+    state: UpdatesState,
+    snapshot?: import("@skill-cli/core").ManagementProjection,
+  ) => {
+    if (!snapshot || closed) return undefined;
+    const current = updates();
+    if (current === state) return state;
+    const key = updateScopeKey(state.scope.entry);
+    if (updateDrafts.get(key) !== state) return undefined;
+    if (state !== activeUpdateState()) reconcileDraftWithSnapshot(state, snapshot);
+    void updateChecks.revalidate(state.scope.sources);
+    setUpdatesBlockedReason(undefined);
+    return activateUpdatesState(state);
+  };
+  const submitFromState = async (
+    state: UpdatesState | undefined,
+    addresses?: readonly UpdateAddress[],
+  ) => {
+    if (closed || foreground || !state) return false;
+    const targets = [...(addresses ?? state.scope.addresses)];
+    if (!targets.length) return false;
+    return createTaskController(state).submit(targets);
+  };
+  const stopUpdates = () => (updatesActive() ? (updateTask()?.controller.stop() ?? false) : false);
 
-  const loadReader = async (address: { readonly source: string; readonly path: string }) => {
+  // Selection can hit a cache without starting another read; it still owns cancellation.
+  // This never touches the foreground lane or the process-owned update task.
+  const cancelReaderContent = () => {
+    const current = readerContentRequest;
+    if (!current) return;
+    readerContentRequest = undefined;
+    dispatchReader({ type: "content.cancel", address: current.address, epoch: current.epoch });
+    current.controller.abort();
+  };
+  const loadReader = async (address: ReaderAddress) => {
     if (closed) return undefined;
-    readerContentController?.abort();
+    cancelReaderContent();
     const controller = new AbortController();
-    readerContentController = controller;
     const start = beginReader(address, "content");
     const epoch = start.epoch;
+    const current = { controller, address, epoch };
+    readerContentRequest = current;
+    const active = () => !closed && readerContentRequest === current && !controller.signal.aborted;
     try {
       const result = await core.content.loadInstalled({ address }, { signal: controller.signal });
-      if (!closed) {
-        dispatchReader({ type: "content.settle", address, epoch, value: result.value });
-        for (const item of result.diagnostics)
-          dispatchReader({ type: "failure", address, epoch, request: "content", diagnostic: item });
+      if (!active()) return undefined;
+      dispatchReader({ type: "content.settle", address, epoch, value: result.value });
+      for (const item of result.diagnostics) {
+        if (!active()) return undefined;
+        dispatchReader({ type: "failure", address, epoch, request: "content", diagnostic: item });
       }
       return result;
     } catch (error) {
-      if (!closed && !cancelled(error))
-        dispatchReader({
-          type: "failure",
-          address,
-          epoch,
-          request: "content",
-          diagnostic: diagnostic(error),
-        });
+      if (active()) {
+        if (cancelled(error)) dispatchReader({ type: "content.cancel", address, epoch });
+        else
+          dispatchReader({
+            type: "failure",
+            address,
+            epoch,
+            request: "content",
+            diagnostic: diagnostic(error),
+          });
+      }
       return undefined;
     } finally {
-      if (readerContentController === controller) readerContentController = undefined;
+      if (readerContentRequest === current) readerContentRequest = undefined;
     }
   };
   const listResources = async (address: { readonly source: string; readonly path: string }) => {
@@ -625,6 +876,9 @@ export function createTuiEffects(
             source: reviewed.observation.source,
             paths,
             exactRevision: reviewed.observation.exactRevision,
+            ...(reviewed.observation.baseline !== undefined
+              ? { expectedBaseline: reviewed.observation.baseline }
+              : {}),
           },
           { signal },
         );
@@ -1200,6 +1454,7 @@ export function createTuiEffects(
   return {
     refresh,
     loadReader,
+    cancelReaderContent,
     listResources,
     readResource,
     review,
@@ -1208,6 +1463,54 @@ export function createTuiEffects(
     install,
     checkUpdate,
     update,
+    selectUpdatesScope,
+    restoreUpdatesScope,
+    updates: () => updates(),
+    updatesActive,
+    updateRun: () => updateTask()?.controller.run(),
+    updateTaskEntry: () => updateTask()?.entry,
+    startUpdateChecks: (snapshot?: import("@skill-cli/core").ManagementProjection) => {
+      if (snapshot && !latestProjection) latestProjection = snapshot;
+      return snapshot ? updateChecks.start(snapshot) : Promise.resolve();
+    },
+    checkUpdates: async (sources?: readonly string[]) => {
+      const state = updates();
+      if (!state) return false;
+      await updateChecks.refresh(
+        state.scope.sources.filter((source) => !sources || sources.includes(source)),
+      );
+      return true;
+    },
+    submitUpdates: (addresses?: readonly UpdateAddress[]) => submitFromState(updates(), addresses),
+    continueUpdates: () => {
+      const task = updateTask();
+      return submitFromState(task?.state, task?.controller.retryable() ?? []);
+    },
+    stopUpdates,
+    updatesSubmittable: () => updates()?.eligible() ?? [],
+    updatesRetryable: () => updateTask()?.controller.retryable() ?? [],
+    updatesBlockedReason,
+    updateCheck: (source: string) => {
+      checkRevision();
+      return updateChecks.check(source);
+    },
+    updateChecksWarning: () => {
+      checkRevision();
+      return updateChecks.cacheWarning();
+    },
+    checkingActive: () => {
+      checkRevision();
+      return updateChecks.checkingActive();
+    },
+    checkActivity: () => {
+      checkRevision();
+      return updateChecks.activity();
+    },
+    currentCheckSource: () => {
+      checkRevision();
+      return updateChecks.currentSource();
+    },
+    stopUpdateChecks: () => updateChecks.stop(),
     reviewInstalled,
     confirmInstalled,
     observeConfig: async (id: string) => {
@@ -1333,6 +1636,11 @@ export function createTuiEffects(
     pending: () => foreground !== undefined,
     pendingKind: () => foreground?.kind,
     cancel: () => {
+      if (foreground?.kind === "updates") {
+        // Overlay/navigation cancellation does not own a process task.
+        // Only explicit Stop update or App teardown may cancel it.
+        return;
+      }
       if (foreground && !foreground.controller.signal.aborted) {
         const current = foreground;
         if (foreground.kind === "execute" || foreground.kind === "observe")
@@ -1367,9 +1675,12 @@ export function createTuiEffects(
       if (!closed) {
         closed = true;
         refreshController?.abort();
-        readerContentController?.abort();
+        cancelReaderContent();
         readerResourceController?.abort();
         foreground?.controller.abort();
+        updateChecks.teardown();
+        updateTask()?.controller.teardown();
+        updateDrafts.clear();
         foreground = undefined;
         liveReview = undefined;
         liveDiscovery = undefined;

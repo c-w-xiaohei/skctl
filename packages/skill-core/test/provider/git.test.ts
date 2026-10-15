@@ -3,7 +3,24 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openGitSource, resolveGitRef } from "../../src/internal/source-git";
-import { discoverSnapshotSkills, openSource } from "../../src/internal/sources";
+import {
+  discoverSnapshotSkills,
+  openSource,
+  type RemoteSnapshot,
+} from "../../src/internal/sources";
+import { createExecutableFixture } from "../executable-fixture";
+
+// Recognize invocation-level config without weakening the shim's intended failure.
+const identifyGitCommand = `identify() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -c) shift 2 ;;
+      --git-dir=*) shift ;;
+      *) command="$1"; option="\${2:-}"; return ;;
+    esac
+  done
+}
+identify "$@"`;
 
 async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
@@ -56,13 +73,11 @@ test("Generic Git reads an exact pinned commit with spaces and executable modes"
   await snapshot.close();
 });
 
-test("Generic Git falls back to advertised refs when direct pinned fetch is rejected", async () => {
+test("Generic Git never broadens a rejected exact fetch to all advertised refs", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-fallback-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  const bin = join(root, "bin");
   await mkdir(work);
-  await mkdir(bin);
   await git(work, "init");
   await git(work, "config", "user.email", "test@example.test");
   await git(work, "config", "user.name", "Test");
@@ -73,33 +88,41 @@ test("Generic Git falls back to advertised refs when direct pinned fetch is reje
   await initBare(root, bare);
   await git(work, "remote", "add", "origin", bare);
   await git(work, "push", "origin", "HEAD:main");
-  await writeFile(
-    join(bin, "git"),
-    `#!/bin/bash
-if [ "$1" = "-c" ] && [ "$3" = "fetch" ] && printf '%s' "$6" | grep -Eq '^[0-9a-f]{40}$'; then
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
+  const previousPath = process.env.PATH;
+  try {
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "git"),
+      `#!/bin/bash
+${identifyGitCommand}
+printf '%s\\n' "$*" >> "${root}/commands"
+if [ "$command" = "fetch" ]; then
   exit 1
 fi
 exec /usr/bin/git "$@"
 `,
-    { mode: 0o755 },
-  );
-  const previousPath = process.env.PATH;
-  process.env.PATH = `${bin}:${previousPath}`;
-  try {
-    const snapshot = await openGitSource("fallback", bare, commit, "", {
-      source: "fallback",
-      origin: "git",
-      declaration: { level: "project" },
-      stability: "immutable",
-      revision: commit,
-    });
-    expect((await Array.fromAsync(snapshot.list(""))).map((entry) => entry.path)).toEqual([
-      "SKILL.md",
-    ]);
-    await snapshot.close();
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${bin}:${previousPath}`;
+    await expect(
+      openGitSource("fallback", bare, commit, "", {
+        source: "fallback",
+        origin: "git",
+        declaration: { level: "project" },
+        stability: "immutable",
+        revision: commit,
+      }),
+    ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    const commands = await readFile(join(root, "commands"), "utf8");
+    expect(commands.match(/ fetch /gu)).toHaveLength(1);
+    expect(commands).not.toContain("refs/heads/*");
     expect(await resolveGitRef(`git:${bare}#${commit}`, "main")).toBe(`git:${bare}#${commit}`);
   } finally {
     process.env.PATH = previousPath;
+    await rm(shimRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -107,10 +130,8 @@ test("Generic Git fetches remote Snapshots without eagerly downloading blobs", a
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-filter-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  const bin = join(root, "bin");
   const log = join(root, "git.log");
   await mkdir(work);
-  await mkdir(bin);
   await git(work, "init");
   await git(work, "config", "user.email", "test@example.test");
   await git(work, "config", "user.name", "Test");
@@ -121,17 +142,20 @@ test("Generic Git fetches remote Snapshots without eagerly downloading blobs", a
   await initBare(root, bare);
   await git(work, "remote", "add", "origin", bare);
   await git(work, "push", "origin", "HEAD:main");
-  await writeFile(
-    join(bin, "git"),
-    `#!/bin/sh
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
+  const previousPath = process.env.PATH;
+  try {
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "git"),
+      `#!/bin/sh
 printf '%s\\n' "$*" >> "${log}"
 exec /usr/bin/git "$@"
 `,
-    { mode: 0o755 },
-  );
-  const previousPath = process.env.PATH;
-  process.env.PATH = `${bin}:${previousPath}`;
-  try {
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${bin}:${previousPath}`;
     const snapshot = await openGitSource("filtered", bare, commit, "", {
       source: "filtered",
       origin: "git",
@@ -143,6 +167,7 @@ exec /usr/bin/git "$@"
     expect(await readFile(log, "utf8")).toContain("fetch --no-tags --depth=1 --filter=blob:none");
   } finally {
     process.env.PATH = previousPath;
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -196,12 +221,10 @@ test("Generic Git batches candidate SKILL.md acquisition without fetching unsele
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-batch-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  const bin = join(root, "bin");
   const log = join(root, "git.log");
   const wants = join(root, "wants.log");
   await mkdir(join(work, "chosen"), { recursive: true });
   await mkdir(join(work, "other"), { recursive: true });
-  await mkdir(bin);
   await git(work, "init");
   await git(work, "config", "user.email", "test@example.test");
   await git(work, "config", "user.name", "Test");
@@ -220,11 +243,17 @@ test("Generic Git batches candidate SKILL.md acquisition without fetching unsele
   await initBare(root, bare);
   await git(work, "remote", "add", "origin", bare);
   await git(work, "push", "origin", "HEAD:main");
-  await writeFile(
-    join(bin, "git"),
-    `#!/bin/sh
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
+  const previousPath = process.env.PATH;
+  try {
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "git"),
+      `#!/bin/sh
 printf '%s\\n' "$*" >> "${log}"
-if [ "$4" = "fetch-pack" ]; then
+${identifyGitCommand}
+if [ "$command" = "fetch" ] && printf '%s\\n' "$@" | grep -qx -- '--stdin'; then
   input=$(cat)
   printf '%s' "$input" > "${wants}"
   printf '%s\\n' "$input" | /usr/bin/git "$@"
@@ -232,11 +261,9 @@ if [ "$4" = "fetch-pack" ]; then
 fi
 exec /usr/bin/git "$@"
 `,
-    { mode: 0o755 },
-  );
-  const previousPath = process.env.PATH;
-  process.env.PATH = `${bin}:${previousPath}`;
-  try {
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${bin}:${previousPath}`;
     const snapshot = await openGitSource("batched", bare, commit, "", {
       source: "batched",
       origin: "git",
@@ -255,13 +282,17 @@ exec /usr/bin/git "$@"
     await snapshot.close();
     const commands = await readFile(log, "utf8");
     expect(commands).not.toContain("cat-file -s");
-    expect(commands.match(/ fetch-pack /gu)?.length).toBe(1);
+    expect(
+      commands.split("\n").filter((line) => line.includes(" fetch ") && line.includes(" --stdin ")),
+    ).toHaveLength(1);
+    expect(commands).not.toContain("fetch-pack");
     expect(commands).not.toContain("unselected.txt");
     const requested = await readFile(wants, "utf8");
     expect(requested).toContain(chosen);
     expect(requested).not.toContain(unselected);
   } finally {
     process.env.PATH = previousPath;
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -336,7 +367,8 @@ test("Generic Git sanitizes post-open provider failures", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-sanitize-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   try {
     await mkdir(work);
     await mkdir(bin);
@@ -353,7 +385,8 @@ test("Generic Git sanitizes post-open provider failures", async () => {
     await writeFile(
       join(bin, "git"),
       `#!/bin/sh
-if [ "$4" = "cat-file" ] && [ "$5" = "--batch" ]; then
+${identifyGitCommand}
+if [ "$command" = "cat-file" ] && [ "$option" = "--batch" ]; then
   printf 'token=private-secret' >&2
   exit 1
 fi
@@ -379,19 +412,22 @@ exec /usr/bin/git "$@"
       process.env.PATH = previousPath;
     }
   } finally {
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("Generic Git reports an unreachable pinned source as unavailable without stderr", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-transport-"));
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   try {
     await mkdir(bin);
     await writeFile(
       join(bin, "git"),
       `#!/bin/sh
-if [ "$4" = "fetch" ]; then
+${identifyGitCommand}
+if [ "$command" = "fetch" ]; then
   printf 'token=transport-secret' >&2
   exit 1
 fi
@@ -421,13 +457,16 @@ exec /usr/bin/git "$@"
       process.env.PATH = previousPath;
     }
   } finally {
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("Generic Git reports authentication failures without exposing stderr", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-auth-"));
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
+  const invocation = join(root, "auth-invocation");
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   try {
@@ -446,7 +485,9 @@ test("Generic Git reports authentication failures without exposing stderr", asyn
     await writeFile(
       join(bin, "git"),
       `#!/bin/sh
-if [ "$4" = "fetch" ]; then
+${identifyGitCommand}
+if [ "$command" = "fetch" ]; then
+  : > "${invocation}"
   printf 'authentication failed: token=auth-secret' >&2
   exit 1
 fi
@@ -465,11 +506,13 @@ exec /usr/bin/git "$@"
         revision: commit,
       }).catch((value: unknown) => value);
       expect(error).toMatchObject({ code: "PROVIDER_AUTH_FAILED" });
+      expect(await Bun.file(invocation).exists()).toBe(true);
       expect(String(error)).not.toContain("auth-secret");
     } finally {
       process.env.PATH = previousPath;
     }
   } finally {
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -523,7 +566,8 @@ test("Generic Git rejects malformed cat-file batch separators", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-batch-malformed-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   try {
     await mkdir(work);
     await mkdir(bin);
@@ -540,7 +584,8 @@ test("Generic Git rejects malformed cat-file batch separators", async () => {
     await writeFile(
       join(bin, "git"),
       `#!/bin/sh
-if [ "$4" = "cat-file" ] && [ "$5" = "--batch" ]; then
+${identifyGitCommand}
+if [ "$command" = "cat-file" ] && [ "$option" = "--batch" ]; then
   oid=$(cat)
   printf '%s blob 3\\noneX' "$oid"
   exit 0
@@ -567,6 +612,7 @@ exec /usr/bin/git "$@"
       process.env.PATH = previousPath;
     }
   } finally {
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -575,7 +621,8 @@ test("Generic Git rejects cat-file batch headers with extra fields", async () =>
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-batch-header-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   try {
     await mkdir(work);
     await mkdir(bin);
@@ -592,7 +639,8 @@ test("Generic Git rejects cat-file batch headers with extra fields", async () =>
     await writeFile(
       join(bin, "git"),
       `#!/bin/sh
-if [ "$4" = "cat-file" ] && [ "$5" = "--batch" ]; then
+${identifyGitCommand}
+if [ "$command" = "cat-file" ] && [ "$option" = "--batch" ]; then
   oid=$(cat)
   printf '%s blob 3 extra\\none\\n' "$oid"
   exit 0
@@ -619,6 +667,7 @@ exec /usr/bin/git "$@"
       process.env.PATH = previousPath;
     }
   } finally {
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -627,7 +676,8 @@ test("Generic Git rejects non-decimal cat-file batch sizes", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-batch-size-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   try {
     await mkdir(work);
     await mkdir(bin);
@@ -644,7 +694,8 @@ test("Generic Git rejects non-decimal cat-file batch sizes", async () => {
     await writeFile(
       join(bin, "git"),
       `#!/bin/sh
-if [ "$4" = "cat-file" ] && [ "$5" = "--batch" ]; then
+${identifyGitCommand}
+if [ "$command" = "cat-file" ] && [ "$option" = "--batch" ]; then
   oid=$(cat)
   printf '%s blob 0x3\\none\\n' "$oid"
   exit 0
@@ -671,6 +722,7 @@ exec /usr/bin/git "$@"
       process.env.PATH = previousPath;
     }
   } finally {
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -679,7 +731,8 @@ test("Generic Git rejects trailing cat-file batch bytes", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-batch-trailing-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   try {
     await mkdir(work);
     await mkdir(bin);
@@ -696,7 +749,8 @@ test("Generic Git rejects trailing cat-file batch bytes", async () => {
     await writeFile(
       join(bin, "git"),
       `#!/bin/sh
-if [ "$4" = "cat-file" ] && [ "$5" = "--batch" ]; then
+${identifyGitCommand}
+if [ "$command" = "cat-file" ] && [ "$option" = "--batch" ]; then
   oid=$(cat)
   printf '%s blob 3\\none\\ntrailing' "$oid"
   exit 0
@@ -723,6 +777,7 @@ exec /usr/bin/git "$@"
       process.env.PATH = previousPath;
     }
   } finally {
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -731,7 +786,8 @@ test("Generic Git leaves an empty batch entirely idle", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-empty-batch-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   const log = join(root, "git.log");
   try {
     await mkdir(work);
@@ -772,6 +828,7 @@ exec /usr/bin/git "$@"
       process.env.PATH = previousPath;
     }
   } finally {
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -807,14 +864,20 @@ test("Generic Git never substitutes a missing pinned commit", async () => {
 
 test("Generic Git aborts, escalates, and drains a blocked child", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-git-abort-"));
-  const bin = join(root, "bin");
+  const shimRoot = await createExecutableFixture();
+  const bin = join(shimRoot, "bin");
   const ready = join(root, "ready");
   const pid = join(root, "pid");
-  await mkdir(bin);
-  await writeFile(
-    join(bin, "git"),
-    `#!/bin/sh
-if [ "$3" = "init" ]; then
+  const previousPath = process.env.PATH;
+  const controller = new AbortController();
+  let pending: Promise<unknown> | undefined;
+  try {
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "git"),
+      `#!/bin/sh
+${identifyGitCommand}
+if [ "$command" = "init" ]; then
   : > "${ready}"
   printf '%s' "$$" > "${pid}"
   trap '' TERM
@@ -823,13 +886,10 @@ if [ "$3" = "init" ]; then
 fi
 exec /usr/bin/git "$@"
 `,
-    { mode: 0o755 },
-  );
-  const previousPath = process.env.PATH;
-  process.env.PATH = `${bin}:${previousPath}`;
-  try {
-    const controller = new AbortController();
-    const pending = openGitSource(
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${bin}:${previousPath}`;
+    pending = openGitSource(
       "blocked",
       "https://invalid.test/blocked.git",
       "a".repeat(40),
@@ -865,6 +925,9 @@ exec /usr/bin/git "$@"
     expect(() => process.kill(blockedPid, 0)).toThrow();
   } finally {
     process.env.PATH = previousPath;
+    controller.abort();
+    await pending?.catch(() => {});
+    await rm(shimRoot, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -920,7 +983,7 @@ test("provider discovery stops below valid and malformed Skill Roots", async () 
     "bad/child/SKILL.md": "---\nname: hidden2\ndescription: Hidden\n---\n",
     "z/SKILL.md": "---\nname: z\ndescription: Z\n---\n",
   };
-  const snapshot = {
+  const snapshot: RemoteSnapshot = {
     kind: "remote" as const,
     sourceName: "remote",
     commit: "a".repeat(40),
@@ -938,12 +1001,21 @@ test("provider discovery stops below valid and malformed Skill Roots", async () 
       const entry = entries.find((item) => item.path === path)!;
       return { entry, bytes: new TextEncoder().encode(bytes[path]!) };
     },
+    async readMany(paths: readonly string[]) {
+      return Promise.all(paths.map((path) => this.read(path)));
+    },
     async close() {},
+    async inspectRoots() {
+      throw new Error("Discovery must not inspect installed Roots");
+    },
+    async inspectRevisions() {
+      throw new Error("Discovery must not inspect old revisions");
+    },
   };
   const discovered = await discoverSnapshotSkills(snapshot);
   expect(discovered.skills.map((skill) => skill.name)).toEqual(["a", "z"]);
   expect(discovered.diagnostics).toHaveLength(1);
-  const rootSnapshot = {
+  const rootSnapshot: RemoteSnapshot = {
     ...snapshot,
     async *list() {
       yield { kind: "file" as const, path: "SKILL.md", size: 40, executable: false };

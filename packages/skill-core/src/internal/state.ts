@@ -16,7 +16,12 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { SkillCliError } from "../api";
-import { bindingDigest, decodeStrictText } from "./domain";
+import {
+  bindingDigest,
+  decodeStrictText,
+  parseSkillMetadata,
+  type GitTreeIdentity,
+} from "./domain";
 
 export interface LocalInstalledMaterialization {
   readonly source: string;
@@ -38,6 +43,7 @@ export interface RemoteInstalledMaterialization {
   readonly digest: string;
   readonly bindingDigest: string;
   readonly adoptedRevision?: string;
+  readonly treeIdentity?: GitTreeIdentity;
   /** A migrated v1 record whose exact remote revision was not persisted. */
   readonly revisionStatus?: "unresolved";
   readonly identityEvidence?: IdentityEvidence;
@@ -53,7 +59,7 @@ export type IdentityEvidence =
     }
   | { readonly status: "unavailable" };
 export interface PrivateState {
-  readonly version: 1 | 2;
+  readonly version: 1 | 2 | 3;
   readonly generation: number;
   readonly installed: readonly InstalledMaterialization[];
   readonly configs: Readonly<Record<string, { readonly commit: string; readonly digest: string }>>;
@@ -96,7 +102,7 @@ const signal = async (name: string) => {
   // Private child-process crash seam used only by transaction integration tests.
   if (process.env.SKILL_CLI_TEST_CRASH_AT === name) process.exit(97);
 };
-const empty = (): PrivateState => ({ version: 2, generation: 0, installed: [], configs: {} });
+const empty = (): PrivateState => ({ version: 3, generation: 0, installed: [], configs: {} });
 const hash = (value: Uint8Array) => new Bun.CryptoHasher("sha256").update(value).digest("hex");
 const same = (value: Uint8Array | undefined, digest: string | null) =>
   (value ? hash(value) : null) === digest;
@@ -144,7 +150,7 @@ const safePath = (value: unknown) =>
   !value.includes("\\") &&
   !value.startsWith("/") &&
   !value.split("/").some((part: string) => !part || part === "." || part === "..");
-function evidence(value: unknown): value is IdentityEvidence {
+function evidence(value: unknown, allowBoundary = false): value is IdentityEvidence {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return (
@@ -152,10 +158,11 @@ function evidence(value: unknown): value is IdentityEvidence {
     (record.status === "known" &&
       Object.keys(record).length === 3 &&
       nonEmpty(record.canonicalOrigin) &&
-      safePath(record.originRelativeSkillRoot))
+      (safePath(record.originRelativeSkillRoot) ||
+        (allowBoundary && record.originRelativeSkillRoot === "")))
   );
 }
-function materialization(value: unknown, version: 1 | 2): value is InstalledMaterialization {
+function legacyMaterialization(value: unknown, version: 1 | 2): value is InstalledMaterialization {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   const common =
@@ -187,6 +194,71 @@ function materialization(value: unknown, version: 1 | 2): value is InstalledMate
       : version === 2 && record.revisionStatus === "unresolved")
   );
 }
+function materialization(value: unknown, version: 1 | 2 | 3): value is InstalledMaterialization {
+  // Preserve literal legacy validators; v3 is an explicit new durable contract.
+  if (version !== 3) return legacyMaterialization(value, version);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (
+    !nonEmpty(record.source) ||
+    !(safePath(record.path) || record.path === "") ||
+    !nonEmpty(record.name) ||
+    !nonEmpty(record.description) ||
+    !digest(record.digest) ||
+    !digest(record.bindingDigest) ||
+    !evidence(record.identityEvidence, true)
+  )
+    return false;
+  const commonKeys = [
+    "kind",
+    "source",
+    "path",
+    "name",
+    "description",
+    "digest",
+    "bindingDigest",
+    "identityEvidence",
+  ];
+  if (record.kind === "local")
+    return (
+      Object.keys(record).length === 9 &&
+      Object.keys(record).every((key) => [...commonKeys, "root"].includes(key)) &&
+      typeof record.root === "string" &&
+      isAbsolute(record.root) &&
+      resolve(record.root) === record.root
+    );
+  if (
+    record.kind !== "remote" ||
+    Object.keys(record).some(
+      (key) => ![...commonKeys, "adoptedRevision", "revisionStatus", "treeIdentity"].includes(key),
+    )
+  )
+    return false;
+  const exactRevision =
+    typeof record.adoptedRevision === "string" &&
+    /^[a-f0-9]{40}$/u.test(record.adoptedRevision) &&
+    !Object.hasOwn(record, "revisionStatus");
+  const unresolved =
+    !Object.hasOwn(record, "adoptedRevision") && record.revisionStatus === "unresolved";
+  if (!exactRevision && !unresolved) return false;
+  if (!Object.hasOwn(record, "treeIdentity")) return Object.keys(record).length === 9;
+  return (
+    Object.keys(record).length === 10 &&
+    exactRevision &&
+    (record.identityEvidence as IdentityEvidence).status === "known" &&
+    treeEvidence(record.treeIdentity)
+  );
+}
+function treeEvidence(value: unknown): value is GitTreeIdentity {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const tree = value as Record<string, unknown>;
+  return (
+    Object.keys(tree).length === 2 &&
+    tree.objectFormat === "sha1" &&
+    typeof tree.objectId === "string" &&
+    /^[a-f0-9]{40}$/u.test(tree.objectId)
+  );
+}
 function parseState(bytes: Uint8Array | undefined): PrivateState {
   if (!bytes) return empty();
   let value: unknown;
@@ -202,11 +274,11 @@ function parseState(bytes: Uint8Array | undefined): PrivateState {
     Object.keys(state).some(
       (key) => !["version", "generation", "installed", "configs"].includes(key),
     ) ||
-    (state.version !== 1 && state.version !== 2) ||
+    (state.version !== 1 && state.version !== 2 && state.version !== 3) ||
     !Number.isInteger(state.generation) ||
     (state.generation as number) < 0 ||
     !Array.isArray(state.installed) ||
-    !state.installed.every((item) => materialization(item, state.version as 1 | 2)) ||
+    !state.installed.every((item) => materialization(item, state.version as 1 | 2 | 3)) ||
     !state.configs ||
     typeof state.configs !== "object" ||
     Array.isArray(state.configs) ||
@@ -563,9 +635,9 @@ export class StateCoordinator {
     const current = await this.read();
     if (current.generation !== expected)
       throw new SkillCliError("TRANSACTION_CONFLICT", "State generation changed");
-    if (!next.installed.every((item) => materialization(item, 2)))
-      throw new SkillCliError("CONFIG_INVALID", "Version 2 Installed Skill identity is invalid");
-    const value: PrivateState = { version: 2, generation: expected + 1, ...next };
+    if (!next.installed.every((item) => materialization(item, 3)))
+      throw new SkillCliError("CONFIG_INVALID", "Version 3 Installed Skill identity is invalid");
+    const value: PrivateState = { version: 3, generation: expected + 1, ...next };
     await this.publish([{ target: this.statePath, bytes: `${JSON.stringify(value)}\n` }], expected);
     return value;
   }
@@ -681,11 +753,7 @@ export class StateCoordinator {
   ): Promise<InstalledMaterialization> {
     return this.withLock(async () => {
       const text = decodeStrictText(await readFile(join(resolve(root), "SKILL.md")));
-      const fields = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1] ?? "";
-      const name = /^name:\s*(.+)$/mu.exec(fields)?.[1]?.trim();
-      const description = /^description:\s*(.+)$/mu.exec(fields)?.[1]?.trim();
-      if (!name || !description)
-        throw new SkillCliError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
+      const { name, description } = parseSkillMetadata(text);
       const current = await this.read();
       const item: InstalledMaterialization = {
         source,

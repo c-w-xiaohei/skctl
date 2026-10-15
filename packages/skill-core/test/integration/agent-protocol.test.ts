@@ -70,7 +70,9 @@ test("agent browse returns only Use roots before progressively disclosing collec
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain('<managed_skill_catalog scope="root">');
     expect(result.stdout).toContain("<id>gingiris</id>");
-    expect(result.stdout).toContain("<description>Routing and specialist skills</description>");
+    expect(result.stdout).toContain("Routing and specialist skills");
+    expect(result.stdout).toContain("skill-cli agent browse <collection-id>");
+    expect(result.stdout).toContain("skill-cli agent load <selector>");
     expect(result.stdout).not.toContain("gingiris:router");
     const collection = await command(root, global, ["browse", "gingiris"]);
     expect(collection.stdout).toContain('<managed_skill_catalog scope="collection" id="gingiris">');
@@ -78,8 +80,9 @@ test("agent browse returns only Use roots before progressively disclosing collec
     expect(collection.stdout.trim().split("\n")).toHaveLength(1);
     expect(collection.stdout).toContain("<selector>gingiris:router</selector>");
     expect(collection.stdout).toContain("<id>category</id>");
-    expect(collection.stdout).toContain("<description>Also specialists</description>");
-    expect(collection.stdout).toContain("<description>Specialists</description>");
+    expect(collection.stdout).not.toContain("category:specialist");
+    expect(collection.stdout).toContain("Also specialists");
+    expect(collection.stdout).toContain("Specialists");
     expect(collection.stdout).not.toContain("reference");
     expect(collection.stdout).not.toContain("provenance");
   } finally {
@@ -143,13 +146,7 @@ test("agent browse and load permit a reference-reachable category but reject an 
 
     const loaded = await command(root, global, ["load", "category:specialist"]);
     expect(loaded.code).toBe(0);
-    expect(JSON.parse(loaded.stdout)).toEqual({
-      selector: "category:specialist",
-      name: "specialist",
-      description: "specialist skill",
-      path: "SKILL.md",
-      text: "---\nname: specialist\ndescription: specialist skill\n---\n",
-    });
+    expect(loaded.stdout).toBe("---\nname: specialist\ndescription: specialist skill\n---\n");
 
     const hidden = await command(root, global, ["load", "hidden:private"]);
     expect(hidden.code).toBe(1);
@@ -163,11 +160,8 @@ test("agent browse and load permit a reference-reachable category but reject an 
 
     const rootSearch = await command(root, global, ["search", "router"]);
     expect(JSON.parse(rootSearch.stdout)).toEqual({
-      query: "router",
       results: [
         {
-          kind: "skill",
-          rank: 1,
           selector: "gingiris:router",
           name: "router",
           description: "router skill",
@@ -175,14 +169,11 @@ test("agent browse and load permit a reference-reachable category but reject an 
       ],
     });
     const categorySearch = await command(root, global, ["search", "specialist"]);
-    expect(JSON.parse(categorySearch.stdout)).toEqual({ query: "specialist", results: [] });
+    expect(JSON.parse(categorySearch.stdout)).toEqual({ results: [] });
     const searchedIn = await command(root, global, ["search", "specialist", "--in", "category"]);
     expect(JSON.parse(searchedIn.stdout)).toEqual({
-      query: "specialist",
       results: [
         {
-          kind: "skill",
-          rank: 1,
           selector: "category:specialist",
           name: "specialist",
           description: "specialist skill",
@@ -228,7 +219,13 @@ test("agent loads a ready child Skill without requiring unrelated child members"
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: {
-          root: { references: { child: { collection: "child", description: "Child" } } },
+          root: {
+            references: {
+              child: { collection: "child", description: "Child" },
+              pending: { collection: "pending", description: "Pending" },
+            },
+          },
+          pending: { members: { missing: { source: "source", path: "missing" } } },
           child: {
             members: {
               ready: { source: "source", path: "ready" },
@@ -245,6 +242,12 @@ test("agent loads a ready child Skill without requiring unrelated child members"
     expect(browsed.stdout).toContain("<selector>child:ready</selector>");
     expect((await command(root, global, ["load", "child:ready"])).code).toBe(0);
     expect((await command(root, global, ["load", "child:missing"])).code).toBe(1);
+    expect(await command(root, global, ["browse", "pending"])).toEqual({
+      code: 0,
+      stdout:
+        '<managed_skill_catalog scope="collection" id="pending">No Skills or referenced Collections are available in this Collection.</managed_skill_catalog>\n',
+      stderr: "",
+    });
   } finally {
     if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
     else process.env.SKILL_CLI_STATE_DIR = previousState;
@@ -316,11 +319,8 @@ test("agent search includes each Use-root selector for one installed Skill", asy
     );
     await new StateCoordinator(state).installLocal("source", "review", skill);
     expect(JSON.parse((await command(root, global, ["search", "beta:second"])).stdout)).toEqual({
-      query: "beta:second",
       results: [
         {
-          kind: "skill",
-          rank: 1,
           selector: "beta:second",
           name: "review",
           description: "Review",
@@ -351,11 +351,11 @@ test("agent commands reject the removed list protocol and JSON flags", async () 
   }
 });
 
-test("agent reports unavailable catalogs as agent-ready text", async () => {
+test("agent reports unavailable catalogs as system-prompt guidance", async () => {
   const result = await command("/tmp", "/missing", ["browse"]);
   expect(result.code).toBe(0);
-  expect(result.stderr).toBe("");
   expect(result.stdout).toContain("managed catalog is unavailable");
+  expect(result.stderr).toBe("");
 });
 
 test("agent rejects collection IDs and Skill Selectors in the wrong address positions before Core", async () => {
@@ -385,10 +385,10 @@ test("agent help explains the browse to Skill workflow on stdout", async () => {
   const result = await command("/tmp", "/missing", ["--help"]);
   expect(result.code).toBe(0);
   expect(result.stderr).toBe("");
-  expect(result.stdout).toContain("collection ID");
-  expect(result.stdout).toContain("Skill Selector");
-  expect(result.stdout).toContain("skill-cli agent browse");
-  expect(result.stdout).toContain("skill-cli agent load engineering:review");
+  expect(result.stdout).toContain("Collection IDs");
+  expect(result.stdout).toContain("Skill selectors");
+  expect(result.stdout).toContain("browse [collection-id]");
+  expect(result.stdout).toContain("load <selector>");
 });
 
 test("agent subcommand help identifies the accepted address", async () => {
@@ -399,5 +399,5 @@ test("agent subcommand help identifies the accepted address", async () => {
   expect(browse.stdout).toContain("collection-id");
   expect(load.code).toBe(0);
   expect(load.stderr).toBe("");
-  expect(load.stdout).toContain("Skill Selector");
+  expect(load.stdout).toContain("Skill selector");
 });

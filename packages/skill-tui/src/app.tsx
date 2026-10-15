@@ -7,7 +7,16 @@ import {
 } from "@opentui/core";
 import { onResize, render, useKeyboard, useRenderer } from "@opentui/solid";
 import { fitColumn } from "./ui/list-text";
-import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import {
+  batch,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+  Show,
+  untrack,
+} from "solid-js";
 import type {
   ConfigSourceObservation,
   ConfigSourceImpact,
@@ -17,13 +26,12 @@ import type {
 import type { SkillAddress } from "@skill-cli/core";
 import {
   actionIntent,
-  actionIds,
   installedSkillContext,
+  skillCollectionTargets,
   reachableActions,
   selectedConfigIntegrationOwner,
   sourceRouteIntent,
   sourceOperationIntent,
-  skillSourceIntent,
   type ActionId,
 } from "./actions";
 import {
@@ -34,6 +42,7 @@ import {
   type InstalledSkillReview,
   type TuiCore,
 } from "./effects";
+import type { UpdateScopeEntry } from "./updates/scope";
 import {
   destinations,
   readerOwnsFocus,
@@ -47,7 +56,6 @@ import {
   type Section,
 } from "./types";
 import {
-  CommandPalette,
   SourceRemovalOverlay,
   SourceObservationOverlay,
   SourceSelectionOverlay,
@@ -70,6 +78,8 @@ import {
   type InstalledSkillPreviewRequest,
 } from "./operations";
 import { WorkspacePage } from "./workspace-page";
+import { createCommandRegistry, type ExecutableCommand } from "./commands";
+import { CommandPalette, paletteCloseCommand, paletteSearchCommand } from "./command-palette";
 import { ConfigPage } from "./config-page";
 import { filterSkills } from "./skills-filter";
 import {
@@ -82,6 +92,8 @@ import { createLayout } from "./layout";
 import { createProjection } from "./projection";
 import { createWorkspaceState } from "./workspace/state";
 import { createCollectionsState } from "./collections/state";
+import { deriveAgentAccessTree } from "./collections/agent-access-tree";
+import { deriveCollectionFilterTree } from "./collections/collection-filter-tree";
 import { configDeclarationOwnerKey, createConfigState } from "./config/state";
 import { createOperationState } from "./operation-state";
 import {
@@ -91,9 +103,16 @@ import {
   reduceReaderEvent,
   reduceReaderState,
 } from "./reader/state";
-import { NavigationList } from "./components/navigation-list";
 import { SectionTabs } from "./components/section-tabs";
-import { dispatchKeyEvent, isPlainNavKey, parseNavKey, resolve, resolveEscape } from "./navigation";
+import {
+  dispatchKeyEvent,
+  isPlainNavKey,
+  matchesCommandShortcut,
+  parseNavKey,
+  resolve,
+  resolveEscape,
+} from "./navigation";
+import { keyboardGuidance, type InteractionMode } from "./keyboard-guidance";
 import { createRoute, type RelationshipTarget, type RouteTarget } from "./route";
 import {
   createOverlaySession,
@@ -104,6 +123,9 @@ import { theme } from "./ui/theme";
 import { useTheme } from "./ui/use-theme";
 import { RouteShell } from "./ui/route-shell";
 import { CommandControl } from "./command-control";
+import { DiagnosticLog } from "./diagnostic-log";
+import { DataList } from "./ui/data-list";
+import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { selectScrollOffset } from "./select-scroll";
 import { SkillsFilterPopup } from "./skills-filter-popup";
 import { createPanelNavigation, isMounted } from "./panel-navigation";
@@ -111,6 +133,8 @@ import {
   createModalControlRegistry,
   ModalControlsProvider,
   traverseModalControls,
+  useModalControl,
+  useModalControls,
 } from "./modal-controls";
 
 const topOptions = () =>
@@ -118,8 +142,69 @@ const topOptions = () =>
     label: value === "workspace" ? "Workspace" : value[0]!.toUpperCase() + value.slice(1),
     value,
   }));
-const isDestination = (value: ActionId | Destination): value is Destination =>
-  destinations.some((destination) => destination === value);
+
+/** Context is chosen explicitly; moving through the menu never changes the route. */
+function ScopeChoices(props: {
+  readonly current: Destination;
+  readonly onSelect: (destination: Destination) => void;
+  readonly onClose: () => void;
+}) {
+  const controls = useModalControls()!;
+  const register = useModalControl("scope-choices", controls, 10);
+  let choices: SelectRenderable | undefined;
+  onCleanup(
+    controls.intercept((event, current) => {
+      if (current !== choices || !isPlainNavKey(parseNavKey(event))) return false;
+      if (event.name === "up" || event.name === "down") {
+        if (event.name === "up") choices?.moveUp();
+        else choices?.moveDown();
+        return true;
+      }
+      return event.name === "left" || event.name === "right";
+    }),
+  );
+  onMount(() => queueMicrotask(() => choices?.focus()));
+  return (
+    <box flexDirection="column" minHeight={0}>
+      <box flexDirection="row" height={1}>
+        <DialogTitle flexGrow={1}>Scope</DialogTitle>
+        <ModalCommand
+          id="scope-close"
+          order={20}
+          record={{
+            id: "scope.close",
+            verb: "Close",
+            keys: ["enter"],
+            destination: "Current scope",
+            scope: "modal",
+            enabled: true,
+            danger: false,
+          }}
+          execute={props.onClose}
+        />
+      </box>
+      <DataList
+        id="scope-choices"
+        ref={(target) => {
+          choices = target;
+          register(target);
+        }}
+        options={topOptions().map((option) => ({
+          name: `${option.value === props.current ? "✓ " : "  "}${option.label}`,
+          description:
+            option.value === "workspace" ? "Effective workspace" : "Configuration declarations",
+          value: option.value,
+        }))}
+        selectedIndex={destinations.indexOf(props.current)}
+        height={4}
+        showDescription={false}
+        onSelect={(_index, option) => {
+          if (option && destinations.includes(option.value)) props.onSelect(option.value);
+        }}
+      />
+    </box>
+  );
+}
 const configBindingLine = (binding: ConfigSourceImpact["binding"]) =>
   `${binding.kind} ${binding.kind === "local" ? binding.path : binding.origin} ${binding.root}`;
 
@@ -157,7 +242,9 @@ type AppOverlayPayload =
       readonly sourceRemoval?: SourceRemovalReview;
     }
   | { readonly family: "palette" }
+  | { readonly family: "diagnostic-log"; readonly text: string }
   | { readonly family: "skills-filter" }
+  | { readonly family: "scope-selection" }
   | {
       readonly family: "collection-choices";
       readonly choices: readonly {
@@ -257,10 +344,18 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     if (!address) {
       workspaceState.closeReader();
       workspaceState.showWorkArea();
-      if (!(renderer.currentFocusedRenderable instanceof InputRenderable)) requestFocus("browser");
+      if (
+        !(renderer.currentFocusedRenderable instanceof InputRenderable) &&
+        physicalOwnerFor(renderer.currentFocusedRenderable) !== "collection-tree"
+      )
+        requestFocus("browser");
       return;
     }
-    if (workspaceState.readerOpen()) selectReaderSkill(address, true);
+    if (workspaceState.readerOpen()) {
+      const changed = !reader()?.address || !sameSkillAddress(reader()!.address!, address);
+      selectReaderSkill(address);
+      if (changed) readerDispatch({ type: "patch", value: { tab: "skill" } });
+    }
   });
   const collectionsState = createCollectionsState();
   const configState = createConfigState();
@@ -295,13 +390,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         readonly listener: () => void;
       }
     | undefined;
-  type MountedCommand = {
-    readonly record: CommandRecord;
-    readonly owner: FocusOwner;
-    readonly controlId: string;
-    readonly execute: () => void;
-  };
-  const pageCommands = new Map<string, MountedCommand>();
   const modalControls = createModalControlRegistry();
   let routeBackBinding: { readonly target: Renderable; readonly cleanup: () => void } | undefined;
   const bindRouteBack = (target: Renderable) => {
@@ -325,33 +413,25 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     controlId: string,
     execute: () => void,
   ) => {
-    pageCommands.set(record.id, { record, owner, controlId, execute });
-    return () => {
-      const current = pageCommands.get(record.id);
+    return commandRegistry.register(record, owner, controlId, () => {
       if (
-        current?.execute === execute &&
-        current.owner === owner &&
-        current.controlId === controlId
-      )
-        pageCommands.delete(record.id);
-    };
+        record.id.startsWith("reader.") &&
+        route.snapshot().destination === "workspace" &&
+        skillWorkspace()
+      ) {
+        workspaceState.setCollectionBrowserOpen(false);
+        if (!layout.wide()) workspaceState.openDetail();
+      }
+      execute();
+    });
   };
   const executePageCommand = (id: string) => {
-    const command = pageCommands.get(id);
-    if (!command) return;
+    const command = commandRegistry.mounted().get(id);
+    if (!command?.record.enabled) return;
     route.syncCurrent({
-      focus: command.owner,
+      focus: physicalFocusOwner() ?? "browser",
     });
     command.execute();
-  };
-  const firstEnabledCommandOwner = (ids: readonly string[]): FocusOwner | undefined => {
-    for (const id of ids) {
-      const command = pageCommands.get(id);
-      const target = command && focusRegistry.target(command.owner);
-      if (command?.record.enabled && isMounted(target as Renderable | undefined))
-        return command.owner;
-    }
-    return undefined;
   };
   const ownerForTarget = (target: Renderable): FocusOwner | undefined =>
     focusRegistry.ownerOf(target);
@@ -359,7 +439,8 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     renderer.root,
     focusRegistry,
     (owner) =>
-      [...pageCommands.values()].find((command) => command.owner === owner)?.record.enabled ?? true,
+      [...commandRegistry.mounted().values()].find((command) => command.owner === owner)?.record
+        .enabled ?? true,
   );
   const physicalOwnerFor = (current: Renderable | null): FocusOwner | undefined => {
     if (!current || current.isDestroyed) return undefined;
@@ -378,6 +459,9 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   };
   renderer.on("focused_renderable", syncPhysicalFocus);
   let route: ReturnType<typeof createRoute>;
+  const skillWorkspace = () =>
+    workspaceState.section() === "skills" &&
+    ["all-installed-skills", "unassigned", "current-exposure"].includes(workspaceState.scope());
   function cancelPendingShellFocus() {
     shellFocusRevision += 1;
     if (pendingShellFocus) renderer.off("frame", pendingShellFocus.listener);
@@ -385,6 +469,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   }
   const requestFocus = (owner: FocusOwner) => {
     if (owner !== "local-nav") cancelPendingShellFocus();
+    if (skillWorkspace()) {
+      if (owner === "browser") workspaceState.showWorkArea();
+      else if ((readerOwnsFocus(owner) || owner === "agent-preview") && !layout.wide())
+        workspaceState.openDetail();
+    }
     if (route) {
       const readerSurface =
         workspaceState.readerOpen() &&
@@ -397,7 +486,9 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       route.syncCurrent({
         focus: owner,
         region: owner === "top-nav" ? "context" : owner === "local-nav" ? "section" : "content",
-        ...(readerSurface ? { surface: "reader" as const } : {}),
+        // The inline pane's focus does not create a semantic Reader route.
+        // Explicit Reader routes keep their predecessor even after pane travel.
+        ...(readerSurface && !skillWorkspace() ? { surface: "reader" as const } : {}),
       });
     }
     const target = owner;
@@ -413,20 +504,19 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     focus.request(target);
   };
   const sourceInspectorFocus = (source: ManagementProjection["effective"]["sources"][number]) => {
-    // Short detail panes open at their saved scroll surface, not at a trailing
-    // relationship command that would hide the update/install controls.
-    // Prefer a mounted management action. This makes entering a source useful
-    // immediately with arrows/Enter, while retaining the relationship fallback
-    // for sources which cannot be updated or installed into.
-    return (firstEnabledCommandOwner(["check-updates", "add-skills"]) ??
-      (source.contribution ? "command:source.config-source" : undefined) ??
-      (projection
-        .workspace()
-        ?.configs.flatMap((config) => config.direct.sources)
-        .find((item) => item.id === source.id)?.ref.owner
-        ? "command:source.config"
-        : "command:source.skills")) as FocusOwner;
+    // The destination's registry may not be mounted yet. Request its primary
+    // action by identity, never a relationship hidden behind Actions.
+    const snapshot = projection.workspace();
+    const id = snapshot?.installedSkills.some((skill) => skill.address.source === source.id)
+      ? "check-updates"
+      : "add-skills";
+    return reachableActions("workspace", snapshot, pageActionFacts()).some(
+      (action) => action.id === id && action.enabled,
+    )
+      ? (`command:${id}` as const)
+      : ("command:source.actions.toggle" as const);
   };
+  let effects!: ReturnType<typeof createTuiEffects>;
   route = createRoute(
     {
       workspace: workspaceState,
@@ -436,23 +526,30 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     requestFocus,
     () => closeSession(),
     reader,
-    (address, surface) => readerDispatch({ type: "select", address, surface }),
+    (address, surface) => {
+      if (reader()?.address && !sameSkillAddress(reader()!.address!, address))
+        effects.cancelReaderContent();
+      readerDispatch({ type: "select", address, surface });
+    },
     (address) => {
       batch(() => {
         workspaceState.land("skills", address);
-        workspaceState.closeReader();
-        if (address) workspaceState.openDetail();
+        if (address) {
+          selectReaderSkill(address);
+          workspaceState.openReader();
+          if (!layout.wide()) workspaceState.openDetail();
+        }
       });
-      requestFocus("inspector");
+      requestFocus(address ? "reader" : "browser");
     },
     (state) => {
       if (!state?.address) return;
-      const address = state.address;
-      setReaderState((current) => ({
-        ...current,
-        activeKey: skillAddressKey(address),
-        cache: { ...current.cache, [skillAddressKey(address)]: state },
-      }));
+      readerDispatch({ type: "restore", value: state });
+    },
+    () => effects?.updates(),
+    (state) => {
+      const workspace = projection.workspace();
+      if (workspace) effects.restoreUpdatesScope(state, workspace);
     },
   );
   createEffect(() => {
@@ -507,10 +604,37 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     },
     route.revalidate,
   );
-  const effects = createTuiEffects(
+  effects = createTuiEffects(
     props.core,
     operation,
-    projection.outcomes,
+    {
+      ...projection.outcomes,
+      applyProjection: (snapshot) => {
+        batch(() => {
+          const changed = (projection.workspace()?.installedSkills ?? []).filter((previous) => {
+            const next = snapshot.installedSkills.find((item) =>
+              sameSkillAddress(item.address, previous.address),
+            );
+            return (
+              !next ||
+              !!previous.owner.relevantLocalRoot ||
+              !!next.owner.relevantLocalRoot ||
+              previous.owner.relevantRemoteRevision !== next.owner.relevantRemoteRevision ||
+              previous.owner.source !== next.owner.source
+            );
+          });
+          if (
+            changed.some(
+              (item) => reader()?.address && sameSkillAddress(item.address, reader()!.address!),
+            )
+          )
+            effects.cancelReaderContent();
+          for (const item of changed)
+            readerDispatch({ type: "content.invalidate", address: item.address });
+          projection.outcomes.applyProjection(snapshot);
+        });
+      },
+    },
     readerDispatch,
     (address, request, path) => {
       let start: ReturnType<typeof beginReaderRequest>["event"] | undefined;
@@ -522,6 +646,68 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       return start!;
     },
   );
+  const openUpdates = (entry: UpdateScopeEntry, check = false) => {
+    const workspace = projection.workspace();
+    if (!workspace) return;
+    // Viewing a task must not restart a stopped process-owned check queue.
+    const active = effects.updatesActive();
+    const state = effects.selectUpdatesScope(entry, workspace);
+    if (!state) {
+      if (active) routeSource({ destination: "workspace", section: "updates" });
+      return;
+    }
+    workspaceState.clearSourceUpdatesView();
+    routeSource({ destination: "workspace", section: "updates" });
+    workspaceState.showWorkArea();
+    requestFocus("browser");
+    if (check && !active) void effects.checkUpdates();
+  };
+  const openSourceUpdates = (source: string) => {
+    const workspace = projection.workspace();
+    if (!workspace) return;
+    route.syncCurrent({ surface: "browser", focus: "browser" });
+    // Drilling into an update Source is a view of the current bounded request,
+    // not a new whole-Source draft (especially for Collection/Skill entry).
+    const current = route.snapshot();
+    const state =
+      current.destination === "workspace" && current.current.section === "updates"
+        ? effects.updates()
+        : effects.selectUpdatesScope({ kind: "source", source }, workspace);
+    if (
+      !state ||
+      !(
+        state.scope.sources.includes(source) ||
+        (state.scope.entry.kind === "source" && state.scope.entry.source === source)
+      )
+    )
+      return;
+    route.transition(
+      { destination: "workspace", section: "updates", surface: "browser", focus: "browser" },
+      () => {
+        workspaceState.showWorkArea();
+        workspaceState.showSourceUpdates(source);
+      },
+    );
+  };
+  const activeSourceUpdatesView = () => {
+    const view = workspaceState.sourceUpdatesView();
+    const scope = effects.updates()?.scope;
+    return view &&
+      scope &&
+      (scope.sources.includes(view.source) ||
+        (scope.entry.kind === "source" && scope.entry.source === view.source))
+      ? view
+      : undefined;
+  };
+  const showUpdateTask = () => {
+    const workspace = projection.workspace();
+    const entry = effects.updateTaskEntry();
+    if (!workspace || !entry || !effects.selectUpdatesScope(entry, workspace)) return;
+    workspaceState.clearSourceUpdatesView();
+    routeSource({ destination: "workspace", section: "updates" });
+    workspaceState.showWorkArea();
+    requestFocus("browser");
+  };
   const sessionPayload = () => overlaySession().payload as AppOverlayPayload | undefined;
   const payload = <Family extends AppOverlayPayload["family"]>(family: Family) => {
     const value = sessionPayload();
@@ -625,7 +811,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     kind: import("./types").Overlay,
     family: AppOverlayPayload["family"],
   ) => sessionMatchesOverlay(overlaySession(), begun, kind, family);
-  const closeSession = (revision = overlaySession().revision) => {
+  const closeSession = (revision = overlaySession().revision, restoreOrigin = true) => {
     const current = overlaySession();
     if (!current.kind || current.revision !== revision) return;
     const restoreFocus = current.restoreFocus;
@@ -633,6 +819,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     const focusRevision = focus.revision();
     const routeRevision = route.snapshot().revision;
     setOverlaySession((session) => reduceOverlaySession(session, { type: "close", revision }));
+    if (!restoreOrigin) return;
     queueMicrotask(() => {
       if (
         focus.revision() === focusRevision &&
@@ -650,19 +837,21 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   };
   const setSessionPayload = (next: AppOverlayPayload) =>
     replaceSession(overlaySession().revision, next);
-  const selectReaderSkill = (address: SkillAddress, preserveSurface = false) => {
+  const selectReaderSkill = (address: SkillAddress) => {
     const current = reader();
-    if (current?.address?.source === address.source && current.address?.path === address.path)
-      return;
-    const cached = readerState().cache[skillAddressKey(address)];
-    readerDispatch({ type: "select", address });
-    if (preserveSurface && current)
-      readerDispatch({
-        type: "patch",
-        value: { tab: current.tab, focus: current.focus },
-      });
-    if (cached?.text === undefined || cached.rawText === undefined)
+    if (!current?.address || !sameSkillAddress(current.address, address)) {
+      effects.cancelReaderContent();
+      readerDispatch({ type: "resource-abandon" });
+      readerDispatch({ type: "select", address });
+    }
+    const selected = reader();
+    if (
+      !selected?.loading &&
+      !selected?.error &&
+      (selected?.text === undefined || selected.rawText === undefined)
+    )
       void effects.loadReader(address);
+    if (selected?.tab === "resources") ensureResources();
   };
   const selectReaderTab = (tab: import("./types").ReaderState["tab"]) => {
     readerDispatch({ type: "resource-abandon" });
@@ -683,10 +872,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     if (current?.address && !current.resourcesLoaded && !current.resourceLoading && !current.error)
       void effects.listResources(current.address);
   };
-  const openReaderSkill = (address: SkillAddress) => {
+  const openReaderSkill = (address: SkillAddress, tab?: import("./types").ReaderState["tab"]) => {
     const selected = readerState().cache[skillAddressKey(address)];
-    const readerFocus: FocusOwner =
-      selected?.tab === "resources"
+    const readerFocus: FocusOwner = tab
+      ? "reader"
+      : selected?.tab === "resources"
         ? selected.resourceLevel === "content"
           ? "reader-resource-content"
           : selected.error || selected.resourceLoading || !selected.resources.length
@@ -708,10 +898,16 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       },
       () =>
         batch(() => {
+          workspaceState.showInstalledSkillsFromSource(address.source);
+          workspaceState.setQuery("");
+          workspaceState.clearFilters();
+          workspaceState.clearSourceUpdatesView();
           workspaceState.selectSkill(address);
           workspaceState.openReader();
           selectReaderSkill(address);
-          workspaceState.openDetail();
+          if (tab) readerDispatch({ type: "patch", value: { tab, focus: "reader" } });
+          if (layout.wide()) workspaceState.showWorkArea();
+          else workspaceState.openDetail();
         }),
     );
     setTransition("Opened Reader");
@@ -912,14 +1108,39 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       enabled: true,
     });
   };
+  const explicitSkillDetail = () =>
+    route.snapshot().destination === "workspace" &&
+    route.snapshot().current.section === "skills" &&
+    route.snapshot().current.surface === "inspector";
+  const pageActionFacts = () => ({
+    workspace: workspaceState.snapshot(),
+    explicitSkillDetail: explicitSkillDetail(),
+    collections: collectionsState.snapshot(),
+    config: (destination: Exclude<Destination, "workspace">) => configState.snapshot(destination),
+  });
+  createEffect(() => {
+    if (route.snapshot().destination !== "workspace" || !skillWorkspace()) return;
+    const selected = installedSkillContext("workspace", projection.workspace(), {
+      ...pageActionFacts(),
+      explicitSkillDetail: false,
+    })?.skill;
+    const current = reader();
+    untrack(() => {
+      if (!selected) {
+        effects.cancelReaderContent();
+        workspaceState.closeReader();
+        return;
+      }
+      workspaceState.openReader();
+      const changed = !current?.address || !sameSkillAddress(current.address, selected.address);
+      selectReaderSkill(selected.address);
+      if (changed) readerDispatch({ type: "patch", value: { tab: "skill" } });
+    });
+  });
   const dispatchAction = async (id: ActionId, returnFocus?: FocusOwner) => {
     const workspace = projection.workspace();
     if (!workspace) return;
-    const pageFacts = {
-      workspace: workspaceState.snapshot(),
-      collections: collectionsState.snapshot(),
-      config: (destination: Exclude<Destination, "workspace">) => configState.snapshot(destination),
-    };
+    const pageFacts = pageActionFacts();
     if (id === "open-palette") {
       openSession("palette", {
         family: "palette",
@@ -1201,7 +1422,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       });
       return;
     }
-    if (id === "add-skills" || id === "check-updates") {
+    if (id === "check-updates") {
+      const intent = sourceOperationIntent(id, route.snapshot().destination, workspace, pageFacts);
+      openUpdates({ kind: "source", source: intent.source }, true);
+      return;
+    }
+    if (id === "add-skills") {
       const intent = sourceOperationIntent(id, route.snapshot().destination, workspace, pageFacts);
       operation.clearProblem();
       openSession("selection", { family: "source-observation", intent }, "observing");
@@ -1270,12 +1496,21 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       });
       return;
     }
-    if (id === "skill-add-to-collection") {
-      const skill = installedSkillContext(
+    if (id === "skill-add-to-collection" || id === "skill-add-selected-to-collection") {
+      const targets = skillCollectionTargets(
+        id,
         route.snapshot().destination,
         workspace,
         pageFacts,
-      )?.skill;
+      );
+      if (targets.reason) {
+        operation.report({
+          code: "INVALID_ARGUMENT",
+          severity: "warning",
+          message: targets.reason,
+        });
+        return;
+      }
       const choices =
         workspace.effective.status === "complete"
           ? workspace.effective.collectionsView.flatMap((item) =>
@@ -1292,11 +1527,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                   : [],
             )
           : [];
-      const addresses = workspaceState.selectedSkills().length
-        ? workspaceState.selectedSkills()
-        : skill
-          ? [skill.address]
-          : [];
+      const addresses = targets.addresses;
       if (addresses.length === 0 || choices.length === 0) {
         operation.report({
           code: "INVALID_ARGUMENT",
@@ -1398,36 +1629,33 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       return;
     }
     if (id === "skill-check-updates") {
-      const skill = workspace.installedSkills.find((item) => {
-        const selected = workspaceState.selectedSkill();
-        return !!selected && sameSkillAddress(item.address, selected);
-      });
+      const skill = installedSkillContext(
+        route.snapshot().destination,
+        workspace,
+        pageFacts,
+      )?.skill;
       if (skill) {
-        const intent = skillSourceIntent(route.snapshot().destination, workspace, pageFacts);
-        openSession("selection", { family: "source-observation", intent }, "observing");
-        const begun = beginSession(overlaySession().revision, "observing");
-        const { revision, requestEpoch } = begun;
-        const next = await effects.checkUpdate({
-          kind: intent.kind,
-          source: intent.source,
-          selectedPath: intent.path,
-        });
-        if (
-          next &&
-          sessionMatches(begun, "selection", "source-observation") &&
-          !overlaySession().dismissed
-        )
-          settleSession(revision, requestEpoch, "review", {
-            family: "source-selection",
-            review: next,
-            selectedPaths: [],
-          });
-        else if (
-          sessionMatches(begun, "selection", "source-observation") &&
-          overlaySession().dismissed
-        )
-          closeSession(revision);
+        openUpdates({ kind: "skill", address: skill.address });
+        void effects.submitUpdates([skill.address]);
       }
+      return;
+    }
+    if (id === "collection-check-updates") {
+      const exposure =
+        workspaceState.scope() === "current-exposure"
+          ? deriveAgentAccessTree(workspace, workspaceState.expandedExposurePaths()).rows.find(
+              (row) => row.key === workspaceState.selectedExposurePath(),
+            )
+          : undefined;
+      const collection =
+        workspaceState.scope() === "current-exposure"
+          ? exposure?.kind === "collection"
+            ? exposure.collection
+            : exposure?.kind === "reference"
+              ? exposure.target
+              : undefined
+          : collectionsState.selected();
+      if (collection) openUpdates({ kind: "collection", collection }, true);
       return;
     }
     if (id === "skill-open-source") {
@@ -1469,7 +1697,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
             : current.intent.collection;
       if (collection) collectionsState.select(collection);
       if (current.kind === "membership-batch") {
-        workspaceState.clearSelectedSkills();
+        // Completing a Collection edit does not change the separate checked set.
         const keys = collectionReviewPayload()?.removedOriginKeys;
         if (keys) collectionsState.clearOrigins(current.intent.collection, keys);
       }
@@ -1622,12 +1850,20 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   let exitRequested = false;
   const navigationFacts = () => {
     const workspace = projection.workspace();
-    const visibleReader = filterSkills(workspace?.installedSkills ?? [], {
-      query: workspaceState.query(),
-      filters: workspaceState.filters(),
-      source: workspaceState.sourceFilter(),
-      agentStatus: workspace?.effective.agent.status,
-    }).find((skill) => {
+    const visibleReader = (
+      workspaceState.scope() === "current-exposure"
+        ? (workspace?.installedSkills ?? [])
+        : filterSkills(workspace?.installedSkills ?? [], {
+            query: workspaceState.query(),
+            filters: workspaceState.filters(),
+            source: workspaceState.sourceFilter(),
+            agentStatus: workspace?.effective.agent.status,
+            collectionViews:
+              workspace?.effective.status === "complete"
+                ? workspace.effective.collectionsView
+                : undefined,
+          })
+    ).find((skill) => {
       const selected = workspaceState.selectedSkill();
       return !!selected && sameSkillAddress(skill.address, selected);
     });
@@ -1659,9 +1895,15 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         sameSkillAddress(reader()!.address!, visibleReader.address),
       readerTab: reader()?.tab ?? "skill",
       readerResourceLevel: reader()?.resourceLevel,
+      readerInline: skillWorkspace() && route.snapshot().current.surface !== "reader",
       collectionFilterOpen: collectionPage && collectionFilter.open,
       collectionFilterDimension: collectionPage && !!collectionFilter.dimension,
       collectionInspectorOpen: collectionPage && !!collectionsState.inspector(),
+      collectionBrowserOpen:
+        route.snapshot().destination === "workspace" &&
+        workspaceState.section() === "skills" &&
+        ["all-installed-skills", "unassigned"].includes(workspaceState.scope()) &&
+        workspaceState.collectionBrowserOpen(),
       configSourceSurface:
         route.snapshot().destination !== "workspace" &&
         configState.configSourceSurface(configDestination()) === "inspector",
@@ -1695,7 +1937,10 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     if (decision.kind === "events") {
       batch(() => {
         for (const event of decision.events) {
-          if (event.type === "route.back") {
+          if (event.type === "workspace.collections.close") {
+            workspaceState.setCollectionBrowserOpen(false);
+            workspaceState.showWorkArea();
+          } else if (event.type === "route.back") {
             routeBack();
           } else if (event.type === "collections.filter.back") {
             collectionsState.chooseFilterDimension();
@@ -1773,7 +2018,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       unmodified && routeBackVisible() && renderer.currentFocusedRenderable?.id === "route-back"
         ? routeBackRecord()
         : undefined;
-    const focusedPageCommand = [...pageCommands.values()].find(
+    const focusedPageCommand = [...commandRegistry.mounted().values()].find(
       (command) => unmodified && command.controlId === renderer.currentFocusedRenderable?.id,
     );
     const sharedResult = dispatchKeyEvent({
@@ -1808,6 +2053,17 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         if (blockedSurface) return "declined";
         const result = focusRegistry.dispatchMode(focused ?? undefined, key);
         if (result !== "declined") return result;
+        if (!(focused instanceof InputRenderable)) {
+          const direct = [...commandRegistry.mounted().values()].find((command) =>
+            matchesCommandShortcut(command.record, key),
+          );
+          if (direct) {
+            if (!direct.record.enabled)
+              return { kind: "blocked", reason: direct.record.disabledReason ?? "Unavailable" };
+            executePageCommand(direct.record.id);
+            return "consumed";
+          }
+        }
         // Native editors and list movement remain with the mounted widget.
         if (!unmodified) return "declined";
         if (
@@ -1826,7 +2082,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       },
       command: blockedSurface ? undefined : (focusedPageCommand?.record ?? sharedBack),
       execute: (record) => {
-        const command = pageCommands.get(record.id);
+        const command = commandRegistry.mounted().get(record.id);
         if (command) executePageCommand(record.id);
         else executeRouteBack(record);
       },
@@ -1878,7 +2134,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   });
   onMount(() => {
     resize(renderer.width, renderer.height);
-    void effects.refresh();
+    void effects.refresh().then(() => {
+      const workspace = projection.workspace();
+      // Do not await: browsing and focus are available as soon as the initial
+      // projection arrives; cache policy determines which Sources are checked.
+      if (workspace) void effects.startUpdateChecks(workspace);
+    });
   });
   createEffect(() => {
     focusVersion();
@@ -1916,7 +2177,25 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       }
       const target = focusRegistry.target(owner);
       if (!isMounted(target as Renderable | undefined)) {
+        if (
+          owner === "collection-tree" &&
+          projected &&
+          !refreshing &&
+          !workspaceState.collectionBrowserOpen()
+        ) {
+          requestFocus("browser");
+          return;
+        }
         if (owner === "browser" && projected && !refreshing) {
+          const effective = projection.workspace()?.effective;
+          if (
+            workspaceState.scope() === "current-exposure" &&
+            effective?.status === "complete" &&
+            effective.managed &&
+            effective.agent.status === "available" &&
+            effective.use.length
+          )
+            return;
           const content = panels.order("route-content");
           const fallback =
             content.find(
@@ -1949,7 +2228,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   const resize = (width: number, height: number) => {
     const physical = physicalFocusOwner();
     const wasTooSmall = layout.tooSmall();
-    layout.resize(width, height, (wasNarrow) => {
+    layout.resize(width, height, () => {
       if (layout.tooSmall()) {
         gatedFocus = physical ?? gatedFocus;
         return;
@@ -1960,8 +2239,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         return;
       }
       const remountReader =
-        wasNarrow &&
-        !layout.narrow() &&
+        !wasTooSmall &&
         route.snapshot().destination === "workspace" &&
         workspaceState.section() === "skills" &&
         physical !== undefined &&
@@ -1970,6 +2248,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     });
   };
   onResize(resize);
+  const applyPendingFocus = () => {
+    if (!focus.desired() || overlayKind() || operation.task() || layout.tooSmall()) return;
+    focus.apply();
+  };
+  renderer.on("frame", applyPendingFocus);
   onCleanup(() => {
     focusReconciliationRevision += 1;
     shellFocusRevision += 1;
@@ -1977,36 +2260,136 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     pendingShellFocus = undefined;
     routeBackBinding?.cleanup();
     renderer.off("focused_renderable", syncPhysicalFocus);
+    renderer.off("frame", applyPendingFocus);
     stopThemeFollow();
     stopFocusSubscription();
     effects.teardown();
   });
   const actionDestination = createMemo(() => route.snapshot().destination);
   const actions = createMemo(() =>
-    reachableActions(actionDestination(), projection.workspace(), {
-      workspace: workspaceState.snapshot(),
-      collections: collectionsState.snapshot(),
-      config: (destination) => configState.snapshot(destination),
-    }),
+    reachableActions(actionDestination(), projection.workspace(), pageActionFacts()),
   );
-  const paletteActions = (): readonly CommandRecord[] => [
-    ...(["workspace", "global", "project", "local"] as const).map((destination) => ({
-      id: `navigate.${destination}`,
-      keys: ["enter"],
-      verb:
-        destination === "workspace"
-          ? "Workspace"
-          : destination[0]!.toUpperCase() + destination.slice(1),
-      destination:
-        destination === "workspace"
-          ? "Workspace"
-          : `${destination[0]!.toUpperCase() + destination.slice(1)} Config`,
-      scope: "route" as const,
-      enabled: true,
-      danger: false,
+  const taskCommands = createMemo(() => {
+    const command = (
+      id: string,
+      verb: string,
+      destination: string,
+      execute: () => void,
+      reason?: string,
+    ) => ({
+      record: {
+        id,
+        verb,
+        destination,
+        keys: ["enter"],
+        scope: "task",
+        enabled: !reason,
+        disabledReason: reason,
+        danger: false,
+      } satisfies CommandRecord,
+      execute,
+    });
+    const records: ReturnType<typeof command>[] = [];
+    const run = effects.updateRun();
+    if (run) {
+      const target =
+        run.addresses.length === 1
+          ? `${run.addresses[0]!.source}/${run.addresses[0]!.path || "."}`
+          : `${run.addresses.length} Skills · ${new Set(run.addresses.map((address) => address.source)).size} Sources`;
+      records.push(
+        command(
+          "updates.task.show",
+          run.phase === "settled" ? "View update result" : "View update task",
+          target,
+          showUpdateTask,
+        ),
+      );
+      if (run.phase !== "settled")
+        records.push(
+          command(
+            "updates.task.stop",
+            "Stop update",
+            `${target} · completed updates remain published`,
+            () => {
+              effects.stopUpdates();
+            },
+            run.phase === "stopping" ? "Stopping; waiting for the current operation" : undefined,
+          ),
+        );
+    }
+    const check = effects.checkActivity();
+    if (check) {
+      records.push(
+        command("checks.task.show", "View checks", check.source, () =>
+          openUpdates({ kind: "workspace" }),
+        ),
+      );
+      records.push(
+        command(
+          "checks.task.stop",
+          "Stop checks",
+          "Cancel read-only checks; updating is not cancelled",
+          () => {
+            effects.stopUpdateChecks();
+          },
+          check.phase === "stopping" ? "Stopping; waiting for the current check" : undefined,
+        ),
+      );
+    }
+    return records;
+  });
+  const commandRegistry = createCommandRegistry((): readonly ExecutableCommand[] => [
+    ...taskCommands(),
+    ...actions()
+      .filter((record) => record.id !== "open-palette")
+      .map((record) => ({
+        record,
+        execute: () => {
+          void dispatchAction(record.id);
+        },
+      })),
+    {
+      record: {
+        id: "diagnostics.logs",
+        verb: "Diagnostic logs",
+        keys: ["enter"],
+        destination: "Inspect technical logs without interrupting updates",
+        scope: "shell",
+        enabled: true,
+        danger: false,
+      },
+      execute: () =>
+        openSession("help", { family: "diagnostic-log", text: renderer.console.getCachedLogs() }),
+    },
+    ...destinations.map((destination) => ({
+      record: {
+        id: `navigate.${destination}`,
+        keys: ["enter"],
+        verb:
+          destination === "workspace"
+            ? "Workspace"
+            : destination[0]!.toUpperCase() + destination.slice(1),
+        destination:
+          destination === "workspace"
+            ? "Workspace"
+            : `${destination[0]!.toUpperCase() + destination.slice(1)} Config`,
+        scope: "route" as const,
+        enabled: true,
+        danger: false,
+      },
+      execute: () => selectDestination(destination),
     })),
-    ...actions(),
-  ];
+  ]);
+  const executePaletteCommand = (id: string) => {
+    if (!commandRegistry.resolve(id)?.record.enabled) return;
+    const origin = overlaySession().restoreFocus;
+    // Dismiss and restore before invoking: a command can open another dialog
+    // or route, whose focus must not be overwritten by palette cleanup.
+    closeSession(overlaySession().revision, false);
+    if (origin) focusRegistry.applyFocus(origin);
+    route.syncCurrent({ focus: physicalFocusOwner() ?? "browser" });
+    commandRegistry.execute(id);
+  };
   const sectionTitle = (section: Section): string =>
     section === "config-sources"
       ? "Config Sources"
@@ -2042,32 +2425,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     return segments.join(" / ");
   };
   const previousFrame = () => route.snapshot().stack.at(-1);
-  const escapeOutcome = () => {
-    const facts = navigationFacts();
-    if (operation.task()) return { target: "cancel", message: "Cancel task" };
-    if (
-      (sessionPayload()?.family === "source-observation" ||
-        sessionPayload()?.family === "config-observation") &&
-      !overlaySession().dismissed
-    )
-      return { target: "cancel", message: "Cancel observation" };
-    if (overlayKind()) return { target: "close", message: "Close" };
-    if (facts.activeInput)
-      return { target: facts.readerActive ? "Reader" : "results", message: "Back to results" };
-    if (
-      facts.readerActive &&
-      facts.readerTab === "resources" &&
-      facts.readerResourceLevel === "content"
-    )
-      return { target: "Resources", message: "Back to Resources" };
-    const previous = previousFrame();
-    return previous
-      ? {
-          target: frameLabel(previous),
-          message: `Back to ${frameLabel(previous)}`,
-        }
-      : { target: "", message: "" };
-  };
   const routeBackVisible = () => {
     if (overlayKind() || operation.task()) return false;
     return route.canReturn();
@@ -2087,109 +2444,264 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     if (record.id !== "route.back" || !record.enabled) return;
     applyNavigation(resolveEscape(navigationFacts()));
   };
-  const compactEscapeHint = () => {
-    const target = escapeOutcome().target;
-    if (overlayKind() || operation.task()) return `Esc ${target || "close"}`;
-    const facts = navigationFacts();
-    if (facts.activeInput) return facts.readerActive ? "Esc Reader" : "Esc results";
-    if (
-      facts.configIntegrationSurface ||
-      facts.configSourceSurface ||
-      facts.collectionInspectorOpen
-    )
-      return "Esc parent";
-    if (
-      facts.readerActive &&
-      facts.readerTab === "resources" &&
-      facts.readerResourceLevel === "content"
-    )
-      return "Esc Resources";
-    if (facts.canReturn)
-      return `Esc ${sectionTitle(previousFrame()!.section)}${previousFrame()!.surface === "inspector" ? " details" : ""}`;
-    if (facts.focus === "browser") return "Esc Pages";
-    if (facts.focus === "local-nav") return "Esc Context";
-    return "Ctrl+C quit";
+  const actionsMenuRecord: CommandRecord = {
+    id: "shell.more-actions",
+    verb: "Ctrl+P Actions",
+    destination: "Find an action for the current page",
+    scope: "shell",
+    keys: ["enter"],
+    enabled: true,
+    danger: false,
   };
-  const helpLine = () => {
-    focusVersion();
-    const target = focusedControl();
-    if (operation.task())
-      return operation.task()?.dismissible
-        ? "Read-only impact · Esc close"
-        : "Esc cancel · Wait for operation";
-    if (overlayKind() === "filter") return "↑↓ choose · Enter select · Esc close";
-    if (target instanceof InputRenderable)
-      return target.id === "reader-find"
-        ? "Type to find · Enter search"
-        : target.id === "skills-query"
-          ? "Type to filter results · Enter results · ↓ Filter"
-          : target.id === "collections-query"
-            ? "Type to filter results · Enter Filter"
-            : "Type to edit · Tab next panel";
-    if (overlayKind()) {
-      if (target instanceof SelectRenderable) return "↑↓ select · Enter choose / toggle";
-      return "Enter activate focused control";
-    }
-    if (target?.id === "route-back") return `Enter ${routeBackRecord().verb}`;
-    const command = [...pageCommands.values()].find((item) => item.controlId === target?.id);
-    if (command) return `Enter ${command.record.verb}`;
-    if (physicalFocusOwner() === "reader-tabs") return "←→ change Reader view";
-    if (physicalFocusOwner() === "skills-views") return "←→ change Skills view";
-    const shell = shellHelp();
-    if (shell) return shell;
-    if (target instanceof ScrollBoxRenderable) return "↑↓ scroll · PgUp/PgDn page · Home/End";
-    if (target instanceof SelectRenderable) {
-      if (target.id === "installed-skill-browser")
-        return "↑↓ select Skill · Enter details · / search";
-      if (target.id === "resource-browser") return "↑↓ select resource · Enter open";
-      if (target.id.includes("source")) return "↑↓ select Source · Enter inspect";
-      if (target.id.includes("collection")) return "↑↓ select Collection · Enter inspect";
-      return "↑↓ select · Enter open / choose";
-    }
-    if (physicalFocusOwner() === "details-metadata") return "Enter expand / collapse metadata";
-    return "↑↓ choose · Enter open";
+  const scopeMenuRecord = (): CommandRecord => ({
+    id: "shell.scope",
+    verb: `${layout.narrow() ? "" : "Scope: "}${topOptions().find((option) => option.value === route.snapshot().destination)!.label} ▾`,
+    destination: "Choose Workspace or a configuration scope",
+    scope: "shell",
+    keys: ["enter"],
+    enabled: true,
+    danger: false,
+  });
+  const sectionOptions = (context = route.snapshot().destination) =>
+    validSections(context).map((value) => ({
+      label: sectionTitle(value),
+      compactLabel:
+        value === "collections"
+          ? "Cols"
+          : value === "config-sources"
+            ? "Configs"
+            : value === "integrations"
+              ? "Agents"
+              : sectionTitle(value),
+      value,
+    }));
+  const activityWidths = () => {
+    // Share the actual captions with SectionTabs; its native strip adds four
+    // padding cells per caption. Keep Scope and Actions fully available.
+    const navigation = layout.narrow()
+      ? 0
+      : (layout.width() >= 120 ? 11 : 0) +
+        sectionOptions().reduce(
+          (width, option) =>
+            width + Bun.stringWidth(layout.width() < 120 ? option.compactLabel : option.label) + 4,
+          0,
+        );
+    const controls =
+      Bun.stringWidth(scopeMenuRecord().verb) +
+      Bun.stringWidth(layout.width() < 120 ? "Actions" : actionsMenuRecord.verb) +
+      tokens().density.paddingX * 4;
+    const current = sectionOptions().find(
+      (option) => option.value === route.snapshot().current.section,
+    );
+    const selectedTab = layout.narrow()
+      ? 0
+      : (layout.width() >= 120 ? 11 : 0) +
+        Bun.stringWidth(
+          current ? (layout.width() < 120 ? current.compactLabel : current.label) : "",
+        ) +
+        4;
+    const available = layout.width() - 2 - controls - (layout.narrow() ? 1 : 3);
+    return {
+      preferred: Math.max(1, available - navigation),
+      maximum: Math.max(1, available - selectedTab),
+    };
   };
-  const traversalHelp = () => {
-    const title = panels.title(focusedControl());
-    const tabHelp = `Tab/Shift+Tab panels${title && layout.width() >= 100 ? ` · ${title}` : ""}`;
-    const back = compactEscapeHint();
-    if (overlayKind() === "filter") return "Tab stays in filter · ↑↓ controls · Enter select";
-    if (layout.width() < 64) return `${tabHelp} · ${back}`;
-    if (overlayKind()) return `${tabHelp} · ↑↓ rows · ${back}`;
-    if (navigationFacts().readerActive) {
-      const action = [...pageCommands.values()].some(
-        (item) => item.controlId === focusedControl()?.id,
-      );
-      return `${tabHelp} · ${action ? "↑↓ choose action · " : ""}${back} · Up at top: tabs`;
+  const processStatus = createMemo<
+    { readonly label: string; readonly source?: string; readonly warning?: boolean } | undefined
+  >(() => {
+    const run = effects.updateRun();
+    if (run && run.phase !== "settled")
+      return {
+        label:
+          run.phase === "stopping"
+            ? "Stopping…"
+            : run.phase === "checking"
+              ? "Checking"
+              : "Updating",
+        source: run.phase === "stopping" ? undefined : run.source,
+      };
+    const task = operation.task();
+    if (task) return { label: task.cancellationRequested ? "Stopping…" : task.title };
+    const check = effects.checkActivity();
+    if (check)
+      return {
+        label:
+          check.phase === "stopping"
+            ? "Stopping checks"
+            : check.phase === "paused"
+              ? "Checks queued"
+              : "Checking",
+        source: check.phase === "stopping" ? undefined : check.source,
+      };
+    if (projection.refresh() === "loading") return { label: "Loading workspace" };
+    if (run) {
+      const unresolved = run.results.filter(
+        (result) => !["updated", "unchanged"].includes(result.status),
+      ).length;
+      if (unresolved) return { label: `${unresolved} need attention`, warning: true };
+      const updated = run.results.filter((result) => result.status === "updated").length;
+      return {
+        label: updated ? `Updated ${updated} Skill${updated === 1 ? "" : "s"}` : "Up to date",
+      };
     }
-    if ([...pageCommands.values()].some((item) => item.controlId === focusedControl()?.id))
-      return `${tabHelp} · ↑↓ choose action · ${back}`;
-    if (physicalFocusOwner() === "browser")
-      return `${tabHelp} · ${navigationFacts().canReturn ? "← return" : "← Pages"} · ${back}`;
-    if (physicalFocusOwner() === "top-nav" || physicalFocusOwner() === "local-nav")
-      return `${tabHelp} · ${physicalFocusOwner() === "top-nav" ? "←→ contexts" : layout.wide() ? "↑↓ pages" : "←→ pages"} · ${back}`;
-    return `${tabHelp} · ↑↓ choose · ${back}`;
-  };
-  const idleHelp = () => {
-    const hint = helpLine();
     const notice =
       operation.notice() ??
-      (transition() === "Previously viewed item is no longer available"
-        ? "Previously viewed item is no longer available"
-        : undefined);
-    return notice && !operation.task() ? `${hint} · ${notice}` : hint;
-  };
-  const shellHelp = () => {
+      (transition() === "Previously viewed item is no longer available" ? transition() : undefined);
+    return notice ? { label: notice, warning: !!operation.problem() } : undefined;
+  });
+  const processLabel = createMemo(() => {
+    const status = processStatus();
+    if (!status) return "";
+    const { preferred, maximum } = activityWidths();
+    const text =
+      status.source && preferred >= Bun.stringWidth(status.label) + 5
+        ? `${status.label} · ${status.source}`
+        : status.label;
+    return fitColumn(
+      text,
+      Math.min(36, maximum, Math.max(Bun.stringWidth(status.label), preferred)),
+    ).trimEnd();
+  });
+  const ActivityStatus = () => (
+    <text
+      id="process-status"
+      visible={!!processLabel()}
+      height={1}
+      width={Math.max(1, Bun.stringWidth(processLabel()))}
+      flexShrink={0}
+      marginLeft={layout.narrow() ? "auto" : 1}
+      marginRight={layout.narrow() ? 0 : 2}
+      fg={processStatus()?.warning ? tokens().colors.warning : tokens().colors.mutedForeground}
+      wrapMode="none"
+    >
+      {processLabel()}
+    </text>
+  );
+  const hintWidth = () => Math.max(1, layout.width() - 2);
+  const guidance = createMemo(() => {
+    focusVersion();
+    const target = focusedControl();
     const owner = physicalFocusOwner();
-    const scope = owner === "top-nav" ? "context" : owner === "local-nav" ? "section" : undefined;
-    if (!scope) return undefined;
-    return scope === "context"
-      ? "←→ change context · Enter Pages"
-      : `${layout.wide() ? "↑↓" : "←→"} change page · Enter content`;
-  };
+    const command = [...commandRegistry.mounted().values()].find(
+      (item) => item.controlId === target?.id,
+    )?.record;
+    const horizontal =
+      owner === "top-nav" ||
+      owner === "reader-tabs" ||
+      owner === "skills-views" ||
+      (owner === "local-nav" && !layout.wide());
+    const palette = overlayKind() === "palette";
+    const filter = overlayKind() === "filter";
+    const canonical = owner ? focusRegistry.target(owner) : undefined;
+    const treeTarget =
+      canonical instanceof ScrollBoxRenderable &&
+      ["current-exposure-browser", "collection-filter-tree"].includes(canonical.id)
+        ? canonical
+        : undefined;
+    const treeBrowser = !!treeTarget;
+    const exposureRow =
+      treeTarget?.id === "current-exposure-browser"
+        ? deriveAgentAccessTree(
+            projection.workspace(),
+            workspaceState.expandedExposurePaths(),
+          ).rows.find((row) => row.key === workspaceState.selectedExposurePath())
+        : undefined;
+    const inventoryRows =
+      treeTarget?.id === "collection-filter-tree"
+        ? deriveCollectionFilterTree(
+            projection.workspace(),
+            workspaceState.expandedCollectionPaths(),
+          ).rows
+        : [];
+    const collection = workspaceState.filters().Collection;
+    const inventoryRow = collection
+      ? (inventoryRows.find(
+          (row) =>
+            row.key === workspaceState.selectedCollectionPath() && row.collection === collection,
+        ) ?? inventoryRows.find((row) => row.collection === collection))
+      : undefined;
+    const treeRow = exposureRow ?? inventoryRow;
+    const treeExpanded = exposureRow
+      ? workspaceState.isExposurePathExpanded(exposureRow.nodeId.path)
+      : inventoryRow
+        ? !!workspaceState.expandedCollectionPaths()[inventoryRow.key]
+        : false;
+    const filterCommand: CommandRecord | undefined =
+      filter &&
+      [
+        "skills-filter-search",
+        "skills-filter-close",
+        "skills-filter-clear-all",
+        "skills-filter-clear-search",
+      ].includes(target?.id ?? "")
+        ? {
+            id: "filter.focus",
+            verb:
+              target?.id === "skills-filter-search"
+                ? "options"
+                : target?.id === "skills-filter-close"
+                  ? "close"
+                  : target?.id === "skills-filter-clear-search"
+                    ? "clear search"
+                    : "clear filters",
+            keys: ["enter"],
+            destination: "Filter",
+            scope: "modal",
+            enabled: true,
+            danger: false,
+          }
+        : undefined;
+    const mode: InteractionMode =
+      target instanceof InputRenderable
+        ? "edit"
+        : palette || command || filterCommand || target?.id === "route-back"
+          ? "command"
+          : horizontal
+            ? "horizontal"
+            : target instanceof ScrollBoxRenderable && !treeBrowser
+              ? "scroll"
+              : "browse";
+    return keyboardGuidance({
+      mode,
+      width: hintWidth(),
+      command:
+        filterCommand ??
+        (palette
+          ? target?.id === "palette-query"
+            ? paletteSearchCommand
+            : target?.id === "palette-close"
+              ? paletteCloseCommand
+              : undefined
+          : target?.id === "route-back"
+            ? routeBackRecord()
+            : command),
+      commands: [...commandRegistry.mounted().values()].map((item) => item.record),
+      browseHint: filter
+        ? target?.id === "skills-filter-dimensions"
+          ? { full: "↑↓ dimension · Enter options", short: "Enter options" }
+          : { full: "↑↓ option · Enter apply · / search", short: "Enter apply · / search" }
+        : treeBrowser
+          ? exposureRow?.kind === "skill"
+            ? exposureRow.availability.status === "available"
+              ? { full: "↑↓ nodes · Enter read · ← parent", short: "Enter read" }
+              : { full: "Unavailable · ↑↓ nodes · ← parent", short: "Unavailable" }
+            : treeTarget?.id === "collection-filter-tree" && !collection
+              ? { full: "↑↓ nodes · Enter Skills", short: "Enter Skills" }
+              : treeRow && !treeRow.expandable
+                ? { full: "No children · ↑↓ nodes · ← parent", short: "No children" }
+                : {
+                    full: `↑↓ nodes · Enter ${treeExpanded ? "collapse" : "expand"} · ←→ level`,
+                    short: `Enter ${treeExpanded ? "collapse" : "expand"}`,
+                  }
+          : skillWorkspace() && owner === "browser"
+            ? { full: "Enter read · / filter · Space check", short: "Enter read" }
+            : undefined,
+      modal: !!overlayKind() || !!operation.task(),
+      modalBack: filter && target?.id === "skills-filter-search" ? "options" : "close",
+    });
+  });
   const selectDestination = (destination: Destination) => {
     route.switchContext(destination, "top-nav");
-    renderer.once("frame", () => focusRegistry.applyFocus("top-nav"));
     setTransition(
       `Opened ${destination === "workspace" ? "Workspace" : `${destination[0]!.toUpperCase()}${destination.slice(1)} Config`}`,
     );
@@ -2201,6 +2713,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   const selectSection = (section: Section) => {
     cancelPendingShellFocus();
     const destination = route.snapshot().destination;
+    if (destination === "workspace" && section === "updates") {
+      const workspace = projection.workspace();
+      if (workspace && !effects.updatesActive())
+        effects.selectUpdatesScope({ kind: "workspace" }, workspace);
+    }
     if (destination !== "workspace")
       configState.selectSection(destination, section as ConfigSection);
     route.switchSection(section, "local-nav");
@@ -2308,97 +2825,45 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         <ModalControlsProvider value={modalControls}>
           <RouteShell
             mode={layout.mode()}
+            compactTitle={skillWorkspace()}
+            hideTitle={
+              route.snapshot().destination === "workspace" &&
+              workspaceState.section() === "skills" &&
+              !routeBackVisible() &&
+              !effects.updatesActive()
+            }
             slots={{
               globalBar: () => (
-                <box id="shell-context-panel" flexDirection="row">
-                  <text
-                    width={layout.wide() ? 21 : 10}
-                    flexShrink={0}
-                    fg={tokens().colors.foreground}
+                <box width="100%" flexDirection={layout.narrow() ? "column" : "row"}>
+                  <box
+                    id="section-nav"
+                    flexDirection="row"
+                    height={1}
+                    flexGrow={layout.narrow() ? 0 : 1}
+                    flexBasis={layout.narrow() ? undefined : 0}
+                    flexShrink={1}
+                    minWidth={0}
                   >
-                    <strong>skill-cli </strong>
-                  </text>
-                  <box flexGrow={1} flexBasis={0} minWidth={0}>
-                    <SectionTabs
-                      id="top-navigation"
-                      owner="top-nav"
-                      options={topOptions()}
-                      value={route.snapshot().current.context}
-                      focusRegistry={focusRegistry}
-                      commandForDirection={(direction) =>
-                        shellNavigationRecord("context", direction)
-                      }
-                      onNavigate={(destination, record) =>
-                        commitShellNavigation("context", destination, record)
-                      }
-                      onActivate={() => requestFocus("local-nav")}
-                    />
-                  </box>
-                  <CommandControl
-                    id="shell-more-actions"
-                    record={{
-                      id: "shell.more-actions",
-                      verb: "More actions…",
-                      destination: "Optional command menu",
-                      scope: "shell",
-                      keys: ["enter"],
-                      enabled: true,
-                      danger: false,
-                    }}
-                    keyboard={false}
-                    register={(target) => {
-                      const record: CommandRecord = {
-                        id: "shell.more-actions",
-                        verb: "More actions…",
-                        destination: "Optional command menu",
-                        scope: "shell",
-                        keys: ["enter"],
-                        enabled: true,
-                        danger: false,
-                      };
-                      const unregisterFocus = focusRegistry.register(
-                        "command:shell.more-actions",
-                        target,
-                      );
-                      const unregisterCommand = registerPageCommand(
-                        record,
-                        "command:shell.more-actions",
-                        "shell-more-actions",
-                        () => openSession("palette", { family: "palette" }),
-                      );
-                      return () => {
-                        unregisterFocus();
-                        unregisterCommand();
-                      };
-                    }}
-                    execute={() => openSession("palette", { family: "palette" })}
-                  />
-                </box>
-              ),
-              sectionNav: () => (
-                <Show keyed when={route.snapshot().current.context}>
-                  {(context) => {
-                    const options: readonly { label: string; value: Section }[] =
-                      context === "workspace"
-                        ? [
-                            { label: "Skills", value: "skills" },
-                            { label: "Collections", value: "collections" },
-                            { label: "Sources", value: "sources" },
-                          ]
-                        : [
-                            { label: "Sources", value: "sources" },
-                            { label: "Config Sources", value: "config-sources" },
-                            { label: "Collections", value: "collections" },
-                            { label: "Integrations", value: "integrations" },
-                          ];
-                    return (
-                      <Show
-                        when={layout.wide()}
-                        fallback={
+                    <Show when={layout.width() >= 120}>
+                      <text width={11} flexShrink={0}>
+                        <strong>skill-cli</strong>
+                      </text>
+                    </Show>
+                    {/* Scope changes reorder/remove native tabs. Their coordination
+                        lifetime ends on removal, so each context owns a fresh strip. */}
+                    <box flexGrow={1} flexBasis={0} minWidth={0} height={1}>
+                      <Show when={route.snapshot().destination} keyed>
+                        {(context) => (
                           <SectionTabs
-                            id="shell-section"
+                            id={
+                              context === "workspace" ? "shell-section" : `shell-section-${context}`
+                            }
+                            panelId={
+                              context === "workspace" ? "shell-section" : `shell-section-${context}`
+                            }
                             owner="local-nav"
-                            options={options}
+                            compact={layout.width() < 120}
+                            options={sectionOptions(context)}
                             value={route.snapshot().current.section}
                             focusRegistry={focusRegistry}
                             commandForDirection={(direction) =>
@@ -2409,32 +2874,72 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                             }
                             onActivate={() => requestFocus("browser")}
                           />
-                        }
-                      >
-                        <NavigationList
-                          options={options}
-                          height={layout.wide() ? options.length : 1}
-                          value={route.snapshot().current.section}
-                          focusRegistry={focusRegistry}
-                          commandForDirection={(direction) =>
-                            shellNavigationRecord("section", direction)
-                          }
-                          onNavigate={(section, record) =>
-                            commitShellNavigation("section", section, record)
-                          }
-                          onActivate={(section) => {
-                            selectSection(section);
-                            // Activating the one-row navigator enters the newly
-                            // mounted page, rather than leaving native focus on
-                            // the selector until a subsequent input turn.
-                            requestFocus("browser");
-                          }}
-                        />
+                        )}
                       </Show>
-                    );
-                  }}
-                </Show>
+                    </box>
+                    <Show when={!layout.narrow()}>
+                      <ActivityStatus />
+                    </Show>
+                  </box>
+                  <box
+                    id="shell-context-panel"
+                    flexDirection="row"
+                    height={1}
+                    flexShrink={0}
+                    width={layout.narrow() ? "100%" : "auto"}
+                  >
+                    <CommandControl
+                      id="shell-scope-select"
+                      record={scopeMenuRecord()}
+                      keyboard={false}
+                      register={(target) => {
+                        const unbind = focusRegistry.register("top-nav", target);
+                        const unregister = registerPageCommand(
+                          { ...scopeMenuRecord(), verb: "Change Scope" },
+                          "top-nav",
+                          "shell-scope-select",
+                          () => openSession("selection", { family: "scope-selection" }),
+                        );
+                        return () => {
+                          unbind();
+                          unregister();
+                        };
+                      }}
+                      execute={() => openSession("selection", { family: "scope-selection" })}
+                    />
+                    <CommandControl
+                      id="shell-more-actions"
+                      record={
+                        layout.width() < 120
+                          ? { ...actionsMenuRecord, verb: "Actions" }
+                          : actionsMenuRecord
+                      }
+                      keyboard={false}
+                      register={(target) => {
+                        const unregisterFocus = focusRegistry.register(
+                          "command:shell.more-actions",
+                          target,
+                        );
+                        const unregisterCommand = registerPageCommand(
+                          actionsMenuRecord,
+                          "command:shell.more-actions",
+                          "shell-more-actions",
+                          () => openSession("palette", { family: "palette" }),
+                        );
+                        return () => {
+                          unregisterFocus();
+                          unregisterCommand();
+                        };
+                      }}
+                      execute={() => openSession("palette", { family: "palette" })}
+                    />
+                    <Show when={layout.narrow()}>
+                      <ActivityStatus />
+                    </Show>
+                  </box>
+                </box>
               ),
+              sectionNav: null,
               routeTitle: () => (
                 <box flexDirection="row" flexShrink={0} height={1} gap={1}>
                   <text
@@ -2459,6 +2964,55 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                       register={bindRouteBack}
                       keyboard={false}
                       execute={() => executeRouteBack(routeBackRecord())}
+                    />
+                  </Show>
+                  <Show
+                    when={
+                      effects.updatesActive() &&
+                      !(
+                        route.snapshot().destination === "workspace" &&
+                        route.snapshot().current.section === "updates"
+                      )
+                    }
+                  >
+                    <CommandControl
+                      id="return-updates"
+                      record={{
+                        id: "updates.return",
+                        verb: "Return Updates",
+                        palette: false,
+                        destination: "Active Updates",
+                        scope: "page",
+                        keys: ["enter"],
+                        enabled: true,
+                        danger: false,
+                      }}
+                      register={(target) => {
+                        const unregisterFocus = focusRegistry.register(
+                          "command:updates.return",
+                          target,
+                        );
+                        const unregisterCommand = registerPageCommand(
+                          {
+                            id: "updates.return",
+                            verb: "Return Updates",
+                            palette: false,
+                            destination: "Active Updates",
+                            scope: "page",
+                            keys: ["enter"],
+                            enabled: true,
+                            danger: false,
+                          },
+                          "command:updates.return",
+                          "return-updates",
+                          showUpdateTask,
+                        );
+                        return () => {
+                          unregisterFocus();
+                          unregisterCommand();
+                        };
+                      }}
+                      execute={showUpdateTask}
                     />
                   </Show>
                 </box>
@@ -2487,6 +3041,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                       projection={projection.workspace}
                       focusRegistry={focusRegistry}
                       registerCommand={registerPageCommand}
+                      onRequestFocus={requestFocus}
                       executeCommand={executePageCommand}
                       actions={actions()}
                       onSkillRelationship={(relationship: string) => {
@@ -2632,39 +3187,77 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         if (!overlayKind()) workspaceState.selectSource(source);
                       }}
                       onSkill={(address, intent) => {
-                        if (intent === "open") {
-                          // The return frame captures Workspace state synchronously. Select before
-                          // pushing Inspector so its structural object and browser state agree.
-                          workspaceState.selectSkill(address);
-                          route.syncCurrent({
-                            object: address,
-                            surface: "browser",
-                            focus: "browser",
-                          });
-                          route.transition(
-                            {
-                              destination: "workspace",
-                              section: "skills",
-                              selection: address,
-                              surface: "inspector",
-                              focus: "command:skill.open-skill-md",
-                            },
-                            () => {
-                              batch(() => {
-                                workspaceState.closeReader();
-                                workspaceState.openDetail();
-                              });
-                            },
-                          );
-                        } else {
-                          workspaceState.selectSkill(address);
-                          if (workspaceState.readerOpen()) selectReaderSkill(address, true);
-                          route.syncCurrent({ object: address });
+                        if (!skillWorkspace() && intent === "open") {
+                          openReaderSkill(address, "skill");
+                          return;
                         }
+                        const changed =
+                          !reader()?.address || !sameSkillAddress(reader()!.address!, address);
+                        workspaceState.selectSkill(address);
+                        selectReaderSkill(address);
+                        if (changed) readerDispatch({ type: "patch", value: { tab: "skill" } });
+                        workspaceState.openReader();
+                        route.syncCurrent({ object: address });
+                        if (intent === "open") requestFocus("reader");
                       }}
                       onToggleSkill={(address) => {
                         workspaceState.toggleSkill(address);
                       }}
+                      updates={effects.updates}
+                      updatesActive={effects.updatesActive}
+                      updatesRun={effects.updateRun}
+                      updatesCheckingActive={effects.checkingActive}
+                      updatesCurrentCheckSource={effects.currentCheckSource}
+                      updatesCheckWarning={effects.updateChecksWarning}
+                      sourceUpdates={activeSourceUpdatesView}
+                      onSourceUpdatesQuery={workspaceState.setSourceUpdatesQuery}
+                      onSourceUpdatesFilter={workspaceState.setSourceUpdatesFilter}
+                      onUpdatesCheck={(sources) => void effects.checkUpdates(sources)}
+                      onUpdatesSubmit={(addresses) => void effects.submitUpdates(addresses)}
+                      onUpdatesOpenSource={openSourceUpdates}
+                      onUpdateSource={(source) => {
+                        const workspace = projection.workspace();
+                        if (!workspace || effects.updatesActive()) return;
+                        const state = effects.selectUpdatesScope(
+                          { kind: "source", source },
+                          workspace,
+                        );
+                        if (state) void effects.submitUpdates(state.scope.addresses);
+                      }}
+                      onUpdatesStop={() => effects.stopUpdates()}
+                      onUpdatesStopChecking={() => effects.stopUpdateChecks()}
+                      onUpdatesRetry={() => {
+                        void effects.continueUpdates();
+                      }}
+                      onOpenSourceUpdates={(source) => openSourceUpdates(source)}
+                      onSourceUpdatesDetails={(source) => {
+                        const binding = projection
+                          .workspace()
+                          ?.effective.sources.find((item) => item.id === source);
+                        if (!binding) return;
+                        route.syncCurrent({ surface: "browser", focus: "browser" });
+                        route.transition(
+                          {
+                            destination: "workspace",
+                            section: "sources",
+                            selection: source,
+                            surface: "inspector",
+                            focus: sourceInspectorFocus(binding),
+                          },
+                          () => {
+                            workspaceState.land("sources", source);
+                            workspaceState.selectSource(source);
+                            workspaceState.clearSourceUpdatesView();
+                            workspaceState.openDetail();
+                          },
+                        );
+                      }}
+                      onUpdatesOpenSkill={(address, tab) =>
+                        openReaderSkill(address, tab ?? "skill")
+                      }
+                      previewUpdate={(request, options) =>
+                        props.core.management.previewUpdate(request, options)
+                      }
                       onFirstSkill={() => void dispatchAction("add-source")}
                       onDetail={() => {
                         if (workspaceState.section() === "sources") {
@@ -2706,7 +3299,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                               : "reader",
                         );
                       }}
-                      onOpenReader={openReaderSkill}
                       onWorkspaceScroll={(surface, scroll) =>
                         workspaceState.setScroll(surface, scroll)
                       }
@@ -2756,10 +3348,51 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                           return;
                         }
                         workspaceState.selectScope(scope);
-                        route.syncCurrent({ section: workspaceState.section() });
+                        route.syncCurrent({
+                          section: workspaceState.section(),
+                        });
                         if (sameScope) requestFocus("browser");
                       }}
-                      onSelectExposurePath={(path) => workspaceState.selectExposurePath(path)}
+                      onSelectExposurePath={(path) => {
+                        const row = deriveAgentAccessTree(
+                          projection.workspace(),
+                          workspaceState.expandedExposurePaths(),
+                        ).rows.find((candidate) => candidate.key === path);
+                        batch(() => {
+                          workspaceState.selectExposurePath(path);
+                          workspaceState.selectSkill(
+                            row?.kind === "skill" && row.availability.status === "available"
+                              ? row.address
+                              : undefined,
+                          );
+                          if (row && row.kind !== "skill")
+                            collectionsState.select(
+                              row.kind === "reference" ? row.target : row.collection,
+                            );
+                        });
+                      }}
+                      onSelectCollectionPath={(path) => workspaceState.selectCollectionPath(path)}
+                      onCollectionBrowserOpen={(open) => {
+                        batch(() => {
+                          workspaceState.setCollectionBrowserOpen(open);
+                          workspaceState.showWorkArea();
+                        });
+                        requestFocus(open ? "collection-tree" : "browser");
+                      }}
+                      onCollectionPathExpanded={(path, expanded) =>
+                        workspaceState.setCollectionPathExpanded(path, expanded)
+                      }
+                      onToggleExposurePath={(path) => workspaceState.toggleExposurePath(path)}
+                      onExposureUpdate={(row) => {
+                        const entry =
+                          row.kind === "skill"
+                            ? { kind: "skill" as const, address: row.address }
+                            : {
+                                kind: "collection" as const,
+                                collection: row.kind === "collection" ? row.collection : row.target,
+                              };
+                        openUpdates(entry, true);
+                      }}
                       onRepairCurrentExposure={(level, section, collection) => {
                         // Preserve the mounted repair control as the route-back focus before navigation.
                         requestFocus("work-area");
@@ -2782,6 +3415,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                           workspaceState.showWorkArea();
                           requestFocus("browser");
                         }
+                      }}
+                      onSkillFilter={(dimension, value) => {
+                        workspaceState.setFilter(dimension, value);
+                        const projectionValue = projection.workspace();
+                        if (projectionValue)
+                          workspaceState.reconcile(projectionValue, projectionValue);
                       }}
                       onQuery={(query) => {
                         workspaceState.setQuery(query);
@@ -2900,11 +3539,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                           return;
                         }
                         if (intent.kind === "collection-open-skill") {
-                          routeSource({
-                            destination: "workspace",
-                            section: "skills",
-                            selection: intent.address,
-                          });
+                          openReaderSkill(intent.address, "skill");
                           return;
                         }
                         if (intent.kind === "collection-open-config") {
@@ -3006,14 +3641,16 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                           batch(() => {
                             routeSource({
                               destination: "workspace",
-                              section: "skills",
-                              selection: intent.address,
+                              section: "sources",
+                              selection: intent.address.source,
                               handoff: {
                                 kind: "agent-producer",
                                 address: intent.address,
                               },
                             });
+                            workspaceState.openDetail();
                           });
+                          requestFocus("inspector");
                           return;
                         }
                         if (intent.kind === "collection-direct") {
@@ -3109,7 +3746,10 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                             title: "Membership impact requires multiple owners",
                             cancellationRequested: false,
                             dismissible: true,
-                            semanticOwner: { kind: "collection", id: collection },
+                            semanticOwner: {
+                              kind: "collection",
+                              id: collection,
+                            },
                             details: [
                               `Collection: ${collection}`,
                               ...plan.ownerGroups.map(
@@ -3138,25 +3778,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                       onProblem={(intent, key) => {
                         if (intent.kind === "installed-skill") {
                           workspaceState.selectProblem(key);
-                          workspaceState.selectSkill(intent.address);
-                          route.syncCurrent({
-                            object: intent.address,
-                            surface: "browser",
-                            focus: "browser",
-                          });
-                          route.transition(
-                            {
-                              destination: "workspace",
-                              section: "skills",
-                              selection: intent.address,
-                              surface: "inspector",
-                              focus: "command:skill.open-skill-md",
-                            },
-                            () => {
-                              workspaceState.closeReader();
-                              workspaceState.openDetail();
-                            },
-                          );
+                          openReaderSkill(intent.address, "skill");
                           return;
                         }
                         if (intent.kind === "diagnostic-detail") {
@@ -3197,6 +3819,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         });
                       }}
                       onResources={() => ensureResources()}
+                      onRetryContent={(address) => void effects.loadReader(address)}
+                      onReloadContent={(address) => {
+                        effects.cancelReaderContent();
+                        readerDispatch({ type: "content.invalidate", address });
+                      }}
                       onReadResource={(address, path) => {
                         requestFocus("reader-resource-content");
                         const current = reader();
@@ -3250,11 +3877,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         const skill = installedSkillContext(
                           route.snapshot().destination,
                           workspace,
-                          {
-                            workspace: workspaceState.snapshot(),
-                            collections: collectionsState.snapshot(),
-                            config: (destination) => configState.snapshot(destination),
-                          },
+                          pageActionFacts(),
                         )?.skill;
                         if (!skill?.source) return;
                         if (relationship === "source") {
@@ -3412,20 +4035,35 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                 </>
               ),
               commandStatus: () => (
-                <box flexDirection="column">
-                  <text fg={tokens().colors.foreground} wrapMode="none">
-                    {fitColumn(
-                      operation.task()?.cancellationRequested
-                        ? "Cancelling operation"
-                        : projection.refresh() === "loading"
-                          ? "Loading workspace"
-                          : idleHelp(),
-                      Math.max(1, layout.width() - 2),
-                    ).trimEnd()}
-                  </text>
-                  <text fg={tokens().colors.mutedForeground} wrapMode="none">
-                    {traversalHelp()}
-                  </text>
+                <box height={1} width="100%" minWidth={0} flexDirection="row">
+                  <box
+                    height={1}
+                    flexGrow={1}
+                    minWidth={0}
+                    flexDirection="row"
+                    columnGap={guidance().local ? 3 : 0}
+                  >
+                    <text
+                      id="interaction-guidance"
+                      height={1}
+                      width={Bun.stringWidth(guidance().local)}
+                      flexShrink={0}
+                      fg={tokens().colors.foreground}
+                      wrapMode="none"
+                    >
+                      {guidance().local}
+                    </text>
+                    <text
+                      id="navigation-guidance"
+                      height={1}
+                      flexGrow={1}
+                      minWidth={0}
+                      fg={tokens().colors.mutedForeground}
+                      wrapMode="none"
+                    >
+                      {guidance().global}
+                    </text>
+                  </box>
                 </box>
               ),
             }}
@@ -3472,24 +4110,42 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               </box>
             )}
           </Show>
-          {overlayKind() === "palette" && (
-            <CommandPalette
-              actions={paletteActions()}
-              onSelect={(record) => {
-                if (record.id.startsWith("navigate.")) {
-                  const destination = record.id.slice("navigate.".length) as Destination;
-                  if (!isDestination(destination)) return;
-                  selectDestination(destination);
-                  closeSession();
-                  return;
-                }
-                if (record.id === "open-palette") return;
-                if (actionIds.includes(record.id as ActionId))
-                  void dispatchAction(record.id as ActionId);
-              }}
-              onClose={closeOverlay}
-            />
-          )}
+          <CommandPalette
+            open={overlayKind() === "palette"}
+            actions={commandRegistry.records()}
+            onSelect={(record) => executePaletteCommand(record.id)}
+            onClose={closeOverlay}
+          />
+          <Dialog
+            open={sessionPayload()?.family === "scope-selection"}
+            onOpenChange={(open) => {
+              if (!open && sessionPayload()?.family === "scope-selection") closeOverlay();
+            }}
+          >
+            <Show when={sessionPayload()?.family === "scope-selection"}>
+              <DialogContent
+                width={Math.min(34, layout.width() - 2)}
+                maxWidth={34}
+                backdropColor="transparent"
+              >
+                <ScopeChoices
+                  current={route.snapshot().destination}
+                  onClose={closeOverlay}
+                  onSelect={(destination) => {
+                    closeOverlay();
+                    selectDestination(destination);
+                  }}
+                />
+              </DialogContent>
+            </Show>
+          </Dialog>
+          <Show when={sessionPayload()?.family === "diagnostic-log" && sessionPayload()} keyed>
+            {(payload) =>
+              payload.family === "diagnostic-log" ? (
+                <DiagnosticLog text={payload.text} onClose={closeOverlay} />
+              ) : null
+            }
+          </Show>
           <Show when={overlayKind() === "filter"}>
             <SkillsFilterPopup
               workspace={workspaceState}
@@ -3506,11 +4162,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                 const skill = installedSkillContext(
                   route.snapshot().destination,
                   projection.workspace(),
-                  {
-                    workspace: workspaceState.snapshot(),
-                    collections: collectionsState.snapshot(),
-                    config: (destination) => configState.snapshot(destination),
-                  },
+                  pageActionFacts(),
                 )?.skill;
                 const address = surface.address ?? skill?.address;
                 if (!address) return;
@@ -3592,7 +4244,10 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                   onSubmit={(intent) => {
                     const begun = beginSession(overlaySession().revision, "executing");
                     void effects
-                      .createCollection({ kind: "collection-create", ...intent })
+                      .createCollection({
+                        kind: "collection-create",
+                        ...intent,
+                      })
                       .then((complete) => {
                         if (
                           complete &&
@@ -4289,7 +4944,7 @@ export async function runTui(core: SkillCliCore): Promise<void> {
     screenMode: "alternate-screen",
     exitOnCtrlC: false,
     useMouse: true,
-    consoleMode: "disabled",
+    consoleMode: "console-overlay",
   });
   let exiting = false;
   const exit = () => {

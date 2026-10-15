@@ -9,7 +9,9 @@ import type {
 
 type MembershipSubject = {
   readonly kind: "membership";
-  readonly member: Pick<CollectionMemberOriginRow, "name" | "address">;
+  readonly member: Pick<CollectionMemberOriginRow, "name" | "address"> & {
+    readonly available?: boolean;
+  };
   readonly origin?: Pick<CollectionMemberOriginRow, "path">["path"];
 };
 
@@ -52,13 +54,24 @@ const membershipCommands = (
   member: MembershipSubject["member"],
   path: MemberOriginPath | undefined,
 ): readonly RelationshipCommand[] => {
+  const skillAvailable = member.available ?? true;
+  const openSkill = command(
+    "membership.open-skill",
+    "Open Skill",
+    "Installed Skill",
+    skillAvailable,
+    skillAvailable
+      ? {
+          kind: "collection-open-skill",
+          collection,
+          address: member.address,
+        }
+      : undefined,
+    skillAvailable ? undefined : "Unavailable: installed Skill unavailable",
+  );
   if (path?.kind === "repository-derived")
     return [
-      command("membership.open-skill", "Open Skill", "Installed Skill", true, {
-        kind: "collection-open-skill",
-        collection,
-        address: member.address,
-      }),
+      openSkill,
       command("membership.open-source", "Open Source", "Skill Source", true, {
         kind: "collection-producer",
         collection,
@@ -69,7 +82,15 @@ const membershipCommands = (
     const link = path.links[0];
     const owner = link?.owner;
     const enabled = !!owner;
-    const intent = owner
+    const openIntent = owner
+      ? {
+          kind: "collection-open-link" as const,
+          collection: link.collection,
+          target: link.linkedCollection,
+          owner,
+        }
+      : undefined;
+    const removalIntent = owner
       ? {
           kind: "collection-link" as const,
           collection: link.collection,
@@ -78,12 +99,13 @@ const membershipCommands = (
         }
       : undefined;
     return [
+      openSkill,
       command(
         "membership.open-link",
         "Open owning Link",
         "Owning Link",
         enabled,
-        intent,
+        openIntent,
         enabled ? undefined : unavailable(owner, true),
       ),
       command(
@@ -91,7 +113,7 @@ const membershipCommands = (
         "Unlink Membership",
         "Review removal",
         enabled && !owner!.contribution,
-        intent,
+        removalIntent,
         enabled && !owner!.contribution ? undefined : unavailable(owner, true),
         true,
       ),
@@ -114,6 +136,7 @@ const membershipCommands = (
       }
     : undefined;
   return [
+    openSkill,
     command(
       owner?.contribution ? "membership.open-source" : "membership.open-owner",
       owner?.contribution ? "Open Config Source" : "Open owning Config",

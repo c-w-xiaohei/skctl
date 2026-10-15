@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { SourceRegistrationOverlay } from "../src/operations";
 
-test("Source form stays one Tab panel and fields remain reachable with arrows", async () => {
+test("Source form cycles within live modal controls and fields remain reachable with arrows", async () => {
   const writes: unknown[] = [];
   const setup = await testRender(
     () => (
@@ -25,6 +25,9 @@ test("Source form stays one Tab panel and fields remain reachable with arrows", 
     }
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-register-id");
     setup.mockInput.pressTab();
+    await setup.renderOnce();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-register-origin");
+    setup.mockInput.pressTab({ shift: true });
     await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-register-id");
     setup.mockInput.pressArrow("down");

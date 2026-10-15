@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { afterEach, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
-import type { TabsTabRenderable } from "@tuiparts/core/tabs";
+import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { createSignal, Show } from "solid-js";
 import { SectionTabs } from "../src/components/section-tabs";
 import { createFocusRegistry } from "../src/focus";
@@ -41,7 +41,12 @@ test("narrow section navigation reveals the complete active tab without clipping
     expect(tab.screenX).toBeGreaterThanOrEqual(0);
     expect(tab.screenX + tab.width).toBeLessThanOrEqual(43);
   }
-  await setup.waitForFrame((frame) => frame.includes("[ Integrations ]"));
+  await setup.waitFor(
+    () =>
+      (
+        setup!.renderer.root.findDescendantById("sections-tab-integrations") as TabsTabRenderable
+      ).getState().selected,
+  );
   setup.resize(80, 13);
   await setup.renderOnce();
   setup.resize(43, 13);
@@ -80,6 +85,39 @@ async function renderTabs() {
   return { navigations, pointerEntries, registry, value };
 }
 
+test("focusing an inactive native tab releases the previous roving stop before it becomes nonfocusable", async () => {
+  const { value } = await renderTabs();
+  const first = setup!.renderer.root.findDescendantById(
+    "workspace-section-browser-tab-skills",
+  ) as TabsTabRenderable;
+  const sources = setup!.renderer.root.findDescendantById(
+    "workspace-section-browser-tab-sources",
+  ) as TabsTabRenderable;
+  first.focus();
+  sources.focus();
+  expect(setup!.renderer.currentFocusedRenderable).toBe(sources);
+  expect(first.focused).toBe(false);
+  setup!.mockInput.pressEnter();
+  await setup!.waitFor(() => value() === "sources");
+  expect(first.focused).toBe(false);
+});
+
+test("an unavailable native tab cannot blur the live roving stop", async () => {
+  await renderTabs();
+  const first = setup!.renderer.root.findDescendantById(
+    "workspace-section-browser-tab-skills",
+  ) as TabsTabRenderable;
+  const sources = setup!.renderer.root.findDescendantById(
+    "workspace-section-browser-tab-sources",
+  ) as TabsTabRenderable;
+  first.focus();
+  sources.visible = false;
+  sources.focus();
+  expect(setup!.renderer.currentFocusedRenderable).toBe(first);
+  expect(first.focused).toBe(true);
+  expect(sources.focused).toBe(false);
+});
+
 test("resizing a focused middle Section keeps its entire selected token visible", async () => {
   const [value, setValue] = createSignal("sources");
   const [width, setWidth] = createSignal(120);
@@ -115,7 +153,7 @@ test("resizing a focused middle Section keeps its entire selected token visible"
     const active = setup.renderer.root.findDescendantById("resize-sections-tab-collections")!;
     expect(active.screenX).toBeGreaterThanOrEqual(0);
     expect(active.screenX + active.width).toBeLessThanOrEqual(columns);
-    await setup.waitForFrame((frame) => frame.includes("[ Collections ]"));
+    expect((active as TabsTabRenderable).getState().selected).toBe(true);
   }
 });
 
@@ -133,6 +171,9 @@ test("Context pointer immediately activates Project and Space does not switch it
 
 test("SectionTabs registers the selected trigger under its focus owner with stable ids", async () => {
   const { registry } = await renderTabs();
+  expect(
+    setup!.renderer.root.findDescendantById("workspace-section-browser-tab-skills"),
+  ).toBeInstanceOf(TabsTabRenderable);
   expect(
     setup!.renderer.root.findDescendantById("workspace-section-browser-tab-skills"),
   ).toBeDefined();
@@ -215,8 +256,10 @@ async function renderContextTabs() {
 
 test("Context Right immediately changes the active token while native Tabs transfers physical focus", async () => {
   const { context, navigations } = await renderContextTabs();
+  const prior = setup!.renderer.root.findDescendantById("context-tab-workspace")!;
   setup!.mockInput.pressArrow("right");
   await setup!.renderOnce();
+  expect(prior === setup!.renderer.root.findDescendantById("context-tab-workspace")).toBe(true);
   const workspace = setup!.renderer.root.findDescendantById(
     "context-tab-workspace",
   ) as TabsTabRenderable;
@@ -266,8 +309,8 @@ test("SectionTabs stays horizontal and switches immediately with horizontal keys
   const collections = setup.renderer.root.findDescendantById(
     "workspace-section-browser-tab-collections",
   )!;
-  expect(setup.captureCharFrame()).toContain("[ Skills ]");
-  expect(setup.captureCharFrame()).toContain("  Collections  ");
+  expect((skills as TabsTabRenderable).getState().selected).toBe(true);
+  expect((collections as TabsTabRenderable).getState().selected).toBe(false);
   expect(skills.screenY).toBe(collections.screenY);
   expect(registry.applyFocus("local-nav")).toBe(true);
   setup.mockInput.pressArrow("right");

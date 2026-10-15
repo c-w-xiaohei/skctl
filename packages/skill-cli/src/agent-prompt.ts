@@ -1,6 +1,13 @@
-import type { AgentCatalogItem } from "@skill-cli/core";
+import { SkillCliError, type AgentCatalogItem } from "@skill-cli/core";
 
 const maximumPromptBytes = 64 * 1024;
+const xml = (value: string) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
 
 export const unavailableCatalogPrompt =
   "skill-cli managed catalog is unavailable for this request. Do not invent managed Skills; continue without it or report the unavailable catalog.";
@@ -11,28 +18,34 @@ export function renderAgentCatalog(
 ): string {
   const records = items.map((item) =>
     item.kind === "skill"
-      ? `<skill><selector>${item.selector}</selector><name>${item.name}</name><description>${item.description}</description></skill>`
-      : `<collection><id>${item.id}</id><name>${item.name}</name>${item.description ? `<description>${item.description}</description>` : ""}</collection>`,
+      ? `<skill><selector>${xml(item.selector)}</selector><name>${xml(item.name)}</name><description>${xml(item.description)}</description></skill>`
+      : `<collection><id>${xml(item.id)}</id><name>${xml(item.name)}</name>${item.description ? `<description>${xml(item.description)}</description>` : ""}</collection>`,
   );
   const scopeAttributes =
-    scope.kind === "root" ? 'scope="root"' : `scope="collection" id="${scope.id}"`;
-  const catalog = `<managed_skill_catalog ${scopeAttributes}>${records.join("") || "No managed Skills are currently selected."}</managed_skill_catalog>`;
+    scope.kind === "root" ? 'scope="root"' : `scope="collection" id="${xml(scope.id)}"`;
+  const emptyMessage =
+    scope.kind === "root"
+      ? "No managed Collections are currently exposed."
+      : "No Skills or referenced Collections are available in this Collection.";
+  const catalog = `<managed_skill_catalog ${scopeAttributes}>${records.join("") || emptyMessage}</managed_skill_catalog>`;
   const output =
     scope.kind === "collection"
       ? catalog
       : [
           "Managed Skills are progressively disclosed. Collection descriptions route discovery; only loaded Skills contain task instructions.",
-          "Before planning or answering, follow any potentially relevant item:",
+          "Before planning or answering, use descriptions to browse task-relevant Collections and load matching Skills. Skip unrelated branches; stop a branch when nothing matches.",
           "- Collection: `skill-cli agent browse <collection-id>`",
-          "- Skill: `skill-cli agent load <selector>`; load it before planning or answering.",
+          "- Skill: `skill-cli agent load <selector>`",
           "Use only exact displayed IDs and selectors; never infer addresses.",
-          "After loading, follow the Skill and use its resources without reading CLI help:",
+          "Reuse applicable browse results and full Skill instructions still in context. Do not revisit a Collection solely because another reference points to it. Re-read needed content when missing (including after compaction) or stale.",
+          "Follow loaded Skill instructions; read referenced resources only as needed for the current task and the Skill's conditions:",
           "- Read text: `skill-cli agent read <selector> <root-relative-path>`",
           "- Copy a resource: `skill-cli agent download <selector> <root-relative-path> --output <host-path>`",
-          "- Run in the Skill Root: `skill-cli agent run <selector> -- <command> [args...]`",
+          "- Run in a temporary copy of the Skill Root: `skill-cli agent run <selector> -- <command> [args...]`; write persistent outputs to absolute paths.",
+          "Use subcommand --help when options are unclear.",
           catalog,
         ].join("\n");
-  if (new TextEncoder().encode(output).byteLength > maximumPromptBytes)
-    throw new Error("Catalog prompt is too large");
+  if (Buffer.byteLength(output) > maximumPromptBytes)
+    throw new SkillCliError("TEXT_TOO_LARGE", "Catalog prompt is too large");
   return `${output}\n`;
 }

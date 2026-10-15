@@ -297,7 +297,7 @@ test("TX-003 a legacy migration combined with uninstall rolls forward once and p
   }
 });
 
-test("TX-003 a crashed legacy migration and uninstall recovers as one v2 generation advance", async () => {
+test("TX-003 a crashed legacy migration and uninstall recovers as one v3 generation advance", async () => {
   const value = await installFixture();
   try {
     const origin = join(value.project, "skills");
@@ -328,7 +328,7 @@ test("TX-003 a crashed legacy migration and uninstall recovers as one v2 generat
     process.env.SKILL_CLI_STATE_DIR = value.state;
     await createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get();
     expect(JSON.parse(await readFile(join(value.state, "state.json"), "utf8"))).toEqual({
-      version: 2,
+      version: 3,
       generation: 5,
       installed: [],
       configs: {},

@@ -66,17 +66,19 @@ test("MGMT-006 Local discovery installs an atomic selected set without an invent
     const discovery = await value.core.management.discover({ source: "team/local" });
     expect(discovery.value.candidates.map((candidate) => candidate.path)).toEqual(["one", "two"]);
     await value.core.management.install({ source: "team/local", paths: ["two", "one"] });
-    expect((await value.core.management.checkUpdate({ source: "team/local" })).value).toEqual({
-      source: "team/local",
-      kind: "local",
-      changed: [],
-      added: [],
-      removed: [],
-      unchanged: [
-        { path: "one", name: "review", description: "Review" },
-        { path: "two", name: "publish", description: "Publish" },
-      ],
-    });
+    expect((await value.core.management.checkUpdate({ source: "team/local" })).value).toMatchObject(
+      {
+        source: "team/local",
+        kind: "local",
+        changed: [],
+        added: [],
+        removed: [],
+        unchanged: [
+          { path: "one", name: "review", description: "Review" },
+          { path: "two", name: "publish", description: "Publish" },
+        ],
+      },
+    );
     await value.core.management.uninstall({ source: "team/local", paths: ["two"] });
     await value.core.management.install({ source: "team/local", paths: ["two"] });
     expect(
@@ -425,7 +427,7 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
     expect(await readFile(join(value.root, "state", "state.json"), "utf8")).toBe(before);
     await value.core.management.install({ source: "first", paths: ["two"] });
     const migrated = JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"));
-    expect(migrated).toMatchObject({ version: 2, generation: 5 });
+    expect(migrated).toMatchObject({ version: 3, generation: 5 });
     expect(migrated.installed[0]).toMatchObject({
       source: "first",
       path: "nested/one",
@@ -478,7 +480,7 @@ test("MGMT-009 degrades an already-missing literal v1 owner without provider acc
     });
     await core.management.install({ source: "second", paths: ["two"] });
     const migrated = JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"));
-    expect(migrated).toMatchObject({ version: 2, generation: 3 });
+    expect(migrated).toMatchObject({ version: 3, generation: 3 });
     expect(migrated.installed[0]).toMatchObject({
       source: "missing",
       identityEvidence: { status: "unavailable" },
@@ -546,7 +548,7 @@ test("MGMT-009 derives literal v1 Remote evidence during a state-only uninstall 
     });
     await core.management.uninstall({ source: "remote", paths: ["review"] });
     expect(JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"))).toEqual({
-      version: 2,
+      version: 3,
       generation: 9,
       installed: [],
       configs: {},
@@ -809,20 +811,26 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
       .update(`blob ${Buffer.byteLength(skill)}\0`)
       .update(skill)
       .digest("hex");
-    const tree = "b".repeat(40);
+    const tree = await git(work, "rev-parse", `${revision}^{tree}`);
+    const sourceTree = await git(work, "rev-parse", `${revision}:skills`);
+    const rootTree = await git(work, "rev-parse", `${revision}:skills/review`);
     const server = Bun.serve({
       port: 0,
       fetch(request) {
-        const path = new URL(request.url).pathname;
+        const url = new URL(request.url);
+        const path = url.pathname;
         if (path === `/repos/acme/skills/commits/${revision}`)
           return Response.json({ sha: revision, commit: { tree: { sha: tree } } });
-        if (path === `/repos/acme/skills/git/trees/${tree}`)
+        if (
+          path === `/repos/acme/skills/git/trees/${tree}` &&
+          url.searchParams.get("recursive") === "1"
+        )
           return Response.json({
             sha: tree,
             truncated: false,
             tree: [
-              { path: "skills", mode: "040000", type: "tree", sha: "c".repeat(40) },
-              { path: "skills/review", mode: "040000", type: "tree", sha: "d".repeat(40) },
+              { path: "skills", mode: "040000", type: "tree", sha: sourceTree },
+              { path: "skills/review", mode: "040000", type: "tree", sha: rootTree },
               {
                 path: "skills/review/SKILL.md",
                 mode: "100644",
@@ -832,14 +840,25 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
               },
             ],
           });
-        if (path === `/repos/acme/skills/git/trees/${"c".repeat(40)}`)
+        if (path === `/repos/acme/skills/git/trees/${tree}`)
           return Response.json({
-            sha: "c".repeat(40),
+            sha: tree,
+            truncated: false,
+            tree: [{ path: "skills", mode: "040000", type: "tree", sha: sourceTree }],
+          });
+        if (path === `/repos/acme/skills/git/trees/${sourceTree}`)
+          return Response.json({
+            sha: sourceTree,
+            truncated: false,
+            tree: [{ path: "review", mode: "040000", type: "tree", sha: rootTree }],
+          });
+        if (path === `/repos/acme/skills/git/trees/${rootTree}`)
+          return Response.json({
+            sha: rootTree,
             truncated: false,
             tree: [
-              { path: "review", mode: "040000", type: "tree", sha: "d".repeat(40) },
               {
-                path: "review/SKILL.md",
+                path: "SKILL.md",
                 mode: "100644",
                 type: "blob",
                 sha: blob,

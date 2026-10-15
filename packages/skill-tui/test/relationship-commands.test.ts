@@ -5,10 +5,14 @@ import {
 } from "../src/collections/relationship-commands";
 import type { CollectionRelationRow } from "../src/collections/relationship-inspector";
 
-const owner = { level: "project" as const, file: "/project.jsonc", pointer: "/collections/team" };
+const owner = {
+  level: "project" as const,
+  file: "/project.jsonc",
+  pointer: "/collections/team",
+};
 const address = { source: "team", path: "guide" };
 
-test("direct Membership exposes its owner and review-backed removal command", () => {
+test("direct Membership leads with its Skill and retains owner and review-backed removal commands", () => {
   expect(
     relationshipCommands("team", {
       kind: "membership",
@@ -16,6 +20,14 @@ test("direct Membership exposes its owner and review-backed removal command", ()
       origin: { kind: "direct", collection: "team", entryName: "guide", owner },
     }),
   ).toEqual([
+    expect.objectContaining({
+      id: "membership.open-skill",
+      verb: "Open Skill",
+      destination: "Installed Skill",
+      danger: false,
+      enabled: true,
+      intent: { kind: "collection-open-skill", collection: "team", address },
+    }),
     expect.objectContaining({
       id: "membership.open-owner",
       verb: "Open owning Config",
@@ -29,7 +41,13 @@ test("direct Membership exposes its owner and review-backed removal command", ()
       destination: "Review removal",
       danger: true,
       enabled: true,
-      intent: { kind: "collection-direct", collection: "team", name: "guide", address, owner },
+      intent: {
+        kind: "collection-direct",
+        collection: "team",
+        name: "guide",
+        address,
+        owner,
+      },
     }),
   ]);
 });
@@ -38,7 +56,11 @@ test("membership provenance selects the stable ordinary and disabled danger reco
   const contributed = {
     ...owner,
     contribution: {
-      configSource: { level: "global" as const, file: "/global.jsonc", pointer: "/sources/team" },
+      configSource: {
+        level: "global" as const,
+        file: "/global.jsonc",
+        pointer: "/sources/team",
+      },
       declaration: {
         level: "global" as const,
         file: "/global.jsonc",
@@ -49,7 +71,12 @@ test("membership provenance selects the stable ordinary and disabled danger reco
   const direct = relationshipCommands("team", {
     kind: "membership",
     member: { name: "guide", address },
-    origin: { kind: "direct", collection: "team", entryName: "guide", owner: contributed },
+    origin: {
+      kind: "direct",
+      collection: "team",
+      entryName: "guide",
+      owner: contributed,
+    },
   });
   expect(
     direct.map(({ id, verb, destination, danger, enabled, disabledReason }) => ({
@@ -61,6 +88,14 @@ test("membership provenance selects the stable ordinary and disabled danger reco
       disabledReason,
     })),
   ).toEqual([
+    {
+      id: "membership.open-skill",
+      verb: "Open Skill",
+      destination: "Installed Skill",
+      danger: false,
+      enabled: true,
+      disabledReason: undefined,
+    },
     {
       id: "membership.open-source",
       verb: "Open Config Source",
@@ -81,7 +116,12 @@ test("membership provenance selects the stable ordinary and disabled danger reco
   const repository = relationshipCommands("team", {
     kind: "membership",
     member: { name: "guide", address },
-    origin: { kind: "repository-derived", repository: "org/team", source: "team", path: "guide" },
+    origin: {
+      kind: "repository-derived",
+      repository: "org/team",
+      source: "team",
+      path: "guide",
+    },
   });
   expect(repository.map((item) => item.id)).toEqual([
     "membership.open-skill",
@@ -93,6 +133,7 @@ test("membership provenance selects the stable ordinary and disabled danger reco
     origin: { kind: "direct", collection: "team", entryName: "guide" },
   });
   expect(missing.map((item) => item.disabledReason)).toEqual([
+    undefined,
     "Unavailable: owner unavailable",
     "Unavailable: owner unavailable",
   ]);
@@ -102,9 +143,48 @@ test("membership provenance selects the stable ordinary and disabled danger reco
     origin: { kind: "via-link", links: [] },
   });
   expect(link.map((item) => item.disabledReason)).toEqual([
+    undefined,
     "Unavailable: link owner unavailable",
     "Unavailable: link owner unavailable",
   ]);
+});
+
+test("linked Membership leads with its exact Skill before link management", () => {
+  const linkOwner = { ...owner, pointer: "/collections/shared/links/0" };
+  const commands = relationshipCommands("team", {
+    kind: "membership",
+    member: { name: "guide", address },
+    origin: {
+      kind: "via-link",
+      links: [{ collection: "team", linkedCollection: "shared", owner: linkOwner }],
+    },
+  });
+
+  expect(commands.map((item) => item.id)).toEqual([
+    "membership.open-skill",
+    "membership.open-link",
+    "membership.unlink",
+  ]);
+  expect(commands[0]?.intent).toEqual({
+    kind: "collection-open-skill",
+    collection: "team",
+    address,
+  });
+});
+
+test("unavailable Membership retains its primary Skill action with an honest reason", () => {
+  const [openSkill] = relationshipCommands("team", {
+    kind: "membership",
+    member: { name: "guide", address, available: false },
+    origin: { kind: "direct", collection: "team", entryName: "guide", owner },
+  });
+
+  expect(openSkill).toMatchObject({
+    id: "membership.open-skill",
+    enabled: false,
+    disabledReason: "Unavailable: installed Skill unavailable",
+  });
+  expect(openSkill?.intent).toBeUndefined();
 });
 
 test("Collection Use, Reference, and Link preserve current relationship intents", () => {
@@ -136,7 +216,12 @@ test("Collection Use, Reference, and Link preserve current relationship intents"
     target: "docs",
     owner,
     effect: "1 selector",
-    intent: { kind: "collection-link" as const, collection: "team", target: "docs", owner },
+    intent: {
+      kind: "collection-link" as const,
+      collection: "team",
+      target: "docs",
+      owner,
+    },
   };
   expect(
     relationshipCommands("team", { kind: "relation", relation: use }).map((item) => [
@@ -176,11 +261,58 @@ test("Collection Use, Reference, and Link preserve current relationship intents"
     ).toBe(true);
 });
 
+test("opening a Link is navigation, while unlinking retains the removal intent", () => {
+  const link = {
+    kind: "collection-link" as const,
+    label: "Link docs",
+    target: "docs",
+    owner,
+    effect: "1 selector",
+    intent: {
+      kind: "collection-link" as const,
+      collection: "team",
+      target: "docs",
+      owner,
+    },
+  };
+  const [openSkill, open, unlink] = relationshipCommands("team", {
+    kind: "membership",
+    member: { name: "guide", address },
+    origin: {
+      kind: "via-link",
+      links: [{ collection: "team", linkedCollection: "docs", owner }],
+    },
+  });
+
+  expect(openSkill).toMatchObject({
+    id: "membership.open-skill",
+    intent: { kind: "collection-open-skill", collection: "team", address },
+  });
+  expect(open).toMatchObject({
+    id: "membership.open-link",
+    intent: {
+      kind: "collection-open-link",
+      collection: "team",
+      target: "docs",
+      owner,
+    },
+  });
+  expect(unlink).toMatchObject({
+    id: "membership.unlink",
+    intent: link.intent,
+    danger: true,
+  });
+});
+
 test("command matrix retains every command field and legal danger boundary", () => {
   const contributed = {
     ...owner,
     contribution: {
-      configSource: { level: "global" as const, file: "/global.jsonc", pointer: "/sources/team" },
+      configSource: {
+        level: "global" as const,
+        file: "/global.jsonc",
+        pointer: "/sources/team",
+      },
       declaration: {
         level: "global" as const,
         file: "/global.jsonc",
@@ -188,9 +320,18 @@ test("command matrix retains every command field and legal danger boundary", () 
       },
     },
   };
-  const direct = { kind: "direct" as const, collection: "team", entryName: "guide", owner };
+  const direct = {
+    kind: "direct" as const,
+    collection: "team",
+    entryName: "guide",
+    owner,
+  };
   const contributedDirect = { ...direct, owner: contributed };
-  const missing = { kind: "direct" as const, collection: "team", entryName: "guide" };
+  const missing = {
+    kind: "direct" as const,
+    collection: "team",
+    entryName: "guide",
+  };
   const via = (linkOwner?: typeof owner) => ({
     kind: "via-link" as const,
     links: linkOwner ? [{ collection: "team", linkedCollection: "shared", owner: linkOwner }] : [],
@@ -206,7 +347,13 @@ test("command matrix retains every command field and legal danger boundary", () 
     effect: "Effect",
     ...(relationOwner
       ? kind === "collection-use"
-        ? { intent: { kind: "collection-use" as const, collection: "team", owner: relationOwner } }
+        ? {
+            intent: {
+              kind: "collection-use" as const,
+              collection: "team",
+              owner: relationOwner,
+            },
+          }
         : kind === "collection-reference"
           ? {
               intent: {
@@ -236,8 +383,22 @@ test("command matrix retains every command field and legal danger boundary", () 
   const rows: readonly MatrixCase[] = [
     {
       name: "Membership direct",
-      subject: { kind: "membership" as const, member: { name: "guide", address }, origin: direct },
+      subject: {
+        kind: "membership" as const,
+        member: { name: "guide", address },
+        origin: direct,
+      },
       expected: [
+        {
+          id: "membership.open-skill",
+          keys: ["enter", "return"],
+          verb: "Open Skill",
+          destination: "Installed Skill",
+          scope: "page",
+          enabled: true,
+          danger: false,
+          intent: { kind: "collection-open-skill", collection: "team", address },
+        },
         {
           id: "membership.open-owner",
           keys: ["enter", "return"],
@@ -256,7 +417,13 @@ test("command matrix retains every command field and legal danger boundary", () 
           scope: "page",
           enabled: true,
           danger: true,
-          intent: { kind: "collection-direct", collection: "team", name: "guide", address, owner },
+          intent: {
+            kind: "collection-direct",
+            collection: "team",
+            name: "guide",
+            address,
+            owner,
+          },
         },
       ],
     },
@@ -269,6 +436,16 @@ test("command matrix retains every command field and legal danger boundary", () 
       },
       expected: [
         {
+          id: "membership.open-skill",
+          keys: ["enter", "return"],
+          verb: "Open Skill",
+          destination: "Installed Skill",
+          scope: "page",
+          enabled: true,
+          danger: false,
+          intent: { kind: "collection-open-skill", collection: "team", address },
+        },
+        {
           id: "membership.open-source",
           keys: ["enter", "return"],
           verb: "Open Config Source",
@@ -276,7 +453,11 @@ test("command matrix retains every command field and legal danger boundary", () 
           scope: "page",
           enabled: true,
           danger: false,
-          intent: { kind: "collection-contribution", collection: "team", owner: contributed },
+          intent: {
+            kind: "collection-contribution",
+            collection: "team",
+            owner: contributed,
+          },
         },
         {
           id: "membership.remove",
@@ -299,8 +480,22 @@ test("command matrix retains every command field and legal danger boundary", () 
     },
     {
       name: "Membership ownerless",
-      subject: { kind: "membership" as const, member: { name: "guide", address }, origin: missing },
+      subject: {
+        kind: "membership" as const,
+        member: { name: "guide", address },
+        origin: missing,
+      },
       expected: [
+        {
+          id: "membership.open-skill",
+          keys: ["enter", "return"],
+          verb: "Open Skill",
+          destination: "Installed Skill",
+          scope: "page",
+          enabled: true,
+          danger: false,
+          intent: { kind: "collection-open-skill", collection: "team", address },
+        },
         {
           id: "membership.open-owner",
           keys: ["enter", "return"],
@@ -344,7 +539,11 @@ test("command matrix retains every command field and legal danger boundary", () 
           scope: "page",
           enabled: true,
           danger: false,
-          intent: { kind: "collection-open-skill", collection: "team", address },
+          intent: {
+            kind: "collection-open-skill",
+            collection: "team",
+            address,
+          },
         },
         {
           id: "membership.open-source",
@@ -367,6 +566,16 @@ test("command matrix retains every command field and legal danger boundary", () 
       },
       expected: [
         {
+          id: "membership.open-skill",
+          keys: ["enter", "return"],
+          verb: "Open Skill",
+          destination: "Installed Skill",
+          scope: "page",
+          enabled: true,
+          danger: false,
+          intent: { kind: "collection-open-skill", collection: "team", address },
+        },
+        {
           id: "membership.open-link",
           keys: ["enter", "return"],
           verb: "Open owning Link",
@@ -374,7 +583,12 @@ test("command matrix retains every command field and legal danger boundary", () 
           scope: "page",
           enabled: true,
           danger: false,
-          intent: { kind: "collection-link", collection: "team", target: "shared", owner },
+          intent: {
+            kind: "collection-open-link",
+            collection: "team",
+            target: "shared",
+            owner,
+          },
         },
         {
           id: "membership.unlink",
@@ -384,7 +598,12 @@ test("command matrix retains every command field and legal danger boundary", () 
           scope: "page",
           enabled: true,
           danger: true,
-          intent: { kind: "collection-link", collection: "team", target: "shared", owner },
+          intent: {
+            kind: "collection-link",
+            collection: "team",
+            target: "shared",
+            owner,
+          },
         },
       ],
     },
@@ -397,6 +616,16 @@ test("command matrix retains every command field and legal danger boundary", () 
       },
       expected: [
         {
+          id: "membership.open-skill",
+          keys: ["enter", "return"],
+          verb: "Open Skill",
+          destination: "Installed Skill",
+          scope: "page",
+          enabled: true,
+          danger: false,
+          intent: { kind: "collection-open-skill", collection: "team", address },
+        },
+        {
           id: "membership.open-link",
           keys: ["enter", "return"],
           verb: "Open owning Link",
@@ -405,7 +634,7 @@ test("command matrix retains every command field and legal danger boundary", () 
           enabled: true,
           danger: false,
           intent: {
-            kind: "collection-link",
+            kind: "collection-open-link",
             collection: "team",
             target: "shared",
             owner: contributed,
@@ -431,8 +660,22 @@ test("command matrix retains every command field and legal danger boundary", () 
     },
     {
       name: "Membership via Link ownerless",
-      subject: { kind: "membership" as const, member: { name: "guide", address }, origin: via() },
+      subject: {
+        kind: "membership" as const,
+        member: { name: "guide", address },
+        origin: via(),
+      },
       expected: [
+        {
+          id: "membership.open-skill",
+          keys: ["enter", "return"],
+          verb: "Open Skill",
+          destination: "Installed Skill",
+          scope: "page",
+          enabled: true,
+          danger: false,
+          intent: { kind: "collection-open-skill", collection: "team", address },
+        },
         {
           id: "membership.open-link",
           keys: ["enter", "return"],
@@ -457,7 +700,10 @@ test("command matrix retains every command field and legal danger boundary", () 
     },
     {
       name: "Use direct",
-      subject: { kind: "relation" as const, relation: relation("collection-use", owner) },
+      subject: {
+        kind: "relation" as const,
+        relation: relation("collection-use", owner),
+      },
       expected: [
         {
           id: "relationship.open-owner",
@@ -488,7 +734,10 @@ test("command matrix retains every command field and legal danger boundary", () 
     },
     {
       name: "Use contributed",
-      subject: { kind: "relation" as const, relation: relation("collection-use", contributed) },
+      subject: {
+        kind: "relation" as const,
+        relation: relation("collection-use", contributed),
+      },
       expected: [
         {
           id: "relationship.open-owner",
@@ -514,13 +763,20 @@ test("command matrix retains every command field and legal danger boundary", () 
           enabled: false,
           disabledReason: "Unavailable: contributed config",
           danger: false,
-          intent: { kind: "collection-use-edit", collection: "team", owner: contributed },
+          intent: {
+            kind: "collection-use-edit",
+            collection: "team",
+            owner: contributed,
+          },
         },
       ],
     },
     {
       name: "Use ownerless",
-      subject: { kind: "relation" as const, relation: relation("collection-use", undefined) },
+      subject: {
+        kind: "relation" as const,
+        relation: relation("collection-use", undefined),
+      },
       expected: [
         {
           id: "relationship.open-owner",
@@ -546,7 +802,10 @@ test("command matrix retains every command field and legal danger boundary", () 
     },
     {
       name: "Reference direct",
-      subject: { kind: "relation" as const, relation: relation("collection-reference", owner) },
+      subject: {
+        kind: "relation" as const,
+        relation: relation("collection-reference", owner),
+      },
       expected: [
         {
           id: "relationship.open-owner",
@@ -632,7 +891,10 @@ test("command matrix retains every command field and legal danger boundary", () 
     },
     {
       name: "Reference ownerless",
-      subject: { kind: "relation" as const, relation: relation("collection-reference", undefined) },
+      subject: {
+        kind: "relation" as const,
+        relation: relation("collection-reference", undefined),
+      },
       expected: [
         {
           id: "relationship.open-owner",
@@ -658,7 +920,10 @@ test("command matrix retains every command field and legal danger boundary", () 
     },
     {
       name: "Link direct",
-      subject: { kind: "relation" as const, relation: relation("collection-link", owner) },
+      subject: {
+        kind: "relation" as const,
+        relation: relation("collection-link", owner),
+      },
       expected: [
         {
           id: "relationship.open-owner",
@@ -668,7 +933,12 @@ test("command matrix retains every command field and legal danger boundary", () 
           scope: "page",
           enabled: true,
           danger: false,
-          intent: { kind: "collection-open-link", collection: "team", target: "shared", owner },
+          intent: {
+            kind: "collection-open-link",
+            collection: "team",
+            target: "shared",
+            owner,
+          },
         },
         {
           id: "relationship.unlink",
@@ -678,13 +948,21 @@ test("command matrix retains every command field and legal danger boundary", () 
           scope: "page",
           enabled: true,
           danger: true,
-          intent: { kind: "collection-link", collection: "team", target: "shared", owner },
+          intent: {
+            kind: "collection-link",
+            collection: "team",
+            target: "shared",
+            owner,
+          },
         },
       ],
     },
     {
       name: "Link contributed",
-      subject: { kind: "relation" as const, relation: relation("collection-link", contributed) },
+      subject: {
+        kind: "relation" as const,
+        relation: relation("collection-link", contributed),
+      },
       expected: [
         {
           id: "relationship.open-owner",
@@ -721,7 +999,10 @@ test("command matrix retains every command field and legal danger boundary", () 
     },
     {
       name: "Link ownerless",
-      subject: { kind: "relation" as const, relation: relation("collection-link", undefined) },
+      subject: {
+        kind: "relation" as const,
+        relation: relation("collection-link", undefined),
+      },
       expected: [
         {
           id: "relationship.open-owner",

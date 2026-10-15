@@ -7,7 +7,7 @@ import { DataList } from "../src/ui/data-list";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { parsedEnter } from "./reader-test-controls";
+import { openAllInstalledSkills, parsedEnter } from "./reader-test-controls";
 
 const options = Array.from({ length: 12 }, (_, index) => ({
   name: `community-launch-runner-${index}`,
@@ -82,9 +82,7 @@ test("production Skill list click selects the exact scrolled row from query focu
     { width: 120, height: 30 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
+    await openAllInstalledSkills(setup);
     const list = setup.renderer.currentFocusedRenderable as SelectRenderable;
     for (let index = 0; index < 30; index++) setup.mockInput.pressArrow("down");
     await setup.waitFor(() => list.getSelectedIndex() === 30);
@@ -98,10 +96,9 @@ test("production Skill list click selects the exact scrolled row from query focu
     expect(list.getSelectedIndex()).toBe(wanted);
     expect(setup.captureCharFrame()).toContain(`skill-${wanted}`);
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
-    );
-    expect(setup.captureCharFrame()).toContain(`team-main/skill-${wanted}`);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-scrollbox"));
+    expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeUndefined();
+    expect(setup.renderer.root.findDescendantById("installed-skill-browser")).toBe(list);
   } finally {
     setup.renderer.destroy();
   }

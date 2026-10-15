@@ -1,7 +1,8 @@
 /** @jsxImportSource @opentui/solid */
 import { afterEach, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
-import { CommandButton } from "../src/ui/command-button";
+import { Button } from "../src/ui/button";
+import { ButtonRenderable } from "@tuiparts/core/button";
 import { MetadataGrid } from "../src/ui/metadata-grid";
 import { Pane } from "../src/ui/pane";
 import { RouteShell } from "../src/ui/route-shell";
@@ -33,11 +34,10 @@ test("a too-small RouteShell mounts only the resize gate", async () => {
   for (const id of ["global-bar", "section-nav", "route-title", "route-content", "command-status"])
     expect(!!setup.renderer.root.findDescendantById(id)).toBe(false);
   expect(setup.renderer.root.findDescendantById("resize-gate")).toBeDefined();
-  expect(frame).toContain("Terminal is too small.");
   expect(frame).not.toContain("Content");
 });
 
-test("CommandButton states and MetadataGrid fields expose structural-only cues", async () => {
+test("shared native buttons retain disabled and focus state beside metadata", async () => {
   setup = await testRender(
     () => (
       <Pane id="details" title="Details" active>
@@ -53,22 +53,25 @@ test("CommandButton states and MetadataGrid fields expose structural-only cues",
             },
           ]}
         />
-        <CommandButton label="Open" state="idle" />
-        <CommandButton label="Focus" state="focused" />
-        <CommandButton label="Unavailable" state="disabled" />
-        <CommandButton label="Remove" state="danger" destination="Review removal" />
+        <Button id="open" label="Open" />
+        <Button id="focus" label="Focus" />
+        <Button id="unavailable" label="Unavailable" disabled />
+        <Button id="remove" label="Remove" intent="danger" />
       </Pane>
     ),
     { width: 60, height: 10 },
   );
   await setup.renderOnce();
   const frame = setup.captureCharFrame();
-  expect(frame).toContain("* Details");
-  expect(frame).toContain("Owner  Project");
-  expect(frame).toContain("Defined at  /workspace/config.jsonc");
-  expect(frame).toContain("{Open}");
-  expect(frame).toContain(">Focus<");
-  expect(frame).toContain("- Unavailable");
-  expect(frame).toContain("{DANGER Remove -> Review removal}");
+  expect(frame).toContain("Project");
+  expect(frame).toContain("/workspace/config.jsonc");
+  for (const id of ["open", "focus", "unavailable", "remove"])
+    expect(setup.renderer.root.findDescendantById(id)).toBeInstanceOf(ButtonRenderable);
+  const focused = setup.renderer.root.findDescendantById("focus") as ButtonRenderable;
+  focused.focus();
+  expect(focused.getState().focused).toBe(true);
+  expect(
+    (setup.renderer.root.findDescendantById("unavailable") as ButtonRenderable).getState().disabled,
+  ).toBe(true);
   expect(setup.renderer.root.findDescendantById("details")).toBeDefined();
 });

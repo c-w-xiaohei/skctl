@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { SelectRenderable } from "@opentui/core";
+import {
+  ScrollBoxRenderable,
+  SelectRenderable,
+  TextRenderable,
+  type BaseRenderable,
+} from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import {
@@ -12,6 +17,7 @@ import {
   collectionMemberOriginIntent,
   collectionRelationRows,
 } from "../src/collections-page";
+import { collectionRelationKey } from "../src/collections/relationship-inspector";
 import {
   collectionOriginKey,
   createCollectionsState,
@@ -19,11 +25,11 @@ import {
   exposureHierarchy,
   unassignedSkills,
 } from "../src/collections/state";
-import { filterProblemRows, problemRows } from "../src/workspace/state";
+import { filterProblemRows, problemRowKey, problemRows } from "../src/workspace/state";
 import { selectScrollOffset, setSelectScrollOffset } from "../src/select-scroll";
 import { skillAddressKey } from "../src/types";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { focusLive, parsedEnter } from "./reader-test-controls";
+import { enterLive, focusLive, openReaderTab, parsedEnter } from "./reader-test-controls";
 import {
   readerContent,
   readerProjection,
@@ -32,12 +38,26 @@ import {
 } from "./installed-reader.fixture";
 
 async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-  const section = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
-  section.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === section);
-  await setup.renderOnce();
-  setup.mockInput.pressArrow("right");
+  await setup.waitFor(
+    () =>
+      !!setup.renderer.root.findDescendantById("shell-section-navigation") ||
+      !!setup.renderer.root.findDescendantById("shell-section-tab-skills"),
+  );
+  const navigator = setup.renderer.root.findDescendantById("shell-section-navigation");
+  if (navigator) {
+    navigator.focus();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === navigator);
+    setup.mockInput.pressArrow("down");
+    await setup.waitFor(
+      () => (navigator as SelectRenderable).getSelectedOption()?.value === "collections",
+    );
+    await parsedEnter(setup);
+  } else {
+    const section = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
+    section.focus();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === section);
+    setup.mockInput.pressArrow("right");
+  }
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
   setup.renderer.root.findDescendantById("collection-browser")!.focus();
   await setup.renderOnce();
@@ -48,36 +68,8 @@ async function openSkillView(
   setup: Awaited<ReturnType<typeof testRender>>,
   view: "current-exposure" | "problems",
 ) {
-  const currentId = "skills-view-tab-current-exposure";
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById(currentId));
-  const current = setup.renderer.root.findDescendantById(currentId)!;
-  current.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === current);
-  if (view === "problems") {
-    setup.mockInput.pressKey("ARROW_RIGHT");
-    await setup.renderOnce();
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills"),
-    );
-    const all = setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills")!;
-    all.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === all);
-    setup.mockInput.pressKey("ARROW_RIGHT");
-    await setup.renderOnce();
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skills-view-tab-unassigned"),
-    );
-    const unassigned = setup.renderer.root.findDescendantById("skills-view-tab-unassigned")!;
-    unassigned.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === unassigned);
-    setup.mockInput.pressKey("ARROW_RIGHT");
-    await setup.renderOnce();
-    await setup.waitFor(
-      () =>
-        !!setup.renderer.root.findDescendantById("skills-view-tab-problems") &&
-        !!setup.renderer.root.findDescendantById("problems-browser"),
-    );
-  }
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById(`skills-view-tab-${view}`));
+  await enterLive(setup, `skills-view-tab-${view}`);
   await setup.waitFor(
     () =>
       !!setup.renderer.root.findDescendantById(
@@ -235,6 +227,64 @@ test("COLLECTION member origins preserve contribution, producer, and outer Link 
     target: "shared",
     owner,
   });
+});
+
+test("COLLECTION relation rows retain structural identities when their display order changes", () => {
+  const owner = {
+    level: "project" as const,
+    file: "/project.jsonc",
+    pointer: "/collections/team",
+  };
+  const base = workspaceProjection();
+  if (base.effective.status !== "complete") throw new Error("expected complete fixture");
+  const projection = {
+    ...base,
+    effective: {
+      ...base.effective,
+      collectionsView: [
+        {
+          id: "team",
+          description: "Team workflows",
+          declared: [owner],
+          repository: { derived: false, producers: [] },
+          members: [],
+          references: [
+            {
+              name: "docs",
+              collection: "docs",
+              description: "Read documentation",
+              owner,
+            },
+            {
+              name: "ops",
+              collection: "ops",
+              description: "Run operations",
+              owner,
+            },
+          ],
+          links: [],
+        },
+      ],
+    },
+  };
+  const forward = collectionRelationRows("team", projection);
+  const reverse = collectionRelationRows("team", {
+    ...projection,
+    effective: {
+      ...projection.effective,
+      collectionsView: [
+        {
+          ...projection.effective.collectionsView[0]!,
+          references: [...projection.effective.collectionsView[0]!.references].reverse(),
+        },
+      ],
+    },
+  });
+
+  expect(forward.map((row) => [row.target, collectionRelationKey(row)]).sort()).toEqual(
+    reverse.map((row) => [row.target, collectionRelationKey(row)]).sort(),
+  );
+  expect(forward.map(collectionRelationKey)).not.toContain(undefined);
 });
 
 test("COLLECTION removal plan keeps repeated exact origins separate and explains non-direct rows", () => {
@@ -870,8 +920,13 @@ test("RENDER Problems uses native search and filters, routes subjects, and keeps
   try {
     await openSkillView(setup, "problems");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("problems-browser"));
-    expect(setup.captureCharFrame()).toContain("Problems 2/2");
-    expect(setup.captureCharFrame()).toContain("Read-only");
+    const count = () =>
+      (setup.renderer.root.findDescendantById("problems-browser") as SelectRenderable).options
+        .length;
+    expect(count()).toBe(2);
+    expect(
+      problemRows(projection).find((row) => row.message === unmatched.message)?.intent,
+    ).toBeUndefined();
 
     const problemsBrowser = setup.renderer.root.findDescendantById("problems-browser")!;
     problemsBrowser.focus();
@@ -888,92 +943,35 @@ test("RENDER Problems uses native search and filters, routes subjects, and keeps
       await setup.renderOnce();
     }
     await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("Problems 1/2"));
+    await setup.waitFor(() => count() === 1);
 
-    const clearQuery = setup.renderer.root.findDescendantById("clear-all-problems-filters")!;
-    clearQuery.focus();
-    await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Problems 2/2"));
-
-    const problemsFilter = setup.renderer.root.findDescendantById("open-problems-filter")!;
-    problemsFilter.focus();
-    await setup.renderOnce();
-    await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-filter-overlay"));
-    const dimensions = setup.renderer.root.findDescendantById(
-      "skills-filter-dimensions",
-    ) as SelectRenderable;
-    dimensions.focus();
-    await parsedEnter(setup);
-    await setup.renderOnce();
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-filter-values"));
-    const severityValues = setup.renderer.root.findDescendantById(
-      "skills-filter-values",
-    ) as SelectRenderable;
-    severityValues.focus();
-    setup.mockInput.pressArrow("down");
-    await parsedEnter(setup);
-    await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("Problems 1/2 · 1 filters"));
-
-    setup.renderer.root.findDescendantById("problems-browser")!.focus();
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-query");
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "open-problems-filter",
-    );
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "clear-problems-filter-Severity",
-    );
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "clear-all-problems-filters",
-    );
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "top-navigation-tab-workspace",
-    );
-
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("clear-problems-filter-Severity"),
-    );
-    const clearSeverity = setup.renderer.root.findDescendantById("clear-problems-filter-Severity")!;
-    clearSeverity.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === clearSeverity);
-    await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Problems 2/2"));
-    expect(
-      setup.renderer.root.findDescendantById("clear-problems-filter-Severity"),
-    ).toBeUndefined();
-
-    const codeFilter = setup.renderer.root.findDescendantById("open-problems-filter")!;
-    codeFilter.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === codeFilter);
-    await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-filter-overlay"));
-    const codeDimensions = setup.renderer.root.findDescendantById(
-      "skills-filter-dimensions",
-    ) as SelectRenderable;
-    codeDimensions.focus();
-    setup.mockInput.pressArrow("down");
-    await parsedEnter(setup);
-    await setup.renderOnce();
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-filter-values"));
-    const codeValues = setup.renderer.root.findDescendantById(
-      "skills-filter-values",
-    ) as SelectRenderable;
-    codeValues.focus();
-    setup.mockInput.pressArrow("down");
-    await parsedEnter(setup);
-    await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("Problems 1/2 · 1 filters"));
-
-    const clearAll = setup.renderer.root.findDescendantById("clear-all-problems-filters")!;
-    clearAll.focus();
-    await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Problems 2/2"));
+    setup.mockInput.pressKey("u", { ctrl: true });
+    await setup.waitFor(() => count() === 2);
+    for (const [dimension, value] of [
+      ["Severity", "info"],
+      ["Code", "CONFIG_INVALID"],
+    ]) {
+      await enterLive(setup, "open-problems-filter");
+      const dimensions = (await focusLive(setup, "skills-filter-dimensions")) as SelectRenderable;
+      const dimensionIndex = dimensions.options.findIndex((option) => option.value === dimension);
+      expect(dimensionIndex).toBeGreaterThanOrEqual(0);
+      dimensions.setSelectedIndex(dimensionIndex);
+      await setup.flush();
+      await parsedEnter(setup);
+      const values = (await focusLive(setup, "skills-filter-values")) as SelectRenderable;
+      const valueIndex = values.options.findIndex((option) => option.value === value);
+      expect(valueIndex).toBeGreaterThanOrEqual(0);
+      values.setSelectedIndex(valueIndex);
+      await parsedEnter(setup);
+      await setup.waitFor(() => count() === 1);
+      expect(setup.renderer.root.findDescendantById("skills-filter-overlay")).toBeDefined();
+      await enterLive(setup, "skills-filter-clear-all");
+      await setup.waitFor(() => count() === 2);
+      await parsedEscape(setup);
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "open-problems-filter",
+      );
+    }
     const browser = setup.renderer.root.findDescendantById("problems-browser")!;
     browser.focus();
     setup.mockInput.pressArrow("down");
@@ -981,11 +979,12 @@ test("RENDER Problems uses native search and filters, routes subjects, and keeps
     await parsedEnter(setup);
     await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("problems-browser");
-    expect(setup.captureCharFrame()).toContain("Read-only");
+    expect(setup.renderer.root.findDescendantById("reader-views")).toBeUndefined();
     setup.mockInput.pressArrow("up");
     await setup.renderOnce();
     await parsedEnter(setup);
-    await setup.renderOnce();
+    await openReaderTab(setup, 2);
+    await setup.flush();
     expect(setup.captureCharFrame()).toContain("team/guide");
     expect(setup.captureCharFrame()).not.toContain("wrong-owner.jsonc");
   } finally {
@@ -993,7 +992,7 @@ test("RENDER Problems uses native search and filters, routes subjects, and keeps
   }
 });
 
-test("RENDER narrow Problems handoff lands Inspector-first and requires explicit Reader open", async () => {
+test("RENDER narrow Problems handoff reads the exact installed subject and Escape restores Problems", async () => {
   const loads: string[] = [];
   const base = readerProjection();
   const problem = {
@@ -1030,31 +1029,14 @@ test("RENDER narrow Problems handoff lands Inspector-first and requires explicit
     setup.resize(43, 30);
     await openSkillView(setup, "problems");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
-    await parsedEnter(setup);
-    await setup.waitFor(
-      () =>
-        !!setup.renderer.root.findDescendantById("skill-inspector-open-reader") &&
-        setup.captureCharFrame().includes("Address  team-main/guide"),
-    );
-    setup.renderer.root.findDescendantById("skill-inspector-open-reader")!.focus();
-    await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("skill-inspector-open-reader");
-    expect(setup.renderer.root.findDescendantById("problems-browser")).toBeUndefined();
-    expect(setup.renderer.root.findDescendantById("reader-views")).toBeUndefined();
     expect(loads).toEqual([]);
-
-    setup.renderer.root.findDescendantById("skill-inspector-open-reader")!.focus();
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
-    await focusLive(setup, "reader-tabs");
+    expect(setup.renderer.root.findDescendantById("skill-inspector-open-reader")).toBeUndefined();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
+    await openReaderTab(setup, 2);
+    await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
     expect(loads).toEqual(["guide"]);
-    await parsedEscape(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-    );
-    setup.renderer.root.findDescendantById("skill-inspector-open-reader")!.focus();
-    await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("skill-inspector-open-reader");
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
   } finally {
@@ -1064,7 +1046,7 @@ test("RENDER narrow Problems handoff lands Inspector-first and requires explicit
 
 test("RENDER invalid Config diagnostic detail preserves exact row selection and native scroll at 120, 80, and 43 columns", async () => {
   const base = workspaceProjection();
-  const diagnostics = Array.from({ length: 10 }, (_, index) => ({
+  const diagnostics = Array.from({ length: 30 }, (_, index) => ({
     code: "CONFIG_INVALID",
     severity: "warning" as const,
     message: `invalid configuration ${index}`,
@@ -1112,7 +1094,7 @@ test("RENDER invalid Config diagnostic detail preserves exact row selection and 
         );
       }
       setSelectScrollOffset(browser, 4);
-      await setup.waitForFrame((frame) => frame.includes("▶ Workspace  invalid configuration 7"));
+      await setup.waitForFrame((frame) => frame.includes("invalid configuration 7"));
       const selected = browser.getSelectedOption()?.value;
       expect(selected).toBeDefined();
       expect(browser.getSelectedIndex()).toBe(7);
@@ -1120,15 +1102,29 @@ test("RENDER invalid Config diagnostic detail preserves exact row selection and 
       await setup.waitFor(() => browser.getSelectedOption()?.value === selected);
 
       await parsedEnter(setup);
-      const detailFrame = await setup.waitForFrame((frame) =>
-        frame.includes("File  /workspace/invalid-7.jsonc"),
+      const texts = (node: BaseRenderable): string[] => [
+        ...(node instanceof TextRenderable ? [node.plainText] : []),
+        ...node.getChildren().flatMap(texts),
+      ];
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("workspace-diagnostic-detail"),
       );
-      expect(detailFrame).toContain("Pointer  /agents/opencode");
-      expect(detailFrame).toContain("Cause  invalid configuration 7");
-      expect(detailFrame).toContain("Mutations disabled");
-      expect(detailFrame).toContain("until it is valid and");
-      expect(detailFrame).toContain("readable.");
-      expect(detailFrame).toContain("Back");
+      await setup.flush();
+      const metadata = texts(
+        setup.renderer.root.findDescendantById("workspace-diagnostic-detail")!,
+      );
+      expect(metadata).toContain("/workspace/invalid-7.jsonc");
+      expect(metadata).toContain("/agents/opencode");
+      expect(metadata).toContain("invalid configuration 7");
+      const detailFrame = setup.captureCharFrame();
+      expect(
+        detailFrame
+          .split("\n")
+          .map((line) => line.replace(/^[ │]+|[ │]+$/g, ""))
+          .join(" ")
+          .replace(/\s+/g, " "),
+      ).toContain("Mutations are disabled until this Config is valid and readable.");
+      expect(detailFrame).toContain("Esc");
       expect(setup.renderer.root.findDescendantById("config-operation-review")).toBeUndefined();
 
       await parsedEscape(setup);
@@ -1160,7 +1156,7 @@ test("RENDER invalid Config diagnostic detail preserves exact row selection and 
   }
 });
 
-test("RENDER unavailable Current Exposure keeps authoritative diagnostic context in its Work Area", async () => {
+test("RENDER unavailable Agent access routes to authoritative Problems without inventing a repair", async () => {
   const base = readerProjection();
   const problem = {
     code: "CONFIG_INVALID",
@@ -1191,46 +1187,37 @@ test("RENDER unavailable Current Exposure keeps authoritative diagnostic context
   );
   try {
     await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("current-exposure-unavailable"),
+      () => !!setup.renderer.root.findDescendantById("current-exposure-problems"),
     );
-    expect(setup.captureCharFrame()).toContain("Current Exposure is unavailable.");
+    expect(
+      setup.renderer.root.findDescendantById("current-exposure-enable-managed-opencode"),
+    ).toBeUndefined();
+    await enterLive(setup, "current-exposure-problems");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
     const diagnostics = setup.renderer.root.findDescendantById(
-      "current-exposure-problems-browser",
+      "problems-browser",
     ) as SelectRenderable;
     expect(diagnostics).toBeDefined();
-    const actionable = diagnostics.options.find((option) => option.name.includes("Skill details"));
-    expect(actionable?.name).toBe(
-      "Installed Skill team-main/guide  Collection Use is unavailable -> Skill details",
-    );
-    expect(actionable?.description).toContain("warning · CONFIG_INVALID");
-    expect(actionable?.value).toBe(
-      JSON.stringify({
-        code: "CONFIG_INVALID",
-        severity: "warning",
-        message: "Collection Use is unavailable",
-        location: undefined,
-        related: undefined,
-        suggestion: undefined,
-        diagnosticSubject: problem.subject,
-        diagnosticSkill: undefined,
-        intent: {
-          kind: "installed-skill",
-          address: { source: "team-main", path: "guide" },
-        },
-      }),
-    );
-    const readOnly = diagnostics.options.find((option) => option.name.includes("No action"));
-    expect(readOnly?.name).toBe(
-      "Read-only  Effective projection  No owner is available -> No action",
-    );
-    expect(readOnly?.description).toContain("info · CONFIG_INVALID");
-    expect(readOnly?.value).toContain('"message":"No owner is available"');
+    expect(diagnostics.options).toHaveLength(2);
+    const facts = problemRows(projection);
+    const actionable = facts.find((row) => row.message === problem.message)!;
+    const readOnly = facts.find((row) => row.message === readOnlyProblem.message)!;
+    expect(actionable.intent).toEqual({
+      kind: "installed-skill",
+      address: problem.subject.address,
+    });
+    expect(readOnly.intent).toBeUndefined();
+    expect(diagnostics.options.map((option) => option.value)).toEqual(facts.map(problemRowKey));
+    expect(diagnostics.options.map((option) => option.description?.trimEnd())).toEqual([
+      problem.message,
+      readOnlyProblem.message,
+    ]);
   } finally {
     setup.renderer.destroy();
   }
 });
 
-test("RENDER Current Exposure Enter opens Inspector and Escape restores its native browser", async () => {
+test("RENDER empty Agent Collection Enter stays in the tree and explicit Details returns to that tree", async () => {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
   const owner = {
@@ -1253,6 +1240,7 @@ test("RENDER Current Exposure Enter opens Inspector and Escape restores its nati
     effective: {
       ...base.effective,
       managed: true,
+      agent: { ...base.effective.agent, status: "available" as const },
       use: ["root"],
       collectionsView: [
         {
@@ -1271,22 +1259,37 @@ test("RENDER Current Exposure Enter opens Inspector and Escape restores its nati
     { width: 120, height: 30 },
   );
   try {
-    await openSkillView(setup, "current-exposure");
-    await parsedEnter(setup);
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-entries",
+      () => setup.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
+    );
+    const tree = setup.renderer.root.findDescendantById(
+      "current-exposure-browser",
+    ) as ScrollBoxRenderable;
+    await parsedEnter(setup);
+    expect(setup.renderer.currentFocusedRenderable).toBe(tree);
+    expect(tree.content.getChildren()).toHaveLength(1);
+    expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeUndefined();
+    await enterLive(setup, "agent-access-collection-details");
+    await setup.waitFor(
+      () =>
+        setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-entries" ||
+        setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
     );
     await parsedEscape(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
     );
-    expect(setup.captureCharFrame()).toContain("Current Exposure");
+    expect(setup.captureCharFrame()).toContain("Agent access");
     expect(setup.renderer.root.findDescendantById("collection-browser")).toBeUndefined();
+    expect(setup.renderer.root.findDescendantById("current-exposure-browser")).toBeInstanceOf(
+      ScrollBoxRenderable,
+    );
+    const key = JSON.stringify([["root", null]]);
     expect(
-      (
-        setup.renderer.root.findDescendantById("current-exposure-browser") as SelectRenderable
-      ).getSelectedOption()?.value,
-    ).toBe("root");
+      setup.renderer.root.findDescendantById(
+        `current-exposure-browser-row-${encodeURIComponent(key)}-name`,
+      ),
+    ).toBeDefined();
   } finally {
     setup.renderer.destroy();
   }
@@ -1536,7 +1539,7 @@ test("FILTER Collection Use is exposed as the user-visible Exposure dimension", 
   ).toEqual(["hidden"]);
 });
 
-test("RENDER Collection producer route lands its distinct Installed Skill in Workspace, Reader, and Details", async () => {
+test("RENDER Collection producer Open Source navigates to its owning Source", async () => {
   const loads: string[] = [];
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -1594,12 +1597,10 @@ test("RENDER Collection producer route lands its distinct Installed Skill in Wor
   try {
     await navigateToCollections(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
-    expect(setup.captureCharFrame()).toContain("engineering  1 member");
+    expect(setup.captureCharFrame()).toContain("engineering");
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-entries",
-    );
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
+    expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeDefined();
     const producer = setup.renderer.root.findDescendantById(
       "collection-relationships",
     ) as SelectRenderable;
@@ -1608,15 +1609,19 @@ test("RENDER Collection producer route lands its distinct Installed Skill in Wor
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === producer);
     await parsedEnter(setup);
     await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("Membership reference"));
+    await setup.waitForFrame((frame) => frame.includes("A distinct Installed Skill"));
     expect(setup.renderer.root.findDescendantById("collection-membership-inspector")).toBeDefined();
     expect(loads).toEqual([]);
     const openSkill = setup.renderer.root.findDescendantById("membership.open-skill");
-    const openSource = setup.renderer.root.findDescendantById("membership.open-source");
     expect(openSkill?.id).toBe("membership.open-skill");
+    expect(setup.captureCharFrame()).toContain("Open Skill");
+    expect(loads).toEqual([]);
+    await enterLive(setup, "collection-membership-actions");
+    const openSource = setup.renderer.root.findDescendantById("membership.open-source");
     expect(openSource?.id).toBe("membership.open-source");
-    expect(setup.captureCharFrame()).toContain("Open Skill -> Installed Skill");
-    expect(setup.captureCharFrame()).toContain("Open Source -> Skill Source");
+    await enterLive(setup, "membership.open-source");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-pane"));
+    expect(setup.captureCharFrame()).toContain(readerSecondAddress.source);
     expect(loads).toEqual([]);
   } finally {
     setup.renderer.destroy();

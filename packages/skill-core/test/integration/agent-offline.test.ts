@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
@@ -464,6 +464,11 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
   const root = await mkdtemp(join(tmpdir(), "skill-cli-run-cancel-"));
   const state = join(root, "state");
   const skill = join(root, "skills", "review");
+  const ready = join(root, "child-ready.json");
+  const previous = process.env.SKILL_CLI_STATE_DIR;
+  const controller = new AbortController();
+  const core = isolatedCore(root);
+  let run: ReturnType<typeof core.content.run> | undefined;
   try {
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
@@ -478,27 +483,61 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
     );
     process.env.SKILL_CLI_STATE_DIR = state;
     await new StateCoordinator(state).installLocal("source", "review", skill);
-    const controller = new AbortController();
-    const run = isolatedCore(root).content.run(
+    run = core.content.run(
       {
         selector: "c:review",
         argv: [
           process.execPath,
           "--eval",
-          'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);',
+          `import { renameSync, writeFileSync } from "node:fs"; process.on("SIGTERM", () => {}); setInterval(() => {}, 1000); writeFileSync(${JSON.stringify(`${ready}.tmp`)}, JSON.stringify({ pid: process.pid, cwd: process.cwd() })); renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)});`,
         ],
       },
       { signal: controller.signal },
     );
-    await Bun.sleep(50);
+    // Keep an early run rejection observed while polling; finally still awaits it.
+    void run.catch(() => undefined);
+    // Observe the real child only after its TERM-resistant handler is installed.
+    let child: { pid: number; cwd: string } | undefined;
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      try {
+        child = JSON.parse(await readFile(ready, "utf8"));
+        break;
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      }
+      await Bun.sleep(10);
+    }
+    if (!child) throw new Error("Resistant child did not report readiness within 10 seconds");
+    expect(child.pid).toBeGreaterThan(0);
+    const entries = await readdir(join(state, "runs"));
+    expect(entries).toHaveLength(1);
+    const directory = join(state, "runs", entries[0]!);
+    expect(child.cwd).toBe(join(directory, "root"));
+    expect((await lstat(child.cwd)).isDirectory()).toBe(true);
     controller.abort();
-    expect((await run).value).toMatchObject({ cancelled: true, signal: "SIGTERM" });
-    expect(await Bun.file(join(state, "runs")).exists()).toBe(false);
+    const result = await Promise.race([
+      run,
+      Bun.sleep(2_000).then(() => {
+        throw new Error("Resistant child cancellation did not complete within 2 seconds");
+      }),
+    ]);
+    expect(result.value).toMatchObject({ cancelled: true, signal: "SIGKILL", exitCode: 137 });
+    await expect(lstat(child.cwd)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(join(state, "runs"))).toEqual([]);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    controller.abort();
+    try {
+      // Do not remove fixture bytes while this test's run is still pending.
+      if (run) await run;
+    } finally {
+      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
+      else process.env.SKILL_CLI_STATE_DIR = previous;
+      await rm(root, { recursive: true, force: true });
+    }
   }
-});
+}, 15_000);
 
 test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote runs without mutating content", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-run-tree-"));

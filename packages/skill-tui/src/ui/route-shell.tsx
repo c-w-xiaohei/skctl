@@ -14,6 +14,8 @@ export interface RouteShellSlots {
 export interface RouteShellProps {
   readonly mode: LayoutMode;
   readonly slots: RouteShellSlots;
+  readonly compactTitle?: boolean;
+  readonly hideTitle?: boolean;
 }
 
 function Slot(props: { readonly value: JSXElement | (() => JSXElement) }) {
@@ -24,7 +26,6 @@ function Slot(props: { readonly value: JSXElement | (() => JSXElement) }) {
 /** Application chrome owns layout; page state and commands stay with their owners. */
 export function RouteShell(props: RouteShellProps) {
   const tokens = useTheme();
-  const wide = () => props.mode === "wide";
   return (
     <Show
       when={props.mode !== "too-small"}
@@ -44,40 +45,27 @@ export function RouteShell(props: RouteShellProps) {
       >
         <box
           id="global-bar"
-          height={2}
+          height={props.mode === "narrow" ? 3 : 2}
           flexShrink={0}
           paddingX={1}
           border={["bottom"]}
           borderColor={tokens().colors.border}
         >
           <Slot value={props.slots.globalBar} />
+          <Slot value={props.slots.sectionNav} />
         </box>
         <box flexDirection="row" flexGrow={1} minHeight={0}>
-          <Show when={wide()}>
-            <box
-              id="section-nav"
-              width={22}
-              flexShrink={0}
-              flexDirection="column"
-              paddingX={1}
-              paddingTop={1}
-              border={["right"]}
-              borderColor={tokens().colors.border}
-            >
-              <text fg={tokens().colors.mutedForeground}>PAGES</text>
-              <box height={1} />
-              <Slot value={props.slots.sectionNav} />
-            </box>
-          </Show>
           <box flexDirection="column" flexGrow={1} minWidth={0} minHeight={0} paddingX={1}>
-            <Show when={!wide()}>
-              <box id="section-nav" height={1} flexShrink={0}>
-                <Slot value={props.slots.sectionNav} />
+            <Show when={!props.hideTitle}>
+              <box
+                id="route-title"
+                flexDirection="column"
+                flexShrink={0}
+                height={(props.compactTitle ?? false) ? 1 : 2}
+              >
+                <Slot value={props.slots.routeTitle} />
               </box>
             </Show>
-            <box id="route-title" flexDirection="column" flexShrink={0} height={2}>
-              <Slot value={props.slots.routeTitle} />
-            </box>
             <box id="route-content" flexGrow={1} minHeight={0} minWidth={0}>
               <Slot value={props.slots.content} />
             </box>
@@ -85,11 +73,10 @@ export function RouteShell(props: RouteShellProps) {
         </box>
         <box
           id="command-status"
-          height={3}
+          height={1}
           flexShrink={0}
           paddingX={1}
-          border={["top"]}
-          borderColor={tokens().colors.border}
+          backgroundColor={tokens().colors.surface}
         >
           <Slot value={props.slots.commandStatus} />
         </box>

@@ -190,7 +190,7 @@ test("state publishes a derived v1 migration atomically with one generation adva
       ]);
     });
     expect(JSON.parse(await readFile(state, "utf8"))).toMatchObject({
-      version: 2,
+      version: 3,
       generation: 8,
       installed: [
         {
@@ -202,6 +202,108 @@ test("state publishes a derived v1 migration atomically with one generation adva
         },
       ],
     });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("v3 persists exact Root tree evidence and retains literal legacy records without read migration", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-state-v3-"));
+  const file = join(root, "state.json");
+  const identityEvidence = {
+    status: "known" as const,
+    canonicalOrigin: "https://example.test/repo.git",
+    originRelativeSkillRoot: "skills/review",
+  };
+  const remote = {
+    kind: "remote" as const,
+    source: "team",
+    path: "review",
+    name: "review",
+    description: "Review",
+    digest: "a".repeat(64),
+    bindingDigest: "b".repeat(64),
+    adoptedRevision: "c".repeat(40),
+    identityEvidence,
+  };
+  const treeIdentity = { objectFormat: "sha1", objectId: "d".repeat(40) };
+  try {
+    const coordinator = new StateCoordinator(root);
+    for (const version of [1, 2]) {
+      const { identityEvidence: _identity, ...v1 } = remote;
+      const bytes = JSON.stringify({
+        version,
+        generation: 7,
+        installed: [version === 1 ? v1 : remote],
+        configs: {},
+      });
+      await writeFile(file, bytes);
+      await expect(coordinator.withLock(() => coordinator.read())).resolves.toMatchObject({
+        version,
+        generation: 7,
+      });
+      expect(await readFile(file, "utf8")).toBe(bytes);
+      await writeFile(
+        file,
+        JSON.stringify({
+          version,
+          generation: 7,
+          installed: [{ ...remote, treeIdentity }],
+          configs: {},
+        }),
+      );
+      await expect(coordinator.read()).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+    }
+    const installed = [
+      { ...remote, treeIdentity },
+      {
+        ...remote,
+        path: "",
+        identityEvidence: { ...identityEvidence, originRelativeSkillRoot: "" },
+        treeIdentity,
+      },
+    ];
+    await writeFile(file, JSON.stringify({ version: 3, generation: 7, installed, configs: {} }));
+    await expect(coordinator.withLock(() => coordinator.read())).resolves.toMatchObject({
+      installed,
+    });
+    await coordinator.withLock(async () => {
+      const current = await coordinator.read();
+      const next = await coordinator.write({ installed: current.installed, configs: {} }, 7);
+      expect(next).toMatchObject({ version: 3, generation: 8, installed });
+    });
+    // Absent tree evidence is retained legacy state, not invented on a mutation.
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 3,
+        generation: 0,
+        installed: [
+          remote,
+          { ...remote, adoptedRevision: undefined, revisionStatus: "unresolved" },
+        ],
+        configs: {},
+      }),
+    );
+    await expect(coordinator.read()).resolves.toMatchObject({ version: 3 });
+    for (const bad of [
+      { ...remote, treeIdentity: { ...treeIdentity, objectFormat: "sha256" } },
+      { ...remote, treeIdentity: { ...treeIdentity, objectId: "D".repeat(40) } },
+      { ...remote, treeIdentity: { ...treeIdentity, objectId: "d".repeat(64) } },
+      { ...remote, treeIdentity: { ...treeIdentity, extra: true } },
+      { ...remote, treeIdentity, extra: true },
+      { ...remote, treeIdentity, identityEvidence: { status: "unavailable" } },
+      { ...remote, treeIdentity, adoptedRevision: undefined, revisionStatus: "unresolved" },
+      { ...remote, treeIdentity, revisionStatus: "unresolved" },
+      { ...legacyLocal, identityEvidence, treeIdentity },
+      { ...remote, treeIdentity, path: "../review" },
+    ]) {
+      await writeFile(
+        file,
+        JSON.stringify({ version: 3, generation: 0, installed: [bad], configs: {} }),
+      );
+      await expect(coordinator.read()).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

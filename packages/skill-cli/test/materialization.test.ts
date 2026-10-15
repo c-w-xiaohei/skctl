@@ -58,7 +58,7 @@ test("CLI-001 public setup discovers and installs a Local Skill into a managed c
         }),
       ).toBe(0);
       if (argv[0] === "browse") expect(output).toContain('<managed_skill_catalog scope="root">');
-      else expect(JSON.parse(output)).toBeObject();
+      else expect(output).toContain("---\nname: review\n");
     }
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;

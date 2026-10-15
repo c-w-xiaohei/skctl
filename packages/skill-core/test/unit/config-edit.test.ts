@@ -1,5 +1,15 @@
 import { expect, test as bunTest } from "bun:test";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,8 +17,197 @@ import { changeConfiguration } from "../../src/configuration";
 import { createSkillCliCore } from "../../src/create-core";
 import { StateCoordinator } from "../../src/internal/state";
 import { getWorkspace } from "../../src/workspace";
+import {
+  forgetConfigSource,
+  removeConfigSource,
+  readWorkspaceUnlocked,
+  validateConfigBytes,
+} from "../../src/internal/config";
 
 const test = bunTest.serial;
+
+test("network is rejected by actual Project Local and reusable readers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-network-scopes-"));
+  const previous = process.env.SKILL_CLI_STATE_DIR;
+  const text = '{"network":{"proxy":"http://proxy.test:7890"}}';
+  try {
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    expect(() => validateConfigBytes(Buffer.from(text))).toThrow();
+    for (const name of ["skill-cli.jsonc", "skill-cli.local.jsonc"]) {
+      await writeFile(join(root, "skill-cli.jsonc"), "{}");
+      await writeFile(join(root, name), text);
+      expect(
+        (await getWorkspace({ cwd: root, userConfigPath: join(root, "absent") })).value.effective
+          .status,
+      ).toBe("unavailable");
+      await rm(join(root, name));
+    }
+    await mkdir(join(root, "module"));
+    await writeFile(join(root, "module", "config.jsonc"), text);
+    await writeFile(
+      join(root, "skill-cli.jsonc"),
+      '{"configSources":{"module":{"kind":"local","path":"./module","root":""}}}',
+    );
+    expect(
+      (await getWorkspace({ cwd: root, userConfigPath: join(root, "absent") })).value.effective
+        .status,
+    ).toBe("unavailable");
+    await writeFile(
+      join(root, "skill-cli.jsonc"),
+      '{"configSources":{"module":{"kind":"git","origin":"https://example.test/module.git","root":"","ref":"main"}}}',
+    );
+    const coordinator = new StateCoordinator();
+    const override = { id: "module", commit: "a".repeat(40), value: JSON.parse(text) };
+    const preview = await coordinator.withLock(() =>
+      readWorkspaceUnlocked(
+        { cwd: root, userConfigPath: join(root, "absent") },
+        coordinator,
+        override,
+      ),
+    );
+    expect(preview.value.effective.status).toBe("unavailable");
+  } finally {
+    if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
+    else process.env.SKILL_CLI_STATE_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("both manual Config state writers emit v3 and retain unrelated Remote tree evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-state-v3-"));
+  const previous = process.env.SKILL_CLI_STATE_DIR;
+  try {
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    await writeFile(
+      join(root, "skill-cli.jsonc"),
+      '{"configSources":{"one":{"kind":"git","origin":"https://example.test/one.git","root":"","ref":"main"},"two":{"kind":"git","origin":"https://example.test/two.git","root":"","ref":"main"}}}',
+    );
+    const options = { cwd: root, userConfigPath: join(root, "missing") };
+    const coordinator = new StateCoordinator();
+    const digest = new Bun.CryptoHasher("sha256").update("{}").digest("hex");
+    await coordinator.publishRemoteConfig("one", "a".repeat(40), Buffer.from("{}"));
+    await coordinator.publishRemoteConfig("two", "a".repeat(40), Buffer.from("{}"));
+    const item = {
+      kind: "remote" as const,
+      source: "retained",
+      path: "review",
+      name: "review",
+      description: "Review",
+      digest: "b".repeat(64),
+      bindingDigest: "c".repeat(64),
+      adoptedRevision: "a".repeat(40),
+      identityEvidence: {
+        status: "known" as const,
+        canonicalOrigin: "https://example.test/retained.git",
+        originRelativeSkillRoot: "skills/review",
+      },
+      treeIdentity: { objectFormat: "sha1" as const, objectId: "d".repeat(40) },
+    };
+    await coordinator.withLock(() =>
+      coordinator.write(
+        {
+          installed: [item],
+          configs: {
+            one: { commit: "a".repeat(40), digest },
+            two: { commit: "a".repeat(40), digest },
+          },
+        },
+        2,
+      ),
+    );
+    await forgetConfigSource(options, "one");
+    expect(await coordinator.read()).toMatchObject({
+      version: 3,
+      generation: 4,
+      installed: [item],
+    });
+    await removeConfigSource(options, "two");
+    expect(await coordinator.read()).toEqual({
+      version: 3,
+      generation: 5,
+      installed: [item],
+      configs: {},
+    });
+  } finally {
+    if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
+    else process.env.SKILL_CLI_STATE_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("missing user document inherits but inaccessible user parent fails closed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-network-permissions-"));
+  const parent = join(root, "private");
+  const previous = process.env.SKILL_CLI_STATE_DIR;
+  try {
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await mkdir(parent);
+    const options = { cwd: root, userConfigPath: join(parent, "policy.jsonc") };
+    expect((await getWorkspace(options)).value.effective.status).toBe("complete");
+    await writeFile(options.userConfigPath, '{"network":{"proxy":"http://proxy.test:7890"}}');
+    await chmod(parent, 0);
+    const unavailable = (await getWorkspace(options)).value;
+    expect(unavailable.effective.status).toBe("unavailable");
+    expect(unavailable.configs.find((item) => item.level === "global")?.file.status).not.toBe(
+      "missing",
+    );
+  } finally {
+    await chmod(parent, 0o700);
+    if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
+    else process.env.SKILL_CLI_STATE_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("user proxy survives JSONC declaration edits and never enters Workspace or binding facts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-user-network-"));
+  const global = join(root, "user", "config.jsonc");
+  const previous = process.env.SKILL_CLI_STATE_DIR;
+  try {
+    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    await mkdir(join(root, "user"));
+    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    const proxy = "http://user:secret@proxy.test:7890";
+    await writeFile(
+      global,
+      `{\n // keep network comment\n "network": { "proxy": "${proxy}" }\n}\n`,
+    );
+    const core = createSkillCliCore({ cwd: root, userConfigPath: global });
+    await core.configuration.change({
+      type: "source.register",
+      level: "global",
+      id: "team",
+      binding: {
+        kind: "git",
+        origin: "https://example.test/repo.git",
+        root: "skills",
+        ref: "main",
+      },
+    });
+    const before = (await core.workspace.get()).value;
+    expect(before.effective.status).toBe("complete");
+    const baseline = await core.management.getUpdateBaseline({ source: "team" });
+    expect(JSON.stringify(before)).not.toContain("secret");
+    expect(await readFile(global, "utf8")).toContain("// keep network comment");
+    await core.configuration.change({
+      type: "collection.create",
+      level: "global",
+      collection: "team",
+    });
+    expect(await readFile(global, "utf8")).toContain(proxy);
+    await writeFile(
+      global,
+      (await readFile(global, "utf8")).replace(proxy, "https://other.test:8443"),
+    );
+    expect((await core.workspace.get()).value.effective.sources).toEqual(before.effective.sources);
+    expect(await core.management.getUpdateBaseline({ source: "team" })).toEqual(baseline);
+  } finally {
+    if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
+    else process.env.SKILL_CLI_STATE_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("MGMT-001 creates only the selected Global Project or Local Source target with exact bindings", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-source-targets-"));

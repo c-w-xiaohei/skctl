@@ -203,6 +203,7 @@ async function tui(
   evidenceDir?: string,
   args: readonly string[] = [],
   absent = false,
+  journeyName: string = mode,
 ) {
   if (absent && process.platform !== "win32") {
     const chunks: Uint8Array[] = [];
@@ -247,7 +248,7 @@ async function tui(
       join(outputRoot, "fixture-project"),
       isolatedEnvironment(outputRoot),
       evidenceDir ?? outputRoot,
-      mode,
+      journeyName,
       (driver) => nativeJourney(driver, mode, outputRoot),
       args,
     );
@@ -301,6 +302,55 @@ async function tui(
 
 async function nativeJourney(driver: NativeDriver, mode: NativeMode, outputRoot: string) {
   const escape = () => driver.key("\x1b");
+  const clickVisible = async (label: string) => {
+    const rows = driver.text().split("\n");
+    const row = rows.findIndex((line) => line.includes(label));
+    assert(row >= 0, `Visible UI label ${label} is absent`);
+    await driver.click(label, row + 1);
+  };
+  const chooseScope = async (scope: "Workspace" | "Global" | "Project" | "Local") => {
+    const scopeLabel = driver.text().match(/(?:Scope: )?(?:Workspace|Global|Project|Local) ▾/)?.[0];
+    assert(scopeLabel, "Visible Scope trigger is absent");
+    await clickVisible(scopeLabel);
+    await driver.frame("scope-choices", ["Scope", "Workspace", "Global", "Project", "Local"]);
+    const optionRow = driver
+      .text()
+      .split("\n")
+      .findLastIndex((line) => line.includes(scope) && !line.includes("Scope:"));
+    assert(optionRow >= 0, `Scope choice ${scope} is absent`);
+    await driver.click(scope, optionRow + 1);
+    await driver.frame("scope-option-selected", [
+      "Scope",
+      "Workspace",
+      "Global",
+      "Project",
+      "Local",
+    ]);
+    await driver.key("\r");
+  };
+  const openPage = async (
+    page: "Skills" | "Sources" | "Collections" | "Config Sources" | "Integrations",
+  ) => {
+    const visible = driver.text();
+    const label =
+      page === "Collections" && visible.includes("Cols")
+        ? "Cols"
+        : page === "Config Sources" && visible.includes("Configs")
+          ? "Configs"
+          : page === "Integrations" && visible.includes("Agents")
+            ? "Agents"
+            : page;
+    // Native tabs include two-cell padding; match the whole caption so
+    // Sources cannot resolve to the suffix of Config Sources on the same row.
+    await clickVisible(`  ${label}  `);
+    await driver.key("\r");
+  };
+  const activateAllSkills = async () => {
+    await openPage("Skills");
+    await clickVisible("All Skills");
+    await driver.key("\r");
+    await driver.frame("all-skills", ["All Skills", "Skills ·"]);
+  };
   const responsive = async (name: string, required: readonly string[]) => {
     for (const [width, height] of [
       [80, 24],
@@ -311,65 +361,161 @@ async function nativeJourney(driver: NativeDriver, mode: NativeMode, outputRoot:
       await driver.frame(name, required);
     }
   };
-  await driver.frame("startup", ["Workspace / Skills", "All Skills", "Skills ·"]);
+  await driver.frame("startup", ["Agent access", "Scope: Workspace ▾"]);
   if (mode === "cold") {
     const path = join(outputRoot, "fixture-project", "skill-cli.jsonc");
     const before = await readFile(path, "utf8");
+    await activateAllSkills();
     await driver.frame("cold-installed", ["Your Skill library is empty", "Add a Source"]);
-    await driver.click("Project", 1);
-    await driver.click("Sources");
-    await driver.frame("cold-project", ["Project", "Sources", "Add Source"]);
+    await chooseScope("Project");
+    await driver.frame("cold-project-context", ["Project Config / Sources", "Add Source"]);
+    await openPage("Collections");
+    await driver.frame("cold-project-collections", [
+      "Project Config / Collections",
+      "fixture-collection",
+    ]);
+    await openPage("Sources");
+    await driver.frame("cold-project", ["Project Config / Sources", "Add Source"]);
     await driver.click("Add Source");
-    await driver.frame("cold-source-draft", ["Add Source"]);
+    await driver.frame("cold-source-draft", ["Source ID", "Configured local path", "Cancel"]);
     await escape();
+    await driver.frame("cold-source-cancelled", ["Project Config / Sources", "Add Source"]);
     assert((await readFile(path, "utf8")) === before, "Cold Source draft mutated Config");
     return;
   }
   if (mode === "reader" || mode === "skill") {
-    await driver.frame("installed", ["All Skills", "Skills · 1 / 1", "fixture"]);
+    await activateAllSkills();
+    await driver.frame("installed-direct-reader", [
+      "All Skills",
+      "Skills · 1 / 1",
+      "fixture",
+      "Fixture",
+      "SKILL.md",
+    ]);
     await responsive("installed", ["All Skills", "fixture"]);
     const fixtureRow = driver
       .text()
       .split("\n")
-      .findIndex((line) => /\bfixture\s+fixture-source\b/.test(line));
+      .findIndex((line) => /\bfixture\s+\S/.test(line.split("││", 1)[0]!));
     assert(fixtureRow >= 0, "Installed fixture row is absent");
     await driver.click("fixture", fixtureRow + 1);
     await driver.key("\r");
-    await driver.frame("skill-inspector", [
-      "Skill details",
-      "Read SKILL.md",
-      "fixture-source/fixture",
-    ]);
-    // Resize the browser before drill-in; inspector resize restoration is a
-    // separate historical UI risk, not independent executable release acceptance.
-    await driver.click("Read SKILL.md");
-    await driver.frame("reader", ["Reader", "SKILL.md", "Fixture"]);
+    await driver.frame("reader-focused", ["SKILL.md", "Fixture", "↑↓ scroll"]);
+    for (const [width, height] of [
+      [144, 40],
+      [100, 24],
+      [80, 24],
+      [43, 13],
+      [120, 40],
+    ] as const) {
+      await driver.resize(width, height);
+      await driver.frame("direct-reader-resize", ["SKILL.md", "Fixture", "fixture", "↑↓ scroll"]);
+    }
     if (mode === "reader") {
+      const config = join(outputRoot, "fixture-project", "skill-cli.jsonc");
+      const before = await readFile(config, "utf8");
       await driver.click("Details");
-      await driver.frame("reader-details", ["Reader", "Details", "fixture-source/fixture"]);
+      await driver.frame("reader-details-tabs", [
+        "Details",
+        "fixture-source/fixture",
+        "Description",
+        "Connections",
+        "Manage Skill",
+      ]);
+      await driver.click("Details");
+      await driver.frame("reader-details-reselected", ["Details", "←→ move"]);
+      await driver.key("\r");
+      await driver.frame("reader-details", [
+        "Details",
+        "fixture-source/fixture",
+        "Description",
+        "↑↓ scroll",
+      ]);
+      await driver.click("Manage Skill");
+      await driver.frame("reader-management", [
+        "Manage Skill",
+        "Reload",
+        "Add Skill to Collection",
+      ]);
+      assert((await readFile(config, "utf8")) === before, "Details browsing mutated Config");
+      // These later browse journeys start from the body, not the per-Skill
+      // Details preference intentionally retained by semantic Back.
+      await driver.click("SKILL.md");
+      await driver.key("\r");
+      await driver.frame("reader-body-after-details", ["Fixture", "SKILL.md", "↑↓ scroll"]);
     }
     await escape();
-    await driver.frame("inspector-return", ["Read SKILL.md"]);
-    await escape();
-    await driver.frame("installed-return", ["All Skills", "fixture"]);
+    await driver.frame("installed-return", ["All Skills", "fixture", "Enter read"]);
+    if (mode === "reader") {
+      const config = join(outputRoot, "fixture-project", "skill-cli.jsonc");
+      const before = await readFile(config, "utf8");
+      for (const [width, height] of [
+        [100, 24],
+        [80, 24],
+        [43, 13],
+      ] as const) {
+        await driver.resize(width, height);
+        await driver.frame("compact-skills-entry", ["Collections", "fixture"]);
+        await clickVisible("Collections");
+        await driver.frame("compact-collection-tree", ["Back to Skills", "fixture-collection"]);
+        await driver.click("fixture-collection");
+        await driver.key("\x1b[C");
+        await driver.key("\x1b[B");
+        await driver.frame("compact-collection-reference", [
+          "Back to Skills",
+          "child",
+          "No children",
+        ]);
+        await escape();
+        await driver.frame("compact-empty-skills", ["No matching Skills", "child"]);
+        await clickVisible("Collections");
+        await driver.frame("compact-reference-restored", ["Back to Skills", "child"]);
+        await driver.key("\x1b[D");
+        await escape();
+        await driver.frame("compact-filtered-return", ["fixture", "Enter read"]);
+        await driver.key("\r");
+        await driver.frame("compact-filtered-read", ["Fixture", "SKILL.md", "↑↓ scroll"]);
+        await escape();
+        await driver.frame("compact-filtered-back", ["fixture", "Enter read"]);
+      }
+      await driver.resize(120, 40);
+      await driver.frame("agent-entry-after-resize", ["Agent access", "All Skills", "fixture"]);
+      await clickVisible("Agent access");
+      await driver.key("\r");
+      await driver.frame("agent-tree-restored", ["fixture-collection", "Enter expand"]);
+      await driver.key("\r");
+      await driver.key("\x1b[B");
+      await driver.frame("agent-reference", ["Reference child", "child"]);
+      await driver.key("\x1b[B");
+      await driver.frame("agent-selection-reads", ["SKILL.md", "Fixture"]);
+      await driver.key("\r");
+      await driver.frame("agent-reader-focused", ["Fixture", "↑↓ scroll"]);
+      await escape();
+      await driver.frame("agent-tree-return", ["fixture", "Enter read"]);
+      assert(
+        (await readFile(config, "utf8")) === before,
+        "Collection browsing or installed reading mutated Config",
+      );
+    }
     return;
   }
   if (mode === "workbench") {
-    await driver.click("Agent access");
+    await clickVisible("Agent access");
+    await driver.key("\r");
     await driver.frame("agent-access", [
       "These Collections make their Skills available",
       "fixture-collection",
     ]);
     await driver.click("fixture-collection");
-    await driver.key("\x1b[C");
+    await driver.key("\r");
     await driver.frame("agent-reference-expanded", ["fixture-collection", "child", "Reference"]);
     await driver.key("\x1b[D");
-    await driver.click("All Skills");
+    await activateAllSkills();
     await driver.frame("all-skills-return", ["All Skills", "fixture"]);
     return;
   }
   if (mode === "collection" || mode === "mouse") {
-    await driver.click("Collections");
+    await openPage("Collections");
     await driver.frame("collections", ["Collections", "fixture-collection"]);
     await responsive("collections", ["Collections", "fixture-collection"]);
     if (mode === "mouse") {
@@ -405,18 +551,17 @@ async function nativeJourney(driver: NativeDriver, mode: NativeMode, outputRoot:
     return;
   }
   if (mode === "navigation" || mode === "integration") {
-    await driver.click("Global", 1);
+    await chooseScope("Global");
     await driver.frame("global-immediate", ["Global Config / Sources"]);
-    await driver.key("\r");
     await driver.frame("context-enter-unbound", ["Global Config / Sources"]);
-    await driver.click("Config Sources");
+    await openPage("Config Sources");
     await driver.frame("config-sources", ["Global Config / Config Sources"]);
-    await driver.click("Collections");
+    await openPage("Collections");
     await driver.frame("config-collections", ["Global Config / Collections"]);
     await responsive("config-collections", ["Global Config / Collections"]);
     if (mode === "integration") {
-      await driver.click("Project", 1);
-      await driver.click("Integrations");
+      await chooseScope("Project");
+      await openPage("Integrations");
       await driver.click("Managed OpenCode");
       await driver.key("\r");
       await driver.frame("integration", [
@@ -452,8 +597,8 @@ async function nativeJourney(driver: NativeDriver, mode: NativeMode, outputRoot:
     return;
   }
   const level = mode === "github" ? "global" : mode.slice(7);
-  await driver.click(level[0]!.toUpperCase() + level.slice(1), 1);
-  await driver.click("Sources");
+  await chooseScope((level[0]!.toUpperCase() + level.slice(1)) as "Global" | "Project" | "Local");
+  await openPage("Sources");
   await driver.frame("source-config", [
     `${level[0]!.toUpperCase() + level.slice(1)} Config / Sources`,
   ]);
@@ -566,8 +711,24 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
       explicitNonTTY.exitCode === 1 && explicitNonTTY.stderr.includes("interactive"),
       "Explicit UI must require a terminal",
     );
-    await tui(cli, options.outputRoot, "cold", options.evidenceDir, [], true);
-    await tui(cli, options.outputRoot, "cold", options.evidenceDir, ["tui"], true);
+    await tui(
+      cli,
+      options.outputRoot,
+      "cold",
+      options.evidenceDir,
+      [],
+      true,
+      "cold-cli-default-missing",
+    );
+    await tui(
+      cli,
+      options.outputRoot,
+      "cold",
+      options.evidenceDir,
+      ["tui"],
+      true,
+      "cold-cli-tui-missing",
+    );
     const installedTui = join(
       install,
       process.platform === "win32" ? "skill-tui.exe" : "skill-tui",
@@ -584,23 +745,52 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
       helpCode === 0 && helpText.includes("Usage: skill-tui"),
       "Standalone help failed without a terminal",
     );
-    await tui(installedTui, options.outputRoot, "cold", options.evidenceDir, [
-      "--project",
-      project,
-    ]);
+    await tui(
+      installedTui,
+      options.outputRoot,
+      "cold",
+      options.evidenceDir,
+      ["--project", project],
+      false,
+      "cold-standalone-project",
+    );
     await check(6, async () => {
-      await tui(cli, options.outputRoot, "cold", options.evidenceDir);
-      await tui(cli, options.outputRoot, "cold", options.evidenceDir, ["tui"]);
-      await tui(cli, options.outputRoot, "cold", options.evidenceDir, [
-        "--project",
-        project,
-        "tui",
-      ]);
-      await tui(cli, options.outputRoot, "cold", options.evidenceDir, [
-        "tui",
-        "--project",
-        project,
-      ]);
+      await tui(
+        cli,
+        options.outputRoot,
+        "cold",
+        options.evidenceDir,
+        [],
+        false,
+        "cold-cli-default",
+      );
+      await tui(
+        cli,
+        options.outputRoot,
+        "cold",
+        options.evidenceDir,
+        ["tui"],
+        false,
+        "cold-cli-tui",
+      );
+      await tui(
+        cli,
+        options.outputRoot,
+        "cold",
+        options.evidenceDir,
+        ["--project", project, "tui"],
+        false,
+        "cold-cli-project-command-order",
+      );
+      await tui(
+        cli,
+        options.outputRoot,
+        "cold",
+        options.evidenceDir,
+        ["tui", "--project", project],
+        false,
+        "cold-cli-command-project-order",
+      );
       if (process.platform !== "win32")
         await nativeTerminal(
           cli,
@@ -609,7 +799,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
           options.evidenceDir ?? options.outputRoot,
           "launcher-sigterm",
           async (driver) => {
-            await driver.frame("startup", ["Workspace / Skills", "All Skills", "Skills ·"]);
+            await driver.frame("startup", ["Agent access", "Scope: Workspace ▾"]);
           },
           ["tui"],
           "SIGTERM",
@@ -664,12 +854,12 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
         "Agent Collection browse differs",
       );
       const load = await success(["agent", "load", "fixture-collection:fixture"]);
-      assert(JSON.parse(load.stdout).text === skillBytes, "Agent load bytes differ");
+      assert(load.stdout === skillBytes, "Agent load bytes differ");
       const read = await success(["agent", "read", "fixture-collection:fixture", "run.ts"]);
-      assert(JSON.parse(read.stdout).text.includes(marker), "Agent read bytes differ");
+      assert(read.stdout.includes(marker), "Agent read bytes differ");
     });
     await check(3, async () => {
-      const run = await success([
+      const run = await command([
         "agent",
         "run",
         "fixture-collection:fixture",
@@ -678,7 +868,6 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
         "run.ts",
         marker,
       ]);
-      const final = run.stdout.trimEnd().split("\n").at(-1)!;
       const runRoot = relative(
         join(options.outputRoot, "state", "runs"),
         run.stdout.split("\n")[0]!.trim(),
@@ -686,7 +875,8 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
       assert(
         /^[^/\\]+[/\\]root$/.test(runRoot) &&
           run.stdout.includes(marker) &&
-          JSON.parse(final).exitCode === 7,
+          run.exitCode === 7 &&
+          !run.stdout.includes('"exitCode"'),
         "Agent run did not preserve its owned cwd, marker or child status",
       );
     });
@@ -701,7 +891,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
       ];
       const downloaded = await success([...args, output]);
       assert(
-        JSON.parse(downloaded.stdout).bytesWritten === payload.length &&
+        JSON.parse(downloaded.stdout).output === output &&
           Buffer.compare(await readFile(output), payload) === 0,
         "Agent download bytes differ",
       );
@@ -720,7 +910,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
       try {
         const forced = await success([...args, output, "--force"]);
         assert(
-          JSON.parse(forced.stdout).bytesWritten === replacement.length,
+          JSON.parse(forced.stdout).output === output,
           "Forced download failed with an open destination",
         );
       } finally {
@@ -755,7 +945,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
           : ["reader"];
       if (!options.legacyJourneys)
         process.stdout.write(
-          "Packaged scope: stable Reader/Back plus browser resize; legacy workbench, skill duplicate, collection, integration, navigation, source-global/project/local, github and mouse journeys are excluded from default release acceptance (opt in with --legacy-journeys). Inspector/Reader resize restoration is not verified.\n",
+          "Packaged scope: direct selected-Skill Reader and resize at 144x40, 100x24, 80x24 and 43x13; compact Collection hierarchy/filter/empty/return at 100/80/43 columns; Agent Tree Reference/direct-reading/return, unchanged Config and terminal restoration. Other legacy journeys are excluded (opt in with --legacy-journeys). Human usability remains pending.\n",
         );
       for (const mode of modes)
         await tui(installedTui, options.outputRoot, mode, options.evidenceDir, [

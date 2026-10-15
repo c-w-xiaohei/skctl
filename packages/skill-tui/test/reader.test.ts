@@ -1,14 +1,17 @@
 import { expect, test } from "bun:test";
 import { SkillCliError } from "@skill-cli/core";
 import { createTuiEffects as createRealTuiEffects } from "../src/effects";
+import type { TuiCore } from "../src/effects";
 import { createOperationState } from "../src/operation-state";
 import { createProjection } from "../src/projection";
-import { findLiteralMatches, rawOffsetForMarkdownMatch } from "../src/types";
+import { findLiteralMatches, rawOffsetForMarkdownMatch, skillAddressKey } from "../src/types";
 import {
   activeReader,
   beginReaderRequest,
   createReaderState,
   reduceReaderState,
+  type ReaderAddress,
+  type ReaderEvent,
   type ReaderOwnerState,
 } from "../src/reader/state";
 import { createWorkspaceState } from "../src/workspace/state";
@@ -19,6 +22,33 @@ import {
   testEffects as createTuiEffects,
   workspaceProjection,
 } from "./direct-source.fixture";
+
+test("Reader restores per-Skill Details disclosure state without replacing cached bytes", () => {
+  const address = { source: "team-main", path: "guide" };
+  let state = reduceReaderState(createReaderState(), { type: "select", address });
+  state = reduceReaderState(state, {
+    type: "patch",
+    value: {
+      tab: "details",
+      detailsManagementOpen: true,
+      detailsDescriptionOpen: true,
+      text: "installed prose",
+    },
+  });
+  const saved = activeReader(state)!;
+  state = reduceReaderState(state, { type: "select", address: { ...address, path: "other" } });
+  expect(activeReader(state)?.detailsManagementOpen).not.toBe(true);
+  state = reduceReaderState(state, {
+    type: "restore",
+    value: { ...saved, text: "not authoritative" },
+  });
+  expect(activeReader(state)).toMatchObject({
+    detailsManagementOpen: true,
+    detailsDescriptionOpen: true,
+    text: "installed prose",
+    tab: "details",
+  });
+});
 
 test("READ-012 finds literal case-sensitive non-overlapping matches with source positions", () => {
   expect(findLiteralMatches("one one\r\nOne\n😀one", "one")).toEqual([
@@ -331,4 +361,228 @@ test("STATE-015 stale resource list failure cannot replace a newer resource read
   );
   expect(activeReader(reader)).toMatchObject({ resource: { path: "guide.md", text: "current" } });
   expect(activeReader(reader)?.error).toBeUndefined();
+});
+
+type ContentResult = Awaited<ReturnType<TuiCore["content"]["loadInstalled"]>>;
+
+const installedContent = (address: ReaderAddress, text: string): ContentResult => ({
+  value: {
+    address,
+    name: address.path,
+    description: address.path,
+    markdownText: text,
+    rawText: text,
+  },
+  diagnostics: [],
+});
+
+function pendingContentReads() {
+  const calls: {
+    readonly address: ReaderAddress;
+    readonly signal?: AbortSignal;
+    readonly resolve: (value: ContentResult) => void;
+    readonly reject: (error: unknown) => void;
+  }[] = [];
+  const loadInstalled: TuiCore["content"]["loadInstalled"] = (request, options) =>
+    new Promise((resolve, reject) => {
+      // Deliberately ignore abort: the owner must reject late success and failure too.
+      calls.push({ address: request.address, signal: options?.signal, resolve, reject });
+    });
+  return { calls, loadInstalled };
+}
+
+function ownedReaderEffects(loadInstalled: TuiCore["content"]["loadInstalled"]) {
+  let state = createReaderState();
+  const events: ReaderEvent[] = [];
+  const dispatch = (event: ReaderEvent) => {
+    state = reduceReaderState(state, event);
+    events.push(event);
+  };
+  const operation = createOperationState();
+  const projection = createProjection(operation, {
+    workspace: createWorkspaceState(),
+    collections: createCollectionsState(),
+    config: createConfigState(),
+  });
+  const effects = createRealTuiEffects(
+    directSourceCore(workspaceProjection(), { loadInstalled }),
+    operation,
+    projection.outcomes,
+    dispatch,
+    (address, request, path) => {
+      const begun = beginReaderRequest(state, address, request, path);
+      state = begun.state;
+      return begun.event;
+    },
+  );
+  return { effects, dispatch, events, state: () => state, reader: () => activeReader(state) };
+}
+
+test("rapid A-B-A clears canceled caches and ignores late canceled successes and diagnostics", async () => {
+  const a = { source: "team-main", path: "a" };
+  const b = { source: "team-main", path: "b" };
+  const pending = pendingContentReads();
+  const owner = ownedReaderEffects(pending.loadInstalled);
+  owner.dispatch({ type: "select", address: a });
+  const firstA = owner.effects.loadReader(a);
+  owner.dispatch({ type: "select", address: b });
+  const firstB = owner.effects.loadReader(b);
+  expect(owner.state().cache[skillAddressKey(a)]?.loading).toBe(false);
+  owner.dispatch({ type: "select", address: a });
+  const secondA = owner.effects.loadReader(a);
+
+  expect(pending.calls.map((call) => call.address)).toEqual([a, b, a]);
+  expect(pending.calls.map((call) => call.signal?.aborted)).toEqual([true, true, false]);
+  pending.calls[2]!.resolve(installedContent(a, "current A"));
+  await secondA;
+  pending.calls[0]!.resolve({
+    ...installedContent(a, "old A"),
+    diagnostics: [{ code: "INTERNAL", severity: "warning", message: "old A warning" }],
+  });
+  pending.calls[1]!.resolve(installedContent(b, "canceled B"));
+  expect(await firstA).toBeUndefined();
+  expect(await firstB).toBeUndefined();
+  expect(owner.reader()).toMatchObject({ address: a, text: "current A", loading: false });
+  expect(owner.reader()?.error).toBeUndefined();
+  expect(owner.state().cache[skillAddressKey(b)]).toMatchObject({
+    address: b,
+    loading: false,
+  });
+  expect(owner.state().cache[skillAddressKey(b)]?.text).toBeUndefined();
+  expect(owner.events.filter((event) => event.type === "content.settle")).toHaveLength(1);
+  owner.effects.teardown();
+});
+
+test("switching to a cached Skill can cancel pending content without stranding its loading state", async () => {
+  const a = { source: "team-main", path: "a" };
+  const b = { source: "team-main", path: "b" };
+  const pending = pendingContentReads();
+  const owner = ownedReaderEffects(pending.loadInstalled);
+  owner.dispatch({ type: "select", address: a });
+  const firstA = owner.effects.loadReader(a);
+  pending.calls[0]!.resolve(installedContent(a, "cached A"));
+  await firstA;
+  owner.dispatch({ type: "select", address: b });
+  const firstB = owner.effects.loadReader(b);
+  owner.effects.cancelReaderContent();
+  owner.dispatch({ type: "select", address: a });
+  pending.calls[1]!.reject(new Error("late B failure"));
+  await firstB;
+  expect(owner.reader()).toMatchObject({ address: a, text: "cached A", loading: false });
+  expect(owner.events.filter((event) => event.type === "failure")).toEqual([]);
+
+  owner.dispatch({ type: "select", address: b });
+  expect(owner.reader()).toMatchObject({ address: b, loading: false });
+  expect(owner.reader()?.text).toBeUndefined();
+  const retryB = owner.effects.loadReader(b);
+  pending.calls[2]!.resolve(installedContent(b, "retried B"));
+  await retryB;
+  expect(owner.reader()).toMatchObject({ address: b, text: "retried B", loading: false });
+  owner.effects.teardown();
+});
+
+test("Core content cancellation without a replacement remains reloadable", async () => {
+  const address = { source: "team-main", path: "a" };
+  const pending = pendingContentReads();
+  const owner = ownedReaderEffects(pending.loadInstalled);
+  owner.dispatch({ type: "select", address });
+  const read = owner.effects.loadReader(address);
+  pending.calls[0]!.reject(new SkillCliError("CANCELLED", "content canceled"));
+  await read;
+  expect(owner.reader()).toMatchObject({ address, loading: false });
+  expect(owner.reader()?.text).toBeUndefined();
+  expect(owner.reader()?.error).toBeUndefined();
+  const retry = owner.effects.loadReader(address);
+  pending.calls[1]!.resolve(installedContent(address, "reloaded"));
+  await retry;
+  expect(owner.reader()).toMatchObject({ loading: false, text: "reloaded" });
+  owner.effects.teardown();
+});
+
+test("explicit content navigation cancellation does not cancel a pending Source operation", async () => {
+  const pending = pendingContentReads();
+  let sourceSignal: AbortSignal | undefined;
+  const effects = createTuiEffects(
+    directSourceCore(workspaceProjection(), {
+      loadInstalled: pending.loadInstalled,
+      discover: (_request, options) =>
+        new Promise((_, reject) => {
+          sourceSignal = options?.signal;
+          sourceSignal?.addEventListener("abort", () => {
+            reject(new SkillCliError("CANCELLED", "source canceled on teardown"));
+          });
+        }),
+    }),
+  );
+  const source = effects.discover({ kind: "source-discovery", source: "team-main" });
+  const read = effects.loadReader({ source: "team-main", path: "guide" });
+  effects.cancelReaderContent();
+  expect(pending.calls[0]!.signal?.aborted).toBe(true);
+  expect(sourceSignal?.aborted).toBe(false);
+  expect(effects.pendingKind()).toBe("observe");
+  pending.calls[0]!.reject(new SkillCliError("CANCELLED", "content canceled"));
+  await read;
+  effects.teardown();
+  await source;
+});
+
+test("B failure and explicit retry retain B identity and never reuse A content", async () => {
+  const a = { source: "team-main", path: "a" };
+  const b = { source: "team-main", path: "b" };
+  const pending = pendingContentReads();
+  const owner = ownedReaderEffects(pending.loadInstalled);
+  owner.dispatch({ type: "select", address: a });
+  const readA = owner.effects.loadReader(a);
+  pending.calls[0]!.resolve(installedContent(a, "A only"));
+  await readA;
+  owner.dispatch({ type: "select", address: b });
+  const readB = owner.effects.loadReader(b);
+  pending.calls[1]!.reject(new SkillCliError("RESOURCE_NOT_FOUND", "B SKILL.md missing"));
+  await readB;
+  expect(owner.reader()).toMatchObject({
+    address: b,
+    loading: false,
+    error: { code: "RESOURCE_NOT_FOUND", message: "B SKILL.md missing" },
+  });
+  expect(owner.reader()?.text).toBeUndefined();
+  const retryB = owner.effects.loadReader(b);
+  expect(owner.reader()?.error).toBeUndefined();
+  expect(pending.calls[2]!.address).toEqual(b);
+  pending.calls[2]!.resolve(installedContent(b, "B restored"));
+  await retryB;
+  expect(owner.reader()).toMatchObject({ address: b, text: "B restored", loading: false });
+  owner.dispatch({ type: "select", address: a });
+  expect(owner.reader()?.text).toBe("A only");
+  owner.effects.teardown();
+});
+
+test("explicit installed refresh retires in-flight content and reloads without resetting reading preferences", async () => {
+  const address = { source: "team-main", path: "guide" };
+  const pending = pendingContentReads();
+  const owner = ownedReaderEffects(pending.loadInstalled);
+  owner.dispatch({ type: "select", address });
+  owner.dispatch({
+    type: "patch",
+    value: { tab: "details", raw: true, find: "needle", scroll: 12, detailsScroll: 7 },
+  });
+  const oldRead = owner.effects.loadReader(address);
+  owner.dispatch({ type: "content.invalidate", address });
+  pending.calls[0]!.resolve(installedContent(address, "before refresh"));
+  await oldRead;
+  expect(owner.reader()?.text).toBeUndefined();
+  expect(owner.reader()?.loading).toBe(false);
+
+  const newRead = owner.effects.loadReader(address);
+  pending.calls[1]!.resolve(installedContent(address, "after refresh"));
+  await newRead;
+  expect(owner.reader()).toMatchObject({
+    address,
+    text: "after refresh",
+    tab: "details",
+    raw: true,
+    find: "needle",
+    scroll: 12,
+    detailsScroll: 7,
+  });
+  owner.effects.teardown();
 });

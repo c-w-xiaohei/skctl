@@ -1,4 +1,4 @@
-import { InputRenderable, SelectRenderable, type MouseEvent } from "@opentui/core";
+import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import {
   batch,
@@ -7,6 +7,7 @@ import {
   onCleanup,
   onMount,
   untrack,
+  Show,
   type Accessor,
 } from "solid-js";
 import type { ManagementProjection } from "@skill-cli/core";
@@ -22,8 +23,11 @@ import {
 import { unassignedSkills } from "./collections/state";
 import { hasModalKeyModifier, useModalControl, useModalControls } from "./modal-controls";
 import { ModalCommand } from "./operations";
-import { selectScrollOffset } from "./select-scroll";
-import { fitColumn } from "./ui/list-text";
+import { Input } from "./ui/input";
+import { DataList } from "./ui/data-list";
+import { Dialog, DialogContent } from "./ui/dialog";
+import { Form, FormField } from "./ui/form";
+import { fitColumn, formatColumns } from "./ui/list-text";
 import { useTheme } from "./ui/use-theme";
 
 const plurals: Record<string, string> = {
@@ -31,281 +35,382 @@ const plurals: Record<string, string> = {
   Source: "Sources",
   Config: "Configs",
   Problems: "Problems",
-  "Contains Skill": "Skills",
-  Type: "Types",
-  Updates: "Updates",
   Severity: "Severities",
   Code: "Codes",
 };
 
-/** One mounted popup owns editor state; workspace owns the live filter conditions. */
+/** Applied conditions belong to workspace; this editor owns only facet search and cursor. */
 export function SkillsFilterPopup(props: {
   workspace: WorkspaceState;
   projection: Accessor<ManagementProjection | undefined>;
   onClose: () => void;
 }) {
-  const state = props.workspace,
-    renderer = useRenderer(),
-    terminal = useTerminalDimensions();
-  const controls = useModalControls()!,
-    tokens = useTheme();
+  const state = props.workspace;
+  const renderer = useRenderer();
+  const terminal = useTerminalDimensions();
+  const controls = useModalControls()!;
+  const tokens = useTheme();
   const problems = () => state.scope() === "problems";
   const dimensions = () => (problems() ? problemFilterDimensions : filterDimensions("skills"));
   const [dimension, setDimension] = createSignal(untrack(() => dimensions()[0] ?? "Collection"));
   const [search, setSearch] = createSignal("");
-  let categories: SelectRenderable | undefined, values: SelectRenderable | undefined;
-  let input: InputRenderable | undefined,
-    mounted = false;
+  const [cursor, setCursor] = createSignal(untrack(() => state.filters()[dimension()] ?? ""));
+  const [valueWidth, setValueWidth] = createSignal(0);
+  let categories: SelectRenderable | undefined;
+  let values: SelectRenderable | undefined;
+  let input: InputRenderable | undefined;
+  let mounted = false;
   const trigger = renderer.root.findDescendantById(
     untrack(problems) ? "open-problems-filter" : "open-skills-filter",
   );
   const anchor = { x: trigger?.screenX ?? 1, y: trigger?.screenY ?? 1 };
-  const width = () => Math.max(1, Math.min(78, terminal().width - 2));
-  const height = () =>
-    Math.max(7, Math.min(12, Math.max(dimensions().length + 5, terminal().height - 1)));
-  const categoryWidth = () => (terminal().width < 80 ? 14 : 22);
-  const paneHeight = () => Math.max(1, Math.min(dimensions().length, height() - 5));
+  const width = () => Math.min(78, terminal().width - 2);
+  const height = () => Math.min(18, terminal().height - 2);
+  const categoryWidth = () => (width() < 60 ? 13 : 20);
+  const countsVisible = () => width() >= 60;
+  const collectionViews = createMemo(() => {
+    const effective = props.projection()?.effective;
+    return effective?.status === "complete" ? effective.collectionsView : undefined;
+  });
   const facetFilters = (excluded: string) =>
     Object.fromEntries(Object.entries(state.filters()).filter(([key]) => key !== excluded));
-  const skillFacet = (excluded: string) => {
-    const workspace = props.projection();
-    return workspace
+  const skillFacet = createMemo(() => {
+    const projection = props.projection();
+    return projection
       ? filterSkills(
-          state.scope() === "unassigned" ? unassignedSkills(workspace) : workspace.installedSkills,
+          state.scope() === "unassigned"
+            ? unassignedSkills(projection)
+            : projection.installedSkills,
           {
             query: state.query(),
             source: state.sourceFilter(),
-            filters: facetFilters(excluded),
-            agentStatus: workspace.effective.agent.status,
+            filters: facetFilters(dimension()),
+            agentStatus: projection.effective.agent.status,
+            collectionViews: collectionViews(),
           },
         )
       : [];
-  };
-  const problemFacet = (excluded: string, value?: string) => {
-    const workspace = props.projection();
-    return workspace
-      ? filterProblemRows(problemRows(workspace), state.query(), {
-          ...facetFilters(excluded),
-          ...(value ? { [excluded]: value } : {}),
-        })
-      : [];
-  };
-  const count = (excluded: string, value = "") =>
+  });
+  const problemFacet = createMemo(() =>
+    props.projection()
+      ? filterProblemRows(
+          problemRows(props.projection()!),
+          state.query(),
+          facetFilters(dimension()),
+        )
+      : [],
+  );
+  const resultCount = createMemo(() => {
+    const projection = props.projection();
+    if (!projection) return 0;
+    return problems()
+      ? filterProblemRows(problemRows(projection), state.query(), state.filters()).length
+      : filterSkills(
+          state.scope() === "unassigned"
+            ? unassignedSkills(projection)
+            : projection.installedSkills,
+          {
+            query: state.query(),
+            source: state.sourceFilter(),
+            filters: state.filters(),
+            agentStatus: projection.effective.agent.status,
+            collectionViews: collectionViews(),
+          },
+        ).length;
+  });
+  const available = createMemo(() =>
     problems()
-      ? problemFacet(excluded, value).length
-      : filterSkills(skillFacet(excluded), {
-          filters: value ? { [excluded]: value } : undefined,
-          agentStatus: props.projection()?.effective.agent.status,
-        }).length;
+      ? problemFilterValues(problemFacet(), dimension())
+      : filterValues(skillFacet(), dimension(), props.projection()?.effective.agent.status, {
+          collectionViews: collectionViews(),
+          filters: state.filters(),
+        }),
+  );
   const choices = createMemo(() => [
     "",
-    ...(problems()
-      ? problemFilterValues(problemFacet(dimension()), dimension())
-      : filterValues(
-          skillFacet(dimension()),
-          dimension(),
-          props.projection()?.effective.agent.status,
-        )
-    ).filter((value) => value.toLocaleLowerCase().includes(search().toLocaleLowerCase())),
+    ...available().filter((value) =>
+      value.toLocaleLowerCase().includes(search().toLocaleLowerCase()),
+    ),
   ]);
+  const counts = createMemo(
+    () =>
+      new Map(
+        available()
+          .concat("")
+          .map((value) => [
+            value,
+            problems()
+              ? filterProblemRows(problemFacet(), "", value ? { [dimension()]: value } : {}).length
+              : filterSkills(skillFacet(), {
+                  filters: value ? { [dimension()]: value } : {},
+                  agentStatus: props.projection()?.effective.agent.status,
+                  collectionViews: collectionViews(),
+                }).length,
+          ]),
+      ),
+  );
+  const selectedIndex = createMemo(() => Math.max(0, choices().indexOf(cursor())));
+  const appliedMessage = createMemo(() => {
+    const applied = state.filters()[dimension()];
+    const hidden =
+      applied && !choices().includes(applied) ? `Applied: ${applied} (hidden by search).` : "";
+    const empty = search() && choices().length === 1 ? "No matching values." : "";
+    return [hidden, empty].filter(Boolean).join(" ") || undefined;
+  });
   const label = (value: string) => {
-    const suffix = ` · ${count(dimension(), value)}`;
-    const text =
-      value || (terminal().width < 80 ? "All" : `All ${plurals[dimension()] ?? `${dimension()}s`}`);
-    return `${(state.filters()[dimension()] ?? "") === value ? "✓ " : "  "}${fitColumn(
-      text,
-      Math.max(1, width() - categoryWidth() - 8 - Bun.stringWidth(suffix)),
-    ).trimEnd()}${suffix}`;
+    const name = value || `All ${plurals[dimension()] ?? dimension()}`;
+    const checked = (state.filters()[dimension()] ?? "") === value ? "✓ " : "  ";
+    const availableWidth = Math.max(1, valueWidth() - 5);
+    return countsVisible()
+      ? formatColumns(
+          `${checked}${name}`,
+          String(counts().get(value) ?? 0),
+          availableWidth,
+          Math.max(1, availableWidth - 7),
+        )
+      : fitColumn(`${checked}${name}`, availableWidth);
   };
   const reconcile = () => {
-    const workspace = props.projection();
-    if (workspace) state.reconcile(workspace, workspace);
+    const projection = props.projection();
+    if (projection) state.reconcile(projection, projection);
   };
   const chooseDimension = (value: string) =>
     batch(() => {
       setDimension(value);
       setSearch("");
+      setCursor(state.filters()[value] ?? "");
     });
   const apply = (value: string) => {
     state.setFilter(dimension(), value || undefined);
     reconcile();
   };
-  const pointer = (select: SelectRenderable, event: MouseEvent, category: boolean) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const option = select.options[event.y - select.screenY + selectScrollOffset(select)];
-    if (!option) return;
-    select.setSelectedIndex(select.options.indexOf(option));
-    if (category) chooseDimension(option.value);
-    else apply(option.value);
-  };
-  onCleanup(
-    controls.intercept((event, current) => {
-      const key = event.name.toLowerCase().replace(/^arrow[_-]?/, "");
-      if (hasModalKeyModifier(event, key === "tab")) return false;
-      if (key === "tab") return true;
-      if (key === "left" && !(current instanceof InputRenderable)) {
-        if (current === values) categories?.focus();
-        return true;
-      }
-      if ((key === "return" || key === "enter" || key === "right") && current === categories) {
-        values?.focus();
-        return true;
-      }
-      if ((key === "return" || key === "enter") && current === input) {
-        values?.focus();
-        return true;
-      }
-      return key === "right" && current === values;
-    }),
-  );
   const registerCategories = useModalControl("skills-filter-dimensions", controls, 10);
   const registerSearch = useModalControl("skills-filter-search", controls, 20);
   const registerValues = useModalControl("skills-filter-values", controls, 30);
+  const measure = () => setValueWidth(values?.width ?? 0);
+  renderer.on("frame", measure);
+  onCleanup(() => renderer.off("frame", measure));
+  onCleanup(
+    controls.intercept((event, current) => {
+      const key = event.name.toLowerCase().replace(/^arrow[_-]?/, "");
+      if (hasModalKeyModifier(event, key === "tab") || key === "tab") return false;
+      if (key === "escape" && current === input) {
+        values?.focus();
+        return true;
+      }
+      if ((key === "/" || key === "slash") && current !== input) {
+        input?.focus();
+        return true;
+      }
+      if (key === "up" || key === "down") {
+        if (current instanceof SelectRenderable) {
+          if (key === "up") current.moveUp();
+          else current.moveDown();
+        }
+        return true;
+      }
+      if ((key === "left" || key === "right") && !(current instanceof InputRenderable)) return true;
+      if ((key === "return" || key === "enter") && (current === categories || current === input)) {
+        values?.focus();
+        return true;
+      }
+      return false;
+    }),
+  );
   onMount(() =>
     queueMicrotask(() => {
-      if (categories?.isDestroyed) return;
-      categories?.setSelectedIndex(0);
       mounted = true;
       categories?.focus();
+      measure();
     }),
   );
   return (
-    <>
-      <box
-        id="skills-filter-underlay"
-        position="absolute"
-        top={0}
-        left={0}
-        width="100%"
-        height="100%"
-        zIndex={1}
-        onMouseDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          props.onClose();
-        }}
-      />
-      <box
+    <Dialog
+      open
+      onOpenChange={(open, details) => {
+        if (open) return;
+        if (details.reason === "escape" && renderer.currentFocusedRenderable === input) {
+          details.preventDefault();
+          values?.focus();
+        } else props.onClose();
+      }}
+    >
+      <DialogContent
         id="skills-filter-overlay"
         position="absolute"
         top={Math.max(0, Math.min(anchor.y + 1, terminal().height - height() - 1))}
         left={Math.max(0, Math.min(anchor.x, terminal().width - width()))}
         width={width()}
+        maxWidth={78}
         height={height()}
-        zIndex={2}
-        border
-        flexDirection="column"
-        backgroundColor={tokens().colors.surface}
-        onMouseDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-        }}
+        backdropColor="transparent"
       >
-        <text height={1} flexShrink={0} wrapMode="none">
-          {problems() ? "Filter Problems" : "Filter Skills"}
-        </text>
-        <text height={1} flexShrink={0} wrapMode="none">
-          {state.query() ? `Query: ${state.query()} · ` : ""}
-          {count("")} matching {problems() ? "Problems" : "Skills"}
-        </text>
-        <box flexDirection="row" flexGrow={1} minHeight={0}>
-          <box width={categoryWidth()} flexShrink={0} flexDirection="column">
-            <text height={1} flexShrink={0} wrapMode="none">
-              Category
-            </text>
-            <select
-              id="skills-filter-dimensions"
-              ref={(target: SelectRenderable) => {
-                categories = target;
-                registerCategories(target);
-              }}
-              selectedIndex={0}
-              height={paneHeight()}
-              flexShrink={0}
-              showDescription={false}
-              options={dimensions().map((value) => ({
-                name:
-                  terminal().width < 80 ? value : `${value}   ${state.filters()[value] ?? "Any"}`,
-                description: "Choose filter value",
-                value,
-              }))}
-              onChange={(index) => {
-                const value = dimensions()[index];
-                if (mounted && value) chooseDimension(value);
-              }}
-              onSelect={(_index, option) => {
-                if (typeof option?.value === "string") chooseDimension(option.value);
-              }}
-              onMouseDown={function (event) {
-                pointer(this, event, true);
-              }}
-            />
+        <Form
+          height="100%"
+          header={
+            <box flexDirection="column" flexShrink={0}>
+              <box height={1} flexDirection="row" gap={1}>
+                <text flexGrow={1} minWidth={0} wrapMode="none">
+                  <strong>{problems() ? "Filter Problems" : "Filter Skills"}</strong>
+                </text>
+                <text flexShrink={0} fg={tokens().colors.mutedForeground}>
+                  {resultCount()} results
+                </text>
+                <ModalCommand
+                  id="skills-filter-close"
+                  order={50}
+                  record={{
+                    id: "skills-filter.close",
+                    verb: "Close",
+                    keys: ["enter"],
+                    destination: "Keep applied filters",
+                    scope: "modal",
+                    enabled: true,
+                    danger: false,
+                  }}
+                  execute={props.onClose}
+                />
+              </box>
+              <Show when={state.query()}>
+                <text
+                  height={1}
+                  wrapMode="none"
+                  fg={tokens().colors.mutedForeground}
+                >{`Skill search: ${state.query()}`}</text>
+              </Show>
+            </box>
+          }
+          actions={
+            <box height={1} flexDirection="row" gap={1}>
+              <ModalCommand
+                id="skills-filter-clear-all"
+                order={40}
+                record={{
+                  id: "skills-filter.clear-all",
+                  keys: ["enter"],
+                  verb: "Clear filters",
+                  destination: "Keep Skill search and Source context",
+                  scope: "modal",
+                  enabled: Object.values(state.filters()).some(Boolean),
+                  disabledReason: "No filters applied",
+                  danger: false,
+                }}
+                execute={() => {
+                  state.clearFilters();
+                  reconcile();
+                }}
+              />
+              <Show when={search()}>
+                <ModalCommand
+                  id="skills-filter-clear-search"
+                  order={45}
+                  record={{
+                    id: "skills-filter.clear-search",
+                    keys: ["enter"],
+                    verb: "Clear search",
+                    destination: "Show all values; keep applied filters",
+                    scope: "modal",
+                    enabled: true,
+                    danger: false,
+                  }}
+                  execute={() => {
+                    setSearch("");
+                    values?.focus();
+                  }}
+                />
+              </Show>
+            </box>
+          }
+        >
+          <box flexDirection="row" flexGrow={1} minWidth={0} minHeight={0}>
+            <FormField width={categoryWidth()} flexShrink={0}>
+              <DataList
+                id="skills-filter-dimensions"
+                ref={(target) => {
+                  categories = target;
+                  registerCategories(target);
+                }}
+                height={dimensions().length}
+                showDescription={false}
+                options={dimensions().map((value) => ({
+                  name: state.filters()[value] ? `${value} · ${state.filters()[value]}` : value,
+                  description: "Choose filter dimension",
+                  value,
+                }))}
+                onChange={(index) => {
+                  const value = dimensions()[index];
+                  if (mounted && value) chooseDimension(value);
+                }}
+                onSelect={() => values?.focus()}
+                onRowPress={(_event, hit) => {
+                  categories?.setSelectedIndex(hit.index);
+                  categories?.focus();
+                  return true;
+                }}
+              />
+            </FormField>
+            <FormField flexGrow={1} minWidth={0} minHeight={0} help={appliedMessage()}>
+              <Input
+                id="skills-filter-search"
+                ref={(target) => {
+                  input = target;
+                  registerSearch(target);
+                }}
+                placeholder={`Search ${plurals[dimension()] ?? "values"}…`}
+                value={search()}
+                onInput={setSearch}
+                onSubmit={() => values?.focus()}
+              />
+              <Show when={countsVisible()}>
+                <box height={1} flexShrink={0} flexDirection="row">
+                  <box flexGrow={1} />
+                  <text
+                    id="skills-filter-count-heading"
+                    flexShrink={0}
+                    wrapMode="none"
+                    fg={tokens().colors.mutedForeground}
+                  >
+                    {problems() ? "Problems" : "Skills"}
+                  </text>
+                  <box width={2} flexShrink={0} />
+                </box>
+              </Show>
+              <DataList
+                id="skills-filter-values"
+                ref={(target) => {
+                  values = target;
+                  registerValues(target);
+                  measure();
+                }}
+                flexGrow={1}
+                minHeight={1}
+                showDescription={false}
+                showScrollIndicator
+                options={choices().map((value) => ({
+                  name: label(value),
+                  description: value ? "Apply this value" : "Clear only this dimension",
+                  value,
+                }))}
+                selectedIndex={selectedIndex()}
+                onChange={(_index, option) => {
+                  if (typeof option?.value === "string") setCursor(option.value);
+                }}
+                onSelect={(_index, option) => {
+                  if (typeof option?.value === "string") apply(option.value);
+                }}
+                onRowPress={(_event, hit) => {
+                  const value = values?.options[hit.index]?.value;
+                  if (typeof value !== "string") return false;
+                  values?.setSelectedIndex(hit.index);
+                  values?.focus();
+                  apply(value);
+                  return true;
+                }}
+              />
+            </FormField>
           </box>
-          <box flexGrow={1} minWidth={0} flexDirection="column">
-            <text height={1} flexShrink={0} wrapMode="none">
-              {dimension()} values
-            </text>
-            <input
-              id="skills-filter-search"
-              ref={(target: InputRenderable) => {
-                input = target;
-                registerSearch(target);
-              }}
-              placeholder={`Search ${plurals[dimension()] ?? "values"}…`}
-              value={search()}
-              onInput={setSearch}
-              onMouseDown={(event) => {
-                if (event.button !== 0) return;
-                event.preventDefault();
-                event.stopPropagation();
-                input?.focus();
-              }}
-            />
-            <select
-              id="skills-filter-values"
-              ref={(target: SelectRenderable) => {
-                values = target;
-                registerValues(target);
-              }}
-              height={Math.max(1, Math.min(paneHeight() - 1, choices().length))}
-              flexShrink={0}
-              showDescription={false}
-              selectedIndex={Math.max(0, choices().indexOf(state.filters()[dimension()] ?? ""))}
-              options={choices().map((value) => ({
-                name: label(value),
-                description: value ? "Filter value" : "Clear this filter",
-                value,
-              }))}
-              onSelect={(_index, option) => {
-                if (typeof option?.value === "string") apply(option.value);
-              }}
-              onMouseDown={function (event) {
-                pointer(this, event, false);
-              }}
-            />
-          </box>
-        </box>
-        <ModalCommand
-          id="skills-filter-clear-all"
-          record={{
-            id: "skills-filter.clear-all",
-            keys: ["enter"],
-            verb: "Clear local filters",
-            destination: "Keep query and source context",
-            scope: "modal",
-            enabled: Object.keys(state.filters()).length > 0,
-            danger: false,
-          }}
-          execute={() => {
-            state.clearFilters();
-            reconcile();
-          }}
-        />
-        <text id="skills-filter-help" height={1} flexShrink={0} wrapMode="none">
-          ←→ category/values · Enter select · Esc close
-        </text>
-      </box>
-    </>
+        </Form>
+      </DialogContent>
+    </Dialog>
   );
 }

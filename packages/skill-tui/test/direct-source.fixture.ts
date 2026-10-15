@@ -9,6 +9,7 @@ import type {
 } from "@skill-cli/core";
 import type { TuiCore } from "../src/effects";
 import type { testRender } from "@opentui/solid";
+import { CodeRenderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
 import { createTuiEffects } from "../src/effects";
 import { createOperationState } from "../src/operation-state";
 import { createProjection } from "../src/projection";
@@ -21,7 +22,7 @@ import {
   reduceReaderState,
   type ReaderOwnerState,
 } from "../src/reader/state";
-import { focusLive, openAllInstalledSkills, parsedEnter } from "./reader-test-controls";
+import { focusLive, parsedEnter } from "./reader-test-controls";
 
 export function testProjection() {
   const operation = createOperationState();
@@ -229,6 +230,7 @@ export function directSourceCore(
       request: { readonly source: string },
       options?: { readonly signal?: AbortSignal },
     ) => Promise<OperationResult<UpdateObservation>>;
+    readonly previewUpdate?: TuiCore["management"]["previewUpdate"];
     readonly update?: (
       request: {
         readonly source: string;
@@ -282,6 +284,11 @@ export function directSourceCore(
       get: (options) => hooks.get?.(options) ?? Promise.resolve(result(projection)),
     },
     management: {
+      previewUpdate:
+        hooks.previewUpdate ??
+        (async () => {
+          throw new Error("Unexpected update preview");
+        }),
       previewSourceRemoval: (_request, options) =>
         hooks.preview?.(options) ??
         Promise.resolve(
@@ -576,20 +583,53 @@ export function directSourceCore(
   };
 }
 
-/** Opens the management Inspector first, then activates its explicit Reader control. */
+async function settleReaderHighlighting(node: BaseRenderable): Promise<void> {
+  if (node instanceof CodeRenderable) await node.highlightingDone;
+  for (const child of node.getChildren()) await settleReaderHighlighting(child);
+}
+
+/** Focuses the directly mounted Reader, entering it from the browser when visible. */
 export async function openReaderFromInspector(setup: Awaited<ReturnType<typeof testRender>>) {
-  if (setup.renderer.root.findDescendantById("reader-views")) return;
-  let control = setup.renderer.root.findDescendantById("skill-inspector-open-reader");
-  if (!control) {
-    await openAllInstalledSkills(setup);
+  const browserNode = setup.renderer.root.findDescendantById("installed-skill-browser");
+  if (browserNode instanceof SelectRenderable && browserNode.options.length > 0) {
+    const browser = await focusLive(setup, "installed-skill-browser");
     await parsedEnter(setup);
     await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
+      () =>
+        setup.renderer.currentFocusedRenderable !== browser &&
+        !!setup.renderer.root.findDescendantById("reader-views"),
     );
-    control = setup.renderer.root.findDescendantById("skill-inspector-open-reader");
+  } else {
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
+    const current = setup.renderer.root.findDescendantById("reader-scrollbox");
+    if (current) await focusLive(setup, "reader-scrollbox");
+    else await focusLive(setup, "reader-tabs");
   }
-  if (!control) throw new Error("Open SKILL.md control did not mount");
-  control = await focusLive(setup, "skill-inspector-open-reader");
-  await parsedEnter(setup);
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
+  await setup.waitFor(() => {
+    const readerTargets = [
+      "reader-scrollbox",
+      "resource-browser",
+      "reader-details",
+      "reader-resources-status",
+      "reader-tabs",
+    ];
+    return readerTargets.some((id) => !!setup.renderer.root.findDescendantById(id));
+  });
+  const target = [
+    "reader-scrollbox",
+    "resource-browser",
+    "reader-details",
+    "reader-resources-status",
+    "reader-tabs",
+  ].find((id) => !!setup.renderer.root.findDescendantById(id));
+  if (target) await focusLive(setup, target);
+  await settleReaderHighlighting(setup.renderer.root);
+  await setup.renderOnce();
+  await setup.waitFor(() => {
+    const views = setup.renderer.root.findDescendantById("reader-views");
+    const skillTab = setup.renderer.root.findDescendantById("reader-tabs-tab-skill");
+    const resourcesTab = setup.renderer.root.findDescendantById("reader-tabs-tab-resources");
+    const detailsTab = setup.renderer.root.findDescendantById("reader-tabs-tab-details");
+    return !!views && !!skillTab && !!resourcesTab && !!detailsTab;
+  });
 }
