@@ -661,6 +661,14 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     },
     route.revalidate,
   );
+  const reconcileWorkspaceSelection = () => {
+    const current = projection.workspace();
+    if (current) workspaceState.reconcile(current, current);
+  };
+  const reconcileCollectionSelection = () => {
+    const current = projection.workspace();
+    if (current) collectionsState.reconcile(current, current);
+  };
   effects = createTuiEffects(
     props.core,
     operation,
@@ -778,20 +786,13 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       ? (value as Extract<AppOverlayPayload, { readonly family: Family }>)
       : undefined;
   };
-  const collectionChoicesPayload = () => payload("collection-choices");
-  const collectionCreatePayload = () => payload("collection-create");
-  const membershipChooserPayload = () => payload("membership-chooser");
-  const membershipDraftPayload = () => payload("membership-draft");
-  const membershipRemovalPlanPayload = () => payload("membership-removal-plan");
+  const collectionChoices = () => payload("collection-choices")?.choices;
   const collectionDraftPayload = () => payload("collection-draft");
   const collectionReviewPayload = () => payload("collection-review");
-  const configOperationPayload = () => payload("config-operation");
-  const sourceRegistrationPayload = () => payload("source-registration");
-  const collectionChoices = () => collectionChoicesPayload()?.choices;
-  const collectionCreate = collectionCreatePayload;
-  const membershipChooser = membershipChooserPayload;
-  const membershipDraft = membershipDraftPayload;
-  const membershipRemovalPlan = membershipRemovalPlanPayload;
+  const collectionCreate = () => payload("collection-create");
+  const membershipChooser = () => payload("membership-chooser");
+  const membershipDraft = () => payload("membership-draft");
+  const membershipRemovalPlan = () => payload("membership-removal-plan");
   const collectionDraft = () => collectionDraftPayload()?.draft;
   const collectionUseDraft = () => {
     const draft = collectionDraft();
@@ -802,29 +803,14 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     return effective?.status === "complete" ? effective.collectionsView : [];
   });
   const collectionReview = () => collectionReviewPayload()?.review;
-  const configOperation = configOperationPayload;
-  const sourceRegistration = sourceRegistrationPayload;
-  const sourceRemovalPayload = () => {
-    const value = sessionPayload();
-    return value?.family === "source-removal" ? value : undefined;
-  };
-  const sourceObservationPayload = () => {
-    const value = sessionPayload();
-    return value?.family === "source-observation" ? value : undefined;
-  };
+  const configOperation = () => payload("config-operation");
+  const sourceRegistration = () => payload("source-registration");
+  const sourceRemovalPayload = () => payload("source-removal");
+  const sourceObservationPayload = () => payload("source-observation");
   const configObservationPayload = () => payload("config-observation");
-  const sourceSelectionPayload = () => {
-    const value = sessionPayload();
-    return value?.family === "source-selection" ? value : undefined;
-  };
-  const installedPreviewPayload = () => {
-    const value = sessionPayload();
-    return value?.family === "installed-preview" ? value : undefined;
-  };
-  const installedRebindPayload = () => {
-    const value = sessionPayload();
-    return value?.family === "installed-rebind" ? value : undefined;
-  };
+  const sourceSelectionPayload = () => payload("source-selection");
+  const installedPreviewPayload = () => payload("installed-preview");
+  const installedRebindPayload = () => payload("installed-rebind");
   const openSession = (
     overlay: import("./types").Overlay,
     payload: AppOverlayPayload,
@@ -841,6 +827,8 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         }),
       );
     });
+  const openScopeSelection = () => openSession("selection", { family: "scope-selection" });
+  const openPalette = () => openSession("palette", { family: "palette" });
   const replaceSession = (
     revision: number,
     payload: AppOverlayPayload,
@@ -3130,14 +3118,14 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                             { ...scopeMenuRecord(), verb: "Change Scope" },
                             "top-nav",
                             "shell-scope-select",
-                            () => openSession("selection", { family: "scope-selection" }),
+                            openScopeSelection,
                           );
                           return () => {
                             unbind();
                             unregister();
                           };
                         }}
-                        execute={() => openSession("selection", { family: "scope-selection" })}
+                        execute={openScopeSelection}
                       />
                     </box>
                     <box width={layout.width() < 120 ? 9 : 16} height={1} flexShrink={0}>
@@ -3158,14 +3146,14 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                             actionsMenuRecord,
                             "command:shell.more-actions",
                             "shell-more-actions",
-                            () => openSession("palette", { family: "palette" }),
+                            openPalette,
                           );
                           return () => {
                             unregisterFocus();
                             unregisterCommand();
                           };
                         }}
-                        execute={() => openSession("palette", { family: "palette" })}
+                        execute={openPalette}
                       />
                     </box>
                   </>
@@ -3652,29 +3640,21 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         }}
                         onSkillFilter={(dimension, value) => {
                           workspaceState.setFilter(dimension, value);
-                          const projectionValue = projection.workspace();
-                          if (projectionValue)
-                            workspaceState.reconcile(projectionValue, projectionValue);
+                          reconcileWorkspaceSelection();
                         }}
                         onQuery={(query) => {
                           workspaceState.setQuery(query);
-                          const workspace = projection.workspace();
-                          if (workspace) workspaceState.reconcile(workspace, workspace);
+                          reconcileWorkspaceSelection();
                         }}
                         onOpenFilter={() => openSession("filter", { family: "skills-filter" })}
                         onClearFilter={(dimension) => {
                           workspaceState.setFilter(dimension, undefined);
-                          const workspace = projection.workspace();
-                          if (workspace) workspaceState.reconcile(workspace, workspace);
+                          reconcileWorkspaceSelection();
                           requestFocus("command:skills-filter.open");
                         }}
                         onClearAllFilters={() => {
                           workspaceState.clearFilters();
-                          if (projection.workspace())
-                            workspaceState.reconcile(
-                              projection.workspace()!,
-                              projection.workspace()!,
-                            );
+                          reconcileWorkspaceSelection();
                           requestFocus("browser");
                         }}
                         onSelectCollection={(collection) => {
@@ -3685,27 +3665,20 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         }}
                         onCollectionQuery={(query) => {
                           collectionsState.setQuery(query);
-                          const workspace = projection.workspace();
-                          if (workspace) collectionsState.reconcile(workspace, workspace);
+                          reconcileCollectionSelection();
                         }}
                         onCollectionFilter={(dimension, value) => {
                           collectionsState.setFilter(dimension, value);
-                          const workspace = projection.workspace();
-                          if (workspace) collectionsState.reconcile(workspace, workspace);
+                          reconcileCollectionSelection();
                         }}
                         onClearCollectionFilter={(dimension) => {
                           collectionsState.clearFilter(dimension);
-                          const workspace = projection.workspace();
-                          if (workspace) collectionsState.reconcile(workspace, workspace);
+                          reconcileCollectionSelection();
                           requestFocus("browser");
                         }}
                         onClearAllCollectionFilters={() => {
                           collectionsState.clearFilters();
-                          if (projection.workspace())
-                            collectionsState.reconcile(
-                              projection.workspace()!,
-                              projection.workspace()!,
-                            );
+                          reconcileCollectionSelection();
                           requestFocus("browser");
                         }}
                         onCollectionFilterOpen={() => {
@@ -4480,7 +4453,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                 choices={collectionChoices()!}
                 onClose={closeOverlay}
                 onSelect={(choice) => {
-                  const addresses = collectionChoicesPayload()!.addresses;
+                  const addresses = payload("collection-choices")!.addresses;
                   if (!choice.level) {
                     openSession("form", {
                       family: "collection-create",
