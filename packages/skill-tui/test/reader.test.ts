@@ -363,6 +363,115 @@ test("STATE-015 stale resource list failure cannot replace a newer resource read
   expect(activeReader(reader)?.error).toBeUndefined();
 });
 
+test.each(["resources", "resource"] as const)(
+  "Reader %s replacement retains the shared controller after an older request settles",
+  async (request) => {
+    const address = { source: "team-main", path: "guide" };
+    let reader = reduceReaderState(createReaderState(), { type: "select", address });
+    const events: ReaderEvent[] = [];
+    const signals: AbortSignal[] = [];
+    const completions: (() => void)[] = [];
+    const pending = (signal: AbortSignal | undefined) => {
+      signals.push(signal!);
+      return new Promise<void>((resolve) => completions.push(resolve));
+    };
+    const warning = { code: "INTERNAL", severity: "warning" as const, message: "old warning" };
+    const effects = createTuiEffects(
+      directSourceCore(workspaceProjection(), {
+        listInstalledResources: async (_request, options) => {
+          await pending(options?.signal);
+          return { value: [{ path: "old.md", kind: "file" }], diagnostics: [warning] };
+        },
+        readInstalled: async (_request, options) => {
+          await pending(options?.signal);
+          return {
+            value: { kind: "text", path: "guide.md", text: "old", format: "text" },
+            diagnostics: [warning],
+          };
+        },
+      }),
+      (event) => {
+        reader = reduceReaderState(reader, event);
+        events.push(event);
+      },
+    );
+    const old =
+      request === "resources"
+        ? effects.listResources(address)
+        : effects.readResource(address, "guide.md");
+    const current =
+      request === "resources"
+        ? effects.readResource(address, "guide.md")
+        : effects.listResources(address);
+    expect(signals.map((signal) => signal.aborted)).toEqual([true, false]);
+
+    // Ignore abort deliberately: real epochs, not a transport fake, reject the old result.
+    completions[0]!();
+    expect(await old).toMatchObject({ diagnostics: [warning] });
+    expect(activeReader(reader)).toMatchObject({ resourceLoading: true, resources: [] });
+    expect(activeReader(reader)?.resource).toBeUndefined();
+    expect(activeReader(reader)?.error).toBeUndefined();
+    const count = events.length;
+    effects.teardown();
+    expect(signals[1]!.aborted).toBe(true);
+    completions[1]!();
+    expect(await current).toMatchObject({ diagnostics: [warning] });
+    expect(events).toHaveLength(count);
+  },
+);
+
+test.each(["resources", "resource"] as const)(
+  "Reader %s preserves success diagnostics, failure conversion, and cancellation silence",
+  async (request) => {
+    const address = { source: "team-main", path: "guide" };
+    const warning = { code: "INTERNAL", severity: "warning" as const, message: "read warning" };
+    let error: unknown;
+    const events: ReaderEvent[] = [];
+    const effects = createTuiEffects(
+      directSourceCore(workspaceProjection(), {
+        listInstalledResources: async () => {
+          if (error) throw error;
+          return { value: [{ path: "guide.md", kind: "file" }], diagnostics: [warning] };
+        },
+        readInstalled: async () => {
+          if (error) throw error;
+          return {
+            value: { kind: "text", path: "guide.md", text: "current", format: "text" },
+            diagnostics: [warning],
+          };
+        },
+      }),
+      (event) => events.push(event),
+    );
+    const run = () =>
+      request === "resources"
+        ? effects.listResources(address)
+        : effects.readResource(address, "guide.md");
+    expect(await run()).toMatchObject({ diagnostics: [warning] });
+    expect(events[0]).toMatchObject({ type: `${request}.start`, address, epoch: 1 });
+    expect(events[1]).toMatchObject({ type: `${request}.settle`, address, epoch: 1 });
+    expect(events[2]).toEqual({ type: "failure", address, epoch: 1, request, diagnostic: warning });
+
+    error = new Error("read failed");
+    expect(await run()).toBeUndefined();
+    expect(events.at(-1)).toEqual({
+      type: "failure",
+      address,
+      epoch: 2,
+      request,
+      diagnostic: { code: "INTERNAL", severity: "warning", message: "read failed" },
+    });
+    error = new SkillCliError("CANCELLED", "read cancelled");
+    const count = events.length;
+    expect(await run()).toBeUndefined();
+    expect(events).toHaveLength(count + 1);
+    expect(events.at(-1)).toMatchObject({ type: `${request}.start`, address, epoch: 3 });
+    effects.teardown();
+    expect(await run()).toBeUndefined();
+    expect(events).toHaveLength(count + 1);
+  },
+);
+
 type ContentResult = Awaited<ReturnType<TuiCore["content"]["loadInstalled"]>>;
 
 const installedContent = (address: ReaderAddress, text: string): ContentResult => ({

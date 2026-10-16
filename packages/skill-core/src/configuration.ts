@@ -23,17 +23,12 @@ import {
   type ConfigDocument,
   type MutationOptions,
 } from "./internal/config";
-import { skillAddressKey } from "./collections";
+import { sameSkillAddress, skillAddressKey } from "./collections";
 import { CollectionResolutionError } from "./collections";
 import { parseNameSegment } from "./internal/domain";
 import { StateCoordinator } from "./internal/state";
 import { readFile } from "node:fs/promises";
 import { parse } from "jsonc-parser";
-
-const equalAddress = (
-  left: { readonly source: string; readonly path: string },
-  right: { readonly source: string; readonly path: string },
-) => left.source === right.source && left.path === right.path;
 
 export type ConfigurationOptions = MutationOptions;
 
@@ -89,12 +84,12 @@ export async function previewAddToCollection(
   parseNameSegment(stableEntryName);
   const existing =
     view?.members
-      .filter((member) => equalAddress(member.address, request.address))
+      .filter((member) => sameSkillAddress(member.address, request.address))
       .map(({ name, address, paths }) => ({ name, address, paths })) ?? [];
   const requestedConflict = stableEntryName
     ? view?.members.find(
         (member) =>
-          member.name === stableEntryName && !equalAddress(member.address, request.address),
+          member.name === stableEntryName && !sameSkillAddress(member.address, request.address),
       )
     : undefined;
   const blockers: ImpactBlocker[] = requestedConflict
@@ -256,7 +251,7 @@ export async function previewMembershipBatch(
     if (decision.kind === "direct") {
       for (const entry of additions) {
         const existing = view?.members.find((member) => member.name === entry.name);
-        if (existing && !equalAddress(existing.address, entry.address))
+        if (existing && !sameSkillAddress(existing.address, entry.address))
           blockers.push({
             reason: "conflict",
             name: entry.name,
@@ -273,7 +268,7 @@ export async function previewMembershipBatch(
             path.owner.file === decision.owner.file &&
             path.owner.pointer === `${decision.owner.pointer}/members/${entry.name}`,
         );
-        if (!member || !direct || !equalAddress(member.address, entry.expectedAddress))
+        if (!member || !direct || !sameSkillAddress(member.address, entry.expectedAddress))
           blockers.push({ reason: "membership", owner: decision.owner });
       }
     } else if (decision.kind === "contributed")
@@ -296,7 +291,7 @@ export async function previewMembershipBatch(
       for (const entry of additions) members[entry.name] = entry.address;
       effectful =
         current.length !== Object.keys(members).length ||
-        current.some((member) => !equalAddress(member.address, members[member.name]!));
+        current.some((member) => !sameSkillAddress(member.address, members[member.name]!));
       if (effectful) {
         const state = await coordinator.read();
         const host = parse(await readFile(decision.owner.file, "utf8"), [], {
@@ -374,7 +369,7 @@ export async function previewImport(
   for (const member of source?.members ?? []) {
     const current = targetMembers.find((candidate) => candidate.name === member.name);
     if (!current) additions.push({ name: member.name, address: member.address });
-    else if (equalAddress(current.address, member.address))
+    else if (sameSkillAddress(current.address, member.address))
       skipped.push({ name: member.name, address: member.address });
     else
       conflicts.push({
@@ -416,24 +411,21 @@ export async function previewReference(
   const targetExists =
     workspace.value.effective.status === "complete" &&
     workspace.value.effective.collectionsView.some((item) => item.id === request.target);
-  const existing =
-    decision.kind === "direct"
-      ? await (async () => {
-          const { readFile } = await import("node:fs/promises");
-          const { parse } = await import("jsonc-parser");
-          const bytes = await readFile(decision.owner.file).catch(() => undefined);
-          if (!bytes) return undefined;
-          const document = parse(new TextDecoder().decode(bytes), [], {
-            allowTrailingComma: true,
-          }) as {
-            collections?: Record<
-              string,
-              { references?: Record<string, { collection: string; description: string }> }
-            >;
-          };
-          return document.collections?.[request.collection]?.references?.[request.name];
-        })()
-      : undefined;
+  let existing: { collection: string; description: string } | undefined;
+  if (decision.kind === "direct") {
+    const bytes = await readFile(decision.owner.file).catch(() => undefined);
+    if (bytes) {
+      const document = parse(new TextDecoder().decode(bytes), [], {
+        allowTrailingComma: true,
+      }) as {
+        collections?: Record<
+          string,
+          { references?: Record<string, { collection: string; description: string }> }
+        >;
+      };
+      existing = document.collections?.[request.collection]?.references?.[request.name];
+    }
+  }
   return {
     value: {
       kind: "reference",

@@ -2,28 +2,56 @@ import type {
   AgentBrowseProjection,
   AgentCatalogItem,
   CatalogCapability,
+  CollectionView,
   CoreFactoryOptions,
   OperationResult,
   SearchSkillsResult,
 } from "./api";
 import { SkillCliError } from "./api";
+import { skillAddressKey } from "./collections";
 import { readWorkspace } from "./internal/config";
+
+type SkillEntry = Omit<Extract<AgentCatalogItem, { readonly kind: "skill" }>, "kind">;
+
+function skillsFor(
+  collection: CollectionView,
+  installed: ReadonlyMap<string, { readonly name: string; readonly description: string }>,
+): SkillEntry[] {
+  return collection.members.flatMap((member) => {
+    const skill = installed.get(skillAddressKey(member.address));
+    return skill
+      ? [
+          {
+            selector: `${collection.id}:${member.name}`,
+            name: skill.name,
+            description: skill.description,
+          },
+        ]
+      : [];
+  });
+}
 
 async function records(factory: CoreFactoryOptions) {
   const workspace = await readWorkspace(factory);
   const agent = workspace.value.effective.agent;
   const effective = workspace.value.effective;
   const rootCollections = effective.status === "complete" ? effective.use : [];
+  const collections = new Map(
+    effective.status === "complete"
+      ? effective.collectionsView.map((collection) => [collection.id, collection] as const)
+      : [],
+  );
+  const installed = new Map<string, { readonly name: string; readonly description: string }>();
+  for (const skill of workspace.value.installedSkills)
+    if (skill.owner.health === "healthy" && !installed.has(skillAddressKey(skill.address)))
+      installed.set(skillAddressKey(skill.address), skill);
   const reachable = new Set<string>();
   const pending = [...rootCollections];
   while (pending.length) {
     const id = pending.pop()!;
     if (reachable.has(id)) continue;
     reachable.add(id);
-    const collection =
-      effective.status === "complete"
-        ? effective.collectionsView.find((candidate) => candidate.id === id)
-        : undefined;
+    const collection = collections.get(id);
     for (const reference of collection?.references ?? []) pending.push(reference.collection);
   }
   return {
@@ -31,6 +59,8 @@ async function records(factory: CoreFactoryOptions) {
     entries: agent.catalog,
     rootCollections,
     reachable,
+    collections,
+    installed,
     unavailable:
       agent.status === "unavailable"
         ? (agent.reasons[0]?.message ?? "Catalog unavailable")
@@ -46,8 +76,7 @@ export function createCatalog(factory: CoreFactoryOptions): CatalogCapability {
           value: { status: "unavailable", reason: value.unavailable },
           diagnostics: value.workspace.diagnostics,
         };
-      const effective = value.workspace.value.effective;
-      if (effective.status !== "complete")
+      if (value.workspace.value.effective.status !== "complete")
         throw new SkillCliError("INTERNAL", "Catalog is unavailable");
       const requested = request.collection;
       if (requested && !value.reachable.has(requested))
@@ -58,7 +87,7 @@ export function createCatalog(factory: CoreFactoryOptions): CatalogCapability {
             status: "available",
             scope: { kind: "root" },
             items: value.rootCollections.map((id) => {
-              const collection = effective.collectionsView.find((candidate) => candidate.id === id);
+              const collection = value.collections.get(id);
               return {
                 kind: "collection" as const,
                 id,
@@ -69,28 +98,12 @@ export function createCatalog(factory: CoreFactoryOptions): CatalogCapability {
           },
           diagnostics: value.workspace.diagnostics,
         };
-      const collection = effective.collectionsView.find(
-        (collection) => collection.id === requested,
-      );
+      const collection = value.collections.get(requested);
       if (!collection) throw new SkillCliError("SKILL_NOT_FOUND", "Collection is not exposed");
-      const items: AgentCatalogItem[] = collection.members.flatMap((member) => {
-        const installed = value.workspace.value.installedSkills.find(
-          (skill) =>
-            skill.address.source === member.address.source &&
-            skill.address.path === member.address.path &&
-            skill.owner.health === "healthy",
-        );
-        return installed
-          ? [
-              {
-                kind: "skill" as const,
-                selector: `${collection.id}:${member.name}`,
-                name: installed.name,
-                description: installed.description,
-              },
-            ]
-          : [];
-      });
+      const items: AgentCatalogItem[] = skillsFor(collection, value.installed).map((skill) => ({
+        kind: "skill",
+        ...skill,
+      }));
       items.push(
         ...collection.references.map(({ name, description, collection: target }) => ({
           kind: "collection" as const,
@@ -112,31 +125,12 @@ export function createCatalog(factory: CoreFactoryOptions): CatalogCapability {
       const query = request.query.toLowerCase();
       if (request.collection && !value.reachable.has(request.collection))
         throw new SkillCliError("SKILL_NOT_FOUND", "Collection is not exposed");
-      const effective = value.workspace.value.effective;
       const collectionIds = request.collection ? [request.collection] : value.rootCollections;
       const entries =
-        effective.status === "complete"
+        value.workspace.value.effective.status === "complete"
           ? collectionIds.flatMap((id) => {
-              const collection = effective.collectionsView.find((candidate) => candidate.id === id);
-              return (
-                collection?.members.flatMap((member) => {
-                  const installed = value.workspace.value.installedSkills.find(
-                    (skill) =>
-                      skill.address.source === member.address.source &&
-                      skill.address.path === member.address.path &&
-                      skill.owner.health === "healthy",
-                  );
-                  return installed
-                    ? [
-                        {
-                          selector: `${collection.id}:${member.name}`,
-                          name: installed.name,
-                          description: installed.description,
-                        },
-                      ]
-                    : [];
-                }) ?? []
-              );
+              const collection = value.collections.get(id);
+              return collection ? skillsFor(collection, value.installed) : [];
             })
           : value.entries;
       const results = entries

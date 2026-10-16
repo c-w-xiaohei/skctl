@@ -154,10 +154,7 @@ export function Reader(props: {
         intent={record.id === "skill-check-updates" ? "primary" : inline ? "quiet" : undefined}
         keyboard={!props.executeCommand}
         register={(target) => {
-          bind(owner, target, (key) => {
-            const navigation = handleReaderKey(owner, target, key);
-            return navigation;
-          });
+          bind(owner, target);
           // Reading tools remain registered even when their physical controls
           // yield space to the views or Find input.
           if (persistentCommands[record.id]) return;
@@ -218,7 +215,7 @@ export function Reader(props: {
     if (reader().tab === "resources" && resource?.kind === "text") return resource.text;
     return reader().raw ? (reader().rawText ?? "") : (reader().text ?? "");
   };
-  const matches = () => findLiteralMatches(source(), find());
+  const matches = createMemo(() => findLiteralMatches(source(), find()));
   const current = () => matches()[Math.min(reader().match, Math.max(0, matches().length - 1))];
   const revealCurrent = (raw: boolean, line = current()?.line) => {
     const native = scrollbox();
@@ -319,17 +316,21 @@ export function Reader(props: {
   const description = () => installedSkill()?.description || "No description provided.";
   const descriptionExpanded = () => reader().detailsDescriptionOpen === true;
   const managementExpanded = () => reader().detailsManagementOpen === true;
-  const detailsMetadata = (): MetadataField[] => {
-    const installed = installedSkill();
-    if (!installed) return [];
-    const skill = installed;
-    const source = skill.source;
-    const directOwner = source?.contribution
+  const sourceOwner = createMemo(() => {
+    const source = installedSkill()?.source;
+    return source?.contribution
       ? undefined
       : props
           .projection()
           ?.configs.flatMap((config) => config.direct.sources)
           .find((item) => item.id === source?.id)?.ref.owner;
+  });
+  const detailsMetadata = (): MetadataField[] => {
+    const installed = installedSkill();
+    if (!installed) return [];
+    const skill = installed;
+    const source = skill.source;
+    const directOwner = sourceOwner();
     const configSource = source?.contribution
       ? props
           .projection()
@@ -446,12 +447,7 @@ export function Reader(props: {
     if (!installed) return [];
     const skill = installed;
     const source = skill.source;
-    const directOwner = source?.contribution
-      ? undefined
-      : props
-          .projection()
-          ?.configs.flatMap((config) => config.direct.sources)
-          .find((item) => item.id === source?.id)?.ref.owner;
+    const directOwner = sourceOwner();
     const choices: {
       readonly name: string;
       readonly description: string;
@@ -510,6 +506,8 @@ export function Reader(props: {
     } satisfies CommandRecord,
     execute,
   });
+  const commandControl = (id: string, value: ReturnType<typeof command>, inline = false) =>
+    commandZone(id, value.record, value.execute, inline);
   const resourceReturnKey = createMemo(() => {
     const state = reader();
     return props.active !== false && state.tab === "resources" && state.resourceLevel === "content"
@@ -1015,14 +1013,8 @@ export function Reader(props: {
               <text height={1} flexShrink={0} fg={tokens().colors.mutedForeground}>
                 │
               </text>
-              {(() => {
-                const value = findCommand();
-                return commandZone("reader-find-open", value.record, value.execute, true);
-              })()}
-              {(() => {
-                const value = rawCommand();
-                return commandZone("reader-raw", value.record, value.execute, true);
-              })()}
+              {commandControl("reader-find-open", findCommand(), true)}
+              {commandControl("reader-raw", rawCommand(), true)}
             </Show>
           </box>
         </Show>
@@ -1060,20 +1052,11 @@ export function Reader(props: {
           </text>
         </box>
         <Show when={showMatchNavigation()}>
-          {(() => {
-            const value = previousCommand();
-            return commandZone("reader-find-previous", value.record, value.execute, true);
-          })()}
-          {(() => {
-            const value = nextCommand();
-            return commandZone("reader-find-next", value.record, value.execute, true);
-          })()}
+          {commandControl("reader-find-previous", previousCommand(), true)}
+          {commandControl("reader-find-next", nextCommand(), true)}
         </Show>
         <Show when={showRawMatch()}>
-          {(() => {
-            const value = rawMatchCommand();
-            return commandZone("open-match-raw", value.record, value.execute, true);
-          })()}
+          {commandControl("open-match-raw", rawMatchCommand(), true)}
         </Show>
       </box>
       {reader().tab === "resources" && (
@@ -1188,15 +1171,11 @@ export function Reader(props: {
                   {reader().resource?.path ?? reader().selectedResource ?? "Resource"}
                 </text>
                 <Show when={!sharedReturn}>
-                  {(() => {
-                    const value = command(
-                      "reader.resource.back",
-                      "Back",
-                      "Resources",
-                      props.onResourceBack,
-                    );
-                    return commandZone("reader-resource-back", value.record, value.execute, true);
-                  })()}
+                  {commandControl(
+                    "reader-resource-back",
+                    command("reader.resource.back", "Back", "Resources", props.onResourceBack),
+                    true,
+                  )}
                 </Show>
               </box>
               <scrollbox
@@ -1230,15 +1209,10 @@ export function Reader(props: {
               {reader().resourceLevel !== "content" && (
                 <text>{`${readerError()!.code}: ${readerError()!.message}`}</text>
               )}
-              {(() => {
-                const value = command(
-                  "reader.resource.retry",
-                  "Retry",
-                  "Resource",
-                  props.onRetryResource,
-                );
-                return commandZone("resource-retry", value.record, value.execute);
-              })()}
+              {commandControl(
+                "resource-retry",
+                command("reader.resource.retry", "Retry", "Resource", props.onRetryResource),
+              )}
             </>
           )}
         </>
@@ -1295,15 +1269,16 @@ export function Reader(props: {
               {description()}
             </text>
             <Show when={descriptionOverflow()}>
-              {(() => {
-                const value = command(
+              {commandControl(
+                "reader-description-toggle",
+                command(
                   "reader.description.toggle",
                   descriptionExpanded() ? "Show less" : "Show full description",
                   readerIdentity(),
                   () => props.onPatch({ detailsDescriptionOpen: !descriptionExpanded() }),
-                );
-                return commandZone("reader-description-toggle", value.record, value.execute, true);
-              })()}
+                ),
+                true,
+              )}
             </Show>
           </box>
           {detailRelationships().length > 0 && (
@@ -1460,10 +1435,7 @@ export function Reader(props: {
                         flexShrink={0}
                       >
                         <Show when={props.onReload}>
-                          {(() => {
-                            const value = reloadCommand();
-                            return commandZone("reader-reload", value.record, value.execute, true);
-                          })()}
+                          {commandControl("reader-reload", reloadCommand(), true)}
                         </Show>
                         <For each={detailActions().filter((action) => !action.danger)}>
                           {(action) =>
@@ -1536,16 +1508,16 @@ export function Reader(props: {
           ) : reader().error ? (
             <box flexDirection="column">
               <text wrapMode="word">{`Could not read ${props.skill?.name ?? "this Skill"}: ${reader().error?.message}`}</text>
-              {(() => {
-                const value = command(
+              {commandControl(
+                "reader-content-retry",
+                command(
                   "reader.content.retry",
                   "Retry reading",
                   readerIdentity(),
                   () => props.onRetryContent?.(),
                   !!props.onRetryContent,
-                );
-                return commandZone("reader-content-retry", value.record, value.execute);
-              })()}
+                ),
+              )}
             </box>
           ) : (
             <Show

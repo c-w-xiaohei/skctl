@@ -67,6 +67,7 @@ export interface SourceUpdatesPageProps extends UpdatesPageProps {
   readonly onSourceDetails: () => void;
 }
 const addressKey = (address: UpdateAddress) => `${address.source}\u0000${address.path}`;
+type BrowserPosition = { key?: string; scrollTop: number };
 
 /** Source overview and Source drill-down share feedback and action primitives. */
 export function UpdatesPage(props: UpdatesPageProps) {
@@ -96,12 +97,12 @@ function UpdateWorkbench(
     readonly request: UpdatePreviewRequest;
     readonly unavailableReason?: string;
   }>();
-  let previewStart: { key?: string; scrollTop: number } | undefined;
-  let detailStart: { key?: string; scrollTop: number } | undefined;
+  let previewStart: BrowserPosition | undefined;
+  let detailStart: BrowserPosition | undefined;
   let restoreSearchFrame: (() => void) | undefined;
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchDraft, setSearchDraft] = createSignal("");
-  let searchStart: { key?: string; scrollTop: number } | undefined;
+  let searchStart: BrowserPosition | undefined;
   onCleanup(() => {
     if (restoreSearchFrame) renderer.off("frame", restoreSearchFrame);
   });
@@ -286,6 +287,23 @@ function UpdateWorkbench(
       visibleSources()[0],
   );
   const currentSkillKey = () => props.state.sourcePosition(source()!)?.currentKey;
+  const capturePosition = (): BrowserPosition => ({
+    key: source() ? currentSkillKey() : props.state.focusedRowKey(),
+    scrollTop: source()
+      ? (props.state.sourcePosition(source()!)?.scrollTop ?? 0)
+      : props.state.browserScroll(),
+  });
+  const restorePosition = (position: BrowserPosition) => {
+    if (source())
+      props.state.setSourcePosition(source()!, {
+        currentKey: position.key,
+        scrollTop: position.scrollTop,
+      });
+    else {
+      props.state.setFocusedRowKey(position.key);
+      props.state.setBrowserScroll(position.scrollTop);
+    }
+  };
   const currentSkill = createMemo(
     () =>
       visibleSkills().find((skill) => addressKey(skill.address) === currentSkillKey()) ??
@@ -492,17 +510,7 @@ function UpdateWorkbench(
     const start = detailStart;
     batch(() => {
       setDetailSnapshot(undefined);
-      if (start) {
-        if (source())
-          props.state.setSourcePosition(source()!, {
-            currentKey: start.key,
-            scrollTop: start.scrollTop,
-          });
-        else {
-          props.state.setFocusedRowKey(start.key);
-          props.state.setBrowserScroll(start.scrollTop);
-        }
-      }
+      if (start) restorePosition(start);
     });
     queueMicrotask(() => browser?.focus());
     if (start) restoreViewport(start.scrollTop);
@@ -526,12 +534,9 @@ function UpdateWorkbench(
       : undefined,
   );
   const openPreview = (address: UpdateAddress) => {
-    const group = props.state.groups().find((group) => group.source === address.source);
+    const group = props.state.group(address.source);
     const observation = group?.observation;
-    previewStart = {
-      key: currentSkillKey(),
-      scrollTop: props.state.sourcePosition(source()!)?.scrollTop ?? 0,
-    };
+    previewStart = capturePosition();
     setPreview({
       request: {
         source: address.source,
@@ -560,12 +565,7 @@ function UpdateWorkbench(
     if (detailSnapshot()) closeDetails();
     else if (preferredFeedback()) {
       if (searchOpen()) closeSearch(false);
-      detailStart = {
-        key: source() ? currentSkillKey() : props.state.focusedRowKey(),
-        scrollTop: source()
-          ? (props.state.sourcePosition(source()!)?.scrollTop ?? 0)
-          : props.state.browserScroll(),
-      };
+      detailStart = capturePosition();
       setDetailSnapshot(preferredFeedback());
       queueMicrotask(() => feedbackReader?.focus());
     }
@@ -573,12 +573,7 @@ function UpdateWorkbench(
   const currentLabel = () => (source() ? "Update Skill" : "Update Source");
   const openSearch = () => {
     if (!searchOpen()) {
-      searchStart = {
-        key: source() ? currentSkillKey() : props.state.focusedRowKey(),
-        scrollTop: source()
-          ? (props.state.sourcePosition(source()!)?.scrollTop ?? 0)
-          : props.state.browserScroll(),
-      };
+      searchStart = capturePosition();
       setSearchDraft(committedQuery());
       setSearchOpen(true);
     }
@@ -594,17 +589,7 @@ function UpdateWorkbench(
         else props.state.setQuery(searchDraft());
       }
       setSearchOpen(false);
-      if (cancel && start) {
-        if (source())
-          props.state.setSourcePosition(source()!, {
-            currentKey: start.key,
-            scrollTop: start.scrollTop,
-          });
-        else {
-          props.state.setFocusedRowKey(start.key);
-          props.state.setBrowserScroll(start.scrollTop);
-        }
-      }
+      if (cancel && start) restorePosition(start);
     });
     browser?.focus();
     if (cancel && start) {

@@ -1006,30 +1006,35 @@ export class StateCoordinator {
       return (error as NodeJS.ErrnoException).code === "ESRCH" ? "dead" : "unknown";
     }
   }
-  async withRemoteUse<T>(digest: string, operation: () => Promise<T>): Promise<T> {
+  /** Caller holds the mutation lock through Snapshot verification and use publication. */
+  private async createUse(digest: string): Promise<string> {
     const nonce = crypto.randomUUID();
     const use = join(this.root, "uses", `${nonce}.json`);
-    await this.withLock(async () => {
+    await this.mutableDir(join(this.root, "uses"));
+    const startToken = await this.startToken(process.pid);
+    await this.writeSynced(
+      use,
+      JSON.stringify({ digest, pid: process.pid, ...(startToken ? { startToken } : {}), nonce }),
+    );
+    await signal("use-created");
+    return use;
+  }
+  private async removeUse(use: string | undefined): Promise<void> {
+    if (use)
+      await this.withLock(async () => {
+        await rm(use, { force: true }).catch(() => undefined);
+      });
+  }
+  async withRemoteUse<T>(digest: string, operation: () => Promise<T>): Promise<T> {
+    const use = await this.withLock(async () => {
       await signal("use-verify-before");
-      if ((await this.completeRoot(this.snapshotRoot(digest))) !== digest)
-        throw new SkillCliError(
-          "PROVIDER_INTEGRITY_FAILED",
-          "Snapshot digest does not match content",
-        );
-      await this.mutableDir(join(this.root, "uses"));
-      const startToken = await this.startToken(process.pid);
-      await this.writeSynced(
-        use,
-        JSON.stringify({ digest, pid: process.pid, ...(startToken ? { startToken } : {}), nonce }),
-      );
-      await signal("use-created");
+      await this.verifySnapshot(digest);
+      return this.createUse(digest);
     });
     try {
       return await operation();
     } finally {
-      await this.withLock(async () => {
-        await rm(use, { force: true }).catch(() => undefined);
-      });
+      await this.removeUse(use);
     }
   }
   async withInstalledRoot<T>(
@@ -1051,31 +1056,13 @@ export class StateCoordinator {
       const stat = await lstat(root).catch(() => undefined);
       if (!stat?.isDirectory() || stat.isSymbolicLink())
         throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Installed content is unavailable");
-      if (item.kind === "remote") {
-        const nonce = crypto.randomUUID();
-        use = join(this.root, "uses", `${nonce}.json`);
-        await this.mutableDir(join(this.root, "uses"));
-        const startToken = await this.startToken(process.pid);
-        await this.writeSynced(
-          use,
-          JSON.stringify({
-            digest: item.digest,
-            pid: process.pid,
-            ...(startToken ? { startToken } : {}),
-            nonce,
-          }),
-        );
-        await signal("use-created");
-      }
+      if (item.kind === "remote") use = await this.createUse(item.digest);
       found = { item, root };
     });
     try {
       return await operation(found!);
     } finally {
-      if (use)
-        await this.withLock(async () => {
-          await rm(use!, { force: true }).catch(() => undefined);
-        });
+      await this.removeUse(use);
     }
   }
   async gc(): Promise<void> {
@@ -1088,6 +1075,7 @@ export class StateCoordinator {
       const retainedConfigs = new Set(Object.values(state.configs).map((item) => item.digest));
       const uses = join(this.root, "uses");
       const useNames = await readdir(uses).catch(() => []);
+      const records: { path: string; digest: string; pid: number; startToken?: string }[] = [];
       // Parse all ownership records before deciding any content is collectible.
       // An unreadable record may protect any digest, so fail closed for this pass.
       for (const name of useNames)
@@ -1097,26 +1085,22 @@ export class StateCoordinator {
           if (
             typeof record.digest !== "string" ||
             typeof record.pid !== "number" ||
-            typeof record.nonce !== "string"
-          )
-            return;
-        } catch {
-          return;
-        }
-      for (const name of useNames) {
-        const path = join(uses, name);
-        await this.check(path, "file", false);
-        try {
-          const record = JSON.parse(decodeStrictText((await readBytes(path))!)) as Record<
-            string,
-            unknown
-          >;
-          if (
-            typeof record.digest !== "string" ||
-            typeof record.pid !== "number" ||
+            typeof record.nonce !== "string" ||
             (record.startToken !== undefined && typeof record.startToken !== "string")
           )
             return;
+          records.push({
+            path: join(uses, name),
+            digest: record.digest,
+            pid: record.pid,
+            startToken: record.startToken,
+          });
+        } catch {
+          return;
+        }
+      for (const record of records) {
+        await this.check(record.path, "file", false);
+        try {
           if ((await this.ownerLiveness(record.pid, record.startToken)) !== "dead")
             retainedSnapshots.add(record.digest);
         } catch {

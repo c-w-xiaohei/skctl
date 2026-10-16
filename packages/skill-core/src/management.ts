@@ -259,6 +259,24 @@ function identity(binding: InternalSourceBinding, path: string) {
   return `${binding.origin}\0${[binding.root, path].filter(Boolean).join("/")}`;
 }
 
+/** Pure proof only: callers retain their independent read/lock scopes. */
+function rebindProof(
+  item: InstalledMaterialization,
+  previous: InternalSourceBinding | undefined,
+  owner: InternalSourceBinding | undefined,
+  root: string,
+) {
+  if (!owner || (!previous && item.identityEvidence?.status === "unavailable")) return "unprovable";
+  const proven = previous
+    ? previous.bindingDigest === item.bindingDigest &&
+      previous.origin === owner.origin &&
+      [previous.root, item.path].filter(Boolean).join("/") === root
+    : item.identityEvidence?.status === "known" &&
+      item.identityEvidence.canonicalOrigin === owner.origin &&
+      item.identityEvidence.originRelativeSkillRoot === root;
+  return proven ? "proven" : "distinct";
+}
+
 /**
  * Serialisation is deliberately private to management. Consumers only compare
  * this digest for exact equality and return it to update as an optimistic guard.
@@ -581,21 +599,7 @@ export function createManagement(
       const previous = capturedWorkspace(workspace.value)?.sources.get(request.source);
       const ownerPath = request.ownerPath ?? item.path;
       const root = owner ? [owner.root, ownerPath].filter(Boolean).join("/") : "";
-      const proof = !owner
-        ? "unprovable"
-        : previous
-          ? previous.bindingDigest === item.bindingDigest &&
-            previous.origin === owner.origin &&
-            [previous.root, item.path].filter(Boolean).join("/") === root
-            ? "proven"
-            : "distinct"
-          : item.identityEvidence?.status === "known" &&
-              item.identityEvidence.canonicalOrigin === owner.origin &&
-              item.identityEvidence.originRelativeSkillRoot === root
-            ? "proven"
-            : item.identityEvidence?.status === "unavailable"
-              ? "unprovable"
-              : "distinct";
+      const proof = rebindProof(item, previous, owner, root);
       return {
         value: {
           kind: "rebind",
@@ -960,46 +964,31 @@ export function createManagement(
                 (candidate) => item.source === binding.id && item.path === candidate.path,
               ),
           );
-          const additions: InstalledMaterialization[] = materialized.map((candidate) =>
-            binding.kind === "local"
-              ? {
-                  source: binding.id,
-                  path: candidate.path,
-                  root: resolve(candidate.root),
-                  name: candidate.name,
-                  description: candidate.description,
-                  kind: "local",
-                  digest: digestByPath.get(candidate.path)!,
-                  bindingDigest: binding.bindingDigest,
-                  identityEvidence: {
-                    status: "known",
-                    canonicalOrigin: binding.origin,
-                    originRelativeSkillRoot: [binding.root, candidate.path]
-                      .filter(Boolean)
-                      .join("/"),
-                  },
-                }
-              : {
-                  source: binding.id,
-                  path: candidate.path,
-                  name:
-                    installed.find(
-                      (item) => item.source === binding.id && item.path === candidate.path,
-                    )?.name ?? candidate.name,
-                  description: candidate.description,
-                  kind: "remote",
-                  digest: digestByPath.get(candidate.path)!,
-                  bindingDigest: binding.bindingDigest,
-                  adoptedRevision: candidate.revision!,
-                  treeIdentity: candidate.tree!,
-                  identityEvidence: {
-                    status: "known",
-                    canonicalOrigin: binding.origin,
-                    originRelativeSkillRoot: [binding.root, candidate.path]
-                      .filter(Boolean)
-                      .join("/"),
-                  },
-                },
+          const additions = materialized.map(
+            (candidate): InstalledMaterialization => ({
+              source: binding.id,
+              path: candidate.path,
+              name: candidate.name,
+              description: candidate.description,
+              digest: digestByPath.get(candidate.path)!,
+              bindingDigest: binding.bindingDigest,
+              identityEvidence: {
+                status: "known",
+                canonicalOrigin: binding.origin,
+                originRelativeSkillRoot: [binding.root, candidate.path].filter(Boolean).join("/"),
+              },
+              ...(binding.kind === "local"
+                ? { kind: "local", root: resolve(candidate.root) }
+                : {
+                    kind: "remote",
+                    name:
+                      installed.find(
+                        (item) => item.source === binding.id && item.path === candidate.path,
+                      )?.name ?? candidate.name,
+                    adoptedRevision: candidate.revision!,
+                    treeIdentity: candidate.tree!,
+                  }),
+            }),
           );
           const next: InstalledMaterialization[] = [...retained, ...additions];
           await resolveEffectiveCollections(
@@ -1103,19 +1092,13 @@ export function createManagement(
         });
         const currentPrevious = previousInput?.binding;
         const newRoot = [currentOwner.root, ownerPath].filter(Boolean).join("/");
-        if (!currentPrevious && item.identityEvidence?.status === "unavailable")
+        const proof = rebindProof(item, currentPrevious, currentOwner, newRoot);
+        if (proof === "unprovable")
           throw new SkillCliError(
             "REBIND_UNPROVABLE",
             "Rebind cannot prove an Installed Skill identity",
           );
-        const proven = currentPrevious
-          ? currentPrevious.bindingDigest === item.bindingDigest &&
-            currentPrevious.origin === currentOwner.origin &&
-            [currentPrevious.root, item.path].filter(Boolean).join("/") === newRoot
-          : item.identityEvidence?.status === "known" &&
-            item.identityEvidence.canonicalOrigin === currentOwner.origin &&
-            item.identityEvidence.originRelativeSkillRoot === newRoot;
-        if (!proven)
+        if (proof !== "proven")
           throw new SkillCliError(
             "CONFIG_CONFLICT",
             "Rebind does not preserve Installed Skill identity",

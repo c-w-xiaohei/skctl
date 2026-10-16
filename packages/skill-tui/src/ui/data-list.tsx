@@ -114,20 +114,8 @@ export function DataList(props: DataListProps) {
           return;
         }
 
-        // A pointer row press always selects but never opens an object. Composite
-        // lists can additionally claim a narrow sub-target (such as a tree
-        // disclosure glyph) through onRowPress above; all other lists retain
-        // this same select-only contract.
-        if (!callbacks.onRowPress) {
-          event.preventDefault();
-          event.stopPropagation();
-          target.focus();
-          target.setSelectedIndex(index);
-          return;
-        }
-
-        // A composite row press selects but never opens its object. Enter
-        // remains the explicit open action.
+        // Unclaimed row presses select but never open an object. Enter remains
+        // the explicit open action.
         event.preventDefault();
         event.stopPropagation();
         target.focus();

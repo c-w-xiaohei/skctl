@@ -231,12 +231,8 @@ function truncateDiagnostic(value: string, limit: number): string {
 
 export function redactDiagnostic(value: string, limit = diagnosticLimit): string {
   const redacted = value
-    .split("")
-    .map((character) => {
-      const code = character.charCodeAt(0);
-      return code < 32 || code === 127 ? " " : character;
-    })
-    .join("")
+    // oxlint-disable-next-line no-control-regex -- Diagnostics intentionally replace ASCII controls.
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
     .replace(
       /"(?:[a-z]:[\\/][^"\r\n]*?[\\/]appdata[\\/]local[\\/]temp|%(?:temp|tmp)%)[\\/][^"\r\n]*"/gi,
       '"[temp]"',

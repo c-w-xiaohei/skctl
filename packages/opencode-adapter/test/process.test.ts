@@ -214,4 +214,8 @@ describe("process client", () => {
     expect(diagnostic).toEndWith(" [truncated]");
     expect(diagnostic).not.toMatch(/secret|\/tmp\/|%temp%/i);
   });
+
+  test("replaces control characters in diagnostics without changing Unicode", () => {
+    expect(redactDiagnostic("a\u0000b\n\u007fc😀")).toBe("a b  c😀");
+  });
 });

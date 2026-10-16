@@ -1,4 +1,5 @@
 import {
+  type OperationResult,
   type DiscoveryObservation,
   type ConfigSourceObservation,
   type ContentCapability,
@@ -625,85 +626,50 @@ export function createTuiEffects(
       if (readerContentRequest === current) readerContentRequest = undefined;
     }
   };
-  const listResources = async (address: { readonly source: string; readonly path: string }) => {
-    if (closed) return undefined;
-    readerResourceController?.abort();
-    const controller = new AbortController();
-    readerResourceController = controller;
-    const start = beginReader(address, "resources");
-    const epoch = start.epoch;
-    try {
-      const result = await core.content.listInstalledResources(
-        { address },
-        { signal: controller.signal },
-      );
-      if (!closed) {
-        dispatchReader({ type: "resources.settle", address, epoch, resources: result.value });
-        for (const item of result.diagnostics)
-          dispatchReader({
-            type: "failure",
-            address,
-            epoch,
-            request: "resources",
-            diagnostic: item,
-          });
-      }
-      return result;
-    } catch (error) {
-      if (!closed && !cancelled(error))
-        dispatchReader({
-          type: "failure",
-          address,
-          epoch,
-          request: "resources",
-          diagnostic: diagnostic(error),
-        });
-      return undefined;
-    } finally {
-      if (readerResourceController === controller) readerResourceController = undefined;
-    }
-  };
-  const readResource = async (
-    address: { readonly source: string; readonly path: string },
-    path: string,
+  // List and body reads share transport ownership; the Reader reducer owns stale epochs.
+  const withReaderResource = async <T>(
+    address: ReaderAddress,
+    request: "resources" | "resource",
+    read: (signal: AbortSignal) => Promise<OperationResult<T>>,
+    settled: (value: T, epoch: number) => ReaderEvent,
+    path?: string,
   ) => {
     if (closed) return undefined;
     readerResourceController?.abort();
     const controller = new AbortController();
     readerResourceController = controller;
-    const start = beginReader(address, "resource", path);
-    const epoch = start.epoch;
+    const { epoch } = beginReader(address, request, path);
     try {
-      const result = await core.content.readInstalled(
-        { address, path },
-        { signal: controller.signal },
-      );
+      const result = await read(controller.signal);
       if (!closed) {
-        dispatchReader({ type: "resource.settle", address, epoch, value: result.value });
+        dispatchReader(settled(result.value, epoch));
         for (const item of result.diagnostics)
-          dispatchReader({
-            type: "failure",
-            address,
-            epoch,
-            request: "resource",
-            diagnostic: item,
-          });
+          dispatchReader({ type: "failure", address, epoch, request, diagnostic: item });
       }
       return result;
     } catch (error) {
       if (!closed && !cancelled(error))
-        dispatchReader({
-          type: "failure",
-          address,
-          epoch,
-          request: "resource",
-          diagnostic: diagnostic(error),
-        });
+        dispatchReader({ type: "failure", address, epoch, request, diagnostic: diagnostic(error) });
       return undefined;
     } finally {
       if (readerResourceController === controller) readerResourceController = undefined;
     }
   };
+  const listResources = (address: ReaderAddress) =>
+    withReaderResource(
+      address,
+      "resources",
+      (signal) => core.content.listInstalledResources({ address }, { signal }),
+      (resources, epoch) => ({ type: "resources.settle", address, epoch, resources }),
+    );
+  const readResource = (address: ReaderAddress, path: string) =>
+    withReaderResource(
+      address,
+      "resource",
+      (signal) => core.content.readInstalled({ address, path }, { signal }),
+      (value, epoch) => ({ type: "resource.settle", address, epoch, value }),
+      path,
+    );
 
   const review = async (intent: DirectSourceIntent): Promise<SourceRemovalReview | undefined> => {
     return withForeground("preview", undefined, async ({ id, signal, active }) => {

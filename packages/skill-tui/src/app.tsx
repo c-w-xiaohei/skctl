@@ -1244,9 +1244,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       "enable-managed-opencode",
       "disable-managed-opencode",
     ]);
-    const descriptor = reachableActions(route.snapshot().destination, workspace, pageFacts).find(
-      (action) => action.id === id,
-    );
+    const descriptor = actions().find((action) => action.id === id);
     // The cold-start primary action reaches the same Source registration form before commands exist.
     const coldStartAddSource =
       id === "add-source" &&
@@ -1319,16 +1317,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       });
       return;
     }
-    if (id === "config-observe") {
-      const config = workspace.configs.find((item) => item.level === route.snapshot().destination);
-      const source = config?.direct.configSources.find(
-        (item) =>
-          item.owner.pointer === configState.selection(configDestination(), "config-sources"),
-      );
-      if (!source) return;
-      beginConfigObservation(source.id);
-      return;
-    }
     if (id === "open-config-integration") {
       const destination = configDestination();
       const owner = selectedConfigIntegrationOwner(
@@ -1345,13 +1333,16 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       });
       return;
     }
-    if (id === "config-forget" || id === "config-remove") {
-      const config = workspace.configs.find((item) => item.level === route.snapshot().destination);
-      const source = config?.direct.configSources.find(
+    if (id === "config-observe" || id === "config-forget" || id === "config-remove") {
+      const source = currentConfig?.direct.configSources.find(
         (item) =>
           item.owner.pointer === configState.selection(configDestination(), "config-sources"),
       );
       if (!source) return;
+      if (id === "config-observe") {
+        beginConfigObservation(source.id);
+        return;
+      }
       const kind = id === "config-forget" ? "forget" : "remove";
       openSession("confirm", { family: "config-operation", kind, id: source.id }, "preview");
       const begun = beginSession(overlaySession().revision, "preview");
@@ -1506,33 +1497,16 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       openSession("selection", { family: "source-observation", intent }, "observing");
       const begun = beginSession(overlaySession().revision, "observing");
       const { revision, requestEpoch } = begun;
-      const next =
-        id === "add-skills"
-          ? await effects.discover({
-              kind: "source-discovery",
-              source: intent.source,
-            })
-          : await effects.checkUpdate({
-              kind: "source-update",
-              source: intent.source,
-            });
-      if (
-        next &&
-        sessionMatches(begun, "selection", "source-observation") &&
-        !overlaySession().dismissed
-      )
+      const next = await effects.discover({ kind: "source-discovery", source: intent.source });
+      if (!sessionMatches(begun, "selection", "source-observation")) return;
+      if (next && !overlaySession().dismissed)
         settleSession(revision, requestEpoch, "review", {
           family: "source-selection",
           review: next,
           selectedPaths: [],
         });
-      else if (
-        sessionMatches(begun, "selection", "source-observation") &&
-        overlaySession().dismissed
-      )
-        closeSession(revision);
-      else if (sessionMatches(begun, "selection", "source-observation"))
-        settleSession(revision, requestEpoch, "review");
+      else if (overlaySession().dismissed) closeSession(revision);
+      else settleSession(revision, requestEpoch, "review");
       return;
     }
     if (id === "view-installed-skills") {
@@ -1616,12 +1590,8 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       });
       return;
     }
+    const skill = installedSkillContext(destination, workspace, pageFacts)?.skill;
     if (id === "skill-open-collection-use") {
-      const skill = installedSkillContext(
-        route.snapshot().destination,
-        workspace,
-        pageFacts,
-      )?.skill;
       if (skill?.selectorViews.status === "complete") {
         const view = skill.selectorViews.values.find(
           (item) => (item.exposurePaths?.length ?? 0) > 0,
@@ -1668,21 +1638,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       return;
     }
     if (id === "skill-uninstall") {
-      const skill = installedSkillContext(
-        route.snapshot().destination,
-        workspace,
-        pageFacts,
-      )?.skill;
       if (!skill) return;
       void previewInstalled({ kind: "uninstall", address: skill.address });
       return;
     }
     if (id === "skill-rebind") {
-      const skill = installedSkillContext(
-        route.snapshot().destination,
-        workspace,
-        pageFacts,
-      )?.skill;
       const sources = workspace.effective.sources
         .filter((source) => source.id !== skill?.owner.source)
         .map((source) => source.id);
@@ -1702,11 +1662,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       return;
     }
     if (id === "skill-check-updates") {
-      const skill = installedSkillContext(
-        route.snapshot().destination,
-        workspace,
-        pageFacts,
-      )?.skill;
       if (skill) {
         openUpdates({ kind: "skill", address: skill.address });
         void effects.submitUpdates([skill.address]);
@@ -1732,11 +1687,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       return;
     }
     if (id === "skill-open-source") {
-      const skill = installedSkillContext(
-        route.snapshot().destination,
-        workspace,
-        pageFacts,
-      )?.skill;
       if (skill)
         routeSource({
           destination: "workspace",
@@ -2618,19 +2568,16 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       );
     return segments.join(" / ");
   };
-  const previousFrame = () => route.snapshot().stack.at(-1);
-  const returnAvailable = () => selectedReturn() !== undefined;
-  const routeBackRecord = (): CommandRecord => ({
+  const routeBackRecord = (prior: ReturnType<typeof route.snapshot>["current"]): CommandRecord => ({
     id: "route.back",
     keys: ["enter"],
-    verb: previousFrame()
-      ? `Back to ${sectionTitle(previousFrame()!.section)}${previousFrame()!.surface === "inspector" ? " details" : ""}`
-      : "Back",
-    destination: previousFrame() ? frameLabel(previousFrame()!) : "Workspace",
+    verb: `Back to ${sectionTitle(prior.section)}${prior.surface === "inspector" ? " details" : ""}`,
+    destination: frameLabel(prior),
     scope: "route",
     enabled: true,
     danger: false,
   });
+  const returnAvailable = () => selectedReturn() !== undefined;
   const executeRouteBack = (record: CommandRecord) => {
     const back = selectedReturn();
     if (!back || record.id !== back.record.id || record.destination !== back.record.destination)
@@ -2650,38 +2597,32 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     )
       return;
     const target = activeContent();
-    const activeBranch = new Set<Renderable>();
+    const activeBranch = new Map<Renderable, number>();
     if (target && !target.isDestroyed && target.parent)
       for (let node: Renderable | null = target; node; node = node.parent as Renderable | null) {
         if (!node.visible || node.isDestroyed) {
           activeBranch.clear();
           break;
         }
-        activeBranch.add(node);
+        activeBranch.set(node, activeBranch.size);
       }
     let selected: VisibleReturn | undefined;
-    let selectedDepth = -1;
+    let nearest = Infinity;
     for (const [token, value] of pageReturns()) {
       const anchor = value.anchor();
+      // Membership in the fully validated chain also proves ancestor visibility.
       if (!anchor || anchor.isDestroyed || !anchor.parent || !anchor.visible) continue;
-      let depth = 0,
-        visible = true;
-      for (let node: Renderable | null = anchor; node; node = node.parent as Renderable | null) {
-        visible &&= node.visible;
-        depth++;
-      }
-      if (!visible) continue;
-      if (activeBranch.has(anchor) && depth > selectedDepth) {
-        selectedDepth = depth;
-        const record =
-          value.record.verb === "Back"
-            ? { ...value.record, verb: `Back to ${value.record.destination}` }
-            : value.record;
-        selected = { token, local: true, record, execute: value.execute };
-      }
+      const distance = activeBranch.get(anchor);
+      if (distance === undefined || distance >= nearest) continue;
+      nearest = distance;
+      const record =
+        value.record.verb === "Back"
+          ? { ...value.record, verb: `Back to ${value.record.destination}` }
+          : value.record;
+      selected = { token, local: true, record, execute: value.execute };
     }
     if (selected) return selected;
-    const inlineReader = [...activeBranch].find((node) => node.id === "reader-pane");
+    const inlineReader = [...activeBranch.keys()].find((node) => node.id === "reader-pane");
     if (
       inlineReader &&
       route.snapshot().destination === "workspace" &&
@@ -2707,7 +2648,8 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         },
       };
     const prior = route.snapshot().stack.at(-1);
-    if (prior) return { token: prior, local: false, record: routeBackRecord(), execute: routeBack };
+    if (prior)
+      return { token: prior, local: false, record: routeBackRecord(prior), execute: routeBack };
     if (
       route.snapshot().destination === "workspace" &&
       !layout.wide() &&
@@ -2749,7 +2691,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     const prior = route.snapshot().stack.at(-1);
     if (back?.local && prior)
       result.push({
-        record: routeBackRecord(),
+        record: routeBackRecord(prior),
         execute: () => {
           if (!overlayKind() && !operation.task() && route.snapshot().stack.at(-1) === prior)
             routeBack();

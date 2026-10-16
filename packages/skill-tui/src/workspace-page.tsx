@@ -486,6 +486,15 @@ export function WorkspacePage(props: WorkspacePageProps) {
       return counts;
     });
     const searching = () => !!workspace.query().trim();
+    const selectedIndex = createMemo(() => {
+      const address = workspace.selectedSkill();
+      return Math.max(
+        0,
+        skills().findIndex(
+          (candidate) => !!address && sameSkillAddress(candidate.address, address),
+        ),
+      );
+    });
     const filterChipLabel = (dimension: string, value: string) =>
       `${dimension}: ${value}${dimension === "Collection" ? " (+ children)" : ""} ×`;
     const chipContentWidth = () =>
@@ -647,18 +656,10 @@ export function WorkspacePage(props: WorkspacePageProps) {
               measureList();
               bind("browser", target);
               bind("work-area", target);
-              const selectedIndex = Math.max(
-                0,
-                skills().findIndex(
-                  (candidate) =>
-                    !!workspace.selectedSkill() &&
-                    sameSkillAddress(candidate.address, workspace.selectedSkill()!),
-                ),
-              );
               const restore = restoreSelectState(
                 renderer,
                 target,
-                selectedIndex,
+                selectedIndex(),
                 workspace.scroll(surface()),
                 (offset) => props.onWorkspaceScroll(surface(), offset),
                 () =>
@@ -678,14 +679,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
               target.once("destroyed", () => unregister?.());
             }}
             options={options()}
-            selectedIndex={Math.max(
-              0,
-              skills().findIndex(
-                (candidate) =>
-                  !!workspace.selectedSkill() &&
-                  sameSkillAddress(candidate.address, workspace.selectedSkill()!),
-              ),
-            )}
+            selectedIndex={selectedIndex()}
             showDescription={false}
             inlineDescription
             showSelectionIndicator
@@ -889,11 +883,11 @@ export function WorkspacePage(props: WorkspacePageProps) {
       deriveAgentAccessTree(props.projection(), workspace.expandedExposurePaths()),
     );
     const rows = () => (tree().status === "available" ? tree().rows : []);
-    const selected = () => rows().find((row) => row.key === workspace.selectedExposurePath());
+    const rowForKey = (key: string | undefined) => rows().find((row) => row.key === key);
+    const selectedRow = createMemo(() => rowForKey(workspace.selectedExposurePath()));
     createEffect(() => {
       const roots = rows().filter((row) => row.depth === 0);
-      if (!rows().some((row) => row.key === workspace.selectedExposurePath()) && roots.length)
-        untrack(() => props.onSelectExposurePath(roots[0]!.key));
+      if (!selectedRow() && roots.length) untrack(() => props.onSelectExposurePath(roots[0]!.key));
     });
     const treeRows = () =>
       rows().map((row) => {
@@ -912,7 +906,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
         };
       });
     const pathForRow = (row: AgentAccessTreeRow) => row.nodeId.path;
-    const selectedRow = () => selected();
     const leftVisible = () => split() || !detail();
     const rightVisible = () => split() || detail();
     const unavailable = () => {
@@ -1121,12 +1114,12 @@ export function WorkspacePage(props: WorkspacePageProps) {
                 onScrollChange={(offset) => props.onWorkspaceScroll("current-exposure", offset)}
                 onSelect={props.onSelectExposurePath}
                 onExpandedChange={(key, expanded) => {
-                  const row = rows().find((candidate) => candidate.key === key);
+                  const row = rowForKey(key);
                   if (row && workspace.isExposurePathExpanded(pathForRow(row)) !== expanded)
                     props.onToggleExposurePath(pathForRow(row));
                 }}
                 onActivate={(key) => {
-                  const row = rows().find((candidate) => candidate.key === key);
+                  const row = rowForKey(key);
                   if (row) activate(row);
                 }}
               />

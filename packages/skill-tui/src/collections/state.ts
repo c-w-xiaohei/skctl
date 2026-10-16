@@ -196,22 +196,14 @@ export const visibleExposureRows = (
   expanded: Readonly<Record<string, boolean>> = {},
 ): readonly ExposureRow[] => {
   const rows = exposureHierarchy(projection);
-  const visible: ExposureRow[] = [];
-  for (const row of rows) {
-    let hidden = false;
-    for (let depth = 1; depth < row.exposurePath.segments.length; depth++) {
-      const ancestor = { segments: row.exposurePath.segments.slice(0, depth) };
-      const ancestorKey = exposurePathKey(ancestor);
-      const ancestorRow = rows.find((candidate) => candidate.key === ancestorKey);
-      if (!ancestorRow || (expanded[ancestorKey] ?? ancestorRow.depth === 0) !== true) {
-        hidden = true;
-        break;
-      }
-    }
-    if (hidden) continue;
-    visible.push(row);
-  }
-  return visible;
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+  return rows.filter((row) =>
+    row.exposurePath.segments.slice(1).every((_, index) => {
+      const key = exposurePathKey({ segments: row.exposurePath.segments.slice(0, index + 1) });
+      const ancestor = byKey.get(key);
+      return ancestor !== undefined && (expanded[key] ?? ancestor.depth === 0) === true;
+    }),
+  );
 };
 
 const nearest = (

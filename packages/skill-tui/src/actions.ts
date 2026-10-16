@@ -352,41 +352,7 @@ function reachableActionIntents(
         enabled: true,
       },
       ...(direct
-        ? [
-            {
-              id: "add-membership" as const,
-              title: "Add Membership",
-              description: `Add an Installed Skill to ${collection!.id} (${direct.level})`,
-              enabled: projection.installedSkills.length > 0,
-              reason: projection.installedSkills.length
-                ? undefined
-                : "No Installed Skill is available",
-            },
-            {
-              id: "import-collection" as const,
-              title: "Import Collection",
-              description: `Copy effective Memberships into ${collection!.id} (${direct.level})`,
-              enabled: true,
-            },
-            {
-              id: "add-reference" as const,
-              title: "Add Reference",
-              description: `Describe another Collection from ${collection!.id}`,
-              enabled: true,
-            },
-            {
-              id: "add-link" as const,
-              title: "Add Link",
-              description: `Expose a linked Collection through ${collection!.id}`,
-              enabled: true,
-            },
-            {
-              id: "remove-collection" as const,
-              title: "Remove Collection",
-              description: `Remove the direct ${collection!.id} declaration`,
-              enabled: true,
-            },
-          ]
+        ? collectionMutationIntents(collection!.id, direct.level, projection.installedSkills.length)
         : collection?.repository.derived
           ? [
               {
@@ -510,41 +476,11 @@ function reachableActionIntents(
         ...(collection || collectionUse
           ? [
               ...(collection
-                ? [
-                    {
-                      id: "add-membership" as const,
-                      title: "Add Membership",
-                      description: `Add an Installed Skill to ${collection.id}`,
-                      enabled: projection.installedSkills.length > 0,
-                      reason: projection.installedSkills.length
-                        ? undefined
-                        : "No Installed Skill is available",
-                    },
-                    {
-                      id: "import-collection" as const,
-                      title: "Import Collection",
-                      description: `Copy effective Memberships into ${collection.id}`,
-                      enabled: true,
-                    },
-                    {
-                      id: "add-reference" as const,
-                      title: "Add Reference",
-                      description: `Describe another Collection from ${collection.id}`,
-                      enabled: true,
-                    },
-                    {
-                      id: "add-link" as const,
-                      title: "Add Link",
-                      description: `Expose a linked Collection through ${collection.id}`,
-                      enabled: true,
-                    },
-                    {
-                      id: "remove-collection" as const,
-                      title: "Remove Collection",
-                      description: `Remove the direct ${collection.id} declaration`,
-                      enabled: true,
-                    },
-                  ]
+                ? collectionMutationIntents(
+                    collection.id,
+                    undefined,
+                    projection.installedSkills.length,
+                  )
                 : []),
               {
                 id: "set-collection-use" as const,
@@ -632,6 +568,48 @@ function reachableActionIntents(
         addSource,
       ]
     : [...common, addSource];
+}
+
+function collectionMutationIntents(
+  id: string,
+  directOwnerLevel: string | undefined,
+  installedSkillCount: number,
+): readonly ActionIntent[] {
+  const hasSkills = installedSkillCount > 0;
+  const ownerLabel = directOwnerLevel ? ` (${directOwnerLevel})` : "";
+  return [
+    {
+      id: "add-membership",
+      title: "Add Membership",
+      description: `Add an Installed Skill to ${id}${ownerLabel}`,
+      enabled: hasSkills,
+      reason: hasSkills ? undefined : "No Installed Skill is available",
+    },
+    {
+      id: "import-collection",
+      title: "Import Collection",
+      description: `Copy effective Memberships into ${id}${ownerLabel}`,
+      enabled: true,
+    },
+    {
+      id: "add-reference",
+      title: "Add Reference",
+      description: `Describe another Collection from ${id}`,
+      enabled: true,
+    },
+    {
+      id: "add-link",
+      title: "Add Link",
+      description: `Expose a linked Collection through ${id}`,
+      enabled: true,
+    },
+    {
+      id: "remove-collection",
+      title: "Remove Collection",
+      description: `Remove the direct ${id} declaration`,
+      enabled: true,
+    },
+  ];
 }
 
 function selectedSkillActionIntents(

@@ -769,6 +769,54 @@ test("Collection actions retain read-only update access while edits use direct o
   ).toEqual(["collection-check-updates", "new-collection", "add-membership"]);
 });
 
+test("Config Collection actions retain their direct owner wording and Use eligibility", () => {
+  const owner = { ...directOwner, pointer: "/collections/team" };
+  const base = collectionTargetProjection();
+  const projection: ManagementProjection = {
+    ...base,
+    configs: base.configs.map((config) =>
+      config.level === "project"
+        ? {
+            ...config,
+            direct: {
+              ...config.direct,
+              collections: [{ id: "team", owner }],
+              collectionUse: [{ collection: "team", owner }],
+            },
+          }
+        : config,
+    ),
+  };
+  const owners = pages();
+  owners.config.land("project", "collections", "team");
+
+  const actions = reachableActions("project", projection, owners.facts);
+  expect(actions.every((action) => action.enabled)).toBe(true);
+  expect(
+    actions.map(({ id, verb, destination, danger }) => [id, verb, destination, danger]),
+  ).toEqual([
+    ["new-collection", "New Collection", "Collection form", false],
+    ["add-membership", "Add Membership", "Membership form", false],
+    ["import-collection", "Import Collection", "Import form", false],
+    ["add-reference", "Add Reference", "Review form", false],
+    ["add-link", "Add Link", "Review form", false],
+    ["remove-collection", "Remove Collection", "Review form", true],
+    ["set-collection-use", "Set Collection Use", "Collection Use form", false],
+  ]);
+  const noSkills = { ...projection, installedSkills: [] };
+  expect(reachableActions("project", noSkills, owners.facts).slice(1, 6)).toMatchObject([
+    {
+      id: "add-membership",
+      enabled: false,
+      disabledReason: "No Installed Skill is available",
+    },
+    { id: "import-collection", enabled: true },
+    { id: "add-reference", enabled: true },
+    { id: "add-link", enabled: true },
+    { id: "remove-collection", enabled: true, danger: true },
+  ]);
+});
+
 test("Config integration Actions open an inherited owner instead of enabling the current Config", () => {
   const base = workspaceProjection();
   const inheritedOwner = {

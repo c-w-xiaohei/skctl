@@ -40,7 +40,6 @@ interface ParsedAgentCommand {
 }
 
 const operations = new Set<AgentOperation>(["browse", "search", "load", "read", "download", "run"]);
-const values = new Set(["--limit", "--output", "--in"]);
 
 function invalid(message: string): never {
   throw new SkillCliError("INVALID_ARGUMENT", message);
@@ -98,7 +97,6 @@ function parseAgentCommand(argv: readonly string[]): ParsedAgentCommand {
       force = true;
       continue;
     }
-    if (!values.has(argument)) invalid(`Unknown option: ${argument}`);
     const value = argv[++index];
     if (!value || value.startsWith("--")) invalid(`Option requires a value: ${argument}`);
     if (argument === "--output") output = value;
@@ -115,7 +113,7 @@ function parseAgentCommand(argv: readonly string[]): ParsedAgentCommand {
   if (op === "download" && !output) invalid("--output is required for download");
   if (op === "run") {
     if (!child) invalid("Selector and argv after -- are required");
-  } else if (child) invalid("Child argv is only valid for run");
+  }
   if (op === "browse" && positional[0]) validateCollectionId(positional[0]);
   if (op === "search" && collection) validateCollectionId(collection);
   if (op === "load" || op === "read" || op === "download" || op === "run")

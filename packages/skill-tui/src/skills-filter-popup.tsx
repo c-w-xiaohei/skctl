@@ -74,7 +74,7 @@ export function SkillsFilterPopup(props: {
   });
   const facetFilters = (excluded: string) =>
     Object.fromEntries(Object.entries(state.filters()).filter(([key]) => key !== excluded));
-  const skillFacet = createMemo(() => {
+  const matchingSkills = (filters: Readonly<Record<string, string>>) => {
     const projection = props.projection();
     return projection
       ? filterSkills(
@@ -84,40 +84,26 @@ export function SkillsFilterPopup(props: {
           {
             query: state.query(),
             source: state.sourceFilter(),
-            filters: facetFilters(dimension()),
+            filters,
             agentStatus: projection.effective.agent.status,
             collectionViews: collectionViews(),
           },
         )
       : [];
-  });
-  const problemFacet = createMemo(() =>
-    props.projection()
-      ? filterProblemRows(
-          problemRows(props.projection()!),
-          state.query(),
-          facetFilters(dimension()),
-        )
-      : [],
-  );
-  const resultCount = createMemo(() => {
+  };
+  const diagnosticRows = createMemo(() => {
     const projection = props.projection();
-    if (!projection) return 0;
-    return problems()
-      ? filterProblemRows(problemRows(projection), state.query(), state.filters()).length
-      : filterSkills(
-          state.skillsView() === "unassigned"
-            ? unassignedSkills(projection)
-            : projection.installedSkills,
-          {
-            query: state.query(),
-            source: state.sourceFilter(),
-            filters: state.filters(),
-            agentStatus: projection.effective.agent.status,
-            collectionViews: collectionViews(),
-          },
-        ).length;
+    return projection ? problemRows(projection) : [];
   });
+  const skillFacet = createMemo(() => matchingSkills(facetFilters(dimension())));
+  const problemFacet = createMemo(() =>
+    filterProblemRows(diagnosticRows(), state.query(), facetFilters(dimension())),
+  );
+  const resultCount = createMemo(() =>
+    problems()
+      ? filterProblemRows(diagnosticRows(), state.query(), state.filters()).length
+      : matchingSkills(state.filters()).length,
+  );
   const available = createMemo(() =>
     problems()
       ? problemFilterValues(problemFacet(), dimension())

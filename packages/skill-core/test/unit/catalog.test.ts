@@ -88,6 +88,19 @@ test("PROJ-015/016 projects root and collection nodes without aliases or graph t
         ],
       },
     });
+    await expect(core.catalog.search({ query: "review" })).resolves.toMatchObject({
+      value: {
+        results: [{ selector: "alpha:review", name: "review", description: "Review" }],
+      },
+    });
+    await expect(core.catalog.search({ query: "again" })).resolves.toMatchObject({
+      value: { results: [] },
+    });
+    await expect(
+      core.catalog.search({ query: "review", collection: "zeta" }),
+    ).resolves.toMatchObject({
+      value: { results: [{ selector: "zeta:again", name: "review", description: "Review" }] },
+    });
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });

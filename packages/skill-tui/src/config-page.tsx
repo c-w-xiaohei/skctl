@@ -44,6 +44,23 @@ type ConfigActionId =
   | "add-skills"
   | "remove-source";
 
+type ConfigSource = ConfigLevelView["direct"]["configSources"][number];
+
+const configSourceBindingText = (binding: ConfigSource["binding"], includeKind = true) =>
+  [
+    ...(includeKind ? [`Binding kind  ${binding.kind}`] : []),
+    binding.kind === "local"
+      ? `Local path  ${binding.path}`
+      : `Canonical Origin  ${binding.origin}`,
+    `Source Root  ${binding.root}`,
+    ...(binding.kind === "local" ? [] : [`Tracked ref  ${binding.ref}`]),
+  ].join("\n");
+
+const configSourceAdoptionText = (adoption: ConfigSource["adoption"]) =>
+  adoption.status === "adopted"
+    ? `Applied commit  ${adoption.commit}`
+    : `Adoption  ${adoption.status}`;
+
 export function ConfigPage(props: {
   readonly config: ConfigReadonly;
   readonly overlay?: () => boolean;
@@ -113,6 +130,15 @@ export function ConfigPage(props: {
   ];
   const selectedSourceId = () => selection() ?? sourceItems()[0]?.id;
   const selectedSource = () => sourceItems().find((item) => item.id === selectedSourceId());
+  const selectedSourceFacts = () => {
+    const source = selectedSource();
+    const direct = value()?.direct.sources.find((item) => item.id === source?.id);
+    return {
+      source,
+      owner: source?.contribution?.configSource ?? direct?.ref.owner,
+      trackedRef: typeof source?.ref === "string" ? source.ref : direct?.trackedRef,
+    };
+  };
   const fileProblem = () => {
     const file = value()?.file;
     return file && file.status !== "valid" && file.status !== "missing" ? file : undefined;
@@ -144,11 +170,7 @@ export function ConfigPage(props: {
     const configSourceFacts = () => {
       const source = configSource();
       if (!source) return "Config Source  Unavailable";
-      const binding =
-        source.binding.kind === "local"
-          ? `Binding kind  local\nLocal path  ${source.binding.path}\nSource Root  ${source.binding.root}`
-          : `Binding kind  ${source.binding.kind}\nCanonical Origin  ${source.binding.origin}\nSource Root  ${source.binding.root}\nTracked ref  ${source.binding.ref}`;
-      return `Config Source  ${source.id}\n${source.adoption.status === "adopted" ? `Applied commit  ${source.adoption.commit}` : `Adoption  ${source.adoption.status}`}\n${binding}`;
+      return `Config Source  ${source.id}\n${configSourceAdoptionText(source.adoption)}\n${configSourceBindingText(source.binding)}`;
     };
     if (handoff.kind === "source-declaration")
       return `Source declaration  ${handoff.source.id}\nOwner  ${owner}\nBinding kind  ${handoff.source.kind}\nCanonical Origin  ${handoff.source.origin}\nSource Root  ${handoff.source.root}${handoff.source.ref ? `\nTracked ref  ${handoff.source.ref}` : ""}`;
@@ -174,16 +196,9 @@ export function ConfigPage(props: {
   };
   const sourceText = () => {
     if (section() === "sources") {
-      const source = selectedSource();
+      const { source, owner, trackedRef } = selectedSourceFacts();
       if (!source) return undefined;
-      const owner =
-        source.contribution?.configSource ??
-        value()?.direct.sources.find((item) => item.id === source.id)?.ref.owner;
       const provenance = source.contribution ? "Config Source" : "Direct";
-      const trackedRef =
-        typeof source.ref === "string"
-          ? source.ref
-          : value()?.direct.sources.find((item) => item.id === source.id)?.trackedRef;
       return `Selected Source  ${source.id}\nBinding kind  ${source.kind}\nCanonical Origin  ${source.origin}\nSource Root  ${source.root}\nTracked ref  ${trackedRef ?? "None"}\nProvenance  ${provenance}${owner ? `\n${source.contribution ? "Config Source owner" : "Owner"}  ${owner.level} ${owner.file} ${owner.pointer}` : ""}`;
     }
     if (section() === "config-sources") {
@@ -192,15 +207,7 @@ export function ConfigPage(props: {
         (item) => item.owner.pointer === selection(),
       );
       if (!source) return undefined;
-      const binding =
-        source.binding.kind === "local"
-          ? `Binding kind  local\nLocal path  ${source.binding.path}\nSource Root  ${source.binding.root}`
-          : `Binding kind  ${source.binding.kind}\nCanonical Origin  ${source.binding.origin}\nSource Root  ${source.binding.root}\nTracked ref  ${source.binding.ref}`;
-      const adoption =
-        source.adoption.status === "adopted"
-          ? `Applied commit  ${source.adoption.commit}`
-          : `Adoption  ${source.adoption.status}`;
-      return `Selected > ${source.id}\nConfig Source  ${source.id}\nOwner  ${source.owner.file} ${source.owner.pointer}\n${binding}\n${adoption}`;
+      return `Selected > ${source.id}\nConfig Source  ${source.id}\nOwner  ${source.owner.file} ${source.owner.pointer}\n${configSourceBindingText(source.binding)}\n${configSourceAdoptionText(source.adoption)}`;
     }
     return undefined;
   };
@@ -243,16 +250,12 @@ export function ConfigPage(props: {
   const selectedConfigSourceBinding = () => {
     const source = selectedConfigSource();
     if (!source) return "Binding unavailable";
-    return source.binding.kind === "local"
-      ? `Local path  ${source.binding.path}\nSource Root  ${source.binding.root}`
-      : `Canonical Origin  ${source.binding.origin}\nSource Root  ${source.binding.root}\nTracked ref  ${source.binding.ref}`;
+    return configSourceBindingText(source.binding, false);
   };
   const selectedConfigSourceAdoption = () => {
     const adoption = selectedConfigSource()?.adoption;
     if (!adoption) return "Adoption unavailable";
-    return adoption.status === "adopted"
-      ? `Applied commit  ${adoption.commit}`
-      : `Adoption  ${adoption.status}`;
+    return configSourceAdoptionText(adoption);
   };
   const integrationRows = () => {
     const current = value();
@@ -385,6 +388,21 @@ export function ConfigPage(props: {
           reveal,
         )
       : null;
+  };
+  const SourceActions = (options: { readonly compact?: boolean }) => {
+    const reveal = () => (options.compact ? revealWorkCommand : undefined);
+    return (
+      <>
+        <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
+          {actionCommand("check-updates", "Check updates", reveal())}
+          {actionCommand("add-skills", "Find and install…", reveal())}
+          <Show when={options.compact}>{actionCommand("add-source", "Add Source…", reveal())}</Show>
+        </box>
+        <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
+          {actionCommand("remove-source", "Remove Source declaration…", reveal())}
+        </box>
+      </>
+    );
   };
   const localCommand = (id: string, verb: string, destination: string, execute: () => void) =>
     command(
@@ -643,19 +661,14 @@ export function ConfigPage(props: {
       narrow: "stack",
     });
     if (section() === "sources") {
-      const source = selectedSource();
+      const { source, owner, trackedRef } = selectedSourceFacts();
       if (!source) return [];
-      const direct = value()?.direct.sources.find((item) => item.id === source.id);
-      const owner = source.contribution?.configSource ?? direct?.ref.owner;
       return [
         field("Source", source.id),
         field("Kind", source.kind),
         field("Origin", source.origin),
         field("Root", source.root),
-        field(
-          "Tracked ref",
-          typeof source.ref === "string" ? source.ref : (direct?.trackedRef ?? "None"),
-        ),
+        field("Tracked ref", trackedRef ?? "None"),
         field(
           "Editable",
           source.contribution ? "No · contributed by a Config Source" : "Yes · direct declaration",
@@ -824,10 +837,7 @@ export function ConfigPage(props: {
                         ]}
                         selectedIndex={
                           selection()
-                            ? [
-                                ...(value()?.direct.sources ?? []),
-                                ...(value()?.contributed.sources ?? []),
-                              ].findIndex((item) => item.id === selection())
+                            ? sourceItems().findIndex((item) => item.id === selection())
                             : compactSourceLayout() && sourceItems().length > 0
                               ? 0
                               : undefined
@@ -836,18 +846,10 @@ export function ConfigPage(props: {
                         showSelectionIndicator
                         showScrollIndicator
                         onChange={(index) => {
-                          const items = [
-                            ...(value()?.direct.sources ?? []),
-                            ...(value()?.contributed.sources ?? []),
-                          ];
-                          props.onSelect(items[index]!.id);
+                          props.onSelect(sourceItems()[index]!.id);
                         }}
                         onSelect={(index) => {
-                          const items = [
-                            ...(value()?.direct.sources ?? []),
-                            ...(value()?.contributed.sources ?? []),
-                          ];
-                          props.onSelect(items[index]!.id);
+                          props.onSelect(sourceItems()[index]!.id);
                           enterPrimary();
                         }}
                       />
@@ -1023,18 +1025,7 @@ export function ConfigPage(props: {
                 </Show>
                 <Show when={compactSourceLayout() && section() === "sources" && !!selectedSource()}>
                   <box flexDirection="column" gap={1}>
-                    <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
-                      {actionCommand("check-updates", "Check updates", revealWorkCommand)}
-                      {actionCommand("add-skills", "Find and install…", revealWorkCommand)}
-                      {actionCommand("add-source", "Add Source…", revealWorkCommand)}
-                    </box>
-                    <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
-                      {actionCommand(
-                        "remove-source",
-                        "Remove Source declaration…",
-                        revealWorkCommand,
-                      )}
-                    </box>
+                    <SourceActions compact />
                   </box>
                 </Show>
                 <Show
@@ -1508,13 +1499,7 @@ export function ConfigPage(props: {
             borderColor={tokens().colors.border}
           >
             <Show when={section() === "sources"}>
-              <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
-                {actionCommand("check-updates", "Check updates")}
-                {actionCommand("add-skills", "Find and install…")}
-              </box>
-              <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
-                {actionCommand("remove-source", "Remove Source declaration…")}
-              </box>
+              <SourceActions />
             </Show>
             <Show
               when={
@@ -1550,13 +1535,7 @@ export function ConfigPage(props: {
               border={["top"]}
               borderColor={tokens().colors.border}
             >
-              <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
-                {actionCommand("check-updates", "Check updates")}
-                {actionCommand("add-skills", "Find and install…")}
-              </box>
-              <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
-                {actionCommand("remove-source", "Remove Source declaration…")}
-              </box>
+              <SourceActions />
             </box>
           </Show>
           <Show

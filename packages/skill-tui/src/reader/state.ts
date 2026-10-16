@@ -246,13 +246,11 @@ export function reduceReaderEvent(
       accepted: true,
     };
   const request =
-    event.type === "content.settle"
-      ? "content"
-      : event.type === "resources.settle"
-        ? "resources"
-        : event.type === "resource.settle"
-          ? "resource"
-          : event.request;
+    event.type === "failure"
+      ? event.request
+      : event.type === "content.settle"
+        ? "content"
+        : "resource";
   if (state.epochs[epochKey(event.address, request)] !== event.epoch)
     return { state, accepted: false };
   if (event.type === "content.settle")

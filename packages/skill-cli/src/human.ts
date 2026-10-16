@@ -89,6 +89,19 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
     "Declaration scope: global writes the user config, project writes skill-cli.jsonc, local writes skill-cli.local.jsonc";
   const flagsOf = (value: { opts?: () => Record<string, unknown> }): Record<string, unknown> =>
     value.opts?.() ?? Object.fromEntries(Object.entries(value));
+  const sourceBinding = (
+    kind: "local" | "git" | "github",
+    origin: string,
+    options: Record<string, unknown>,
+  ): Extract<ConfigChange, { type: "source.register" }>["binding"] =>
+    kind === "local"
+      ? { kind, path: origin, root: typeof options.root === "string" ? options.root : "" }
+      : {
+          kind,
+          origin,
+          root: typeof options.root === "string" ? options.root : "",
+          ref: typeof options.ref === "string" ? options.ref : "",
+        };
   const scopeOptions = (target: Command, defaultProject = true) =>
     target
       .option(
@@ -189,15 +202,7 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
       type: "source.register",
       level: scope(flags)!,
       id,
-      binding:
-        kind === "local"
-          ? { kind, path: origin, root: typeof options.root === "string" ? options.root : "" }
-          : {
-              kind,
-              origin,
-              root: typeof options.root === "string" ? options.root : "",
-              ref: typeof options.ref === "string" ? options.ref : "",
-            },
+      binding: sourceBinding(kind, origin, options),
     });
   });
   source
@@ -345,15 +350,7 @@ export function createHumanCommand(options: HumanCommandOptions): Command {
         type: "config-source.register",
         level: scope(flags)!,
         id,
-        binding:
-          kind === "local"
-            ? { kind, path: origin, root: typeof options.root === "string" ? options.root : "" }
-            : {
-                kind,
-                origin,
-                root: typeof options.root === "string" ? options.root : "",
-                ref: typeof options.ref === "string" ? options.ref : "",
-              },
+        binding: sourceBinding(kind, origin, options),
       });
     });
   scopeOptions(configs.commands.at(-1)!);
