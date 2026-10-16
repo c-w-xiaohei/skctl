@@ -7,6 +7,8 @@ import { SectionTabs } from "../src/components/section-tabs";
 import { createFocusRegistry } from "../src/focus";
 import { DataList } from "../src/ui/data-list";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
+import { readerProjection } from "./installed-reader.fixture";
+import { enterLive, parsedEscape } from "./reader-test-controls";
 
 test("DataList keeps the selected label column fixed when physical focus changes", async () => {
   const setup = await testRender(
@@ -235,13 +237,13 @@ test("wide Collections retain the browser beside root details without a Back fra
   }
 });
 
-test("Source Inspector exposes Check Updates directly and cancellation prevents mutation", async () => {
+test("Source Inspector exposes Check Updates directly and leaving its workbench prevents mutation", async () => {
   const observationCalls: unknown[] = [];
   const updateCalls: unknown[] = [];
   const setup = await testRender(
     () => (
       <App
-        core={directSourceCore(workspaceProjection(), {
+        core={directSourceCore(readerProjection(), {
           checkUpdate: async (request) => {
             observationCalls.push(request);
             return {
@@ -269,43 +271,24 @@ test("Source Inspector exposes Check Updates directly and cancellation prevents 
   );
   try {
     await setup.flush();
-    const sections = setup.renderer.root.findDescendantById(
-      "shell-section-navigation",
-    ) as SelectRenderable;
-    sections.setSelectedIndex(2);
-    await setup.renderOnce();
-    await setup.mockMouse.click(sections.screenX + 1, sections.screenY + 2);
+    await enterLive(setup, "shell-section-tab-sources");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
-
-    const sources = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;
-    sources.focus();
-    sources.selectCurrent();
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-command-skills"));
     const checkUpdates = setup.renderer.root.findDescendantById("workspace-action-check-updates");
     expect(checkUpdates).toBeDefined();
     expect(setup.renderer.root.findDescendantById("palette-check-updates")).toBeUndefined();
 
     checkUpdates!.focus();
     setup.mockInput.pressEnter();
-    await setup.waitFor(() => observationCalls.length === 1);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-operation-cancel"));
-    expect(observationCalls).toEqual([{ source: "team-main" }]);
-    const review = setup.renderer.root.findDescendantById(
-      "source-operation-selection",
-    ) as SelectRenderable;
-    expect(review.options.map((option) => option.value)).toContain("guide");
+    await setup.waitFor(() => observationCalls.length > 0);
+    expect(
+      observationCalls.every((request) => (request as { source: string }).source === "team-main"),
+    ).toBe(true);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
+    expect(setup.renderer.root.findDescendantById("source-operation-selection")).toBeUndefined();
     expect(updateCalls).toEqual([]);
-    // Initial Enter only toggles a candidate; it is not an Apply command.
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-operation-selection");
-
-    setup.renderer.root.findDescendantById("source-operation-cancel")!.focus();
-    setup.mockInput.pressEnter();
-    await setup.waitFor(() => !setup.renderer.root.findDescendantById("source-operation-cancel"));
+    await parsedEscape(setup);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
     expect(updateCalls).toEqual([]);
-    setup.renderer.root.findDescendantById("workspace-action-add-skills")!.focus();
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Enter Find and install Skills");
-    expect(setup.captureCharFrame()).toContain("Observation ready");
   } finally {
     setup.renderer.destroy();
   }

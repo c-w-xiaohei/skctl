@@ -1,8 +1,13 @@
 import { expect, test } from "bun:test";
-import { SkillCliError, type ManagementProjection, type UpdateObservation } from "@skill-cli/core";
+import {
+  SkillCliError,
+  type DiscoveryObservation,
+  type ManagementProjection,
+  type UpdateObservation,
+} from "@skill-cli/core";
 import { createUpdateController } from "../src/updates/controller";
 import { testEffects } from "./direct-source.fixture";
-import { directSourceCore } from "./direct-source.fixture";
+import { directOwner, directSourceCore } from "./direct-source.fixture";
 import { buildUpdateScope, createUpdatesState } from "../src/updates/model";
 import { workspaceProjection } from "./direct-source.fixture";
 
@@ -17,10 +22,10 @@ const observation = (source: string, paths: string[], exactRevision = "a".repeat
 });
 
 for (const kind of ["github", "local"] as const) {
-  test(`legacy update review forwards the opaque ${kind} baseline with its exact selection`, async () => {
-    const snapshot = projection();
+  test(`UPDATES Skill submission forwards each fresh opaque ${kind} baseline with its exact selection`, async () => {
+    const snapshot = projection(["team-main"], ["guide", "reference"]);
     const core = directSourceCore(snapshot);
-    const captured: UpdateObservation = {
+    let captured: UpdateObservation = {
       ...observation("team-main", ["guide", "reference"]),
       kind,
       exactRevision: kind === "local" ? undefined : "c".repeat(40),
@@ -38,30 +43,37 @@ for (const kind of ["github", "local"] as const) {
         },
       },
     });
-    const review = await effects.checkUpdate({
-      kind: "source-update",
-      source: "team-main",
-      selectedPath: "guide",
-    });
-    expect(review).toBeDefined();
-    expect(await effects.update(review!, ["reference"])).toBe(false);
-    expect(await effects.update(review!, ["guide", "guide"])).toBe(false);
+    const address = { source: "team-main", path: "guide" };
+    effects.selectUpdatesScope({ kind: "skill", address }, snapshot);
+    expect(await effects.submitUpdates([{ ...address, path: "reference" }])).toBe(false);
+    expect(await effects.submitUpdates([address, address])).toBe(false);
     expect(requests).toEqual([]);
-    expect(await effects.update(review!, ["guide"])).toBe(true);
+    expect(await effects.submitUpdates([address])).toBe(true);
     expect(requests).toEqual([
       {
         source: "team-main",
         paths: ["guide"],
-        exactRevision: captured.exactRevision,
+        ...(kind === "local" ? {} : { exactRevision: captured.exactRevision }),
         expectedBaseline: captured.baseline,
       },
     ]);
-    expect(await effects.update(review!, ["guide"])).toBe(false);
+    captured = {
+      ...captured,
+      exactRevision: kind === "local" ? undefined : "d".repeat(40),
+      baseline: "new-opaque-token",
+    };
+    expect(await effects.submitUpdates([address])).toBe(true);
+    expect(requests[1]).toEqual({
+      source: "team-main",
+      paths: ["guide"],
+      ...(kind === "local" ? {} : { exactRevision: "d".repeat(40) }),
+      expectedBaseline: "new-opaque-token",
+    });
     effects.teardown();
   });
 }
 
-test("legacy update review remains compatible when Core omits the optional baseline", async () => {
+test("UPDATES submission remains compatible when Core omits the optional baseline", async () => {
   const snapshot = projection();
   const core = directSourceCore(snapshot);
   const requests: unknown[] = [];
@@ -76,9 +88,8 @@ test("legacy update review remains compatible when Core omits the optional basel
       },
     },
   });
-  const review = await effects.checkUpdate({ kind: "source-update", source: "team-main" });
-  expect(review).toBeDefined();
-  expect(await effects.update(review!, ["guide"])).toBe(true);
+  effects.selectUpdatesScope({ kind: "source", source: "team-main" }, snapshot);
+  expect(await effects.submitUpdates([{ source: "team-main", path: "guide" }])).toBe(true);
   expect(requests).toHaveLength(1);
   expect(requests[0]).toMatchObject({
     source: "team-main",
@@ -86,6 +97,67 @@ test("legacy update review remains compatible when Core omits the optional basel
     exactRevision: "a".repeat(40),
   });
   expect(requests[0]).not.toHaveProperty("expectedBaseline");
+  effects.teardown();
+});
+
+test("MGMT-007/008 canonical Source submission updates only selected changed roots without install or removal", async () => {
+  const snapshot = projection(["team-main"], ["guide", "reference", "old", "same"]);
+  const calls: unknown[] = [];
+  let unrelatedMutations = 0;
+  const core = directSourceCore(snapshot, {
+    checkUpdate: async () => ({
+      value: {
+        ...observation("team-main", ["guide", "reference"], "observed-commit"),
+        added: [{ path: "new", name: "new", description: "New" }],
+        removed: [{ path: "old", name: "old", description: "Removed" }],
+        unchanged: [{ path: "same", name: "same", description: "Unchanged" }],
+      },
+      diagnostics: [],
+    }),
+    install: async () => {
+      unrelatedMutations++;
+      throw new Error("Updates must not install roots");
+    },
+    uninstall: async () => {
+      unrelatedMutations++;
+      throw new Error("Updates must retain removed roots");
+    },
+    remove: async () => {
+      unrelatedMutations++;
+      throw new Error("Updates must retain the Source");
+    },
+    update: async (request) => {
+      calls.push(request);
+      return { value: undefined, diagnostics: [] };
+    },
+  });
+  const effects = testEffects(core);
+  const state = effects.selectUpdatesScope({ kind: "source", source: "team-main" }, snapshot)!;
+  await effects.checkUpdates();
+  expect(effects.updatesSubmittable()).toEqual([
+    { source: "team-main", path: "guide" },
+    { source: "team-main", path: "reference" },
+  ]);
+  expect(await effects.submitUpdates([])).toBe(false);
+  expect(await effects.submitUpdates([{ source: "team-main", path: "new" }])).toBe(false);
+  expect(calls).toEqual([]);
+  expect(
+    await effects.submitUpdates([
+      { source: "team-main", path: "guide" },
+      { source: "team-main", path: "old" },
+      { source: "team-main", path: "same" },
+    ]),
+  ).toBe(false);
+  expect(calls).toEqual([
+    { source: "team-main", paths: ["guide"], exactRevision: "observed-commit" },
+  ]);
+  expect(effects.updateRun()?.results.map((result) => result.status)).toEqual([
+    "updated",
+    "failed",
+    "unchanged",
+  ]);
+  expect(state.scope.addresses).toEqual(snapshot.installedSkills.map((skill) => skill.address));
+  expect(unrelatedMutations).toBe(0);
   effects.teardown();
 });
 
@@ -455,21 +527,39 @@ test("UPDATES effects checks stay background and a late cancelled result cannot 
   const snapshot = projection(["team-main"]);
   const core = directSourceCore(snapshot);
   const check = deferred<{ value: UpdateObservation; diagnostics: [] }>();
+  const discovery = deferred<{ value: DiscoveryObservation; diagnostics: [] }>();
+  let signal: AbortSignal | undefined;
   const effects = testEffects({
     ...core,
-    management: { ...core.management, checkUpdate: () => check.promise },
+    management: {
+      ...core.management,
+      checkUpdate: () => check.promise,
+      discover: (_request, options) => {
+        signal = options?.signal;
+        return discovery.promise;
+      },
+    },
   });
   effects.selectUpdatesScope({ kind: "workspace" }, snapshot);
   const running = effects.checkUpdates();
   expect(effects.pending()).toBe(false);
-  const foreground = effects.checkUpdate({ kind: "source-update", source: "team-main" });
+  const foreground = effects.discover({ kind: "source-discovery", source: "team-main" });
   expect(effects.pending()).toBe(true);
   effects.cancel();
-  check.reject(new SkillCliError("CANCELLED", "cancelled"));
+  expect(signal?.aborted).toBe(true);
+  effects.stopUpdateChecks();
+  check.resolve({ value: observation("team-main", ["guide"]), diagnostics: [] });
+  discovery.reject(new SkillCliError("CANCELLED", "cancelled"));
   await Promise.all([running, foreground]);
   expect(effects.pending()).toBe(false);
   const source = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
-  expect(source).toBeDefined();
+  expect(source.group("team-main")?.observation).toBeUndefined();
+  expect(effects.updatesSubmittable()).toEqual([]);
+  expect(
+    await effects.review({ kind: "source-removal", source: "team-main", owner: directOwner }),
+  ).toBeDefined();
+  expect(effects.pending()).toBe(false);
+  effects.teardown();
 });
 
 test("UPDATES effects do not revive cached changed work after an update attempt or public revision drift", async () => {
@@ -609,31 +699,32 @@ test("UPDATES effects evict only attempted source cache after an ambiguous faile
 test("UPDATES effects retain cache when a valid subset is refused before foreground-lane acquisition", async () => {
   const snapshot = projection(["first"]);
   const core = directSourceCore(snapshot);
-  const competing = deferred<{ value: UpdateObservation; diagnostics: [] }>();
-  let checks = 0;
+  const competing = deferred<{ value: DiscoveryObservation; diagnostics: [] }>();
   const effects = testEffects({
     ...core,
     workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
     management: {
       ...core.management,
-      checkUpdate: async () => {
-        if (++checks === 1) return { value: observation("first", ["guide"]), diagnostics: [] };
-        return competing.promise;
-      },
+      checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
+      discover: () => competing.promise,
     },
   });
   effects.selectUpdatesScope({ kind: "workspace" }, snapshot);
   await effects.checkUpdates();
 
-  const foregroundRequest = effects.checkUpdate({ kind: "source-update", source: "first" });
+  const foregroundRequest = effects.discover({ kind: "source-discovery", source: "first" });
   expect(effects.pending()).toBe(true);
   expect(await effects.submitUpdates([{ source: "first", path: "guide" }])).toBe(false);
-  competing.resolve({ value: observation("first", ["guide"]), diagnostics: [] });
+  competing.resolve({
+    value: { source: "first", kind: "github", candidates: [] },
+    diagnostics: [],
+  });
   await foregroundRequest;
 
   const reentered = effects.selectUpdatesScope({ kind: "source", source: "first" }, snapshot)!;
   expect(reentered.group("first")?.observation).toBeDefined();
   expect(effects.updatesSubmittable()).toEqual([{ source: "first", path: "guide" }]);
+  effects.teardown();
 });
 
 test("UPDATES effects preserve a source exclusion across an intervening Skill scope and restore the exact prior draft", () => {

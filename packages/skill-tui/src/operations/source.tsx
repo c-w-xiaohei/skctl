@@ -1,5 +1,5 @@
 import { useTerminalDimensions } from "@opentui/solid";
-import type { DiscoveryReview, SourceRemovalReview, UpdateReview } from "../effects";
+import type { DiscoveryReview, SourceRemovalReview } from "../effects";
 import {
   createModalControlRegistry,
   useModalControl,
@@ -9,7 +9,7 @@ import { DataList } from "../ui/data-list";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
 
 export function SourceSelectionOverlay(props: {
-  readonly review: DiscoveryReview | UpdateReview;
+  readonly review: DiscoveryReview;
   readonly installed: ReadonlySet<string>;
   readonly selected: readonly string[];
   readonly pending: boolean;
@@ -20,45 +20,16 @@ export function SourceSelectionOverlay(props: {
 }) {
   const controls = createModalControlRegistry();
   const terminal = useTerminalDimensions();
-  const discovery = props.review.kind === "discovery";
-  const candidates =
-    props.review.kind === "discovery"
-      ? props.review.observation.candidates.map((candidate) => ({
-          ...candidate,
-          category: "Available",
-          selectable: !props.installed.has(candidate.path),
-        }))
-      : [
-          ...props.review.observation.changed.map((candidate) => ({
-            ...candidate,
-            category: "Changed",
-            selectable: true,
-          })),
-          ...props.review.observation.added.map((candidate) => ({
-            ...candidate,
-            category: "New",
-            selectable: false,
-          })),
-          ...props.review.observation.removed.map((candidate) => ({
-            ...candidate,
-            category: "Removed",
-            selectable: false,
-          })),
-          ...props.review.observation.unchanged.map((candidate) => ({
-            ...candidate,
-            category: "Unchanged",
-            selectable: false,
-          })),
-        ];
-  const selectedPath = props.review.kind === "update" ? props.review.selectedPath : undefined;
-  const visibleCandidates = selectedPath
-    ? candidates.filter((candidate) => candidate.path === selectedPath)
-    : candidates;
+  const candidates = () =>
+    props.review.observation.candidates.map((candidate) => ({
+      ...candidate,
+      selectable: !props.installed.has(candidate.path),
+    }));
   const registerCandidates = useModalControl("source-operation-selection", controls);
   useModalControlTraversal(controls, props.onCancel);
   const choices = () =>
-    visibleCandidates.map((candidate) => ({
-      name: `${candidate.selectable ? (props.selected.includes(candidate.path) ? "[x]" : "[ ]") : "[-]"} ${candidate.category} ${candidate.name}`,
+    candidates().map((candidate) => ({
+      name: `${candidate.selectable ? (props.selected.includes(candidate.path) ? "[x]" : "[ ]") : "[-]"} Available ${candidate.name}`,
       description: candidate.selectable
         ? candidate.description
         : `${candidate.description} (not selectable)`,
@@ -72,7 +43,7 @@ export function SourceSelectionOverlay(props: {
       }}
     >
       <ModalBody>
-        <text>{discovery ? "Add Skills" : "Check Updates"}</text>
+        <text>Add Skills</text>
         <text>{`Source: ${props.review.observation.source}`}</text>
         {props.review.observation.exactRevision && (
           <text>{`Revision: ${props.review.observation.exactRevision}`}</text>
@@ -81,11 +52,11 @@ export function SourceSelectionOverlay(props: {
           id="source-operation-selection"
           ref={registerCandidates}
           focused={true}
-          height={Math.max(1, Math.min(visibleCandidates.length * 2, terminal().height - 12))}
+          height={Math.max(1, Math.min(candidates().length * 2, terminal().height - 12))}
           options={choices()}
           showDescription
           onSelect={(_index, option) => {
-            const candidate = visibleCandidates.find((item) => item.path === option?.value);
+            const candidate = candidates().find((item) => item.path === option?.value);
             if (candidate?.selectable && !props.pending) props.onToggle(candidate.path);
           }}
         />
@@ -102,7 +73,7 @@ export function SourceSelectionOverlay(props: {
             controls={controls}
             record={modalCommand(
               "source-operation.submit",
-              `${props.pending ? "Applying" : discovery ? "Install" : "Update"} ${props.selected.length} Skills`,
+              `${props.pending ? "Applying" : "Install"} ${props.selected.length} Skills`,
               "Apply selected Skills",
               !props.pending && props.selected.length > 0,
               false,
@@ -114,18 +85,14 @@ export function SourceSelectionOverlay(props: {
           />
         </box>
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <text>
-          {discovery
-            ? "Install adds no Memberships or Agent disclosure"
-            : "New roots install through Add Skills; removed roots are retained"}
-        </text>
+        <text>Install adds no Memberships or Agent disclosure</text>
       </ModalBody>
     </ModalShell>
   );
 }
 
 export function SourceObservationOverlay(props: {
-  readonly title: "Discovering Skills" | "Checking Updates" | "Observing Config";
+  readonly title: "Discovering Skills" | "Observing Config";
   readonly source: string;
   readonly cancelling: boolean;
   readonly error?: { readonly code: string; readonly message: string };

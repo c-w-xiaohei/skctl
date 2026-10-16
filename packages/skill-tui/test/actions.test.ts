@@ -9,6 +9,7 @@ import {
   sourceOperationIntent,
   sourceRouteIntent,
   selectedSkillActions,
+  selectedSourceContext,
 } from "../src/actions";
 import { createCollectionsState } from "../src/collections/state";
 import { configDeclarationOwnerKey, createConfigState } from "../src/config/state";
@@ -695,9 +696,10 @@ test("MGMT-004 Source actions use the selected Project direct or contributed Sou
     source: "team-main",
   });
   owners.config.select("project", "team-config/lark");
-  expect(sourceOperationIntent("check-updates", "project", projection, owners.facts)).toEqual({
-    kind: "source-update",
+  expect(selectedSourceContext("project", projection, owners.facts)).toMatchObject({
     source: "team-config/lark",
+    destination: "project",
+    contribution: { configSource: configSourceOwner },
   });
 });
 

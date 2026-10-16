@@ -145,9 +145,7 @@ export type DirectSourceIntent = {
   readonly owner: ConfigDeclarationOwner;
 };
 
-export type SourceOperationIntent =
-  | { readonly kind: "source-discovery"; readonly source: string }
-  | { readonly kind: "source-update"; readonly source: string; readonly selectedPath?: string };
+export type SourceOperationIntent = { readonly kind: "source-discovery"; readonly source: string };
 
 export type SourceRouteIntent =
   | {
@@ -855,7 +853,7 @@ export function skillSourceIntent(
 }
 
 export function sourceOperationIntent(
-  id: "add-skills" | "check-updates",
+  id: "add-skills",
   destination: Destination,
   projection: ManagementProjection,
   pages: PageActionFacts,
@@ -863,7 +861,7 @@ export function sourceOperationIntent(
   const context = selectedSourceContext(destination, projection, pages);
   if (!context) throw new Error(`${id} is not reachable for this selection`);
   return {
-    kind: id === "add-skills" ? "source-discovery" : "source-update",
+    kind: "source-discovery",
     source: context.source,
   };
 }

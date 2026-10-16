@@ -24,7 +24,7 @@ import {
   readerSecondAddress,
   readerSecondContent,
 } from "./installed-reader.fixture";
-import { parsedEscape, parsedEnter as rawParsedEnter } from "./reader-test-controls";
+import { focusLive, parsedEscape, parsedEnter as rawParsedEnter } from "./reader-test-controls";
 
 async function parsedArrow(
   setup: Awaited<ReturnType<typeof testRender>>,
@@ -153,7 +153,7 @@ test("arrow-first browser selection enters Details, reads, cycles panes, and ret
   }
 });
 
-test("update review arrows preserve selection policy and Escape cancels without applying", async () => {
+test("update workbench arrows preserve selection and Escape leaves without applying", async () => {
   const observations: unknown[] = [];
   const updates: unknown[] = [];
   const setup = await testRender(
@@ -186,49 +186,38 @@ test("update review arrows preserve selection policy and Escape cancels without 
     { width: 140, height: 40 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-    // Move from the initial Skills browser to the page-navigation sidebar, then
-    // choose Sources and enter its content with arrows and Enter only.
-    await setup.renderOnce();
-    await parsedArrow(setup, "left");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "shell-section-navigation",
-    );
-    await parsedArrow(setup, "down");
-    await parsedArrow(setup, "down");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
+    await focusLive(setup, "shell-section-tab-skills");
+    await parsedArrow(setup, "right");
+    await parsedArrow(setup, "right");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
+    await focusLive(setup, "workspace-action-check-updates");
     await parsedEnter(setup);
-    await checkpoint(setup, "source-browser", "Sources page enter");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
+    await focusLive(setup, "updates-browser");
     await parsedEnter(setup);
-    await checkpoint(setup, "workspace-action-check-updates", "Source inspector Enter");
-    await parsedEnter(setup);
-    await checkpoint(setup, "source-operation-selection", "Source update Enter");
-    const selection = setup.renderer.root.findDescendantById(
-      "source-operation-selection",
-    ) as SelectRenderable;
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe(selection.id);
-    expect(selection.getSelectedOption()?.value).toBe("guide");
-    expect(updates).toEqual([]);
-
-    // Enter marks a candidate without committing; Down at the last row reaches Cancel.
-    await parsedEnter(setup);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-updates-browser"));
+    const selection = await focusLive(setup, "source-updates-browser");
     await parsedArrow(setup, "down");
-    await checkpoint(setup, "source-operation-cancel", "Review boundary enters commands");
-    await parsedArrow(setup, "down");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-operation-submit",
-    );
     await parsedArrow(setup, "up");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-operation-cancel",
-    );
+    expect(setup.renderer.currentFocusedRenderable).toBe(selection);
     expect(updates).toEqual([]);
-    expect(selection.getSelectedOption()?.value).toBe("guide");
-
+    // Space marks the current installed root; navigation and checking never publish.
+    setup.mockInput.pressKey(" ");
+    await setup.renderOnce();
+    await setup.waitForFrame((frame) => frame.includes("Update selected 1"));
+    expect(updates).toEqual([]);
     await parsedEscape(setup);
-    await setup.waitFor(
-      () => !setup.renderer.root.findDescendantById("source-operation-selection"),
-    );
-    expect(observations).toEqual([{ source: "team-main" }]);
+    await setup.waitForFrame((frame) => frame.includes("Ctrl+U Update all"));
+    expect(setup.renderer.root.findDescendantById("source-updates-browser")).toBe(selection);
+    await parsedEscape(setup);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
+    await parsedEscape(setup);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
+    expect(observations.length).toBeGreaterThan(0);
+    expect(
+      observations.every((request) => (request as { source: string }).source === "team-main"),
+    ).toBe(true);
     expect(updates).toEqual([]);
   } finally {
     setup.renderer.destroy();

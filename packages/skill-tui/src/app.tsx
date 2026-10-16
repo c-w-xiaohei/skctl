@@ -29,6 +29,7 @@ import {
   skillCollectionTargets,
   reachableActions,
   selectedConfigIntegrationOwner,
+  selectedSourceContext,
   sourceRouteIntent,
   sourceOperationIntent,
   type ActionId,
@@ -37,7 +38,6 @@ import {
   createTuiEffects,
   type SourceRemovalReview,
   type DiscoveryReview,
-  type UpdateReview,
   type InstalledSkillReview,
   type TuiCore,
 } from "./effects";
@@ -225,7 +225,7 @@ type AppOverlayPayload =
   | { readonly family: "config-observation"; readonly id: string }
   | {
       readonly family: "source-selection";
-      readonly review: DiscoveryReview | UpdateReview;
+      readonly review: DiscoveryReview;
       readonly selectedPaths: readonly string[];
     }
   | {
@@ -1111,8 +1111,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       closeSession();
       return;
     } else if (payload?.family === "source-selection") {
-      if (payload.review.kind === "discovery") effects.discardDiscovery(payload.review);
-      else effects.discardUpdate(payload.review);
+      effects.discardDiscovery(payload.review);
       closeSession();
       return;
     } else if (payload?.family === "installed-rebind") {
@@ -1475,8 +1474,8 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       return;
     }
     if (id === "check-updates") {
-      const intent = sourceOperationIntent(id, route.snapshot().destination, workspace, pageFacts);
-      openUpdates({ kind: "source", source: intent.source }, true);
+      const context = selectedSourceContext(route.snapshot().destination, workspace, pageFacts);
+      if (context) openUpdates({ kind: "source", source: context.source }, true);
       return;
     }
     if (id === "add-skills") {
@@ -1886,10 +1885,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     if (!surface) return;
     const current = surface.review;
     const begun = beginSession(overlaySession().revision, "executing");
-    const complete =
-      current.kind === "discovery"
-        ? await effects.install(current, surface.selectedPaths)
-        : await effects.update(current, surface.selectedPaths);
+    const complete = await effects.install(current, surface.selectedPaths);
     if (
       complete &&
       overlaySession().revision === begun.revision &&
@@ -5145,11 +5141,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
             )}
             {overlayKind() === "selection" && sourceObservationPayload() && (
               <SourceObservationOverlay
-                title={
-                  sourceObservationPayload()!.intent.kind === "source-discovery"
-                    ? "Discovering Skills"
-                    : "Checking Updates"
-                }
+                title="Discovering Skills"
                 source={sourceObservationPayload()!.intent.source}
                 cancelling={overlaySession().phase === "cancelling"}
                 error={operation.problem()}
@@ -5165,11 +5157,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                     }),
                   );
                   const attempt = overlaySession();
-                  void (
-                    intent.kind === "source-discovery"
-                      ? effects.discover(intent)
-                      : effects.checkUpdate(intent)
-                  ).then((next) => {
+                  void effects.discover(intent).then((next) => {
                     if (
                       next &&
                       sessionMatches(attempt, "selection", "source-observation") &&

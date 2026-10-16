@@ -19,7 +19,6 @@ import {
   type SourceRemovalImpact,
   type RebindImpact,
   type UninstallImpact,
-  type UpdateObservation,
   type ManagementProjection,
   type WorkspaceCapability,
   type ConfigDeclarationOwner,
@@ -241,13 +240,6 @@ export interface DiscoveryReview {
   readonly intent: Extract<SourceOperationIntent, { readonly kind: "source-discovery" }>;
   readonly observation: DiscoveryObservation;
 }
-export interface UpdateReview {
-  readonly kind: "update";
-  readonly id: string;
-  readonly intent: Extract<SourceOperationIntent, { readonly kind: "source-update" }>;
-  readonly observation: UpdateObservation;
-  readonly selectedPath?: string;
-}
 export type InstalledSkillReview =
   | {
       readonly kind: "uninstall";
@@ -302,7 +294,6 @@ export function createTuiEffects(
     | undefined;
   let liveReview: SourceRemovalReview | undefined;
   let liveDiscovery: DiscoveryReview | undefined;
-  let liveUpdate: UpdateReview | undefined;
   let liveInstalledReview: InstalledSkillReview | undefined;
   let liveCollectionReview: CollectionReview | undefined;
   let sequence = 0;
@@ -755,43 +746,6 @@ export function createTuiEffects(
     );
   };
 
-  const checkUpdate = async (
-    intent: Extract<SourceOperationIntent, { readonly kind: "source-update" }>,
-  ): Promise<UpdateReview | undefined> => {
-    return withForeground(
-      "observe",
-      undefined,
-      async ({ id, signal, active }) => {
-        const result = await core.management.checkUpdate({ source: intent.source }, { signal });
-        if (!active() || result.value.source !== intent.source) {
-          if (active()) {
-            const error = {
-              code: "TRANSACTION_CONFLICT",
-              severity: "warning" as const,
-              message: "Observed Source no longer matches the selected Source",
-            };
-            settle(id, error.message, error);
-          }
-          return undefined;
-        }
-        const reviewed: UpdateReview = {
-          kind: "update",
-          id,
-          intent,
-          observation: result.value,
-          selectedPath: intent.selectedPath,
-        };
-        liveUpdate = reviewed;
-        settle(id, "Observation ready");
-        return reviewed;
-      },
-      {
-        title: "Observing Updates",
-        semanticOwner: { kind: "source", id: intent.source },
-      },
-    );
-  };
-
   const install = async (reviewed: DiscoveryReview, paths: readonly string[]) => {
     if (closed || foreground || liveDiscovery !== reviewed || paths.length === 0) return false;
     const candidatePaths = new Set(
@@ -819,43 +773,6 @@ export function createTuiEffects(
       },
       {
         title: "Installing Skills",
-        semanticOwner: { kind: "source", id: reviewed.intent.source },
-      },
-    );
-  };
-
-  const update = async (reviewed: UpdateReview, paths: readonly string[]) => {
-    if (closed || foreground || liveUpdate !== reviewed || paths.length === 0) return false;
-    const changedPaths = new Set(
-      reviewed.observation.changed
-        .filter((candidate) => !reviewed.selectedPath || candidate.path === reviewed.selectedPath)
-        .map((candidate) => candidate.path),
-    );
-    if (new Set(paths).size !== paths.length || paths.some((path) => !changedPaths.has(path)))
-      return false;
-    return withForeground(
-      "execute",
-      false,
-      async ({ id, signal, active }) => {
-        await core.management.update(
-          {
-            source: reviewed.observation.source,
-            paths,
-            exactRevision: reviewed.observation.exactRevision,
-            ...(reviewed.observation.baseline !== undefined
-              ? { expectedBaseline: reviewed.observation.baseline }
-              : {}),
-          },
-          { signal },
-        );
-        const refreshed = await refresh();
-        if (active()) liveUpdate = undefined;
-        if (active())
-          settle(id, refreshed ? "Skills updated" : "Skills updated; Workspace is stale");
-        return true;
-      },
-      {
-        title: "Updating Skills",
         semanticOwner: { kind: "source", id: reviewed.intent.source },
       },
     );
@@ -1427,8 +1344,6 @@ export function createTuiEffects(
     confirm,
     discover,
     install,
-    checkUpdate,
-    update,
     selectUpdatesScope,
     restoreUpdatesScope,
     updates: () => updates(),
@@ -1628,9 +1543,6 @@ export function createTuiEffects(
     discardDiscovery: (reviewed: DiscoveryReview) => {
       if (liveDiscovery === reviewed) liveDiscovery = undefined;
     },
-    discardUpdate: (reviewed: UpdateReview) => {
-      if (liveUpdate === reviewed) liveUpdate = undefined;
-    },
     discardInstalledReview: (reviewed: InstalledSkillReview) => {
       if (liveInstalledReview === reviewed) liveInstalledReview = undefined;
     },
@@ -1650,7 +1562,6 @@ export function createTuiEffects(
         foreground = undefined;
         liveReview = undefined;
         liveDiscovery = undefined;
-        liveUpdate = undefined;
         liveInstalledReview = undefined;
         liveCollectionReview = undefined;
       }

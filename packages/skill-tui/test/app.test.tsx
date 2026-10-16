@@ -1447,62 +1447,6 @@ test("RENDER stale Config retry preview completion cannot mutate a newer same-ki
   }
 });
 
-test("RENDER Check Updates labels categories and applies only a selected Changed root at its observation revision", async () => {
-  const calls: unknown[] = [];
-  const setup = await testRender(
-    () => (
-      <App
-        core={directSourceCore(workspaceProjection(), {
-          checkUpdate: async () => ({
-            value: {
-              source: "team-main",
-              kind: "github",
-              exactRevision: "update-commit",
-              changed: [
-                {
-                  path: "changed",
-                  name: "changed",
-                  description: "Changed skill",
-                },
-              ],
-              added: [{ path: "new", name: "new", description: "New skill" }],
-              removed: [{ path: "old", name: "old", description: "Removed skill" }],
-              unchanged: [{ path: "same", name: "same", description: "Same skill" }],
-            },
-            diagnostics: [],
-          }),
-          update: async (request) => {
-            calls.push(request);
-            return { value: undefined, diagnostics: [] };
-          },
-        })}
-        exit={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
-  try {
-    await populated(setup, "sources");
-    await openSourceCommand(setup, "check-updates");
-    await setup.waitForFrame(
-      (frame) => frame.includes("Changed changed") && frame.includes("Unchanged same"),
-    );
-    expect(setup.captureCharFrame()).toContain("[-] New new");
-    await activateControl(setup, "source-operation-selection");
-    await activateControl(setup, "source-operation-submit");
-    await setup.waitFor(() => calls.length === 1);
-    expect(calls).toEqual([
-      {
-        source: "team-main",
-        paths: ["changed"],
-        exactRevision: "update-commit",
-      },
-    ]);
-  } finally {
-    setup.renderer.destroy();
-  }
-});
-
 test("RENDER Source browser pointer opens direct and contributed rows exactly once", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(workspaceProjection())} exit={() => {}} />,
@@ -1604,9 +1548,11 @@ test("RENDER Project contributed Source installs selected observed roots at its 
     { width: 120, height: 40 },
   );
   try {
-    await projectContributedSource(setup);
-    await awaitParsedEscape(setup);
-    await openSourceCommand(setup, "add-skills");
+    await setup.flush();
+    await activateControl(setup, "shell-section-tab-sources");
+    const browser = await readySourceBrowser(setup);
+    browser.setSelectedIndex(1);
+    await activateControl(setup, "workspace-action-add-skills");
     await setup.waitForFrame((frame) => frame.includes("Revision: contributed-install"));
     await activateControl(setup, "source-operation-selection");
     await activateControl(setup, "source-operation-submit");
@@ -1627,62 +1573,102 @@ test("RENDER Project contributed Source installs selected observed roots at its 
   }
 });
 
-test("RENDER Project contributed Source updates only selected Changed roots at its exact revision", async () => {
-  const calls: unknown[] = [];
-  const setup = await testRender(
-    () => (
-      <App
-        core={directSourceCore(workspaceProjection(), {
-          checkUpdate: async (request) => {
-            calls.push(["check", request]);
-            return {
-              value: {
-                source: request.source,
-                kind: "github",
-                exactRevision: "contributed-update",
-                changed: [{ path: "review", name: "review", description: "Changed" }],
-                added: [{ path: "new", name: "new", description: "New" }],
-                removed: [],
-                unchanged: [],
-              },
-              diagnostics: [],
-            };
-          },
-          update: async (request) => {
-            calls.push(["update", request]);
-            return { value: undefined, diagnostics: [] };
-          },
-        })}
-        exit={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
-  try {
-    await projectContributedSource(setup);
-    await awaitParsedEscape(setup);
-    await openSourceCommand(setup, "check-updates");
-    await setup.waitForFrame(
-      (frame) => frame.includes("Changed review") && frame.includes("New new"),
+test.each(["team-main", "team-config/lark"])(
+  "RENDER Source %s updates selected Changed roots through its workbench",
+  async (source) => {
+    const base = workspaceProjection();
+    const projection: ManagementProjection = {
+      ...base,
+      installedSkills: ["changed", "old", "same"].map((path) => ({
+        address: { source, path },
+        name: path,
+        description: path,
+        owner: { source, health: "healthy" },
+        collections: [],
+        selectors: [],
+        selectorViews: { status: "complete", values: [] },
+        aliases: [],
+        problems: [],
+      })),
+    };
+    const calls: unknown[] = [];
+    const setup = await testRender(
+      () => (
+        <App
+          core={directSourceCore(projection, {
+            checkUpdate: async (request) => {
+              return {
+                value: {
+                  source: request.source,
+                  kind: "github",
+                  exactRevision: "d".repeat(40),
+                  baseline: "reviewed-baseline",
+                  changed: [{ path: "changed", name: "changed", description: "Changed" }],
+                  added: [{ path: "new", name: "new", description: "New" }],
+                  removed: [{ path: "old", name: "old", description: "Removed" }],
+                  unchanged: [{ path: "same", name: "same", description: "Unchanged" }],
+                },
+                diagnostics: [],
+              };
+            },
+            update: async (request) => {
+              calls.push(request);
+              return { value: undefined, diagnostics: [] };
+            },
+            install: async () => {
+              throw new Error("Updates must not install new roots");
+            },
+            uninstall: async () => {
+              throw new Error("Updates must not uninstall removed roots");
+            },
+          })}
+          exit={() => {}}
+        />
+      ),
+      { width: 120, height: 40 },
     );
-    await activateControl(setup, "source-operation-selection");
-    await activateControl(setup, "source-operation-submit");
-    await setup.waitFor(() => calls.length === 2);
-    expect(calls).toEqual([
-      ["check", { source: "team-config/lark" }],
-      [
-        "update",
+    try {
+      await setup.flush();
+      await activateControl(setup, "shell-section-tab-sources");
+      const browser = await readySourceBrowser(setup);
+      browser.setSelectedIndex(source === "team-main" ? 0 : 1);
+      browser.focus();
+      setup.mockInput.pressKey("p", { ctrl: true });
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+      const choices = setup.renderer.root.findDescendantById("palette-choices") as SelectRenderable;
+      const check = choices.options.findIndex((option) => option.value.id === "check-updates");
+      expect(check).toBeGreaterThanOrEqual(0);
+      choices.setSelectedIndex(check);
+      await awaitParsedEnter(setup);
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
+      await activateControl(setup, "updates-browser");
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-updates-browser"));
+      await setup.waitForFrame((frame) => frame.includes("changed"));
+      expect(setup.renderer.root.findDescendantById("source-operation-selection")).toBeUndefined();
+      expect(calls).toEqual([]);
+      await focusLive(setup, "source-updates-browser");
+      setup.mockInput.pressKey(" ");
+      await setup.renderOnce();
+      await activateControl(setup, "source-updates-update-all");
+      await setup.waitFor(() => calls.length === 1);
+      expect(calls).toEqual([
         {
-          source: "team-config/lark",
-          paths: ["review"],
-          exactRevision: "contributed-update",
+          source,
+          paths: ["changed"],
+          exactRevision: "d".repeat(40),
+          expectedBaseline: "reviewed-baseline",
         },
-      ],
-    ]);
-  } finally {
-    setup.renderer.destroy();
-  }
-});
+      ]);
+    } catch (cause) {
+      throw new Error(
+        `Source update entry; focus=${setup.renderer.currentFocusedRenderable?.id}\n${setup.captureCharFrame()}`,
+        { cause },
+      );
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 
 test("RENDER contributed Source filters unhealthy Installed Skills and restores each originating layer", async () => {
   const projection = {
