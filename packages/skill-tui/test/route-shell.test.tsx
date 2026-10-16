@@ -18,10 +18,12 @@ test("a too-small RouteShell mounts only the resize gate", async () => {
     () => (
       <RouteShell
         mode="too-small"
+        columns={50}
         slots={{
-          globalBar: <text>Global</text>,
-          sectionNav: <text>Section</text>,
-          routeTitle: <text>Title</text>,
+          scopeControls: <text>Scope</text>,
+          activity: <text>Activity</text>,
+          back: <text>Back</text>,
+          pageNavigation: <text>Pages</text>,
           content: <text>Content</text>,
           commandStatus: <text>Status</text>,
         }}

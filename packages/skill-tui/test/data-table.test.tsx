@@ -41,6 +41,39 @@ async function frames(setup: Setup) {
   for (let i = 0; i < 3; i++) await setup.renderOnce();
 }
 
+test("RENDER partial selection is distinct from full checks and toggles only the current row", async () => {
+  const toggled: string[] = [];
+  const setup = await testRender(
+    () => (
+      <DataTable
+        id="table"
+        rows={rows}
+        columns={columns}
+        rowKey={(row) => row.id}
+        currentKey="a"
+        onCurrentChange={() => {}}
+        selection={{
+          keys: new Set(["c"]),
+          partialKeys: new Set(["a"]),
+          onToggle: (row) => toggled.push(row.id),
+        }}
+      />
+    ),
+    { width: 60, height: 8 },
+  );
+  try {
+    await frames(setup);
+    const partial = setup.renderer.root.findDescendantById("table-row-a:check") as TextRenderable;
+    const full = setup.renderer.root.findDescendantById("table-row-c:check") as TextRenderable;
+    expect(partial.plainText.trim()).toBe("−");
+    expect(full.plainText.trim()).toBe("✓");
+    await setup.mockMouse.click(partial.screenX, partial.screenY);
+    expect(toggled).toEqual(["a"]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
 test("RENDER table aligns headers and data using container width, and adapts without losing the current row", async () => {
   const [width, setWidth] = createSignal(50);
   const [current, setCurrent] = createSignal<string | undefined>("c");

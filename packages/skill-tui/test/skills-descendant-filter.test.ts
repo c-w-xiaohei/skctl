@@ -64,13 +64,13 @@ test("Collection and Unassigned browsing never prune checked installed addresses
   };
   expect(unassignedSkills(projection)).toEqual([unassigned]);
   const state = createWorkspaceState();
-  state.selectScope("all-installed-skills");
+  state.selectSkillsView("all-installed-skills");
   state.toggleSkill(assigned.address);
   state.toggleSkill(unassigned.address);
-  state.selectScope("unassigned");
+  state.selectSkillsView("unassigned");
   state.reconcile(projection, projection);
   expect(state.selectedSkills()).toEqual([assigned.address, unassigned.address]);
-  state.selectScope("all-installed-skills");
+  state.selectSkillsView("all-installed-skills");
   state.setFilter("Collection", "child");
   state.reconcile(projection, projection);
   expect(state.selectedSkill()).toEqual(assigned.address);

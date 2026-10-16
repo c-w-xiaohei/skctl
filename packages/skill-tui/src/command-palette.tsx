@@ -1,6 +1,6 @@
-import { InputRenderable, SelectRenderable } from "@opentui/core";
+import { InputRenderable, ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid";
-import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { CommandRecord } from "./types";
 import {
   createModalControlRegistry,
@@ -100,10 +100,25 @@ function CommandPaletteContents(props: Omit<CommandPaletteProps, "open">) {
   const [query, setQuery] = createSignal("");
   const [selectedId, setSelectedId] = createSignal<string>();
   const [listWidth, setListWidth] = createSignal(0);
+  const [detailsOverflow, setDetailsOverflow] = createSignal(false);
+  const [readingDetails, setReadingDetails] = createSignal(false);
   let search: InputRenderable | undefined;
   let choices: SelectRenderable | undefined;
+  let details: ScrollBoxRenderable | undefined;
   let disposed = false;
-  const measure = () => setListWidth(choices?.width ?? 0);
+  const canReadDetails = () =>
+    !!details &&
+    !details.isDestroyed &&
+    details.viewport.width > 0 &&
+    details.viewport.height > 0 &&
+    details.scrollHeight > details.viewport.height;
+  const measure = () => {
+    setListWidth(choices?.width ?? 0);
+    const overflow = canReadDetails();
+    if (!overflow && renderer.currentFocusedRenderable === details) choices?.focus();
+    setDetailsOverflow(overflow);
+    setReadingDetails(overflow && renderer.currentFocusedRenderable === details);
+  };
   renderer.on("frame", measure);
   onCleanup(() => {
     disposed = true;
@@ -118,7 +133,8 @@ function CommandPaletteContents(props: Omit<CommandPaletteProps, "open">) {
   );
   const registerSearch = useModalControl("palette-query", controls, 0);
   const registerChoices = useModalControl("palette-choices", controls, 1);
-  const registerClose = useModalControl("palette-close", controls, 2);
+  const registerDetails = useModalControl("palette-command-details", controls, 2, canReadDetails);
+  const registerClose = useModalControl("palette-close", controls, 3);
   const actions = createMemo(() =>
     props.actions
       .filter((record) =>
@@ -149,6 +165,10 @@ function CommandPaletteContents(props: Omit<CommandPaletteProps, "open">) {
     ),
   );
   const selected = createMemo(() => actions()[selectedIndex()]);
+  createEffect(() => {
+    selected();
+    if (details && !details.isDestroyed) details.scrollTo(0);
+  });
   // Dialog owns Tab, Escape and the overlay. Keep the existing list-boundary
   // arrow policy (including modified-Enter isolation) instead of duplicating it.
   useModalControlTraversal(controls, () => props.onClose());
@@ -224,30 +244,57 @@ function CommandPaletteContents(props: Omit<CommandPaletteProps, "open">) {
           if (record?.enabled) props.onSelect(record);
         }}
       />
-      <text
-        id="palette-action-detail"
-        height={1}
+      <scrollbox
+        id="palette-command-details"
+        ref={(target: ScrollBoxRenderable) => {
+          details = target;
+          registerDetails(target);
+        }}
+        height={2}
         flexShrink={0}
-        wrapMode="none"
-        fg={selected()?.enabled ? tokens().colors.mutedForeground : tokens().colors.warning}
+        minHeight={0}
+        scrollX={false}
+        horizontalScrollbarOptions={{ visible: false }}
+        focusable={detailsOverflow()}
+        backgroundColor={readingDetails() ? tokens().colors.control : "transparent"}
       >
-        {selected()
-          ? `Target: ${selected()!.destination || "Current page"}`
-          : "No matching commands"}
-      </text>
-      <text
-        id="palette-action-reason"
-        height={1}
-        flexShrink={0}
-        wrapMode="none"
-        fg={selected()?.enabled ? tokens().colors.mutedForeground : tokens().colors.warning}
-      >
-        {selected()
-          ? selected()!.enabled
-            ? selected()!.verb
-            : (selected()!.disabledReason ?? "Unavailable")
-          : "Change the search or clear it to see all commands"}
-      </text>
+        <text
+          id="palette-action-detail"
+          flexShrink={0}
+          selectable
+          wrapMode="word"
+          fg={
+            readingDetails()
+              ? tokens().colors.controlForeground
+              : selected()?.enabled
+                ? tokens().colors.mutedForeground
+                : tokens().colors.warning
+          }
+        >
+          {selected()
+            ? `Target: ${selected()!.destination || "Current page"}`
+            : "No matching commands"}
+        </text>
+        <text
+          id="palette-action-reason"
+          flexShrink={0}
+          selectable
+          wrapMode="word"
+          fg={
+            readingDetails()
+              ? tokens().colors.controlForeground
+              : selected()?.enabled
+                ? tokens().colors.mutedForeground
+                : tokens().colors.warning
+          }
+        >
+          {selected()
+            ? selected()!.enabled
+              ? selected()!.verb
+              : (selected()!.disabledReason ?? "Unavailable")
+            : "Try another search or clear it."}
+        </text>
+      </scrollbox>
     </box>
   );
 }

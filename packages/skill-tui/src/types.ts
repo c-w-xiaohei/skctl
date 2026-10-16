@@ -16,13 +16,7 @@ export type ReadInstalledResource = Awaited<
 export const destinations = ["workspace", "global", "project", "local"] as const;
 export type Destination = (typeof destinations)[number];
 export type WorkspaceSection = "skills" | "collections" | "sources" | "updates";
-export type WorkspaceScope =
-  | "current-exposure"
-  | "all-installed-skills"
-  | "unassigned"
-  | "problems"
-  | "collections"
-  | "sources";
+export type SkillsView = "current-exposure" | "all-installed-skills" | "unassigned" | "problems";
 export type ConfigSection = "sources" | "config-sources" | "collections" | "integrations";
 export type Section = WorkspaceSection | ConfigSection;
 export type NavigationContext = Destination;
@@ -58,6 +52,8 @@ export type FocusOwner =
   | "input"
   | "skills-query"
   | "source-updates-query"
+  | "source-installed-skills"
+  | "collection-tree-issue"
   | "updates-query"
   | "skills-filter-open"
   | "skills-filter-clear"
@@ -148,6 +144,7 @@ export interface ReaderState {
   readonly detailsScroll: number;
   readonly detailsManagementOpen?: boolean;
   readonly detailsDescriptionOpen?: boolean;
+  readonly detailsMetadataOpen?: boolean;
   readonly focus?: FocusOwner;
   readonly text?: string;
   readonly rawText?: string;

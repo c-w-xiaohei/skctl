@@ -5,13 +5,14 @@ import {
   type ScrollBoxRenderable,
   type Renderable,
 } from "@opentui/core";
-import { extend, useTerminalDimensions } from "@opentui/solid";
+import { extend, useRenderer, useTerminalDimensions } from "@opentui/solid";
 import type { ManagementCapability, UpdateFileChange, UpdatePreview } from "@skill-cli/core";
 import { createTwoFilesPatch } from "diff";
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { FocusRegistry } from "../focus";
 import { isPlainNavKey, type NavKey } from "../navigation";
-import type { CommandRegistration, DispatchResult, FocusOwner } from "../types";
+import { usePageReturn } from "../page-navigation";
+import type { CommandRecord, CommandRegistration, DispatchResult, FocusOwner } from "../types";
 import { Button } from "../ui/button";
 import { DataList } from "../ui/data-list";
 import { useTheme } from "../ui/use-theme";
@@ -41,12 +42,14 @@ export interface SkillUpdatePreviewProps {
 export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
   const terminal = useTerminalDimensions(),
     theme = useTheme();
+  const renderer = useRenderer();
   const [preview, setPreview] = createSignal<UpdatePreview>();
   const [error, setError] = createSignal(props.unavailableReason);
   const [loading, setLoading] = createSignal(!props.unavailableReason);
   const [index, setIndex] = createSignal(0);
   const controller = new AbortController();
   let live = true;
+  let root: Renderable | undefined;
   let content: ScrollBoxRenderable | undefined;
   const id = (suffix: string) => `${props.prefix}-preview-${suffix}`;
   const files = () => {
@@ -60,9 +63,24 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
   };
   const wide = () => terminal().width >= 100;
   const close = () => {
+    if (!live || controller.signal.aborted) return;
     controller.abort();
     props.onBack();
   };
+  const backRecord = (): CommandRecord => ({
+    id: `${props.prefix}.preview-back`,
+    verb: "Back to updates",
+    destination: `${props.request.source} · same Skill, filter and checked set`,
+    keys: ["enter"],
+    scope: "page",
+    enabled: true,
+    danger: false,
+  });
+  const sharedReturn = usePageReturn(() => ({
+    record: backRecord(),
+    anchor: () => root,
+    execute: close,
+  }));
   const localKey = (key: NavKey): DispatchResult => {
     if (!isPlainNavKey(key)) return "declined";
     if (key.name === "escape") {
@@ -105,16 +123,9 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
     }
   });
   createEffect(() => {
+    if (sharedReturn) return;
     const dispose = props.registerCommand?.(
-      {
-        id: `${props.prefix}.preview-back`,
-        verb: "Back to updates",
-        destination: "Return to the same Skill, filter and checked set",
-        keys: ["enter"],
-        scope: "widget",
-        enabled: true,
-        danger: false,
-      },
+      { ...backRecord(), scope: "widget" },
       `command:${props.prefix}.preview-back`,
       id("back"),
       close,
@@ -151,22 +162,32 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
     return "Diff is too complex for the bounded preview";
   };
   return (
-    <box id={id("pane")} flexDirection="column" flexGrow={1} minHeight={0}>
+    <box
+      id={id("pane")}
+      flexDirection="column"
+      flexGrow={1}
+      minHeight={0}
+      focusable
+      ref={(target) => {
+        root = target;
+        bind("pane", target);
+        queueMicrotask(() => {
+          if (live && !target.isDestroyed) target.focus();
+        });
+      }}
+    >
       <box id={id("actions-pane")} height={1} flexShrink={0} flexDirection="row">
-        <Button
-          id={id("back")}
-          label="Back"
-          intent="neutral"
-          height={1}
-          flexShrink={0}
-          onPress={close}
-          ref={(target) => {
-            bind("back", target);
-            queueMicrotask(() => {
-              if (live) target.focus();
-            });
-          }}
-        />
+        <Show when={!sharedReturn}>
+          <Button
+            id={id("back")}
+            label="Back"
+            intent="neutral"
+            height={1}
+            flexShrink={0}
+            onPress={close}
+            ref={(target) => bind("back", target)}
+          />
+        </Show>
         <text
           height={1}
           flexGrow={1}
@@ -234,6 +255,10 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
                       return "consumed";
                     }
                     return "declined";
+                  });
+                  queueMicrotask(() => {
+                    if (live && !target.isDestroyed && renderer.currentFocusedRenderable === root)
+                      target.focus();
                   });
                 }}
               />

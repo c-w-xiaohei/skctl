@@ -28,6 +28,8 @@ export interface TreeProps {
   readonly onSelect: (key: string, reason: "keyboard" | "pointer" | "collapse") => void;
   readonly onExpandedChange: (key: string, expanded: boolean) => void;
   readonly onActivate: (key: string) => void;
+  /** Collection navigators can enter adjacent contents rather than toggle on Enter. */
+  readonly activationMode?: "toggle" | "activate";
   readonly focusOwner: FocusOwner;
   readonly focusRegistry: FocusRegistry;
   /** The caller must deactivate panes that remain mounted but are hidden. */
@@ -179,7 +181,11 @@ export function Tree(props: TreeProps) {
     }
     const expanded = props.expandedKeys.has(selected.key);
     if (key.name === "enter") {
-      if (selected.kind === "collection" || selected.kind === "reference") toggle(selected.key);
+      if (
+        props.activationMode !== "activate" &&
+        (selected.kind === "collection" || selected.kind === "reference")
+      )
+        toggle(selected.key);
       else props.onActivate(selected.key);
     } else if (key.name === "right") {
       if (selected.expandable && !expanded) toggle(selected.key, true);

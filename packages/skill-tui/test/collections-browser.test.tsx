@@ -1420,7 +1420,7 @@ test("COLLECTION Relations unify Use, Reference, and Link with owners, effects, 
       expect.objectContaining({
         kind: "collection-reference",
         target: "docs",
-        effect: "0 Skills exposed",
+        effect: "Browse referenced Collection",
       }),
       expect.objectContaining({
         kind: "collection-link",

@@ -33,9 +33,10 @@ import type { FocusRegistry, FocusTarget } from "./focus";
 import { isPlainNavKey, type NavKey } from "./navigation";
 import { Accordion } from "@tuiparts/solid/accordion";
 import { CommandControl } from "./command-control";
+import { usePageReturn } from "./page-navigation";
 import { Input } from "./ui/input";
 import { DataList } from "./ui/data-list";
-import { SectionTabs } from "./components/section-tabs";
+import { SectionTabs, sectionTabsWidth } from "./components/section-tabs";
 import { fitColumn } from "./ui/list-text";
 import { MetadataGrid, type MetadataField } from "./ui/metadata-grid";
 import { useTheme } from "./ui/use-theme";
@@ -51,6 +52,11 @@ const readerActionLabels: Partial<Record<ActionRecord["id"], string>> = {
 };
 
 const syntaxStyle = SyntaxStyle.fromStyles({});
+const readerViews = [
+  { label: "SKILL.md", value: "skill" },
+  { label: "Resources", value: "resources" },
+  { label: "Details", value: "details" },
+] as const;
 
 function NativeMarkdown(props: { readonly content: () => string }) {
   return (
@@ -85,6 +91,7 @@ export function Reader(props: {
   readonly focusRegistry?: FocusRegistry;
   readonly skill?: InstalledSkill;
   readonly mode: LayoutMode;
+  readonly active?: boolean;
   readonly registerCommand?: CommandRegistration;
   readonly executeCommand?: CommandExecution;
   readonly actions: readonly import("./actions").ActionRecord[];
@@ -105,9 +112,9 @@ export function Reader(props: {
   const tokens = useTheme();
   const [find, setFind] = createSignal(props.reader().find);
   const [findOpen, setFindOpen] = createSignal(false);
-  const [metadataOpenAddress, setMetadataOpenAddress] = createSignal<string>();
   const [descriptionOverflow, setDescriptionOverflow] = createSignal(false);
   const [paneWidth, setPaneWidth] = createSignal(0);
+  const [readerRoot, setReaderRoot] = createSignal<Renderable>();
   let readerScrollbox: ScrollBoxRenderable | undefined;
   let readerRestoreRevision = 0;
   let detailsRestoreRevision = 0;
@@ -144,7 +151,7 @@ export function Reader(props: {
         id={id}
         record={record}
         showDisabledReason={!inline}
-        intent={inline && record.id !== "skill-check-updates" ? "quiet" : undefined}
+        intent={record.id === "skill-check-updates" ? "primary" : inline ? "quiet" : undefined}
         keyboard={!props.executeCommand}
         register={(target) => {
           bind(owner, target, (key) => {
@@ -162,6 +169,27 @@ export function Reader(props: {
   };
   const [scrollbox, setScrollbox] = createSignal<ScrollBoxRenderable>();
   const [detailsScrollbox, setDetailsScrollbox] = createSignal<ScrollBoxRenderable>();
+  const revealDetailsFocus = () => {
+    const target = renderer.currentFocusedRenderable;
+    const viewport = detailsScrollbox();
+    if (!target || target.isDestroyed || !viewport || viewport.isDestroyed) return;
+    for (let parent = target.parent; parent; parent = parent.parent) {
+      if (parent !== viewport) continue;
+      viewport.scrollChildIntoView(target.id);
+      const overflow = target.y + target.height - viewport.viewport.y - viewport.viewport.height;
+      if (overflow >= 0) viewport.scrollBy(overflow + 1);
+      break;
+    }
+  };
+  const queueDetailsFocus = () => {
+    renderer.off("frame", revealDetailsFocus);
+    renderer.once("frame", revealDetailsFocus);
+    renderer.requestRender();
+  };
+  const revealDisclosure = (target: Renderable) => {
+    target.on("focused", queueDetailsFocus);
+    onCleanup(() => target.off("focused", queueDetailsFocus));
+  };
   const reader = props.reader;
   const rawMode = createMemo(() => reader().raw);
   let address = reader().address;
@@ -176,6 +204,7 @@ export function Reader(props: {
     bindings.forEach((dispose) => dispose());
     readerRestoreFrame?.();
     detailsRestoreFrame?.();
+    renderer.off("frame", revealDetailsFocus);
   });
   createEffect(() => {
     if (reader().address !== address) {
@@ -481,6 +510,25 @@ export function Reader(props: {
     } satisfies CommandRecord,
     execute,
   });
+  const resourceReturnKey = createMemo(() => {
+    const state = reader();
+    return props.active !== false && state.tab === "resources" && state.resourceLevel === "content"
+      ? JSON.stringify([state.address, state.selectedResource])
+      : undefined;
+  });
+  const sharedReturn = usePageReturn(() =>
+    resourceReturnKey()
+      ? {
+          ...command(
+            "reader.resource.back",
+            "Back to Resources",
+            "Resources",
+            props.onResourceBack,
+          ),
+          anchor: readerRoot,
+        }
+      : undefined,
+  );
   createEffect(() => {
     const native = scrollbox();
     const state = reader();
@@ -634,8 +682,8 @@ export function Reader(props: {
     "reader.find.next": "reader-find-next",
     "reader.match.open-raw": "open-match-raw",
   };
-  // SectionTabs uses two cells of padding on either side of each caption.
-  const tabsWidth = 36;
+  // Include the shared caption padding and separating cells in the tool budget.
+  const tabsWidth = sectionTabsWidth(readerViews);
   const editingFind = () => reader().tab === "skill" && findOpen();
   const toolsWidth = () => (editingFind() ? paneWidth() : Math.max(0, paneWidth() - tabsWidth - 3));
   const showReadingTools = () => !editingFind() && toolsWidth() >= 15;
@@ -755,7 +803,7 @@ export function Reader(props: {
         : reader().tab === "resources"
           ? [
               "command:reader.reload",
-              "command:reader.resource.back",
+              ...(!sharedReturn ? ["command:reader.resource.back" as const] : []),
               "command:reader.resource.retry",
             ]
           : [
@@ -895,11 +943,13 @@ export function Reader(props: {
       minWidth={0}
       minHeight={0}
       ref={(target) => {
+        setReaderRoot(target);
         const resize = () => {
           // Capture before Solid removes a focused control at the breakpoint.
           const focused = renderer.currentFocusedRenderable;
           recoverHiddenFocus(focused);
           setPaneWidth(target.width);
+          queueDetailsFocus();
         };
         target.on("resize", resize);
         onCleanup(() => target.off("resize", resize));
@@ -944,11 +994,7 @@ export function Reader(props: {
             panelId="reader-views"
             owner="reader-tabs"
             focusRegistry={props.focusRegistry}
-            options={[
-              { label: "SKILL.md", value: "skill" },
-              { label: "Resources", value: "resources" },
-              { label: "Details", value: "details" },
-            ]}
+            options={readerViews}
             value={reader().tab}
             onNavigate={selectView}
             onPrimaryPointerEntry={selectView}
@@ -1141,15 +1187,17 @@ export function Reader(props: {
                 >
                   {reader().resource?.path ?? reader().selectedResource ?? "Resource"}
                 </text>
-                {(() => {
-                  const value = command(
-                    "reader.resource.back",
-                    "Back",
-                    "Resources",
-                    props.onResourceBack,
-                  );
-                  return commandZone("reader-resource-back", value.record, value.execute, true);
-                })()}
+                <Show when={!sharedReturn}>
+                  {(() => {
+                    const value = command(
+                      "reader.resource.back",
+                      "Back",
+                      "Resources",
+                      props.onResourceBack,
+                    );
+                    return commandZone("reader-resource-back", value.record, value.execute, true);
+                  })()}
+                </Show>
               </box>
               <scrollbox
                 id="resource-content"
@@ -1198,6 +1246,8 @@ export function Reader(props: {
       {reader().tab === "details" && (
         <scrollbox
           id="reader-details"
+          // Keep the final focused disclosure above the pane's bottom border.
+          contentOptions={{ paddingBottom: 1 }}
           ref={(value: ScrollBoxRenderable) => {
             setDetailsScrollbox(value);
             bind("reader", value);
@@ -1257,7 +1307,7 @@ export function Reader(props: {
             </Show>
           </box>
           {detailRelationships().length > 0 && (
-            <box id="reader-details-connections" marginTop={1} flexShrink={0} maxWidth={88}>
+            <box id="reader-details-connections" marginTop={1} gap={1} flexShrink={0} maxWidth={88}>
               <text height={1} flexShrink={0}>
                 <strong>Connections</strong>
               </text>
@@ -1269,8 +1319,13 @@ export function Reader(props: {
                   () => props.onDetailsRelationship(relationship.value),
                 );
                 return (
-                  <box flexDirection="row" minWidth={0} flexShrink={0} gap={1}>
-                    <box width={22} flexShrink={0}>
+                  <box
+                    flexDirection={paneWidth() < 48 ? "column" : "row"}
+                    minWidth={0}
+                    flexShrink={0}
+                    gap={paneWidth() < 48 ? 0 : 1}
+                  >
+                    <box width={paneWidth() < 48 ? undefined : 22} flexShrink={0}>
                       {commandZone(
                         `reader-details-relationship-${relationship.value}`,
                         value.record,
@@ -1282,6 +1337,7 @@ export function Reader(props: {
                       flexGrow={1}
                       minWidth={0}
                       wrapMode="word"
+                      paddingLeft={paneWidth() < 48 ? 1 : 0}
                       fg={tokens().colors.mutedForeground}
                     >
                       {relationship.description}
@@ -1294,9 +1350,9 @@ export function Reader(props: {
           <Show when={reader().address ? skillAddressKey(reader().address!) : undefined} keyed>
             {(_address) => (
               <Accordion.Root
-                value={metadataOpenAddress() === readerAddress() ? ["metadata"] : []}
+                value={reader().detailsMetadataOpen ? ["metadata"] : []}
                 onValueChange={(value) =>
-                  setMetadataOpenAddress(value.includes("metadata") ? readerAddress() : undefined)
+                  props.onPatch({ detailsMetadataOpen: value.includes("metadata") })
                 }
                 flexDirection="column"
                 width="100%"
@@ -1308,6 +1364,7 @@ export function Reader(props: {
                     id="reader-details-metadata"
                     ref={(value) => {
                       if (!value) return;
+                      revealDisclosure(value);
                       bind("details-metadata", value, (key) => {
                         const navigation = handleReaderKey("details-metadata", value, key);
                         if (navigation !== "declined") return navigation;
@@ -1320,12 +1377,26 @@ export function Reader(props: {
                     width="100%"
                   >
                     {(state) => (
-                      <text
-                        fg={tokens().colors.mutedForeground}
-                      >{`${state.open ? "▾" : "▸"} Technical details`}</text>
+                      <box
+                        height={1}
+                        width="100%"
+                        backgroundColor={
+                          state.focused ? tokens().colors.primary : tokens().colors.surface
+                        }
+                      >
+                        <text
+                          fg={
+                            state.focused
+                              ? tokens().colors.primaryForeground
+                              : tokens().colors.foreground
+                          }
+                        >
+                          {`${state.open ? "▾" : "▸"} Technical details`}
+                        </text>
+                      </box>
                     )}
                   </Accordion.Trigger>
-                  <Show when={metadataOpenAddress() === readerAddress()}>
+                  <Show when={reader().detailsMetadataOpen}>
                     <Accordion.Panel width="100%">
                       <MetadataGrid fields={detailsMetadata()} />
                     </Accordion.Panel>
@@ -1352,31 +1423,69 @@ export function Reader(props: {
                     height={1}
                     width="100%"
                     ref={(target) => {
-                      if (target) bind("command:reader.details.manage", target);
+                      if (target) {
+                        revealDisclosure(target);
+                        bind("command:reader.details.manage", target);
+                      }
                     }}
                   >
-                    {(state) => <text>{`${state.open ? "▾" : "▸"} Manage Skill`}</text>}
+                    {(state) => (
+                      <box
+                        height={1}
+                        width="100%"
+                        backgroundColor={
+                          state.focused ? tokens().colors.primary : tokens().colors.surface
+                        }
+                      >
+                        <text
+                          fg={
+                            state.focused
+                              ? tokens().colors.primaryForeground
+                              : tokens().colors.foreground
+                          }
+                        >
+                          <strong>{`${state.open ? "▾" : "▸"} Manage Skill`}</strong>
+                        </text>
+                      </box>
+                    )}
                   </Accordion.Trigger>
                   <Show when={managementExpanded()}>
                     <Accordion.Panel width="100%" flexDirection="column">
-                      <Show when={props.onReload}>
-                        {(() => {
-                          const value = reloadCommand();
-                          return commandZone("reader-reload", value.record, value.execute, true);
-                        })()}
-                      </Show>
-                      <For each={detailActions().filter((action) => !action.danger)}>
-                        {(action) =>
-                          commandZone(
-                            `reader-details-action-${action.id}`,
-                            action,
-                            () => props.onDetailsAction(action.id),
-                            true,
-                          )
-                        }
-                      </For>
+                      <box
+                        id="reader-manage-actions"
+                        flexDirection="row"
+                        flexWrap="wrap"
+                        gap={1}
+                        minWidth={0}
+                        flexShrink={0}
+                      >
+                        <Show when={props.onReload}>
+                          {(() => {
+                            const value = reloadCommand();
+                            return commandZone("reader-reload", value.record, value.execute, true);
+                          })()}
+                        </Show>
+                        <For each={detailActions().filter((action) => !action.danger)}>
+                          {(action) =>
+                            commandZone(
+                              `reader-details-action-${action.id}`,
+                              action,
+                              () => props.onDetailsAction(action.id),
+                              true,
+                            )
+                          }
+                        </For>
+                      </box>
                       <Show when={detailActions().some((action) => action.danger)}>
-                        <box marginTop={1}>
+                        <box
+                          id="reader-danger-actions"
+                          marginTop={1}
+                          flexDirection="row"
+                          flexWrap="wrap"
+                          gap={1}
+                          minWidth={0}
+                          flexShrink={0}
+                        >
                           <For each={detailActions().filter((action) => action.danger)}>
                             {(action) =>
                               commandZone(

@@ -1,7 +1,13 @@
-import { InputRenderable, Renderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
-import { createMemo, createSignal, onCleanup, Show, untrack } from "solid-js";
+import {
+  InputRenderable,
+  Renderable,
+  SelectRenderable,
+  ScrollBoxRenderable,
+  type BoxRenderable,
+  type BaseRenderable,
+} from "@opentui/core";
+import { batch, createEffect, createMemo, createSignal, onCleanup, Show, untrack } from "solid-js";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
-import { restoreSelectScroll, selectScrollOffset, trackSelectScroll } from "./select-scroll";
 import type { CollectionView, ConfigDeclarationOwner, ManagementProjection } from "@skill-cli/core";
 import type { MemberOriginPath } from "@skill-cli/core";
 import {
@@ -39,7 +45,24 @@ import {
 } from "./collections/relationship-inspector";
 import type { CollectionTableRow } from "./collections/collection-table";
 import type { ActionRecord } from "./actions";
+import { DataTable, type DataTableColumn, type DataTableAction } from "./ui/data-table";
+import { relationshipCommands } from "./collections/relationship-commands";
+import type { ExecutableCommand } from "./commands";
+import { usePageCommands, usePageReturn } from "./page-navigation";
+import { Tree } from "./ui/tree";
+import { createFocusRegistry } from "./focus";
+import {
+  collectionDescendants,
+  collectionFilterPathKey,
+  deriveCollectionFilterTree,
+  findCollectionFilterPath,
+} from "./collections/collection-filter-tree";
 export type { CollectionRelationshipIntent } from "./collections/relationship-inspector";
+
+function CurrentRowCommands(props: { readonly commands: readonly ExecutableCommand[] }) {
+  usePageCommands(() => props.commands);
+  return null;
+}
 
 const ownerText = (owner: ConfigDeclarationOwner): string =>
   `${owner.level} ${owner.file} ${owner.pointer}`;
@@ -112,8 +135,9 @@ export const collectionRelationRows = (
       kind: "collection-reference" as const,
       label: `Reference ${reference.name}`,
       target: reference.collection,
+      targetAvailable: effective.collectionsView.some((item) => item.id === reference.collection),
       owner: reference.owner,
-      effect: "0 Skills exposed",
+      effect: "Browse referenced Collection",
       provenance: ownerProvenanceText(reference.owner),
       intent: {
         kind: "collection-reference" as const,
@@ -294,6 +318,7 @@ export function CollectionsPage(props: {
   readonly mode: LayoutMode;
   readonly surface: "browser" | "detail";
   readonly projection: () => ManagementProjection | undefined;
+  readonly active?: boolean;
   readonly focusRegistry?: FocusRegistry;
   readonly onWorkAreaTarget?: (target: FocusTarget & Pick<BaseRenderable, "once" | "off">) => void;
   readonly onScroll?: (surface: string, scroll: number) => void;
@@ -319,10 +344,27 @@ export function CollectionsPage(props: {
   readonly executeCommand?: CommandExecution;
   readonly actions?: readonly ActionRecord[];
   readonly onAction?: (id: ActionRecord["id"]) => void;
+  readonly onProblems?: () => void;
 }) {
   const renderer = useRenderer();
   const terminal = useTerminalDimensions();
   const tokens = useTheme();
+  const [collectionToolbarWidth, setCollectionToolbarWidth] = createSignal(0);
+  const collectionButtonWidth = (label: string) => label.length + 2 * tokens().density.paddingX;
+  const utilityCaptions = () => {
+    const compact = ["New", "Expand", "Collapse"];
+    const full = ["New Collection", "Expand all", "Collapse all"];
+    const captions: (string | undefined)[] = [...compact];
+    let used = compact.reduce((width, label) => width + collectionButtonWidth(label), 2);
+    full.forEach((label, index) => {
+      const additional = collectionButtonWidth(label) - collectionButtonWidth(compact[index]!);
+      if (used + additional <= collectionToolbarWidth()) {
+        captions[index] = undefined;
+        used += additional;
+      }
+    });
+    return captions;
+  };
   const commandsIn = (pane: string) => {
     const commands: Renderable[] = [];
     const visit = (target: BaseRenderable) => {
@@ -350,17 +392,10 @@ export function CollectionsPage(props: {
     const owner = target && props.focusRegistry?.ownerOf(target);
     if (owner) focus(owner);
   };
-  let collectionBrowser: SelectRenderable | undefined;
+  let collectionBrowser: ScrollBoxRenderable | undefined;
+  let collectionToolbar: BoxRenderable | undefined;
+  const treeFocus = props.focusRegistry ?? createFocusRegistry();
   const bindings = new Map<string, () => void>();
-  const bindScroll = (
-    surface: string,
-    target: SelectRenderable,
-    options: () => readonly unknown[],
-  ) => {
-    void options();
-    const cancel = restoreSelectScroll(renderer, target, props.collections.scroll(surface));
-    onCleanup(cancel);
-  };
   const bind = (
     owner: Parameters<FocusRegistry["register"]>[0],
     target: FocusTarget & Pick<BaseRenderable, "once" | "off">,
@@ -381,46 +416,41 @@ export function CollectionsPage(props: {
     const workspace = props.projection();
     return workspace?.effective.status === "complete" ? workspace.effective.collectionsView : [];
   };
-  const commandZone = (id: string, record: CommandRecord, execute: () => void) => {
+  const commandZone = (
+    id: string,
+    record: CommandRecord,
+    execute: () => void,
+    primary = false,
+    caption?: string,
+  ) => {
     const owner: FocusOwner = `command:${record.id}`;
     return (
       <CommandControl
         id={id}
         record={record}
+        label={caption}
+        intent={primary ? "primary" : "neutral"}
         keyboard={!props.executeCommand}
+        showDisabledReason={false}
         register={(target) => {
           bind(owner, target);
           localMode(target, (key) => {
-            if (key.name !== "up" && key.name !== "down") return "declined";
-            const pane =
-              renderer.root
-                .findDescendantById("collection-detail-pane")
-                ?.findDescendantById(target.id) === target
-                ? "collection-detail-pane"
-                : "collections-list-pane";
-            const commands = commandsIn(pane);
+            if (!["up", "down", "left", "right"].includes(key.name)) return "declined";
+            let pane = target.parent;
+            while (pane && !pane.id.endsWith("-pane")) pane = pane.parent;
+            const commands = commandsIn(pane?.id ?? "collections-list-pane");
             const index = commands.indexOf(target);
-            if (key.name === "up" && index === 0) {
-              if (
-                !focus(
-                  pane === "collection-detail-pane"
-                    ? "collection-relationships"
-                    : "collections-query",
+            focusControl(
+              commands[
+                Math.max(
+                  0,
+                  Math.min(
+                    commands.length - 1,
+                    index + (key.name === "up" || key.name === "left" ? -1 : 1),
+                  ),
                 )
-              )
-                focus("local-nav");
-            } else if (
-              key.name === "down" &&
-              index === commands.length - 1 &&
-              pane === "collections-list-pane"
-            )
-              focus("browser");
-            else
-              focusControl(
-                commands[
-                  Math.max(0, Math.min(commands.length - 1, index + (key.name === "up" ? -1 : 1)))
-                ],
-              );
+              ],
+            );
             return "consumed";
           });
           return props.registerCommand?.(record, owner, id, execute);
@@ -429,11 +459,15 @@ export function CollectionsPage(props: {
       />
     );
   };
-  const managedAction = (id: ActionRecord["id"], label?: string) => {
+  const managedAction = (id: ActionRecord["id"], label?: string, compactCaption?: string) => {
     const record = props.actions?.find((candidate) => candidate.id === id);
     return record
-      ? commandZone(`collection-action-${id}`, label ? { ...record, verb: label } : record, () =>
-          props.onAction?.(id),
+      ? commandZone(
+          `collection-action-${id}`,
+          label ? { ...record, verb: label } : record,
+          () => props.onAction?.(id),
+          id === "add-membership",
+          compactCaption,
         )
       : null;
   };
@@ -459,30 +493,160 @@ export function CollectionsPage(props: {
     values.filter((value) =>
       value.toLocaleLowerCase().includes(filterSearch().toLocaleLowerCase()),
     );
-  const options = createMemo(() =>
-    collections().map((item) => ({
-      name: item.id,
-      description: "",
-      value: item.id,
-    })),
-  );
-  const choose = (index: number, open: boolean) => {
-    const collection = collections()[index];
-    if (!collection) return;
-    const browserScroll = collectionBrowser ? selectScrollOffset(collectionBrowser) : undefined;
-    props.onSelect(collection.id);
-    if (open) {
-      if (browserScroll !== undefined) props.onScroll?.("collection-browser", browserScroll);
-      props.onDetail();
-    }
-  };
-  const FilterPanel = () => {
-    const dimension = filterDimension();
-    const values = dimension
-      ? matching(collectionFilterValues(dimension, effective()))
-      : matching(collectionFilterDimensions);
+  const navigator = createMemo(() => {
+    const tree = deriveCollectionFilterTree(props.projection(), props.collections.expandedPaths());
+    if (!query() && Object.keys(filters()).length === 0) return tree;
+    const matches = new Set(collections().map((collection) => collection.id));
+    return {
+      ...tree,
+      rows: tree.rows.filter((row) =>
+        [...collectionDescendants(effective(), row.collection)].some((id) => matches.has(id)),
+      ),
+    };
+  });
+  const selectedPath = () =>
+    navigator().rows.find(
+      (row) =>
+        row.key === props.collections.selectedPath() &&
+        row.collection === props.collections.selected(),
+    )?.key ?? navigator().rows.find((row) => row.collection === props.collections.selected())?.key;
+  const selectedNavigatorRow = () => navigator().rows.find((row) => row.key === selectedPath());
+  const NavigatorIssue = () => {
+    let root: ScrollBoxRenderable | undefined;
+    usePageReturn(() =>
+      selectedNavigatorRow()?.issue && (props.surface === "browser" || props.mode === "wide")
+        ? {
+            record: {
+              id: "collections.issue.back",
+              keys: ["enter", "return"],
+              verb: "Back",
+              destination: "Collections",
+              scope: "page",
+              enabled: true,
+              danger: false,
+            },
+            anchor: () => root,
+            execute: () => {
+              focus("browser");
+            },
+          }
+        : undefined,
+    );
     return (
-      <box flexDirection="column" border paddingLeft={1}>
+      <scrollbox
+        id="collection-tree-issue"
+        flexGrow={1}
+        minHeight={0}
+        focusable
+        ref={(target) => {
+          root = target;
+          bind("collection-tree-issue", target);
+        }}
+      >
+        <text wrapMode="word" fg={tokens().colors.warning}>
+          {selectedNavigatorRow()?.issue}
+        </text>
+        <text wrapMode="word">{`Target: ${selectedNavigatorRow()?.collection ?? "Unavailable"}`}</text>
+        <text wrapMode="word">{`Path: ${
+          selectedNavigatorRow()
+            ?.path.segments.map((segment) => segment.reference?.name ?? segment.collection)
+            .join(" / ") ?? "Unavailable"
+        }`}</text>
+      </scrollbox>
+    );
+  };
+  const filterKey = createMemo(() => JSON.stringify([query(), filters()]));
+  createEffect(() => {
+    filterKey();
+    untrack(() => {
+      if (!query() && Object.keys(filters()).length === 0) return;
+      const expanded = { ...props.collections.expandedPaths() };
+      for (const collection of collections())
+        for (const key of findCollectionFilterPath(props.projection(), collection.id)
+          ?.ancestorKeys ?? [])
+          expanded[key] = true;
+      props.collections.setExpandedPaths(expanded);
+    });
+  });
+  createEffect(() => {
+    const id = props.collections.selected();
+    if (!id || selectedPath()) return;
+    const match = findCollectionFilterPath(props.projection(), id);
+    if (!match) return;
+    untrack(() =>
+      batch(() => {
+        for (const key of match.ancestorKeys) props.collections.setPathExpanded(key, true);
+        props.collections.selectPath(collectionFilterPathKey(match.path));
+      }),
+    );
+  });
+  const selectPath = (key: string) => {
+    const row = navigator().rows.find((candidate) => candidate.key === key);
+    if (!row) return;
+    batch(() => {
+      props.collections.selectPath(key);
+      props.onSelect(row.collection);
+    });
+  };
+  const expandAll = () =>
+    props.collections.setExpandedPaths(
+      Object.fromEntries(
+        deriveCollectionFilterTree(props.projection(), "all")
+          .rows.filter((row) => row.expandable)
+          .map((row) => [row.key, true]),
+      ),
+    );
+  const collapseAll = () => {
+    const row = navigator().rows.find((candidate) => candidate.key === selectedPath());
+    const root = row?.path.segments[0];
+    batch(() => {
+      props.collections.setExpandedPaths({});
+      if (root) {
+        props.collections.selectPath(collectionFilterPathKey({ segments: [root] }));
+        props.onSelect(root.collection);
+      }
+    });
+    focus("command:collections.expand-all");
+  };
+  const FilterPanel = (panel: { readonly dimension?: CollectionFilterDimension }) => {
+    const dimension = panel.dimension;
+    let root: BoxRenderable | undefined;
+    const backRecord = (): CommandRecord => ({
+      id: "collections.filter.back",
+      keys: ["enter", "return"],
+      verb: "Back",
+      destination: dimension ? "Filter categories" : "Collections",
+      scope: "page",
+      enabled: true,
+      danger: false,
+    });
+    const goBack = () => (dimension ? props.onFilterDimension() : props.onFilterClose());
+    const sharedReturn = usePageReturn(() =>
+      filterState().open
+        ? {
+            record: backRecord(),
+            anchor: () => root,
+            execute: goBack,
+          }
+        : undefined,
+    );
+    const values = createMemo(() =>
+      dimension
+        ? matching(collectionFilterValues(dimension, effective()))
+        : matching(collectionFilterDimensions),
+    );
+    const canClear = dimension !== undefined && filters()[dimension] !== undefined;
+    return (
+      <box
+        flexDirection="column"
+        border
+        paddingLeft={1}
+        flexGrow={1}
+        minHeight={0}
+        ref={(target) => {
+          root = target;
+        }}
+      >
         <Input
           id="collections-filter-search"
           ref={(value: InputRenderable) => {
@@ -497,14 +661,26 @@ export function CollectionsPage(props: {
           ref={(value: SelectRenderable) => {
             bind(dimension ? "collections-filter-values" : "collections-filter-dimensions", value);
           }}
-          options={values.map((value) => ({
-            name: value,
-            description: "",
-            value,
-          }))}
+          options={[
+            ...(canClear
+              ? [{ name: `Clear ${dimension} filter`, description: "", value: "" }]
+              : []),
+            ...values().map((value) => ({
+              name: `${dimension && filters()[dimension] === value ? "✓ " : ""}${value}`,
+              description: "",
+              value,
+            })),
+          ]}
           showDescription={false}
+          flexGrow={1}
+          minHeight={1}
           onSelect={(index) => {
-            const value = values[index];
+            if (canClear && index === 0 && dimension) {
+              props.onClear(dimension);
+              props.onFilterClose();
+              return;
+            }
+            const value = values()[index - (canClear ? 1 : 0)];
             if (!value) return;
             if (dimension) {
               props.onFilter(dimension, value);
@@ -512,45 +688,49 @@ export function CollectionsPage(props: {
             } else props.onFilterDimension(value as CollectionFilterDimension);
           }}
         />
-        {commandZone(
-          "collections-filter-back",
-          {
-            id: "collections.filter.back",
-            keys: ["enter"],
-            verb: dimension ? "Back" : "Close",
-            destination: dimension ? "Filter categories" : "Collections",
-            scope: "page",
-            enabled: true,
-            danger: false,
-          },
-          dimension ? () => props.onFilterDimension() : props.onFilterClose,
-        )}
+        <Show when={!sharedReturn}>
+          {commandZone("collections-filter-back", backRecord(), goBack)}
+        </Show>
       </box>
     );
   };
-  const detail = () => {
-    const collection = selected();
+  const detail = (collection: CollectionView | undefined) => {
     if (!collection)
       return (
-        <box flexDirection="column" flexGrow={1} paddingLeft={1}>
-          {props.surface === "detail" ? (
-            <>
-              <text>Collection unavailable.</text>
-              <text>Return to Collections to choose an available Collection.</text>
-            </>
-          ) : effective().length === 0 ? (
-            <>
-              <text>Collections group Skills for reuse and agent disclosure.</text>
-              <text>Create a Collection here, or install one supplied by a repository.</text>
-            </>
-          ) : (
-            <text>Select a Collection to see its Entries and Relations.</text>
-          )}
-        </box>
+        <Show
+          when={selectedNavigatorRow()?.issue}
+          fallback={
+            <box flexDirection="column" flexGrow={1} paddingLeft={1}>
+              {props.surface === "detail" ? (
+                <>
+                  <text>Collection unavailable.</text>
+                  <text>Return to Collections to choose an available Collection.</text>
+                </>
+              ) : effective().length === 0 ? (
+                <>
+                  <text>Collections group Skills for reuse and agent disclosure.</text>
+                  <text>Create a Collection here, or install one supplied by a repository.</text>
+                </>
+              ) : (
+                <text>Select a Collection to see its Entries and Relations.</text>
+              )}
+            </box>
+          }
+        >
+          <Pane
+            id="collection-detail-pane"
+            borderTitle={selectedNavigatorRow()?.collection ?? "Unavailable Collection"}
+          >
+            <box id="collection-tree-issue-pane" flexGrow={1} minHeight={0}>
+              <NavigatorIssue />
+            </box>
+          </Pane>
+        </Show>
       );
     const selectedTab = createMemo(() => tab());
-    const [showCollectionActions, setShowCollectionActions] = createSignal(false);
-    let relationshipSelect: SelectRenderable | undefined;
+    const [controlWidth, setControlWidth] = createSignal(0);
+    let controls: BoxRenderable | undefined;
+    let relationshipSelect: BoxRenderable | undefined;
     const memberOrigins: CollectionMemberOriginRow[] = collection.members.flatMap((member) =>
       (member.paths.length ? member.paths : [undefined]).map((path, index) => ({
         kind: "member" as const,
@@ -598,6 +778,7 @@ export function CollectionsPage(props: {
     const workAreaTitle = () => {
       const current = inspector();
       if (!current || current.collection !== collection.id) return "Collection details";
+      if (current.kind === "collection") return collection.id;
       if (current.kind === "membership")
         return (
           collection.members.find(
@@ -629,19 +810,36 @@ export function CollectionsPage(props: {
           ? `${row.address.source}/${row.address.path}`
           : compactAddress(row.address);
     };
-    const relationRowsForTable = createMemo<readonly CollectionTableRow[]>(() =>
+    type ContentDomain = (typeof memberRows)[number] | CollectionRelationRow;
+    type ContentRow = CollectionTableRow<ContentDomain>;
+    const relationRowsForTable = createMemo<readonly ContentRow[]>(() =>
       selectedTab() === "entries"
-        ? memberRows.map((row) => ({
-            key: row.key,
-            value: row.value,
-            domain: row,
-            cells: [
-              `${row.origins.some((origin) => props.collections.selectedOrigins(collection.id).includes(origin.key)) ? "[x]" : "[ ]"} ${row.name}`,
-              entryAddress(row),
-              row.origin,
-            ],
-            destination: "Membership details" as const,
-          }))
+        ? [
+            ...memberRows.map(
+              (row): ContentRow => ({
+                key: row.key,
+                value: row.value,
+                domain: row,
+                cells: [row.name, entryAddress(row), row.origin],
+                destination: "Membership details" as const,
+              }),
+            ),
+            ...relationRows
+              .filter((row) => row.kind === "collection-reference")
+              .map(
+                (row): ContentRow => ({
+                  key: collectionRelationKey(row),
+                  value: collectionRelationKey(row),
+                  domain: row,
+                  cells: [
+                    row.intent?.kind === "collection-reference" ? row.intent.name : row.label,
+                    row.target ?? "Unavailable",
+                    "Reference",
+                  ],
+                  destination: "Collection details",
+                }),
+              ),
+          ]
         : relationRows.map((row) => ({
             key: collectionRelationKey(row),
             value: collectionRelationKey(row),
@@ -659,13 +857,17 @@ export function CollectionsPage(props: {
             destination: "Relationship details" as const,
           })),
     );
+    const currentRow = () =>
+      relationRowsForTable().find(
+        (row) => row.value === props.collections.selectedRow(collection.id, selectedTab()),
+      ) ?? relationRowsForTable()[0];
     const compactSelectionDescription = () => {
       const rows = relationRowsForTable();
       const selectedValue = props.collections.selectedRow(collection.id, selectedTab());
       const row = rows.find((candidate) => candidate.value === selectedValue) ?? rows[0];
       if (!row) return undefined;
-      if (selectedTab() === "entries") {
-        const member = row.domain as (typeof memberRows)[number];
+      if (row.domain.kind === "member") {
+        const member = row.domain;
         return (
           props
             .projection()
@@ -676,7 +878,7 @@ export function CollectionsPage(props: {
             )?.description ?? "Skill description unavailable."
         );
       }
-      const relation = row.domain as CollectionRelationRow;
+      const relation = row.domain;
       return relation.intent?.kind === "collection-reference"
         ? relation.intent.description
         : relation.effect;
@@ -694,220 +896,345 @@ export function CollectionsPage(props: {
       props.onToggleOrigins?.(collection.id, keys);
       return true;
     };
-    return (
-      <Pane id="collection-detail-pane" title={inspector() ? workAreaTitle() : collection.id}>
-        <Show when={!props.collections.inspector()}>
-          <SectionTabs
-            id="collection-tabs"
-            options={[
-              { label: "Entries", value: "entries" },
-              {
-                label: "Relations",
-                value: "relations",
-              },
-            ]}
-            value={selectedTab()}
-            owner="inspector"
-            focusRegistry={props.focusRegistry}
-            label="View"
-            onPrimaryPointerEntry={props.onInspectorFocus}
-            onActivate={() => focus("collection-relationships")}
-            onNavigate={(value) => {
-              const surface = `collection:${collection.id}:${selectedTab()}`;
-              const selectedRow = props.collections.selectedRow(collection.id, selectedTab());
-              props.collections.selectRow(collection.id, selectedTab(), selectedRow);
-              if (relationshipSelect)
-                props.onScroll?.(surface, selectScrollOffset(relationshipSelect));
-              props.onTab(collection.id, value);
-            }}
-          />
-          <Show when={relationRowsForTable().length === 0}>
-            <text fg={tokens().colors.mutedForeground}>
-              {selectedTab() === "entries"
-                ? collection.references.length
-                  ? "Skills are organized through referenced Collections. View Relations to open them."
-                  : "Empty Collection"
-                : "No Relations"}
-            </text>
-          </Show>
-          <Show
-            when={
-              selectedTab() === "entries" &&
-              relationRowsForTable().length === 0 &&
-              collection.references.length > 0
+    const inspectRow = (row = currentRow()) => {
+      if (!row) return;
+      props.onRelationship(
+        row.domain.kind === "member"
+          ? { kind: "collection-membership-inspect", collection: collection.id, member: row.value }
+          : { kind: "collection-relation-inspect", collection: collection.id, relation: row.value },
+      );
+    };
+    const memberAvailable = (row: ContentRow) => {
+      const member = row.domain;
+      return (
+        member.kind !== "member" ||
+        props
+          .projection()
+          ?.installedSkills.some(
+            (skill) =>
+              skill.address.source === member.address.source &&
+              skill.address.path === member.address.path &&
+              skill.owner.health === "healthy",
+          )
+      );
+    };
+    const columns = (): readonly DataTableColumn<ContentRow>[] =>
+      selectedTab() === "entries"
+        ? [
+            {
+              id: "name",
+              header: "Name",
+              minWidth: controlWidth() >= 54 ? 24 : 12,
+              cell: (row) => row.cells[0] ?? "",
+            },
+            {
+              id: "kind",
+              header: "Type",
+              width: 10,
+              optional: true,
+              cell: (row) => (row.domain.kind === "member" ? "Skill" : "Collection"),
+            },
+            {
+              id: "target",
+              header: "Source / target",
+              minWidth: 12,
+              maxWidth: 32,
+              optional: true,
+              cell: (row) => row.cells[1] ?? "",
+            },
+            {
+              id: "origin",
+              header: "Origin",
+              minWidth: 10,
+              maxWidth: 24,
+              optional: true,
+              cell: (row) => row.cells[2] ?? "",
+            },
+          ]
+        : [
+            { id: "name", header: "Relation", minWidth: 12, cell: (row) => row.cells[0] ?? "" },
+            {
+              id: "target",
+              header: "Target",
+              minWidth: 10,
+              optional: true,
+              cell: (row) => row.cells[1] ?? "",
+            },
+            {
+              id: "owner",
+              header: "Owner",
+              minWidth: 8,
+              maxWidth: 12,
+              optional: true,
+              cell: (row) => row.cells[2] ?? "",
+            },
+          ];
+    const selectedOrigins = () => props.collections.selectedOrigins(collection.id);
+    const checkedRows = createMemo(
+      () =>
+        new Set(
+          memberRows
+            .filter(
+              (row) =>
+                row.origins.length &&
+                row.origins.every((origin) => selectedOrigins().includes(origin.key)),
+            )
+            .map((row) => row.value),
+        ),
+    );
+    const partialRows = createMemo(
+      () =>
+        new Set(
+          memberRows
+            .filter(
+              (row) =>
+                row.origins.some((origin) => selectedOrigins().includes(origin.key)) &&
+                !row.origins.every((origin) => selectedOrigins().includes(origin.key)),
+            )
+            .map((row) => row.value),
+        ),
+    );
+    const contentUnavailable = () => {
+      const row = currentRow();
+      if (row && !memberAvailable(row)) return "Installed Skill unavailable · Manage for ownership";
+      if (row?.domain.kind === "collection-reference" && row.domain.targetAvailable === false)
+        return "Referenced Collection unavailable";
+      return undefined;
+    };
+    const commandsForRow = (row: ContentRow) => {
+      const domain = row.domain;
+      return relationshipCommands(
+        collection.id,
+        domain.kind === "member"
+          ? {
+              kind: "membership",
+              member: { ...domain, available: memberAvailable(row) },
+              origin: domain.origins.length === 1 ? domain.origins[0]?.path : undefined,
             }
-          >
+          : { kind: "relation", relation: domain },
+      );
+    };
+    const rowActions = (row: ContentRow): readonly DataTableAction[] => [
+      {
+        key: "manage",
+        record: {
+          id: `collection.row.${encodeURIComponent(collection.id)}.${encodeURIComponent(row.value)}.manage`,
+          keys: ["enter", "return"],
+          scope: "page",
+          enabled: true,
+          danger: false,
+          verb: "Manage…",
+          destination: `${collection.id} / ${row.cells[0]}`,
+        },
+        execute: () => inspectRow(row),
+      },
+    ];
+    const currentCommands = (): readonly ExecutableCommand[] => {
+      if (inspector() || props.collections.filter().open) return [];
+      const row = currentRow();
+      if (!row) return [];
+      // Reading has an exact address even when managing requires choosing an origin.
+      const commands = commandsForRow(row).filter(
+        (command) =>
+          row.domain.kind !== "member" ||
+          row.domain.origins.length <= 1 ||
+          command.id === "membership.open-skill",
+      );
+      return commands.map((command) => ({
+        record: {
+          ...command,
+          destination: `${collection.id} / ${row.cells[0]} · ${command.destination}`,
+        },
+        execute: () => {
+          if (!command.enabled || currentRow() !== row || inspector()) return;
+          if (command.id === "membership.remove" && row.domain.kind === "member")
+            props.onRemoveOrigins?.(collection.id, row.domain.origins);
+          else if (command.intent) props.onRelationship(command.intent);
+        },
+      }));
+    };
+    return (
+      <Pane
+        id="collection-detail-pane"
+        borderTitle={inspector() ? workAreaTitle() : collection.id}
+        borderBottomTitle={
+          contentUnavailable() ??
+          (selectedNavigatorRow()?.cycle ? "Reference cycle · About for reason" : undefined)
+        }
+      >
+        <Show when={!props.collections.inspector()}>
+          <CurrentRowCommands commands={currentCommands()} />
+          <box height={1} flexShrink={0} flexDirection="row">
+            <box flexGrow={1} minWidth={0}>
+              <SectionTabs
+                id="collection-tabs"
+                options={[
+                  { label: "Contents", value: "entries" },
+                  {
+                    label: "Relations",
+                    value: "relations",
+                  },
+                ]}
+                value={selectedTab()}
+                owner="inspector"
+                focusRegistry={props.focusRegistry}
+                onPrimaryPointerEntry={props.onInspectorFocus}
+                onActivate={() => focus("collection-relationships")}
+                onNavigate={(value) => {
+                  const surface = `collection:${collection.id}:${selectedTab()}`;
+                  const selectedRow = props.collections.selectedRow(collection.id, selectedTab());
+                  props.collections.selectRow(collection.id, selectedTab(), selectedRow);
+                  const body = relationshipSelect?.findDescendantById(
+                    "collection-relationships-body",
+                  );
+                  if (body instanceof ScrollBoxRenderable)
+                    props.onScroll?.(surface, body.scrollTop);
+                  props.onTab(collection.id, value);
+                }}
+              />
+            </box>
             {commandZone(
-              "collection-open-relations",
+              "collection-about",
               {
-                id: "collection.open-relations",
+                id: "collection.about",
                 keys: ["enter", "return"],
-                verb: "View Relations",
-                destination: "Collection Relations",
+                verb: "Info",
+                destination: collection.id,
                 scope: "page",
                 enabled: true,
                 danger: false,
               },
-              () => {
-                props.onTab(collection.id, "relations");
-                queueMicrotask(() => focus("collection-relationships"));
-              },
-            )}
-          </Show>
-          <Show when={selectedTab() === "entries" && terminal().height > 16}>
-            <text fg={tokens().colors.mutedForeground}>
-              Space selects entries · Enter shows ownership
-            </text>
-            <Show when={props.collections.selectedOrigins(collection.id).length > 0}>
-              <text>{`${props.collections.selectedOrigins(collection.id).length} origins selected`}</text>
-            </Show>
-          </Show>
-          <box flexDirection="row" height={1} flexShrink={0}>
-            <Show when={terminal().height <= 16 && compactSelectionDescription()}>
-              {(description) => (
-                <text
-                  flexGrow={1}
-                  minWidth={0}
-                  wrapMode="none"
-                  fg={tokens().colors.mutedForeground}
-                >
-                  {description()}
-                </text>
-              )}
-            </Show>
-            {commandZone(
-              "collection-actions-toggle",
-              {
-                id: "collection.actions.toggle",
-                keys: ["enter", "return"],
-                verb: showCollectionActions() ? "Hide actions" : "Actions",
-                destination: "Collection management actions",
-                scope: "page",
-                enabled: true,
-                danger: false,
-              },
-              () => setShowCollectionActions((visible) => !visible),
+              () => props.onRelationship({ kind: "collection-info", collection: collection.id }),
             )}
           </box>
-          <Show when={showCollectionActions()}>
-            <scrollbox id="collection-actions-scroll" height={3} flexShrink={0} width="100%">
-              <Show
-                when={
-                  selectedTab() === "entries" &&
-                  props.collections.selectedOrigins(collection.id).length > 0
-                }
-              >
-                {commandZone(
-                  "remove-from-collection",
-                  {
-                    id: "collection.remove-selected-origins",
-                    keys: ["enter", "return"],
-                    verb: "Remove selected origins",
-                    destination: "Review removal",
-                    scope: "page",
-                    enabled: true,
-                    danger: true,
-                  },
-                  () =>
-                    props.onRemoveOrigins?.(
-                      collection.id,
-                      memberOrigins.filter((row) =>
-                        props.collections.selectedOrigins(collection.id).includes(row.key),
-                      ),
+          <box
+            id="collection-content-controls-pane"
+            flexDirection="row"
+            height={1}
+            flexShrink={0}
+            gap={1}
+            ref={(value: BoxRenderable) => {
+              controls = value;
+              setControlWidth(value.width);
+            }}
+            onSizeChange={() => setControlWidth(controls?.width ?? 0)}
+          >
+            {managedAction("add-membership", "Add Skills…")}
+            {managedAction("add-reference", "Add Reference…")}
+            <Show when={controlWidth() >= 54}>
+              {managedAction("add-link", "Link…")}
+              {managedAction("import-collection", "Import…")}
+            </Show>
+          </box>
+          <Show when={selectedOrigins().length > 0}>
+            <box id="collection-batch-pane" flexDirection="row" height={1} flexShrink={0}>
+              <text flexGrow={1} minWidth={0} height={1} wrapMode="none">
+                {selectedOrigins().length} origins checked
+              </text>
+              {commandZone(
+                "remove-from-collection",
+                {
+                  id: "collection.remove-selected-origins",
+                  keys: ["enter", "return"],
+                  verb: "Review removal",
+                  destination: `${collection.id} · ${selectedOrigins().length} checked origins`,
+                  scope: "page",
+                  enabled: true,
+                  danger: true,
+                },
+                () =>
+                  props.onRemoveOrigins?.(
+                    collection.id,
+                    memberOrigins.filter((row) =>
+                      props.collections.selectedOrigins(collection.id).includes(row.key),
                     ),
-                )}
-              </Show>
-              {managedAction("collection-check-updates", "Check Collection updates…")}
-              {managedAction("add-membership", "Add Skills to Collection…")}
-              {managedAction("add-reference", "Add discovery reference…")}
-              {managedAction("add-link", "Link another Collection's Skills…")}
-              {managedAction("remove-collection", "Remove Collection declaration…")}
-            </scrollbox>
+                  ),
+              )}
+            </box>
           </Show>
-          <DataList
-            id="collection-relationships"
-            ref={(value: SelectRenderable) => {
-              relationshipSelect = value;
-              bind("collection-relationships", value);
-              const surface = `collection:${collection.id}:${selectedTab()}`;
-              const row = untrack(() =>
-                props.collections.selectedRow(collection.id, selectedTab()),
-              );
-              const index = relationRowsForTable().findIndex((option) => option.value === row);
-              const isLive = () =>
-                value.parent !== undefined &&
-                renderer.root.findDescendantById("collection-relationships") === value &&
-                selected()?.id === collection.id &&
-                tab() === selectedTab();
-              queueMicrotask(() => {
-                if (isLive() && index >= 0) value.setSelectedIndex(index);
-              });
-              const cancel = restoreSelectScroll(
-                renderer,
-                value,
-                props.collections.scroll(surface),
-              );
-              trackSelectScroll(value, (scroll) => {
-                if (isLive()) props.onScroll?.(surface, scroll);
-              });
-              value.once("destroyed", cancel);
-              const unregister = props.focusRegistry?.registerModeHandler(value, (key) => {
-                if (key.name === "up" && value.getSelectedIndex() === 0) {
-                  focus("inspector");
-                  return "consumed";
-                }
-                if (key.name === "right") {
-                  focusControl(commandsIn("collection-detail-pane")[0]);
-                  return "consumed";
-                }
-                if (key.name !== "character" || key.char !== " " || selectedTab() !== "entries")
-                  return "declined";
-                return toggleSelectedEntryOrigins(value.getSelectedIndex())
-                  ? "consumed"
-                  : "declined";
-              });
-              value.once("destroyed", () => unregister?.());
-            }}
-            options={relationRowsForTable().map((row) => ({
-              name: row.cells[0] ?? "",
-              description: row.cells.slice(1).join(" · "),
-              value: row.value,
-            }))}
-            showDescription={terminal().height > 16}
-            showSelectionIndicator
-            showScrollIndicator
-            width="100%"
-            flexGrow={1}
-            minHeight={terminal().height > 16 ? 2 : 1}
-            onChange={(index) => {
-              const option = relationRowsForTable()[index];
-              if (option) props.collections.selectRow(collection.id, selectedTab(), option.value);
-            }}
-            onSelect={(index) => {
-              const option = relationRowsForTable()[index];
-              if (option) {
-                const surface = `collection:${collection.id}:${selectedTab()}`;
-                props.collections.selectRow(collection.id, selectedTab(), option.value);
-                if (relationshipSelect)
-                  props.onScroll?.(surface, selectScrollOffset(relationshipSelect));
-                if (selectedTab() === "entries") {
-                  props.onRelationship({
-                    kind: "collection-membership-inspect",
-                    collection: collection.id,
-                    member: option.value,
-                  });
-                } else
-                  props.onRelationship({
-                    kind: "collection-relation-inspect",
-                    collection: collection.id,
-                    relation: option.value,
-                  });
-              }
-            }}
-          />
+          <Show when={selectedTab()} keyed>
+            {(view) => (
+              <box id="collection-content-data-pane" flexGrow={1} minHeight={0}>
+                <DataTable
+                  id="collection-relationships"
+                  rows={relationRowsForTable()}
+                  columns={columns()}
+                  actions={{
+                    width: 9,
+                    compactWidth: 9,
+                    items: rowActions,
+                    registerCommand: props.registerCommand,
+                  }}
+                  rowKey={(row) => row.value}
+                  currentKey={props.collections.selectedRow(collection.id, view)}
+                  onCurrentChange={(value) =>
+                    props.collections.selectRow(collection.id, view, value)
+                  }
+                  initialScrollTop={props.collections.scroll(`collection:${collection.id}:${view}`)}
+                  onScroll={(scroll) =>
+                    props.onScroll?.(`collection:${collection.id}:${view}`, scroll)
+                  }
+                  selection={
+                    view === "entries"
+                      ? {
+                          get keys() {
+                            return checkedRows();
+                          },
+                          get partialKeys() {
+                            return partialRows();
+                          },
+                          get showIndicators() {
+                            return true;
+                          },
+                          canSelect: (row) => row.domain.kind === "member",
+                          onToggle: (row) =>
+                            toggleSelectedEntryOrigins(relationRowsForTable().indexOf(row)),
+                        }
+                      : undefined
+                  }
+                  focusRegistry={props.focusRegistry}
+                  emptyText={
+                    selectedTab() === "entries"
+                      ? "Add Skills or a Reference to this Collection."
+                      : "No relationships in this Collection."
+                  }
+                  ref={(value) => {
+                    relationshipSelect = value;
+                    bind("collection-relationships", value);
+                  }}
+                  width="100%"
+                  flexGrow={1}
+                  onActivate={(option) => {
+                    if (!memberAvailable(option)) return;
+                    props.collections.selectRow(collection.id, view, option.value);
+                    if (option.domain.kind === "member")
+                      props.onRelationship({
+                        kind: "collection-open-skill",
+                        collection: collection.id,
+                        address: option.domain.address,
+                      });
+                    else if (view === "entries" && option.domain.kind === "collection-reference") {
+                      if (option.domain.target && option.domain.targetAvailable !== false)
+                        props.onRelationship({
+                          kind: "collection-open-collection",
+                          collection: collection.id,
+                          target: option.domain.target,
+                        });
+                    } else inspectRow(option);
+                  }}
+                />
+              </box>
+            )}
+          </Show>
+          <Show when={terminal().height > 18 && compactSelectionDescription()}>
+            <text height={1} flexShrink={0} wrapMode="none" fg={tokens().colors.mutedForeground}>
+              {compactSelectionDescription()}
+            </text>
+          </Show>
         </Show>
         <RelationshipInspector
           collection={collection}
+          contextIssue={selectedNavigatorRow()?.issue}
           memberOrigins={memberOrigins}
           relationRows={relationRows}
           memberDescription={(address) =>
@@ -932,6 +1259,7 @@ export function CollectionsPage(props: {
           focusRegistry={props.focusRegistry}
           bind={bind}
           onRelationship={props.onRelationship}
+          onScroll={props.onScroll}
           registerCommand={props.registerCommand}
           executeCommand={props.executeCommand}
         />
@@ -941,126 +1269,197 @@ export function CollectionsPage(props: {
   const BrowserList = () => (
     <Pane
       id="collections-list-pane"
-      title={`Collections · ${collections().length}`}
-      width={props.mode === "wide" ? "43%" : "100%"}
+      borderTitle={
+        props.projection()?.effective.status === "complete"
+          ? `Collections · ${collections().length}`
+          : "Collections"
+      }
+      borderBottomTitle={
+        selectedNavigatorRow()?.issue
+          ? selectedNavigatorRow()?.cycle
+            ? "Reference cycle · Enter contents"
+            : "Unavailable · Enter reason"
+          : undefined
+      }
+      width="100%"
     >
-      {managedAction("new-collection", "New Collection…")}
       <Show when={effective().length > 0}>
-        <box flexDirection="row" gap={1} height={1} flexShrink={0} marginBottom={1}>
-          <Input
-            id="collections-query"
-            ref={(value: InputRenderable) => {
-              bind("collections-query", value);
-              localMode(value, (key) => {
-                if (key.name !== "enter") return "declined";
-                focus("command:collections.filter.open");
-                return "consumed";
-              });
-            }}
-            placeholder={props.mode === "narrow" ? "Search…" : "Search Collections…"}
-            flexGrow={1}
-            flexBasis={0}
-            width={0}
-            minWidth={0}
-            backgroundColor={tokens().colors.surface}
-            focusedBackgroundColor={tokens().colors.surface}
-            focusedTextColor={tokens().colors.foreground}
-            placeholderColor={tokens().colors.mutedForeground}
-            value={query()}
-            onInput={props.onQuery}
-          />
-          {commandZone(
-            "collections-filter",
-            {
-              id: "collections.filter.open",
-              keys: ["enter", "return"],
-              verb: "Filter",
-              destination: "Collections filters",
-              scope: "page",
-              enabled: true,
-              danger: false,
-            },
-            () => {
-              props.onScroll?.("collection-browser", selectScrollOffset(collectionBrowser!));
-              props.onFilterOpen();
-            },
-          )}
-        </box>
-        {Object.entries(filters()).map(([dimension, value]) => {
-          const clear = () => props.onClear(dimension);
-          const id = `clear-collections-filter-${dimension}`;
-          return (
-            <box id={id}>
+        <box flexDirection="column" height={3} gap={1} flexShrink={0}>
+          <box
+            id="collections-search-controls-pane"
+            flexDirection="row"
+            gap={1}
+            height={1}
+            flexShrink={0}
+          >
+            <Input
+              id="collections-query"
+              ref={(value: InputRenderable) => {
+                bind("collections-query", value);
+                localMode(value, (key) => {
+                  if (key.name !== "enter") return "declined";
+                  focus("browser");
+                  return "consumed";
+                });
+              }}
+              placeholder="Search…"
+              flexGrow={1}
+              flexBasis={0}
+              width={0}
+              minWidth={0}
+              value={query()}
+              onInput={props.onQuery}
+            />
+            {commandZone(
+              "collections-filter",
+              {
+                id: "collections.filter.open",
+                keys: ["enter", "return"],
+                verb: Object.keys(filters()).length
+                  ? `Filter ${Object.keys(filters()).length}`
+                  : "Filter",
+                destination: "Collections filters",
+                scope: "page",
+                enabled: true,
+                danger: false,
+              },
+              () => {
+                if (collectionBrowser)
+                  props.onScroll?.("collection-browser", collectionBrowser.scrollTop);
+                props.onFilterOpen();
+              },
+            )}
+            <Show when={Boolean(query()) || Object.keys(filters()).length > 0}>
               {commandZone(
-                `${id}-keyboard`,
+                "clear-all-collections-filters-keyboard",
                 {
-                  id: `collections.filter.clear.${dimension}`,
+                  id: "collections.filter.clear-all",
                   keys: ["enter", "return"],
-                  verb: `${dimension}: ${value} Clear`,
+                  verb: "Clear filters",
                   destination: "Collections",
                   scope: "page",
                   enabled: true,
                   danger: false,
                 },
-                clear,
+                props.onClearAll,
+                false,
+                collectionToolbarWidth() < 46 ? "Clear" : undefined,
               )}
-            </box>
-          );
-        })}
-        <Show when={Boolean(query()) || Object.keys(filters()).length > 0}>
-          <box id="clear-all-collections-filters">
+            </Show>
+          </box>
+          <box
+            id="collections-tree-controls-pane"
+            flexDirection="row"
+            gap={1}
+            height={1}
+            flexShrink={0}
+            ref={(target: BoxRenderable) => {
+              collectionToolbar = target;
+              setCollectionToolbarWidth(target.width);
+            }}
+            onSizeChange={() => {
+              setCollectionToolbarWidth(collectionToolbar?.width ?? 0);
+            }}
+          >
+            {managedAction("new-collection", undefined, utilityCaptions()[0])}
             {commandZone(
-              "clear-all-collections-filters-keyboard",
+              "collections-expand-all",
               {
-                id: "collections.filter.clear-all",
+                id: "collections.expand-all",
                 keys: ["enter", "return"],
-                verb: "Clear all",
-                destination: "Collections",
+                verb: "Expand all",
+                destination: "All Collection Reference branches",
                 scope: "page",
-                enabled: true,
+                enabled: effective().some((collection) => collection.references.length > 0),
                 danger: false,
               },
-              props.onClearAll,
+              expandAll,
+              false,
+              utilityCaptions()[1],
+            )}
+            {commandZone(
+              "collections-collapse-all",
+              {
+                id: "collections.collapse-all",
+                keys: ["enter", "return"],
+                verb: "Collapse all",
+                destination: "All Collection Reference branches",
+                scope: "page",
+                enabled: Object.values(props.collections.expandedPaths()).some(Boolean),
+                danger: false,
+              },
+              collapseAll,
+              false,
+              utilityCaptions()[2],
             )}
           </box>
-        </Show>
+        </box>
       </Show>
-      <DataList
+      <Show when={effective().length === 0 && props.projection()?.effective.status === "complete"}>
+        {managedAction("new-collection", "New Collection…")}
+      </Show>
+      <Tree
         id="collection-browser"
-        ref={(value: SelectRenderable) => {
+        ref={(value) => {
           collectionBrowser = value;
-          bind("browser", value);
-          localMode(value, (key) => {
-            if (key.name === "up" && value.getSelectedIndex() === 0) {
-              if (!focus("collections-query")) focus("command:new-collection");
-              return "consumed";
-            }
-            if (key.name === "right") {
-              choose(value.getSelectedIndex(), true);
-              return "consumed";
-            }
-            return "declined";
-          });
           props.onWorkAreaTarget?.(value);
-          bindScroll("collection-browser", value, options);
         }}
-        options={options()}
-        flexGrow={1}
-        minHeight={0}
-        width="100%"
-        selectedIndex={Math.max(
-          0,
-          options().findIndex((option) => option.value === props.collections.selected()),
-        )}
-        showDescription={false}
-        showSelectionIndicator
-        showScrollIndicator
-        onChange={(index) => choose(index, false)}
-        onSelect={(index) => choose(index, true)}
+        rows={navigator().rows}
+        selectedKey={selectedPath()}
+        expandedKeys={
+          new Set(
+            Object.entries(props.collections.expandedPaths())
+              .filter(([, open]) => open)
+              .map(([key]) => key),
+          )
+        }
+        activationMode="activate"
+        focusOwner="browser"
+        focusRegistry={treeFocus}
+        active={props.active !== false && !props.collections.filter().open}
+        initialScrollTop={props.collections.snapshot().scrolls["collection-browser"]}
+        onScrollChange={(scroll) => props.onScroll?.("collection-browser", scroll)}
+        onSelect={selectPath}
+        onExpandedChange={(key, expanded) => props.collections.setPathExpanded(key, expanded)}
+        onActivate={(key) => {
+          const row = navigator().rows.find((candidate) => candidate.key === key);
+          if (!row) return;
+          if (row.issue && !effective().some((collection) => collection.id === row.collection)) {
+            focus("collection-tree-issue");
+            return;
+          }
+          if (collectionBrowser)
+            props.onScroll?.("collection-browser", collectionBrowser.scrollTop);
+          props.onDetail();
+        }}
       />
+      <Show when={props.mode !== "wide" && selectedNavigatorRow()?.issue}>
+        <box id="collection-tree-issue-pane" height={3} flexShrink={0}>
+          <NavigatorIssue />
+        </box>
+      </Show>
       <Show when={collections().length === 0}>
         <box flexDirection="column" paddingTop={1}>
-          {effective().length === 0 ? (
+          {!props.projection() ? (
+            <text>Loading Collections…</text>
+          ) : props.projection()?.effective.status !== "complete" ? (
+            <>
+              <text wrapMode="word">Collections unavailable. Check workspace Problems.</text>
+              {commandZone(
+                "collections-open-problems",
+                {
+                  id: "collections.open-problems",
+                  keys: ["enter"],
+                  verb: "View Problems",
+                  destination: "Workspace Problems",
+                  scope: "page",
+                  enabled: !!props.onProblems,
+                  danger: false,
+                },
+                () => props.onProblems?.(),
+              )}
+            </>
+          ) : effective().length === 0 ? (
             <>
               <text>No Collections yet</text>
               <text>Collections group Skills for reuse and agent disclosure.</text>
@@ -1073,43 +1472,6 @@ export function CollectionsPage(props: {
           )}
         </box>
       </Show>
-      <text fg={tokens().colors.mutedForeground}>Enter details</text>
-    </Pane>
-  );
-  const CollectionPreview = () => (
-    <Pane id="collection-preview-pane" title="Collection overview" width="57%">
-      <Show
-        when={selected() ?? collections()[0]}
-        fallback={
-          <text fg={tokens().colors.mutedForeground}>
-            Select a Collection to preview its Skills.
-          </text>
-        }
-      >
-        {(collection) => (
-          <>
-            <text wrapMode="word">
-              <strong>{collection().id}</strong>
-            </text>
-            <scrollbox
-              id="collection-preview"
-              flexGrow={1}
-              minHeight={0}
-              marginTop={1}
-              ref={(target) => bind("inspector", target)}
-            >
-              <text wrapMode="word" fg={tokens().colors.mutedForeground}>
-                {collection().description ?? "Description unavailable."}
-              </text>
-              <text wrapMode="word" marginTop={1}>
-                {collection().members.length
-                  ? `${collection().members.length} member${collection().members.length === 1 ? "" : "s"} · Enter for Entries and Relations.`
-                  : "No members yet · Enter for Entries and Relations."}
-              </text>
-            </scrollbox>
-          </>
-        )}
-      </Show>
     </Pane>
   );
   const CollectionList = () => (
@@ -1117,21 +1479,39 @@ export function CollectionsPage(props: {
       when={filterState().open}
       fallback={
         <box flexDirection="row" flexGrow={1} minHeight={0}>
-          <BrowserList />
+          <box
+            width={
+              props.mode === "wide"
+                ? Math.min(38, Math.max(36, Math.floor(terminal().width * 0.28)))
+                : "100%"
+            }
+            flexShrink={0}
+            minHeight={0}
+          >
+            <BrowserList />
+          </box>
           <Show when={props.mode === "wide"}>
-            <box width="57%" flexGrow={1} minHeight={0} minWidth={0} flexDirection="column">
-              <CollectionPreview />
+            <box flexGrow={1} minHeight={0} minWidth={0} flexDirection="column">
+              <Show when={selected()} keyed fallback={detail(undefined)}>
+                {(collection) => detail(collection)}
+              </Show>
             </box>
           </Show>
         </box>
       }
     >
-      <FilterPanel />
+      <Show when={filterDimension() ?? ("dimensions" as const)} keyed>
+        {(dimension) => (
+          <FilterPanel dimension={dimension === "dimensions" ? undefined : dimension} />
+        )}
+      </Show>
     </Show>
   );
   const content = (
-    <Show when={props.surface === "detail"} keyed fallback={<CollectionList />}>
-      {(_detail) => detail()}
+    <Show when={props.surface === "detail"} fallback={<CollectionList />}>
+      <Show when={selected()} keyed fallback={detail(undefined)}>
+        {(collection) => detail(collection)}
+      </Show>
     </Show>
   );
   return content;

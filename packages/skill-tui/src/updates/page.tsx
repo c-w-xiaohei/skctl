@@ -10,6 +10,7 @@ import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { batch, createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { FocusRegistry } from "../focus";
 import { isPlainNavKey, matchesCommandShortcut, type NavKey } from "../navigation";
+import { usePageReturn } from "../page-navigation";
 import type {
   CommandExecution,
   CommandRecord,
@@ -83,6 +84,7 @@ function UpdateWorkbench(
   const theme = useTheme();
   const source = () => props.sourceView?.source;
   const prefix = source() ? "source-updates" : "updates";
+  let workbench: BoxRenderable | undefined;
   let browser: BoxRenderable | undefined;
   let input: InputRenderable | undefined;
   let actionPane: BoxRenderable | undefined;
@@ -440,20 +442,41 @@ function UpdateWorkbench(
     get focusRegistry() {
       return props.focusRegistry;
     },
-    onKey: (key: NavKey): DispatchResult =>
-      ["left", "right", "up", "down"].includes(key.name) ? "declined" : keyHandler(key),
+    onKey: (key: NavKey): DispatchResult => {
+      if (
+        detailSnapshot() &&
+        !preview() &&
+        isPlainNavKey(key) &&
+        (key.name === "escape" || key.char === "d")
+      ) {
+        closeDetails();
+        return "consumed";
+      }
+      return ["left", "right", "up", "down"].includes(key.name) ? "declined" : keyHandler(key);
+    },
   };
   const feedback = createMemo(() => updateFeedback(targets(), props.state.groups(), run()));
-  const preferredFeedback = createMemo(
-    () =>
-      feedback().find((item) => item.source === (source() ?? currentSource()?.source)) ??
-      feedback()[0],
-  );
+  const preferredFeedback = createMemo(() => {
+    if (source()) {
+      const current = currentSkill();
+      return (
+        feedback().find(
+          (item) =>
+            item.address && current && addressKey(item.address) === addressKey(current.address),
+        ) ?? feedback().find((item) => item.source === source() && !item.uncertain)
+      );
+    }
+    return feedback().find((item) => item.source === currentSource()?.source) ?? feedback()[0];
+  });
   const shownFeedback = () => detailSnapshot() ?? preferredFeedback();
-  const feedbackTarget = (item: UpdateFeedback) =>
-    item.address
-      ? `${item.source} / ${allSkills().find((skill) => addressKey(skill.address) === addressKey(item.address!))?.name ?? (item.address.path || ".")}`
-      : item.source;
+  const feedbackTarget = (item: UpdateFeedback) => {
+    if (!item.address) return item.source;
+    const path = item.address.path || ".";
+    const name = allSkills().find(
+      (skill) => addressKey(skill.address) === addressKey(item.address!),
+    )?.name;
+    return `${item.source} / ${path}${name && name !== path ? ` · ${name}` : ""}`;
+  };
   const restoreViewport = (scrollTop: number) => {
     if (restoreSearchFrame) renderer.off("frame", restoreSearchFrame);
     restoreSearchFrame = () => {
@@ -484,6 +507,24 @@ function UpdateWorkbench(
     queueMicrotask(() => browser?.focus());
     if (start) restoreViewport(start.scrollTop);
   };
+  const sharedReturn = usePageReturn(() =>
+    detailSnapshot() && !preview()
+      ? {
+          record: {
+            id: `${prefix}.feedback-details`,
+            verb: "Back to updates",
+            destination: source() ? `${source()} · Skill updates list` : "Updates · Sources list",
+            keys: ["enter"],
+            shortcut: "d",
+            scope: "page",
+            enabled: true,
+            danger: false,
+          },
+          anchor: () => workbench,
+          execute: closeDetails,
+        }
+      : undefined,
+  );
   const openPreview = (address: UpdateAddress) => {
     const group = props.state.groups().find((group) => group.source === address.source);
     const observation = group?.observation;
@@ -574,7 +615,7 @@ function UpdateWorkbench(
     return (
       [
         (compact() && preferredFeedback()
-          ? `${preferredFeedback()!.title} · ${preferredFeedback()!.source}`
+          ? `${preferredFeedback()!.title} · ${feedbackTarget(preferredFeedback()!)}`
           : undefined) ??
           (source()
             ? props.sourceView?.filter === "all"
@@ -684,7 +725,8 @@ function UpdateWorkbench(
     ];
     const notice = shownFeedback();
     if (notice) {
-      const inspectSkill = notice.recovery === "inspect-skill" && notice.address;
+      const inspectSkill =
+        notice.recovery === "inspect-skill" && notice.address && props.onInspectSkill;
       records.push(
         command(
           "feedback-recover",
@@ -694,8 +736,7 @@ function UpdateWorkbench(
               ? "Recheck Source"
               : "Open Source",
           () => {
-            if (notice.recovery === "inspect-skill" && notice.address)
-              props.onInspectSkill?.(notice.address);
+            if (inspectSkill && notice.address) props.onInspectSkill?.(notice.address);
             else if (notice.recovery === "recheck") props.onCheck([notice.source]);
             else props.onInspectSource?.(notice.source);
           },
@@ -706,22 +747,26 @@ function UpdateWorkbench(
                 ? active()
                   ? "An update is running"
                   : undefined
-                : inspectSkill
-                  ? props.onInspectSkill
-                    ? undefined
-                    : "Skill inspection unavailable"
-                  : props.onInspectSource
-                    ? undefined
+                : inspectSkill || props.onInspectSource
+                  ? undefined
+                  : notice.recovery === "inspect-skill"
+                    ? "Skill and Source inspection unavailable"
                     : "Source inspection unavailable",
           },
         ),
       );
-      records.push(
-        command("feedback-details", detailSnapshot() ? "Back to list" : "Details", toggleDetails, {
-          shortcut: "d",
-          destination: `Read diagnostics for ${feedbackTarget(notice)}`,
-        }),
-      );
+      if (!detailSnapshot() || !sharedReturn)
+        records.push(
+          command(
+            "feedback-details",
+            detailSnapshot() ? "Back to list" : "Details",
+            toggleDetails,
+            {
+              shortcut: "d",
+              destination: `Read diagnostics for ${feedbackTarget(notice)}`,
+            },
+          ),
+        );
     }
     if (source())
       records.push(
@@ -769,7 +814,7 @@ function UpdateWorkbench(
     if (detailSnapshot() || (compact() && preferredFeedback()))
       return [
         ...(!active() ? ["feedback-recover"] : []),
-        "feedback-details",
+        ...(!detailSnapshot() || !sharedReturn ? ["feedback-details"] : []),
         ...(active() ? ["stop"] : []),
       ];
     if (active()) return ["stop"];
@@ -819,7 +864,15 @@ function UpdateWorkbench(
       borderBottomTitle={preview() ? "Read-only preview" : context()}
     >
       <box flexDirection="column" flexGrow={1} minHeight={0}>
-        <box flexDirection="column" flexGrow={1} minHeight={0} visible={!preview()}>
+        <box
+          flexDirection="column"
+          flexGrow={1}
+          minHeight={0}
+          visible={!preview()}
+          ref={(target) => {
+            workbench = target;
+          }}
+        >
           <Show when={!compact()}>
             <Show when={scope().entry.kind === "collection" || scope().entry.kind === "skill"}>
               <text
@@ -965,7 +1018,7 @@ function UpdateWorkbench(
                           0,
                         );
                       const last = Math.max(0, rows - target.viewport.height);
-                      if (key.name === "escape") closeDetails();
+                      if (key.name === "escape" || key.char === "d") closeDetails();
                       else if (key.name === "home") target.scrollTo(0);
                       else if (key.name === "end") target.scrollTo(last);
                       else if (["up", "down", "page-up", "page-down"].includes(key.name))
@@ -981,7 +1034,7 @@ function UpdateWorkbench(
                   }}
                 >
                   <text wrapMode="word" fg={theme().colors.foreground}>
-                    {notice.detail}
+                    {`${feedbackTarget(notice)}\n\n${notice.detail}`}
                   </text>
                 </scrollbox>
               </>

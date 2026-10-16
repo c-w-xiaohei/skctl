@@ -44,6 +44,39 @@ const rows = (source: ManagementProjection, expanded: Readonly<Record<string, bo
   return tree.rows;
 };
 
+test("expand-all enumerates distinct shared Reference paths and stops at cycles", () => {
+  const tree = deriveCollectionFilterTree(
+    projection([
+      view("one", ["shared"]),
+      view("two", ["shared"]),
+      view("shared", ["loop"]),
+      view("loop", ["shared"]),
+      view("one-prefix"),
+    ]),
+    "all",
+  );
+  expect(tree.status).toBe("available");
+  expect(tree.rows.filter((row) => row.collection === "shared" && !row.cycle)).toHaveLength(2);
+  expect(tree.rows.filter((row) => row.cycle)).toHaveLength(2);
+  expect(new Set(tree.rows.map((row) => row.key)).size).toBe(tree.rows.length);
+  expect(tree.rows.find((row) => row.collection === "one-prefix")?.depth).toBe(0);
+  const expanded = Object.fromEntries(
+    tree.rows.filter((row) => row.expandable).map((row) => [row.key, true]),
+  );
+  expect(
+    deriveCollectionFilterTree(
+      projection([
+        view("one", ["shared"]),
+        view("two", ["shared"]),
+        view("shared", ["loop"]),
+        view("loop", ["shared"]),
+        view("one-prefix"),
+      ]),
+      expanded,
+    ),
+  ).toEqual(tree);
+});
+
 test("inventory is independent of Use and materialises only expanded immediate layers", () => {
   const source = projection([
     view("parent", ["child"]),

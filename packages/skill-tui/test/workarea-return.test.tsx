@@ -1,0 +1,422 @@
+/** @jsxImportSource @opentui/solid */
+import { expect, test } from "bun:test";
+import { ButtonRenderable } from "@tuiparts/core/button";
+import { SelectRenderable, type BaseRenderable } from "@opentui/core";
+import type { ManagementProjection } from "@skill-cli/core";
+import { testRender } from "@opentui/solid";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { App } from "../src/app";
+import { directSourceCore } from "./direct-source.fixture";
+import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
+import { collectionFilterPathKey } from "../src/collections/collection-filter-tree";
+import {
+  enterLive,
+  expectSharedReturn,
+  focusLive,
+  parsedEnter,
+  parsedEscape,
+} from "./reader-test-controls";
+
+const descendants = (node: BaseRenderable): BaseRenderable[] => [
+  node,
+  ...node.getChildren().flatMap(descendants),
+];
+async function mount(
+  width = 100,
+  height = 24,
+  projection: ManagementProjection = collectionsSourcesProjection(),
+) {
+  await mkdir("/tmp/opencode", { recursive: true });
+  const cache = await mkdtemp("/tmp/opencode/workarea-return-");
+  const prior = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
+  process.env.SKILL_TUI_UPDATE_CACHE_DIR = cache;
+  const setup = await testRender(
+    () => <App core={directSourceCore(projection)} exit={() => {}} />,
+    { width, height },
+  );
+  return {
+    setup,
+    async dispose() {
+      setup.renderer.destroy();
+      if (prior === undefined) delete process.env.SKILL_TUI_UPDATE_CACHE_DIR;
+      else process.env.SKILL_TUI_UPDATE_CACHE_DIR = prior;
+      await rm(cache, { recursive: true, force: true });
+    },
+  };
+}
+async function openMembership(setup: Awaited<ReturnType<typeof testRender>>) {
+  await enterLive(setup, "shell-section-tab-collections");
+  await enterLive(setup, "collection-browser");
+  await setup.flush();
+  const cell = setup.renderer.root.findDescendantById(
+    "collection-relationships-row-guide%3A0:actions",
+  )!;
+  const manage = descendants(cell).find(
+    (node): node is ButtonRenderable =>
+      node instanceof ButtonRenderable && node.id.endsWith(".manage"),
+  )!;
+  await setup.mockMouse.click(manage.screenX + 1, manage.screenY);
+  await setup.waitFor(
+    () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
+  );
+  await setup.flush();
+}
+
+async function chooseAction(setup: Awaited<ReturnType<typeof testRender>>, id: string) {
+  setup.mockInput.pressKey("p", { ctrl: true });
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+  const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+  const index = choices.options.findIndex((option) => option.value.id === id);
+  expect(index).toBeGreaterThanOrEqual(0);
+  for (let step = 0; step < index; step++) setup.mockInput.pressArrow("down");
+  await parsedEnter(setup);
+}
+
+test("Escape from the left Collection tree does not close an inactive right inspector", async () => {
+  const mounted = await mount(144, 40);
+  const { setup } = mounted;
+  try {
+    await openMembership(setup);
+    const key = collectionFilterPathKey({ segments: [{ collection: "team" }] });
+    const name = setup.renderer.root.findDescendantById(
+      `collection-browser-row-${encodeURIComponent(key)}-name`,
+    )!;
+    await setup.mockMouse.click(name.screenX + 1, name.screenY);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
+    expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
+    await parsedEscape(setup);
+    expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(true);
+    expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("collection-relationships");
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test.each([144, 80])(
+  "inline Reader returns locally before the Source predecessor at %i columns",
+  async (width) => {
+    const mounted = await mount(width, 30);
+    const { setup } = mounted;
+    try {
+      await setup.flush();
+      await enterLive(setup, "shell-section-tab-sources");
+      await focusLive(setup, "source-browser");
+      await chooseAction(setup, "view-installed-skills");
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+      );
+      const browser = setup.renderer.currentFocusedRenderable as SelectRenderable;
+      await setup.mockInput.typeText(" ");
+      setup.mockInput.pressArrow("down");
+      await setup.flush();
+      const selected = browser.getSelectedOption()!.value;
+      const checked = browser.options.find((option) => option.name.startsWith("✓"))!.value;
+      for (const activation of ["escape", "pointer", "tab", "actions"] as const) {
+        await parsedEnter(setup);
+        await setup.waitFor(
+          () => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox",
+        );
+        await setup.flush();
+        await expectSharedReturn(setup, "Back to Skills");
+        if (activation === "escape") await parsedEscape(setup);
+        else if (activation === "pointer") {
+          const back = setup.renderer.root.findDescendantById("route-back")!;
+          await setup.mockMouse.click(back.screenX + 1, back.screenY);
+        } else if (activation === "actions") await chooseAction(setup, "workspace.reader-back");
+        else {
+          for (
+            let step = 0;
+            step < 12 && setup.renderer.currentFocusedRenderable?.id !== "route-back";
+            step++
+          ) {
+            setup.mockInput.pressTab();
+            await setup.flush();
+          }
+          expect(setup.renderer.currentFocusedRenderable?.id).toBe("route-back");
+          await parsedEnter(setup);
+        }
+        await setup.waitFor(
+          () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+        );
+        const restored = setup.renderer.currentFocusedRenderable as SelectRenderable;
+        expect(restored.getSelectedOption()?.value).toBe(selected);
+        expect(restored.options.find((option) => option.name.startsWith("✓"))?.value).toBe(checked);
+        expect(
+          restored.options.every((option) => JSON.parse(option.value)[0] === "team-main"),
+        ).toBe(true);
+        await expectSharedReturn(setup, "Back to Sources");
+      }
+    } finally {
+      await mounted.dispose();
+    }
+  },
+);
+
+test.each([
+  [144, 40],
+  [100, 24],
+  [80, 24],
+  [43, 13],
+])(
+  "shared Back names the active local parent and focusing it never consumes a different route edge at %ix%i",
+  async (width, height) => {
+    const mounted = await mount(width, height);
+    const { setup } = mounted;
+    try {
+      await openMembership(setup);
+      const output = process.env.RETURN_CAPTURE_DIR;
+      if (output) {
+        await mkdir(output, { recursive: true });
+        await writeFile(
+          join(output, `membership-${width}x${height}.txt`),
+          setup.captureCharFrame(),
+        );
+      }
+      await expectSharedReturn(setup, "Back to Contents");
+      expect(setup.renderer.root.findDescendantById("collection.inspector-back")).toBeUndefined();
+      await enterLive(setup, "route-back");
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+      );
+      expect(
+        setup.renderer.root.findDescendantById("collection-membership-inspector"),
+      ).toBeUndefined();
+      expect(setup.captureCharFrame()).toContain("─team─");
+      if (width < 100) expect(setup.renderer.root.findDescendantById("route-back")).toBeDefined();
+      await enterLive(setup, "collection-tabs-tab-relations");
+      await enterLive(setup, "collection-relationships");
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
+      );
+      await setup.flush();
+      await expectSharedReturn(setup, "Back to Relations");
+      if (output)
+        await writeFile(join(output, `reference-${width}x${height}.txt`), setup.captureCharFrame());
+    } finally {
+      await mounted.dispose();
+    }
+  },
+);
+
+test("the shared return is reachable by ordinary Tab and remains the same action through Actions dismissal", async () => {
+  const mounted = await mount();
+  const { setup } = mounted;
+  try {
+    await openMembership(setup);
+    await focusLive(setup, "collection-membership-inspector");
+    let reached = false;
+    for (let index = 0; index < 12; index++) {
+      setup.mockInput.pressTab();
+      await setup.flush();
+      if (setup.renderer.currentFocusedRenderable?.id === "route-back") {
+        reached = true;
+        break;
+      }
+    }
+    expect(reached).toBe(true);
+    setup.mockInput.pressKey("p", { ctrl: true });
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("palette-choices"));
+    const choices = setup.renderer.root.findDescendantById("palette-choices") as SelectRenderable;
+    expect(choices.options.some((option) => option.value.id === "collection.inspector-back")).toBe(
+      true,
+    );
+    await parsedEscape(setup);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "route-back");
+    expect(setup.captureCharFrame()).toContain("Back to Contents");
+    await parsedEnter(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+    );
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("Escape exits Reader Find before navigation but the displayed Back returns directly to its Collection", async () => {
+  const mounted = await mount();
+  const { setup } = mounted;
+  try {
+    await enterLive(setup, "shell-section-tab-collections");
+    await enterLive(setup, "collection-browser");
+    await enterLive(setup, "collection-relationships");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-scrollbox"));
+    await focusLive(setup, "reader-scrollbox");
+    await setup.mockInput.typeText("/");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-find");
+    await parsedEscape(setup);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
+    expect(setup.renderer.root.findDescendantById("reader-find-row")?.visible ?? false).toBe(false);
+    expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(true);
+
+    await setup.mockInput.typeText("/");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-find");
+    const back = setup.renderer.root.findDescendantById("route-back")!;
+    await expectSharedReturn(setup, "Back to Collections");
+    await setup.mockMouse.click(back.screenX + 1, back.screenY);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+    );
+    expect(setup.renderer.root.findDescendantById("reader-find-row")?.visible ?? false).toBe(false);
+    expect(setup.captureCharFrame()).toContain("─team─");
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("Scope dismissal and the resize gate never replace a local return with its outer route", async () => {
+  const mounted = await mount(80, 24);
+  const { setup } = mounted;
+  try {
+    await openMembership(setup);
+    await enterLive(setup, "shell-scope-select");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("scope-choices"));
+    expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
+    await parsedEscape(setup);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("route-back"));
+    await expectSharedReturn(setup, "Back to Contents");
+    setup.resize(42, 12);
+    await setup.flush();
+    expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
+    expect(!!setup.renderer.root.findDescendantById("resize-gate")).toBe(true);
+    setup.resize(80, 24);
+    await setup.flush();
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
+    );
+    await setup.waitFor(
+      () =>
+        setup.renderer.currentFocusedRenderable?.id === "shell-scope-select" &&
+        !!setup.renderer.root.findDescendantById("route-back"),
+    );
+    await expectSharedReturn(setup, "Back to Contents");
+    await enterLive(setup, "route-back");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+    );
+    expect(setup.captureCharFrame()).toContain("─team─");
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test.each([100, 80])(
+  "FI-3 Back-focused resize recovers its live local parent without manual content focus at %i columns",
+  async (width) => {
+    const mounted = await mount(width, 24);
+    const { setup } = mounted;
+    try {
+      await openMembership(setup);
+      for (
+        let step = 0;
+        step < 12 && setup.renderer.currentFocusedRenderable?.id !== "route-back";
+        step++
+      ) {
+        setup.mockInput.pressTab();
+        await setup.flush();
+      }
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("route-back");
+      expect(setup.captureCharFrame()).toContain("Back to Contents");
+      const old = setup.renderer.root.findDescendantById("collection-membership-inspector")!;
+      setup.resize(42, 12);
+      await setup.flush();
+      expect(old.isDestroyed).toBe(true);
+      setup.resize(width, 24);
+      await setup.waitFor(
+        () =>
+          setup.renderer.currentFocusedRenderable?.id === "route-back" &&
+          setup.captureCharFrame().includes("Back to Contents"),
+      );
+      const live = setup.renderer.root.findDescendantById("collection-membership-inspector")!;
+      expect(live === old).toBe(false);
+      await parsedEnter(setup);
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+      );
+      expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(
+        false,
+      );
+      expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(width < 100);
+      expect(setup.captureCharFrame()).toContain("─team─");
+    } finally {
+      await mounted.dispose();
+    }
+  },
+);
+
+test.each(["pointer", "keyboard"])(
+  "dismissible multi-owner impact can be closed by %s without unrelated Workspace filters",
+  async (activation) => {
+    const base = collectionsSourcesProjection();
+    if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
+    const team = base.effective.collectionsView[0]!;
+    const otherOwner = {
+      level: "global" as const,
+      file: "/global.jsonc",
+      pointer: "/collections/team",
+    };
+    const projection = {
+      ...base,
+      effective: {
+        ...base.effective,
+        collectionsView: [
+          {
+            ...team,
+            declared: [...team.declared, otherOwner],
+            members: team.members.map((member, index) =>
+              index === 1
+                ? {
+                    ...member,
+                    paths: [
+                      {
+                        kind: "direct" as const,
+                        collection: "team",
+                        entryName: member.name,
+                        owner: {
+                          ...otherOwner,
+                          pointer: `/collections/team/members/${member.name}`,
+                        },
+                      },
+                    ],
+                  }
+                : member,
+            ),
+          },
+          ...base.effective.collectionsView.slice(1),
+        ],
+      },
+    };
+    const mounted = await mount(100, 24, projection);
+    const { setup } = mounted;
+    try {
+      await enterLive(setup, "shell-section-tab-collections");
+      await enterLive(setup, "collection-browser");
+      await setup.mockInput.typeText(" ");
+      setup.mockInput.pressArrow("down");
+      await setup.flush();
+      await setup.mockInput.typeText(" ");
+      await enterLive(setup, "remove-from-collection");
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership-impact-task"));
+      await setup.flush();
+      const close = setup.renderer.root.findDescendantById("impact-close")!;
+      expect(close.focusable).toBe(true);
+      if (activation === "pointer") await setup.mockMouse.click(close.screenX + 1, close.screenY);
+      else {
+        for (
+          let step = 0;
+          step < 6 && setup.renderer.currentFocusedRenderable?.id !== "impact-close";
+          step++
+        ) {
+          setup.mockInput.pressTab();
+          await setup.flush();
+        }
+        expect(setup.renderer.currentFocusedRenderable?.id).toBe("impact-close");
+        await parsedEnter(setup);
+      }
+      await setup.waitFor(() => !setup.renderer.root.findDescendantById("membership-impact-task"));
+      expect(setup.captureCharFrame()).toContain("2 origins checked");
+    } finally {
+      await mounted.dispose();
+    }
+  },
+);

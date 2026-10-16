@@ -18,7 +18,7 @@ import { configSourceOwner, directOwner, workspaceProjection } from "./direct-so
 
 function pages() {
   const workspace = createWorkspaceState();
-  workspace.selectScope("all-installed-skills");
+  workspace.selectSkillsView("all-installed-skills");
   const collections = createCollectionsState();
   const config = createConfigState();
   const facts = {
@@ -276,7 +276,7 @@ test("K7 Unassigned eligibility excludes assigned cursor memory but preserves ch
   const owners = pages();
   owners.workspace.selectSkill(b.address);
   owners.workspace.toggleSkill(b.address);
-  owners.workspace.selectScope("unassigned");
+  owners.workspace.selectSkillsView("unassigned");
   expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
   expect(selectedSkillActions("workspace", projection, owners.facts)).toEqual([]);
   expect(
@@ -310,7 +310,7 @@ test("K7 Problems eligibility follows the selected visible diagnostic's exact In
     ],
   };
   const owners = pages();
-  owners.workspace.selectScope("problems");
+  owners.workspace.selectSkillsView("problems");
   owners.workspace.selectSkill(b);
   owners.workspace.selectProblem(problemRowKey(problemRows(projection)[0]!));
   expect(installedSkillContext("workspace", projection, owners.facts)?.skill.address).toEqual(b);

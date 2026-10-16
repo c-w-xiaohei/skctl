@@ -180,7 +180,7 @@ export function installedSkillContext(
   if (!selected) return undefined;
   let candidates = projection.installedSkills;
   if (!pages.explicitSkillDetail) {
-    if (workspace.scope === "problems") {
+    if (workspace.skillsView === "problems") {
       const problem = filterProblemRows(
         problemRows(projection),
         workspace.query,
@@ -191,7 +191,7 @@ export function installedSkillContext(
         !sameSkillAddress(problem.intent.address, selected)
       )
         return undefined;
-    } else if (workspace.scope === "current-exposure") {
+    } else if (workspace.skillsView === "current-exposure") {
       const row = deriveAgentAccessTree(projection, workspace.expandedExposurePaths).rows.find(
         (candidate) => candidate.key === workspace.selectedExposurePath,
       );
@@ -202,10 +202,8 @@ export function installedSkillContext(
       )
         return undefined;
     } else {
-      if (workspace.scope !== "all-installed-skills" && workspace.scope !== "unassigned")
-        return undefined;
       candidates = filterSkills(
-        workspace.scope === "unassigned" ? unassignedSkills(projection) : candidates,
+        workspace.skillsView === "unassigned" ? unassignedSkills(projection) : candidates,
         {
           query: workspace.query,
           filters: workspace.filters,
@@ -829,7 +827,7 @@ export function reachableActions(
   if (
     destination === "workspace" &&
     pages.workspace.section === "skills" &&
-    pages.workspace.scope === "current-exposure" &&
+    pages.workspace.skillsView === "current-exposure" &&
     projection?.effective.status === "complete"
   ) {
     const row = deriveAgentAccessTree(projection, pages.workspace.expandedExposurePaths).rows.find(

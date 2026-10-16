@@ -111,6 +111,18 @@ export async function enterLive(setup: ReaderSetup, id: string) {
   await parsedEnter(setup);
 }
 
+/** The compact Back exposes its full owned command in the focus-aware footer. */
+export async function expectSharedReturn(setup: ReaderSetup, verb: string) {
+  const origin = setup.renderer.currentFocusedRenderable;
+  await focusLive(setup, "route-back");
+  await setup.waitForFrame((frame) => frame.includes(verb));
+  expect(setup.captureCharFrame()).toContain(verb);
+  if (origin && !origin.isDestroyed && origin.parent) {
+    origin.focus();
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === origin);
+  }
+}
+
 /** Native Markdown highlighting settles independently of the installed-content read. */
 export async function waitForReaderBody(setup: ReaderSetup, text: string, visible = true) {
   const descendants = (node: BaseRenderable): BaseRenderable[] => [

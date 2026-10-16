@@ -11,12 +11,12 @@ export function Input(props: InputProps) {
   const tokens = useTheme();
   return (
     <InputPrimitive
-      backgroundColor="transparent"
-      cursorColor={tokens().colors.foreground}
-      focusedBackgroundColor="transparent"
-      focusedTextColor={tint(tokens().colors.foreground, tokens().colors.focus, 0.35)}
-      placeholderColor={tokens().colors.mutedForeground}
-      textColor={tokens().colors.foreground}
+      backgroundColor={tokens().colors.input}
+      cursorColor={tokens().colors.focus}
+      focusedBackgroundColor={tokens().colors.control}
+      focusedTextColor={tokens().colors.controlForeground}
+      placeholderColor={tint(tokens().colors.controlForeground, tokens().colors.input, 0.25)}
+      textColor={tokens().colors.controlForeground}
       {...props}
     />
   );

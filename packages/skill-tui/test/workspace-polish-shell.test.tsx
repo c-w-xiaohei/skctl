@@ -79,9 +79,15 @@ test("a page-tab pointer entry after choosing Scope cannot reactivate the Scope 
   await parsedEnter(setup!);
   await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("scope-choices"));
   const choices = setup!.renderer.root.findDescendantById("scope-choices") as SelectRenderable;
+  await setup!.flush();
   await setup!.mockMouse.click(choices.screenX + 5, choices.screenY + 2);
   await parsedEnter(setup!);
-  await setup!.waitForFrame((frame) => frame.includes("Project Config / Sources"));
+  await setup!.waitFor(
+    () => !!setup!.renderer.root.findDescendantById("shell-section-project-tab-sources"),
+  );
+  expect(
+    setup!.renderer.root.findDescendantById("shell-section-project-tab-sources"),
+  ).toBeInstanceOf(TabsTabRenderable);
   const collections = setup!.renderer.root.findDescendantById(
     "shell-section-project-tab-collections",
   ) as TabsTabRenderable;
@@ -91,6 +97,9 @@ test("a page-tab pointer entry after choosing Scope cannot reactivate the Scope 
   expect(setup!.renderer.root.findDescendantById("scope-choices")).toBeUndefined();
   expect(setup!.renderer.currentFocusedRenderable?.id).not.toBe("shell-scope-select");
   await parsedEnter(setup!);
-  await setup!.waitForFrame((frame) => frame.includes("Project Config / Collections"));
+  await setup!.waitFor(() => {
+    const tab = setup!.renderer.root.findDescendantById("shell-section-project-tab-collections");
+    return tab instanceof TabsTabRenderable && tab.getState().selected;
+  });
   expect(setup!.renderer.root.findDescendantById("scope-choices")).toBeUndefined();
 });

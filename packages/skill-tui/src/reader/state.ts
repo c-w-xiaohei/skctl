@@ -130,6 +130,7 @@ export function reduceReaderEvent(
       detailsScroll: saved.detailsScroll,
       detailsManagementOpen: saved.detailsManagementOpen,
       detailsDescriptionOpen: saved.detailsDescriptionOpen,
+      detailsMetadataOpen: saved.detailsMetadataOpen,
       focus: saved.focus,
       selectedResource: saved.selectedResource,
       resourceLevel:

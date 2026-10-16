@@ -4,6 +4,11 @@ export interface Tokens {
   colors: {
     background: ColorInput;
     surface: ColorInput;
+    control: ColorInput;
+    controlForeground: ColorInput;
+    input: ColorInput;
+    destructiveSurface: ColorInput;
+    destructiveSurfaceForeground: ColorInput;
     foreground: ColorInput;
     mutedForeground: ColorInput;
     border: ColorInput;
@@ -180,6 +185,11 @@ export const terminal: Tokens = {
   colors: {
     background: RGBA.defaultBackground(),
     surface: RGBA.fromIndex(8),
+    control: RGBA.fromIndex(8),
+    controlForeground: RGBA.fromIndex(15),
+    input: RGBA.fromIndex(0),
+    destructiveSurface: RGBA.fromIndex(1),
+    destructiveSurfaceForeground: RGBA.fromIndex(15),
     foreground: RGBA.defaultForeground(),
     mutedForeground: RGBA.fromIndex(7),
     border: RGBA.fromIndex(8),
@@ -218,6 +228,13 @@ export const theme = createThemeStore({
       dark: {
         colors: {
           surface: "#293544",
+          control: "#36475a",
+          controlForeground: "#f3f6fa",
+          input: "#17232f",
+          destructiveSurface: "#512b34",
+          destructiveSurfaceForeground: "#ffdde1",
+          disabled: "#303a46",
+          disabledForeground: "#b0bac6",
           mutedForeground: "#a5b2c2",
           border: "#526173",
           focus: "#80b7f5",
@@ -228,6 +245,13 @@ export const theme = createThemeStore({
       light: {
         colors: {
           surface: "#dce6f0",
+          control: "#c3d0df",
+          controlForeground: "#203249",
+          input: "#eef2f7",
+          destructiveSurface: "#f3dce0",
+          destructiveSurfaceForeground: "#7c2031",
+          disabled: "#e2e5ea",
+          disabledForeground: "#556171",
           mutedForeground: "#4c5e73",
           border: "#8595a8",
           focus: "#245a98",

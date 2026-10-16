@@ -59,6 +59,8 @@ export const collectionOriginKey = (
 
 export interface CollectionsSnapshot {
   readonly selected?: string;
+  readonly selectedPath?: string;
+  readonly expandedPaths?: Readonly<Record<string, boolean>>;
   readonly query: string;
   readonly filters: Readonly<Record<string, string>>;
   readonly tabs: Readonly<Record<string, CollectionTab>>;
@@ -71,6 +73,7 @@ export interface CollectionsSnapshot {
   };
   readonly scrolls: Readonly<Record<string, number>>;
   readonly inspector?:
+    | { readonly kind: "collection"; readonly collection: string }
     | {
         readonly kind: "membership";
         readonly collection: string;
@@ -241,6 +244,20 @@ export function createCollectionsState() {
       setSnapshot(structuredClone(next));
     },
     selected: () => snapshot().selected,
+    selectedPath: () => snapshot().selectedPath,
+    expandedPaths: () => snapshot().expandedPaths ?? {},
+    selectPath(selectedPath: string) {
+      update((current) => ({ ...current, selectedPath }));
+    },
+    setPathExpanded(key: string, expanded: boolean) {
+      update((current) => ({
+        ...current,
+        expandedPaths: { ...current.expandedPaths, [key]: expanded },
+      }));
+    },
+    setExpandedPaths(expandedPaths: Readonly<Record<string, boolean>>) {
+      update((current) => ({ ...current, expandedPaths }));
+    },
     query: () => snapshot().query,
     filters: () => snapshot().filters,
     tab: (collection: string): CollectionTab => snapshot().tabs[collection] ?? "entries",
@@ -305,6 +322,9 @@ export function createCollectionsState() {
         ...current,
         filter: { open: false, search: "" },
       }));
+    },
+    openCollectionInfo(collection: string) {
+      update((current) => ({ ...current, inspector: { kind: "collection", collection } }));
     },
     openMembership(collection: string, member: string) {
       update((current) => ({
@@ -423,6 +443,11 @@ export type CollectionsReadonly = Pick<
   CollectionsState,
   | "snapshot"
   | "selected"
+  | "selectedPath"
+  | "expandedPaths"
+  | "selectPath"
+  | "setPathExpanded"
+  | "setExpandedPaths"
   | "query"
   | "filters"
   | "tab"

@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { BoxRenderable, LayoutEvents, ScrollBoxRenderable } from "@opentui/core";
+import { BoxRenderable, LayoutEvents, ScrollBoxRenderable, type Renderable } from "@opentui/core";
 import type { BoxOptions } from "@opentui/core";
 import { useRenderer } from "@opentui/solid";
 import {
@@ -16,7 +16,8 @@ import {
 } from "solid-js";
 import type { FocusRegistry } from "../focus";
 import { isPlainNavKey, parseNavKey, type NavKey } from "../navigation";
-import type { DispatchResult } from "../types";
+import type { CommandRecord, CommandRegistration, DispatchResult } from "../types";
+import { Button } from "./button";
 import {
   layoutTableColumns,
   truncateTableText,
@@ -26,6 +27,13 @@ import {
 import { useTheme } from "./use-theme";
 
 export type { DataTableCell, DataTableColumn } from "./data-table-layout";
+
+export interface DataTableAction {
+  /** Same action meaning across rows; command IDs still identify exact targets. */
+  readonly key: string;
+  readonly record: CommandRecord;
+  readonly execute: () => void;
+}
 
 export interface DataTableProps<T> extends Pick<
   BoxOptions,
@@ -38,6 +46,13 @@ export interface DataTableProps<T> extends Pick<
   readonly currentKey: string | undefined;
   readonly onCurrentChange: (key: string | undefined) => void;
   readonly onActivate?: (row: T) => void;
+  /** Required rightmost native-control column; only the current row enters Actions discovery. */
+  readonly actions?: {
+    readonly width: number;
+    readonly compactWidth: number;
+    readonly items: (row: T, compact: boolean) => readonly DataTableAction[];
+    readonly registerCommand?: CommandRegistration;
+  };
   /** Page-owned commands run before ordinary table navigation. */
   readonly onKey?: (key: NavKey) => DispatchResult;
   readonly onBoundary?: (direction: "up" | "down") => void;
@@ -45,6 +60,7 @@ export interface DataTableProps<T> extends Pick<
   readonly onScroll?: (scrollTop: number) => void;
   readonly selection?: {
     readonly keys: ReadonlySet<string>;
+    readonly partialKeys?: ReadonlySet<string>;
     readonly showIndicators?: boolean;
     readonly canSelect?: (row: T) => boolean;
     readonly onToggle: (row: T) => void;
@@ -70,6 +86,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const selectionPredicate = createMemo(() => selection()?.canSelect);
   const isChecked = createSelector(
     () => selection()?.keys,
+    (key: string, keys) => keys?.has(key) ?? false,
+  );
+  const isPartial = createSelector(
+    () => selection()?.partialKeys,
     (key: string, keys) => keys?.has(key) ?? false,
   );
   const data = createMemo(() => {
@@ -99,7 +119,13 @@ export function DataTable<T>(props: DataTableProps<T>) {
   // Definition identity does not depend on width. For receives stable IDs, not layouts.
   const definitions = createMemo(() => new Map(props.columns.map((column) => [column.id, column])));
   const gutter = createMemo(() => (showIndicators() ? 6 : 2));
-  const layout = createMemo(() => layoutTableColumns(props.columns, width() - gutter()));
+  const compactActions = createMemo(() => width() < 80);
+  const actionWidth = createMemo(() =>
+    props.actions ? (compactActions() ? props.actions.compactWidth : props.actions.width) : 0,
+  );
+  const layout = createMemo(() =>
+    layoutTableColumns(props.columns, width() - gutter() - (props.actions ? actionWidth() + 2 : 0)),
+  );
   const columnKeys = createMemo(() => layout().map(({ column }) => column.id));
   const columnWidths = createMemo(
     () => new Map(layout().map(({ column, width }) => [column.id, width])),
@@ -115,6 +141,23 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const initialScrollTop = props.initialScrollTop;
   let restorePending = initialScrollTop !== undefined;
   let reportedScroll: number | undefined;
+  const actionTargets = new Map<string, Map<string, Renderable>>();
+  let pendingAction: { row: string; action?: string } | undefined;
+  const enterActions = (row: string | undefined, action?: string) => {
+    if (!row || !props.actions || !fits()) return;
+    pendingAction = { row, action };
+    reveal();
+  };
+  const actionButtons = (key: string) => {
+    const row = data().rows.get(key);
+    const targets = actionTargets.get(key);
+    return row === undefined
+      ? []
+      : (props.actions?.items(row, compactActions()) ?? []).flatMap((item) => {
+          const target = targets?.get(item.record.id);
+          return target && !target.isDestroyed && target.focusable ? [{ item, target }] : [];
+        });
+  };
   const reveal = () => {
     revealPending = true;
     renderer.requestRender();
@@ -170,6 +213,16 @@ export function DataTable<T>(props: DataTableProps<T>) {
       }
     }
     reportScroll();
+    if (pendingAction && !revealPending) {
+      const next = pendingAction;
+      pendingAction = undefined;
+      const buttons = actionButtons(next.row);
+      (
+        buttons.find(({ item }) => item.key === next.action) ??
+        buttons.find(({ item }) => !item.record.danger) ??
+        buttons[0]
+      )?.target.focus();
+    }
   };
   const focus = () => setFocused(true);
   const blur = () => setFocused(false);
@@ -218,6 +271,13 @@ export function DataTable<T>(props: DataTableProps<T>) {
       case "end":
         locate(data().keys.length - 1);
         break;
+      case "right":
+        if (!props.actions) return "declined";
+        enterActions(cursor().key);
+        break;
+      case "left":
+        if (!props.actions) return "declined";
+        break;
       case "enter":
       case "character": {
         if (key.name === "character" && (key.char !== " " || !selecting())) return "declined";
@@ -239,6 +299,103 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const handleKey = (key: NavKey): DispatchResult => {
     const result = props.onKey?.(key);
     return result && result !== "declined" ? result : navigate(key);
+  };
+  const ActionCell = (cellProps: { rowKey: string; row: T }) => {
+    const items = createMemo(() => props.actions?.items(cellProps.row, compactActions()) ?? []);
+    const byId = createMemo(() => new Map(items().map((item) => [item.record.id, item])));
+    return (
+      <box
+        id={`${rowId(cellProps.rowKey)}:actions`}
+        width={actionWidth()}
+        height={1}
+        flexShrink={0}
+        flexDirection="row"
+        gap={1}
+        overflow="hidden"
+      >
+        <For each={items().map((item) => item.record.id)}>
+          {(actionId) => {
+            const item = createMemo<DataTableAction>(
+              (previous) => byId().get(actionId) ?? previous,
+              byId().get(actionId)!,
+            );
+            let target: Renderable | undefined;
+            const execute = () => {
+              if (!item().record.enabled || !data().rows.has(cellProps.rowKey)) return;
+              props.onCurrentChange(cellProps.rowKey);
+              reportScroll();
+              item().execute();
+            };
+            createEffect(() => {
+              const record = item().record;
+              if (props.currentKey !== cellProps.rowKey || !target || !root) return;
+              const owner = props.focusRegistry?.ownerOf(root);
+              if (owner)
+                onCleanup(
+                  props.actions?.registerCommand?.(record, owner, target.id, execute) ?? (() => {}),
+                );
+            });
+            const mode = (key: NavKey): DispatchResult => {
+              if (!isPlainNavKey(key)) return "declined";
+              const buttons = actionButtons(cellProps.rowKey);
+              const index = buttons.findIndex((button) => button.target === target);
+              if (key.name === "escape" || (key.name === "left" && index <= 0)) root?.focus();
+              else if (key.name === "left" || key.name === "right")
+                buttons[
+                  Math.max(0, Math.min(buttons.length - 1, index + (key.name === "left" ? -1 : 1)))
+                ]?.target.focus();
+              else if (key.name === "up" || key.name === "down") {
+                locate(cursor().index + (key.name === "up" ? -1 : 1));
+                enterActions(cursor().key, item().key);
+              } else return "declined";
+              return "consumed";
+            };
+            return (
+              <Button
+                id={`${rowId(cellProps.rowKey)}:action-${encodeURIComponent(actionId)}`}
+                label={item().record.verb}
+                intent={item().record.danger ? "danger" : "neutral"}
+                disabled={!item().record.enabled}
+                ref={(value: Renderable) => {
+                  target = value;
+                  const targets = actionTargets.get(cellProps.rowKey) ?? new Map();
+                  targets.set(actionId, value);
+                  actionTargets.set(cellProps.rowKey, targets);
+                  const owner = root && props.focusRegistry?.ownerOf(root);
+                  const releaseMember =
+                    owner && root
+                      ? props.focusRegistry?.registerMember(owner, value, root)
+                      : undefined;
+                  const releaseMode = props.focusRegistry?.registerModeHandler(value, mode);
+                  onCleanup(() => {
+                    if (renderer.currentFocusedRenderable === value && !root?.isDestroyed)
+                      root?.focus();
+                    releaseMode?.();
+                    releaseMember?.();
+                    targets.delete(actionId);
+                    if (!targets.size) actionTargets.delete(cellProps.rowKey);
+                  });
+                }}
+                onMouseDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.stopPropagation();
+                  if (item().record.enabled) {
+                    props.onCurrentChange(cellProps.rowKey);
+                    target?.focus();
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.defaultPrevented || mode(parseNavKey(event)) !== "consumed") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onPress={execute}
+              />
+            );
+          }}
+        </For>
+      </box>
+    );
   };
   const cellColor = (tone: Exclude<DataTableCell, string>["tone"], highlighted: boolean) => {
     const colors = tokens().colors;
@@ -271,7 +428,12 @@ export function DataTable<T>(props: DataTableProps<T>) {
       focusable
       onSizeChange={resize}
       onKeyDown={(event) => {
-        if (event.defaultPrevented || handleKey(parseNavKey(event)) !== "consumed") return;
+        if (
+          event.defaultPrevented ||
+          renderer.currentFocusedRenderable !== root ||
+          handleKey(parseNavKey(event)) !== "consumed"
+        )
+          return;
         event.preventDefault();
         event.stopPropagation();
       }}
@@ -314,6 +476,17 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 );
               }}
             </For>
+            <Show when={props.actions}>
+              <text
+                id={`${id}-header-actions`}
+                width={actionWidth()}
+                height={1}
+                flexShrink={0}
+                fg={tokens().colors.mutedForeground}
+              >
+                Actions
+              </text>
+            </Show>
           </box>
         </box>
       </Show>
@@ -433,9 +606,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
                           content={
                             isChecked(key)
                               ? `${tokens().glyphs.check} `
-                              : selectable()
-                                ? "□ "
-                                : "— "
+                              : isPartial(key)
+                                ? "− "
+                                : selectable()
+                                  ? "□ "
+                                  : "— "
                           }
                           onMouseDown={(event) => {
                             if (event.button !== 0) return;
@@ -482,6 +657,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
                           );
                         }}
                       </For>
+                      <Show when={props.actions}>
+                        <ActionCell rowKey={key} row={row()} />
+                      </Show>
                     </box>
                   </box>
                 );

@@ -266,7 +266,7 @@ test("preview errors remain readable and Back returns without triggering a reche
   try {
     await enterLive(mounted.setup, "source-updates-browser");
     await mounted.setup.waitForFrame((frame) => frame.includes("Installed comparison changed"));
-    await enterLive(mounted.setup, "source-updates-preview-back");
+    await enterLive(mounted.setup, "route-back");
     await mounted.setup.waitFor(
       () => mounted.setup.renderer.currentFocusedRenderable?.id === "source-updates-browser",
     );

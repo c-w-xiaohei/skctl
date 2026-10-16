@@ -1,0 +1,460 @@
+/** @jsxImportSource @opentui/solid */
+import { expect, test } from "bun:test";
+import { ButtonRenderable } from "@tuiparts/core/button";
+import { BoxRenderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
+import { testRender } from "@opentui/solid";
+import type { ManagementProjection, SkillAddress } from "@skill-cli/core";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { App } from "../src/app";
+import { directSourceCore } from "./direct-source.fixture";
+import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
+import {
+  enterLive,
+  focusLive,
+  parsedEnter,
+  parsedEscape,
+  waitForReaderBody,
+} from "./reader-test-controls";
+
+function projection(): ManagementProjection {
+  const base = collectionsSourcesProjection();
+  if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
+  const team = base.effective.collectionsView[0]!;
+  const original = base.installedSkills[0]!;
+  const names = [
+    "guide",
+    "reference",
+    "audience-mapper",
+    "brief-generator",
+    "budget-optimizer",
+    "campaign-planner",
+    "competitor-tracker",
+    "content-amplifier",
+    "contract-reviewer",
+    "creator-content-auditor",
+    "fit-scorer",
+    "influencer-discovery",
+    "landing-optimizer",
+    "outreach-manager",
+    "performance-analyzer",
+    "report-generator",
+    "趋势观察-中文👨‍👩‍👧‍👦",
+  ];
+  const members = names.map((name) => ({
+    name,
+    address: { source: original.address.source, path: name },
+    paths: [
+      {
+        kind: "direct" as const,
+        collection: team.id,
+        entryName: name,
+        owner: { ...team.declared[0]!, pointer: `/collections/team/members/${name}` },
+      },
+    ],
+  }));
+  return {
+    ...base,
+    installedSkills: members.map((member) => ({
+      ...original,
+      address: member.address,
+      name: member.name,
+      description: `Installed ${member.name} instructions`,
+      collections: [{ id: team.id, entry: member.name, paths: member.paths }],
+    })),
+    effective: {
+      ...base.effective,
+      collectionsView: [{ ...team, members }, ...base.effective.collectionsView.slice(1)],
+    },
+  };
+}
+
+type Setup = Awaited<ReturnType<typeof testRender>>;
+async function mount(width: number, height: number, input: ManagementProjection = projection()) {
+  await mkdir("/tmp/opencode", { recursive: true });
+  const cache = await mkdtemp("/tmp/opencode/collection-actions-");
+  const previous = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
+  process.env.SKILL_TUI_UPDATE_CACHE_DIR = cache;
+  const reads: SkillAddress[] = [],
+    changes: unknown[] = [],
+    previews: unknown[] = [],
+    usePreviews: unknown[] = [];
+  const core = directSourceCore(input, {
+    loadInstalled: async ({ address }) => {
+      reads.push(address);
+      const text = `# ${address.path}\n\nExact installed ${address.path} instructions.`;
+      return {
+        value: {
+          address,
+          name: address.path,
+          description: address.path,
+          rawText: text,
+          markdownText: text,
+        },
+        diagnostics: [],
+      };
+    },
+  });
+  const preview = core.configuration.previewMembershipBatch;
+  core.configuration.previewMembershipBatch = async (request, options) => {
+    previews.push(request);
+    return preview(request, options);
+  };
+  const previewUse = core.configuration.previewCollectionUse;
+  core.configuration.previewCollectionUse = async (request, options) => {
+    usePreviews.push(request);
+    return previewUse(request, options);
+  };
+  core.configuration.change = async (request) => {
+    changes.push(request);
+    throw new Error("Unconfirmed row actions must not mutate Config");
+  };
+  const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
+  return {
+    setup,
+    reads,
+    changes,
+    previews,
+    usePreviews,
+    async dispose() {
+      setup.renderer.destroy();
+      if (previous === undefined) delete process.env.SKILL_TUI_UPDATE_CACHE_DIR;
+      else process.env.SKILL_TUI_UPDATE_CACHE_DIR = previous;
+      await rm(cache, { recursive: true, force: true });
+    },
+  };
+}
+const descendants = (target: BaseRenderable): BaseRenderable[] => [
+  target,
+  ...target.getChildren().flatMap(descendants),
+];
+async function openActions(setup: Setup) {
+  setup.mockInput.pressKey("p", { ctrl: true });
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+  return setup.renderer.currentFocusedRenderable as SelectRenderable;
+}
+async function chooseAction(setup: Setup, id: string) {
+  const choices = await openActions(setup);
+  const index = choices.options.findIndex((option) => option.value.id === id);
+  expect(index).toBeGreaterThanOrEqual(0);
+  for (let row = 0; row < index; row++) setup.mockInput.pressArrow("down");
+  await parsedEnter(setup);
+}
+async function chooseManage(setup: Setup, destination: string) {
+  const choices = await openActions(setup);
+  const option = choices.options.find(
+    (candidate) =>
+      candidate.value.verb === "Manage…" && candidate.value.destination.includes(destination),
+  );
+  expect(option).toBeDefined();
+  await parsedEscape(setup);
+  await chooseAction(setup, option!.value.id);
+}
+async function selectRow(setup: Setup, down: number) {
+  await focusLive(setup, "collection-relationships");
+  for (let row = 0; row < down; row++) setup.mockInput.pressArrow("down");
+  await setup.flush();
+}
+async function openContents(setup: Setup) {
+  await enterLive(setup, "shell-section-tab-collections");
+  await enterLive(setup, "collection-browser");
+  await setup.waitFor(
+    () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+  );
+  await setup.flush();
+}
+
+test.each([
+  [144, 40],
+  [100, 24],
+  [80, 24],
+  [43, 13],
+])(
+  "Collections task toolbar and Actions column fit %ix%i with real-length content",
+  async (width, height) => {
+    const mounted = await mount(width, height);
+    const { setup } = mounted;
+    try {
+      await openContents(setup);
+      const output = process.env.COLLECTION_ACTION_CAPTURE_DIR;
+      if (output) {
+        await mkdir(output, { recursive: true });
+        await writeFile(
+          join(output, `collections-actions-${width}x${height}.txt`),
+          setup.captureCharFrame(),
+        );
+      }
+      expect(
+        setup.renderer.root.findDescendantById("collection-action-add-reference"),
+      ).toBeDefined();
+      const header = setup.renderer.root.findDescendantById(
+        "collection-relationships-header-actions",
+      )!;
+      expect(header).toBeDefined();
+      const body = setup.renderer.root.findDescendantById("collection-detail-pane")!;
+      const cell = setup.renderer.root.findDescendantById(
+        "collection-relationships-row-guide%3A0:actions",
+      )!;
+      expect(cell.screenX).toBe(header.screenX);
+      expect(cell.screenX + cell.width).toBeLessThanOrEqual(body.screenX + body.width - 1);
+      expect(cell.screenY + cell.height).toBeLessThanOrEqual(height - 2);
+      expect(cell.width).toBeGreaterThan(0);
+      for (const paneId of ["collection-content-controls-pane", "collections-tree-controls-pane"]) {
+        const pane = setup.renderer.root.findDescendantById(paneId);
+        if (!pane) continue;
+        for (const button of descendants(pane).filter((node) => node instanceof ButtonRenderable)) {
+          expect(button.screenX).toBeGreaterThanOrEqual(pane.screenX);
+          expect(button.screenX + button.width).toBeLessThanOrEqual(pane.screenX + pane.width);
+          expect(button.screenY + button.height).toBeLessThanOrEqual(pane.screenY + pane.height);
+        }
+      }
+      expect(mounted.changes).toEqual([]);
+      await setup.mockInput.typeText(" ");
+      await setup.flush();
+      expect(
+        setup.renderer.root.findDescendantById("collection-relationships-header-actions"),
+      ).toBeDefined();
+      const checkedCell = setup.renderer.root.findDescendantById(
+        "collection-relationships-row-guide%3A0:actions",
+      )!;
+      expect(checkedCell.screenY + checkedCell.height).toBeLessThan(height - 1);
+      if (output)
+        await writeFile(
+          join(output, `collections-batch-${width}x${height}.txt`),
+          setup.captureCharFrame(),
+        );
+    } finally {
+      await mounted.dispose();
+    }
+  },
+);
+
+test("multi-origin Membership has no implicit Remove and Manage preserves explicit origin choice", async () => {
+  const base = projection();
+  if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
+  const team = base.effective.collectionsView[0]!;
+  const member = team.members[0]!;
+  const input = {
+    ...base,
+    effective: {
+      ...base.effective,
+      collectionsView: [
+        {
+          ...team,
+          members: [
+            {
+              ...member,
+              paths: [
+                ...member.paths,
+                {
+                  kind: "repository-derived" as const,
+                  repository: "fixture/repo",
+                  source: "team-main",
+                  path: "guide",
+                },
+              ],
+            },
+            ...team.members.slice(1),
+          ],
+        },
+        ...base.effective.collectionsView.slice(1),
+      ],
+    },
+  };
+  const mounted = await mount(144, 40, input);
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await selectRow(setup, 0);
+    const current = await openActions(setup);
+    expect(current.options.some((option) => option.value.id === "membership.remove")).toBe(false);
+    await parsedEscape(setup);
+    await chooseAction(setup, "collection.row.team.guide%3A0.manage");
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("collection-membership-origin"),
+    );
+    expect(mounted.previews).toEqual([]);
+    expect(mounted.changes).toEqual([]);
+    expect(mounted.reads).toEqual([]);
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("Tab reaches a table with unavailable Read and still reaches its enabled Manage", async () => {
+  const base = projection();
+  const input = {
+    ...base,
+    installedSkills: base.installedSkills.filter((skill) => skill.address.path !== "guide"),
+  };
+  const mounted = await mount(144, 40, input);
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await selectRow(setup, 0);
+    const actions = await openActions(setup);
+    expect(
+      actions.options.find((option) => option.value.id === "membership.open-skill")?.value,
+    ).toMatchObject({ enabled: false, disabledReason: "Unavailable: installed Skill unavailable" });
+    await parsedEscape(setup);
+    await focusLive(setup, "collection-action-add-membership");
+    setup.mockInput.pressTab();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+    );
+    setup.mockInput.pressTab({ shift: true });
+    await setup.flush();
+    setup.mockInput.pressTab();
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-relationships");
+    setup.mockInput.pressArrow("right");
+    await setup.waitFor(
+      () =>
+        setup.renderer.currentFocusedRenderable?.id ===
+        `collection-relationships-row-${encodeURIComponent("guide:0")}:action-${encodeURIComponent("collection.row.team.guide%3A0.manage")}`,
+    );
+    await parsedEnter(setup);
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
+    );
+    expect(mounted.reads).toEqual([]);
+    expect(mounted.changes).toEqual([]);
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("Reference Manage to Link preserves action meaning without entering Unlink", async () => {
+  const base = projection();
+  if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
+  const team = base.effective.collectionsView[0]!;
+  const input = {
+    ...base,
+    effective: {
+      ...base.effective,
+      collectionsView: [
+        { ...team, links: [{ collection: "docs", owner: team.declared[0]! }] },
+        ...base.effective.collectionsView.slice(1),
+      ],
+    },
+  };
+  const mounted = await mount(144, 40, input);
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await enterLive(setup, "collection-tabs-tab-relations");
+    await focusLive(setup, "collection-relationships");
+    await selectRow(setup, 1);
+    await chooseManage(setup, "Link docs");
+    expect(mounted.changes).toEqual([]);
+    expect(mounted.previews).toEqual([]);
+    await parsedEnter(setup);
+    expect(setup.captureCharFrame()).toContain("Link");
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("inline Use edit retains the host Config's other roots and cancellation writes nothing", async () => {
+  const base = projection();
+  const input = {
+    ...base,
+    configs: base.configs.map((config) =>
+      config.level === "project"
+        ? {
+            ...config,
+            direct: {
+              ...config.direct,
+              collectionUse: ["team", "docs"].map((collection, index) => ({
+                collection,
+                owner: {
+                  level: "project" as const,
+                  file: "/workspace/skill-cli/skill-cli.jsonc",
+                  pointer: `/use/${index}`,
+                },
+              })),
+            },
+          }
+        : config,
+    ),
+  };
+  const mounted = await mount(144, 40, input);
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await enterLive(setup, "collection-tabs-tab-relations");
+    await setup.flush();
+    await selectRow(setup, 0);
+    await chooseAction(setup, "relationship.edit-use");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-use-values"));
+    expect(
+      (setup.renderer.root.findDescendantById("collection-use-values") as SelectRenderable).options
+        .filter((option) => option.name.startsWith("[x]"))
+        .map((option) => option.value),
+    ).toEqual(["team", "docs"]);
+    await enterLive(setup, "collection-use-review");
+    await setup.waitFor(() => mounted.usePreviews.length === 1);
+    expect(mounted.usePreviews[0]).toMatchObject({
+      level: "project",
+      collections: ["team", "docs"],
+    });
+    await parsedEscape(setup);
+    expect(mounted.changes).toEqual([]);
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("current-row Actions Remove previews only that Membership and leaves a different checked row untouched on cancel", async () => {
+  const mounted = await mount(144, 40);
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await selectRow(setup, 1);
+    await setup.mockInput.typeText(" ");
+    await setup.flush();
+    await setup.mockInput.pressArrow("up");
+    await setup.flush();
+    await chooseAction(setup, "membership.remove");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership-removal-plan"));
+    await enterLive(setup, "membership-removal-plan-continue");
+    await setup.waitFor(() => mounted.previews.length === 1);
+    expect(mounted.previews[0]).toMatchObject({
+      collection: "team",
+      removals: [{ name: "guide", expectedAddress: { source: "team-main", path: "guide" } }],
+    });
+    await parsedEscape(setup);
+    await setup.flush();
+    expect(setup.captureCharFrame()).toContain("1 origins checked");
+    expect(mounted.changes).toEqual([]);
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("current-row Actions Read uses that row address and Back restores the Collection without changing checks", async () => {
+  const mounted = await mount(144, 40);
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await setup.mockInput.typeText(" ");
+    await setup.flush();
+    await selectRow(setup, 1);
+    await chooseAction(setup, "membership.open-skill");
+    await waitForReaderBody(setup, "Exact installed reference instructions.").catch((error) => {
+      throw new Error(
+        `${error}\nreads=${JSON.stringify(mounted.reads)} focus=${setup.renderer.currentFocusedRenderable?.id}\n${setup.captureCharFrame()}`,
+      );
+    });
+    expect(mounted.reads).toEqual([{ source: "team-main", path: "reference" }]);
+    await parsedEscape(setup);
+    await setup.waitFor(
+      () =>
+        setup.renderer.root.findDescendantById("collection-relationships") instanceof BoxRenderable,
+    );
+    expect(setup.captureCharFrame()).toContain("1 origins checked");
+    expect(mounted.changes).toEqual([]);
+  } finally {
+    await mounted.dispose();
+  }
+});

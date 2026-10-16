@@ -20,6 +20,17 @@ export function Button(props: ButtonProps) {
     "showFocusIndicator",
   ]);
   const tokens = useTheme();
+  const intent = () => recipe.intent ?? "neutral";
+  const foreground = (state: ButtonPrimitive.State) =>
+    state.disabled
+      ? tokens().colors.disabledForeground
+      : state.focused || state.pressed || intent() === "primary"
+        ? intent() === "danger"
+          ? tokens().colors.destructiveForeground
+          : tokens().colors.primaryForeground
+        : intent() === "danger"
+          ? tokens().colors.destructiveSurfaceForeground
+          : tokens().colors.controlForeground;
   return (
     <ButtonPrimitive backgroundColor="transparent" disabled={recipe.disabled} {...root}>
       {(state: ButtonPrimitive.State) => (
@@ -29,21 +40,19 @@ export function Button(props: ButtonProps) {
               ? tokens().colors.disabled
               : state.pressed
                 ? tint(
-                    recipe.intent === "danger"
-                      ? tokens().colors.destructive
-                      : tokens().colors.primary,
-                    tokens().colors.foreground,
-                    0.15,
+                    intent() === "danger" ? tokens().colors.destructive : tokens().colors.primary,
+                    tokens().colors.background,
+                    0.18,
                   )
                 : state.focused
-                  ? recipe.intent === "danger"
+                  ? intent() === "danger"
                     ? tokens().colors.destructive
                     : tokens().colors.primary
-                  : (recipe.intent ?? "primary") === "primary"
+                  : intent() === "primary"
                     ? tokens().colors.primary
-                    : recipe.intent === "quiet"
-                      ? "transparent"
-                      : tokens().colors.surface
+                    : intent() === "danger"
+                      ? tokens().colors.destructiveSurface
+                      : tokens().colors.control
           }
           flexDirection="row"
           paddingRight={
@@ -58,25 +67,11 @@ export function Button(props: ButtonProps) {
                 ? tokens().density.comfortablePaddingX
                 : tokens().density.paddingX
             }
-            fg={tokens().colors.primaryForeground}
+            fg={foreground(state)}
           >
             {state.focused && recipe.showFocusIndicator !== false ? "›" : " "}
           </text>
-          <text
-            content={recipe.label}
-            wrapMode="none"
-            fg={
-              state.disabled
-                ? tokens().colors.disabledForeground
-                : state.focused || state.pressed || (recipe.intent ?? "primary") === "primary"
-                  ? tokens().colors.primaryForeground
-                  : recipe.intent === "danger"
-                    ? tokens().colors.destructive
-                    : recipe.intent === "quiet"
-                      ? tokens().colors.mutedForeground
-                      : tokens().colors.foreground
-            }
-          />
+          <text content={recipe.label} wrapMode="none" fg={foreground(state)} />
         </box>
       )}
     </ButtonPrimitive>

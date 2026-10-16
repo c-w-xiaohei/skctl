@@ -45,17 +45,25 @@ export function keyboardGuidance(input: {
       : input.mode === "scroll"
         ? "↑↓ scroll"
         : modes[input.mode];
+  const minimumGlobal = input.modal
+    ? `Esc ${input.modalBack ?? "close"}`
+    : input.mode === "edit"
+      ? "Esc cancel"
+      : "^P Actions";
+  const compactGlobal = input.modal || input.mode === "edit" ? minimumGlobal : "Esc · ^P Actions";
   const candidates: readonly (readonly [string, string])[] = [
     [local, global],
     ...(input.mode === "browse" && input.browseHint ? ([[local, shortGlobal]] as const) : []),
     [shortLocal, shortGlobal],
-    ...(input.mode === "command" || input.mode === "edit" ? [[shortLocal, ""] as const] : []),
-    ["", shortGlobal],
-    ["", input.modal ? "Esc close" : input.mode === "edit" ? "Esc cancel" : "Ctrl+P Actions"],
+    [shortLocal, compactGlobal],
+    [shortLocal, minimumGlobal],
   ];
   for (const [control, navigation] of candidates) {
     if (Bun.stringWidth(control) + (control ? 3 : 0) + Bun.stringWidth(navigation) <= input.width)
       return { local: control, global: navigation };
   }
-  return { local: "", global: fitColumn(shortGlobal, input.width).trimEnd() };
+  const localWidth = input.width - Bun.stringWidth(minimumGlobal) - 3;
+  if (localWidth >= 8)
+    return { local: fitColumn(shortLocal, localWidth).trimEnd(), global: minimumGlobal };
+  return { local: "", global: fitColumn(minimumGlobal, input.width).trimEnd() };
 }

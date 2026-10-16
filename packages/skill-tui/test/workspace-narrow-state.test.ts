@@ -5,7 +5,7 @@ import { readerProjection } from "./installed-reader.fixture";
 
 test("workspace narrow Source flow distinguishes Skills, Sources, and inspector", () => {
   const workspace = createWorkspaceState();
-  expect(workspace.scope()).toBe("current-exposure");
+  expect(workspace.skillsView()).toBe("current-exposure");
   expect(workspace.section()).toBe("skills");
   workspace.selectSection("sources");
   expect(workspace.section()).toBe("sources");
@@ -162,53 +162,53 @@ test("workspace reconciliation retains a valid expanded descendant hidden by its
   expect(workspace.isExposurePathExpanded(root)).toBe(false);
 });
 
-test("workspace scope selection keeps its work area section coherent", () => {
+test("workspace page selection does not replace its Skills view", () => {
   const workspace = createWorkspaceState();
-  workspace.selectScope("sources");
-  expect(workspace.scope()).toBe("sources");
+  workspace.selectSection("sources");
+  expect(workspace.skillsView()).toBe("current-exposure");
   expect(workspace.section()).toBe("sources");
 });
 
-test("ordinary workspace section changes select their matching browser scope", () => {
+test("ordinary workspace page changes retain their independent Skills view", () => {
   const workspace = createWorkspaceState();
   workspace.selectSection("skills");
-  expect(workspace.scope()).toBe("current-exposure");
+  expect(workspace.skillsView()).toBe("current-exposure");
   expect(workspace.section()).toBe("skills");
 
   workspace.selectSection("collections");
-  expect(workspace.scope()).toBe("collections");
+  expect(workspace.skillsView()).toBe("current-exposure");
   expect(workspace.section()).toBe("collections");
 
   workspace.selectSection("sources");
-  expect(workspace.scope()).toBe("sources");
+  expect(workspace.skillsView()).toBe("current-exposure");
   expect(workspace.section()).toBe("sources");
 
   workspace.selectSection("skills");
-  expect(workspace.scope()).toBe("all-installed-skills");
+  expect(workspace.skillsView()).toBe("current-exposure");
   expect(workspace.section()).toBe("skills");
 });
 
 test("explicit Current Exposure selection remains an intentional handoff", () => {
   const workspace = createWorkspaceState();
-  workspace.selectScope("current-exposure");
-  expect(workspace.scope()).toBe("current-exposure");
+  workspace.selectSkillsView("current-exposure");
+  expect(workspace.skillsView()).toBe("current-exposure");
   expect(workspace.section()).toBe("skills");
 });
 
-test("workspace compatibility navigation synchronizes Scope and section", () => {
+test("workspace page landing retains the selected Skills view", () => {
   const workspace = createWorkspaceState();
-  workspace.selectScope("unassigned");
+  workspace.selectSkillsView("unassigned");
   workspace.selectSection("skills");
-  expect(workspace.scope()).toBe("unassigned");
+  expect(workspace.skillsView()).toBe("unassigned");
   expect(workspace.section()).toBe("skills");
 
   workspace.selectSection("collections");
-  expect(workspace.scope()).toBe("collections");
+  expect(workspace.skillsView()).toBe("unassigned");
   expect(workspace.section()).toBe("collections");
 
   workspace.land("skills", "team-main/reference");
   expect(workspace.snapshot()).toMatchObject({
-    scope: "all-installed-skills",
+    skillsView: "unassigned",
     section: "skills",
   });
 });
@@ -218,7 +218,7 @@ test("workspace source compatibility commands land their Work Area context", () 
   workspace.setQuery("reference");
   workspace.showInstalledSkillsFromSource("team-main");
   expect(workspace.snapshot()).toMatchObject({
-    scope: "all-installed-skills",
+    skillsView: "all-installed-skills",
     section: "skills",
     sourceFilter: "team-main",
     query: "reference",
@@ -226,7 +226,7 @@ test("workspace source compatibility commands land their Work Area context", () 
 
   workspace.clearSourceFilter();
   expect(workspace.snapshot()).toMatchObject({
-    scope: "sources",
+    skillsView: "all-installed-skills",
     section: "sources",
     sourceFilter: undefined,
     query: "reference",
@@ -248,9 +248,9 @@ test("workspace Scope changes leave Reader and source-filter context behind", ()
   const workspace = createWorkspaceState();
   workspace.showInstalledSkillsFromSource("team-main");
   workspace.openReader();
-  workspace.selectScope("collections");
+  workspace.selectSection("collections");
   expect(workspace.snapshot()).toMatchObject({
-    scope: "collections",
+    skillsView: "all-installed-skills",
     section: "collections",
     sourceFilter: undefined,
     readerOpen: false,
@@ -335,7 +335,7 @@ test("workspace Problems preserves the first semantic row and synchronizes detai
       { ...base.installedSkills[1]!, problems: [second] },
     ],
   };
-  workspace.selectScope("problems");
+  workspace.selectSkillsView("problems");
   workspace.reconcile(undefined, initial);
   workspace.openReader();
   expect(workspace.selectedProblem()).toBe(problemRowKey(problemRows(initial)[0]!));

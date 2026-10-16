@@ -5,7 +5,7 @@ import {
   sameSkillAddress,
   type ConfigSection,
   type NarrowLevel,
-  type WorkspaceScope,
+  type SkillsView,
   type WorkspaceSection,
 } from "../types";
 import { filterSkills } from "../skills-filter";
@@ -14,8 +14,13 @@ import { deriveAgentAccessTree, isAgentAccessPathValid } from "../collections/ag
 import type { ConfigDeclarationOwner, Diagnostic } from "@skill-cli/core";
 import type { SkillAddress } from "@skill-cli/core";
 
+export interface SourceBrowseView {
+  readonly detailsOpen?: boolean;
+  readonly currentSkill?: string;
+}
+
 export interface WorkspaceSnapshot {
-  readonly scope: WorkspaceScope;
+  readonly skillsView: SkillsView;
   readonly section: WorkspaceSection;
   readonly selectedSource?: string;
   readonly selectedSourceRelationship?: string;
@@ -42,6 +47,7 @@ export interface WorkspaceSnapshot {
   readonly sourceUpdatesViews: Readonly<
     Record<string, { readonly query: string; readonly filter: "all" | "updates" }>
   >;
+  readonly sourceBrowseViews?: Readonly<Record<string, SourceBrowseView>>;
 }
 
 export interface ProblemRow {
@@ -295,17 +301,6 @@ const expandedPathFromKey = (key: string): ExposurePath | undefined => {
   }
 };
 
-const skillScopes = new Set<WorkspaceScope>(["all-installed-skills", "unassigned", "problems"]);
-
-const scopeForSection = (current: WorkspaceSnapshot, section: WorkspaceSection): WorkspaceScope => {
-  if (section === "skills")
-    return skillScopes.has(current.scope) || current.scope === "current-exposure"
-      ? current.scope
-      : "all-installed-skills";
-  if (section === "collections") return "collections";
-  return section === "sources" ? "sources" : current.scope;
-};
-
 /** Durable Workspace browser state captured and restored by the route owner. */
 export function createWorkspaceState(
   onReconciledSkill?: (selectedSkill: SkillAddress | undefined) => void,
@@ -315,7 +310,7 @@ export function createWorkspaceState(
   // frame must never rewind it after a Source → Skill → Back round-trip.
   const sourceUpdatesViews = new Map<string, { query: string; filter: "all" | "updates" }>();
   const [snapshot, setSnapshot] = createSignal<WorkspaceSnapshot>({
-    scope: "current-exposure",
+    skillsView: "current-exposure",
     section: "skills",
     readerOpen: false,
     selectedSkills: [],
@@ -344,7 +339,7 @@ export function createWorkspaceState(
       }
       setSnapshot(restored);
     },
-    scope: () => snapshot().scope,
+    skillsView: () => snapshot().skillsView,
     section: () => snapshot().section,
     selectedSource: () => snapshot().selectedSource,
     selectedSourceRelationship: () => snapshot().selectedSourceRelationship,
@@ -363,6 +358,17 @@ export function createWorkspaceState(
     filters: () => snapshot().filters,
     sourceFilter: () => snapshot().sourceFilter,
     sourceUpdatesView: () => snapshot().sourceUpdatesView,
+    sourceBrowseView: (source: string): SourceBrowseView =>
+      snapshot().sourceBrowseViews?.[source] ?? {},
+    patchSourceBrowseView(source: string, patch: Partial<SourceBrowseView>) {
+      update((current) => ({
+        ...current,
+        sourceBrowseViews: {
+          ...current.sourceBrowseViews,
+          [source]: { ...current.sourceBrowseViews?.[source], ...patch },
+        },
+      }));
+    },
     scroll: (surface: string) => snapshot().scrolls[surface] ?? 0,
     narrowLevel,
     openWorkArea() {
@@ -389,21 +395,19 @@ export function createWorkspaceState(
     selectSection(section: WorkspaceSection) {
       update((current) => ({
         ...current,
-        scope: scopeForSection(current, section),
         section,
         sourceFilter: section === "skills" ? current.sourceFilter : undefined,
         readerOpen: false,
       }));
     },
-    selectScope(scope: WorkspaceScope) {
+    selectSkillsView(skillsView: SkillsView) {
       update((current) => ({
         ...current,
-        scope,
-        section:
-          scope === "collections" ? "collections" : scope === "sources" ? "sources" : "skills",
-        sourceFilter: scope === "all-installed-skills" ? current.sourceFilter : undefined,
+        skillsView,
+        section: "skills",
+        sourceFilter: skillsView === "all-installed-skills" ? current.sourceFilter : undefined,
         filters:
-          scope === "problems"
+          skillsView === "problems"
             ? Object.fromEntries(
                 Object.entries(current.filters).filter(([dimension]) =>
                   ["Severity", "Code"].includes(dimension),
@@ -420,7 +424,6 @@ export function createWorkspaceState(
     land(section: WorkspaceSection, selection?: string | SkillAddress) {
       update((current) => ({
         ...current,
-        scope: scopeForSection(current, section),
         section,
         readerOpen: section === "skills" && selection !== undefined ? current.readerOpen : false,
         sourceFilter: section === "skills" ? current.sourceFilter : undefined,
@@ -539,7 +542,7 @@ export function createWorkspaceState(
     showInstalledSkillsFromSource(source: string) {
       update((current) => ({
         ...current,
-        scope: "all-installed-skills",
+        skillsView: "all-installed-skills",
         section: "skills",
         sourceFilter: source,
         readerOpen: false,
@@ -609,7 +612,6 @@ export function createWorkspaceState(
     clearSourceFilter() {
       update((current) => ({
         ...current,
-        scope: "sources",
         section: "sources",
         sourceFilter: undefined,
         readerOpen: false,
@@ -634,9 +636,9 @@ export function createWorkspaceState(
             source: state.sourceFilter,
           };
           const currentSkills =
-            state.scope === "unassigned" ? unassignedSkills(current) : current.installedSkills;
+            state.skillsView === "unassigned" ? unassignedSkills(current) : current.installedSkills;
           const previousSkills =
-            state.scope === "unassigned"
+            state.skillsView === "unassigned"
               ? previous
                 ? unassignedSkills(previous)
                 : []
@@ -676,17 +678,17 @@ export function createWorkspaceState(
               ? nextProblemRow.intent.address
               : undefined;
           const exposure =
-            state.scope === "current-exposure"
+            state.skillsView === "current-exposure"
               ? deriveAgentAccessTree(current, state.expandedExposurePaths).rows.find(
                   (row) => row.key === state.selectedExposurePath,
                 )
               : undefined;
           const nextSkill =
-            state.scope === "current-exposure"
+            state.skillsView === "current-exposure"
               ? exposure?.kind === "skill" && exposure.availability.status === "available"
                 ? exposure.address
                 : undefined
-              : state.scope === "problems"
+              : state.skillsView === "problems"
                 ? problemSkill &&
                   state.selectedSkill &&
                   sameSkillAddress(state.selectedSkill, problemSkill)
@@ -703,7 +705,7 @@ export function createWorkspaceState(
             selectedSkill: nextSkill,
             selectedProblem: nextProblem,
             readerOpen:
-              state.readerOpen && (state.scope !== "problems" || problemSkill !== undefined),
+              state.readerOpen && (state.skillsView !== "problems" || problemSkill !== undefined),
             selectedSkills: state.selectedSkills.filter((selected) =>
               current.installedSkills.some((skill) => sameSkillAddress(skill.address, selected)),
             ),
@@ -735,7 +737,7 @@ export type WorkspaceState = ReturnType<typeof createWorkspaceState>;
 export type WorkspaceReadonly = Pick<
   WorkspaceState,
   | "snapshot"
-  | "scope"
+  | "skillsView"
   | "section"
   | "selectedSource"
   | "selectedSourceRelationship"
@@ -757,6 +759,7 @@ export type WorkspaceReadonly = Pick<
   | "filters"
   | "sourceFilter"
   | "sourceUpdatesView"
+  | "sourceBrowseView"
   | "scroll"
   | "narrowLevel"
 >;
@@ -771,12 +774,13 @@ export type WorkspaceCommands = Pick<
   | "showList"
   | "showWorkArea"
   | "selectSection"
-  | "selectScope"
+  | "selectSkillsView"
   | "selectProblem"
   | "openDiagnosticDetail"
   | "closeDiagnosticDetail"
   | "land"
   | "selectSource"
+  | "patchSourceBrowseView"
   | "selectSourceRelationship"
   | "selectSkillRelationship"
   | "selectSkill"

@@ -24,6 +24,7 @@ import type { FocusRegistry, FocusTarget } from "./focus";
 import type { NavKey } from "./navigation";
 import { configDeclarationOwnerKey } from "./config/state";
 import { CommandControl } from "./command-control";
+import { usePageReturn } from "./page-navigation";
 import { DataList } from "./ui/data-list";
 import { Pane } from "./ui/pane";
 import { useTheme } from "./ui/use-theme";
@@ -78,6 +79,7 @@ export function ConfigPage(props: {
   const renderer = useRenderer();
   const terminal = useTerminalDimensions();
   const tokens = useTheme();
+  const [pageRoot, setPageRoot] = createSignal<Renderable>();
   const compactSourceLayout = () =>
     terminal().height <= 18 &&
     props.mode !== "wide" &&
@@ -119,6 +121,10 @@ export function ConfigPage(props: {
   const backIntegrationSurface = () => {
     if (props.onBackIntegrationSurface) props.onBackIntegrationSurface();
     else props.config.backIntegrationSurface(props.destination);
+  };
+  const backConfigSource = () => {
+    if (props.onBackConfigSourceInspector) props.onBackConfigSourceInspector();
+    else props.config.backConfigSourceSurface(props.destination);
   };
   const handoffText = () => {
     const handoff = props.handoff;
@@ -281,6 +287,46 @@ export function ConfigPage(props: {
     integrationCatalog().find(
       (entry) => entry.selector === props.config.integrationCatalogSelection(props.destination),
     );
+  const sharedReturn = usePageReturn(() => {
+    if (fileProblem() || !props.projection()) return undefined;
+    // Owner/selection changes invalidate the previous layer's registered instance.
+    void selection();
+    void props.config.integrationCatalogSelection(props.destination);
+    const sourceInspector =
+      section() === "config-sources" &&
+      props.config.configSourceSurface(props.destination) === "inspector" &&
+      !!selectedConfigSource();
+    const integrationSurface = props.config.integrationSurface(props.destination);
+    const integrationInspector = section() === "integrations" && integrationSurface !== "list";
+    if (!sourceInspector && !integrationInspector) return undefined;
+    const catalogEntry = integrationInspector && integrationSurface === "catalog-entry";
+    const record: CommandRecord = {
+      id: sourceInspector
+        ? "config.source.back"
+        : catalogEntry
+          ? "config.catalog.back"
+          : "config.integration.back",
+      verb: sourceInspector
+        ? "Back to Config Sources"
+        : catalogEntry
+          ? "Back to Integration"
+          : "Back to Integrations",
+      destination: sourceInspector
+        ? "Config Sources"
+        : catalogEntry
+          ? "Integration inspector"
+          : "Integrations",
+      scope: "page",
+      keys: ["enter", "return"],
+      enabled: true,
+      danger: false,
+    };
+    return {
+      record,
+      anchor: pageRoot,
+      execute: sourceInspector ? backConfigSource : backIntegrationSurface,
+    };
+  });
   const selectedCollection = () =>
     value()?.direct.collections.find((item) => item.id === selection());
   const selectedCollectionId = () => {
@@ -377,18 +423,20 @@ export function ConfigPage(props: {
               "config-observe",
               "config-forget",
               "config-remove",
-              "config.source.back",
+              ...(!sharedReturn ? ["config.source.back"] : []),
               "add-config-source",
             ]
           : section() === "collections"
             ? ["set-collection-use", "config.collection.open-owner", "new-collection"]
             : props.config.integrationSurface(props.destination) === "catalog-entry"
-              ? ["config.catalog.back"]
+              ? !sharedReturn
+                ? ["config.catalog.back"]
+                : []
               : [
                   "enable-managed-opencode",
                   "disable-managed-opencode",
                   "config.integration.open-owner",
-                  "config.integration.back",
+                  ...(!sharedReturn ? ["config.integration.back"] : []),
                 ];
     return ids.flatMap((id) => {
       const owner = enabledCommand(id);
@@ -410,7 +458,9 @@ export function ConfigPage(props: {
         (owner) =>
           !["command:add-source", "command:add-config-source", "command:new-collection"].includes(
             owner,
-          ),
+          ) &&
+          !owner.endsWith(".back") &&
+          !props.actions.find((record) => `command:${record.id}` === owner)?.danger,
       );
       const empty =
         section() === "sources"
@@ -423,7 +473,15 @@ export function ConfigPage(props: {
       const owner =
         selectedAction ??
         (empty ? controls()[0] : undefined) ??
-        (mounted("details-metadata") ? "details-metadata" : "work-area");
+        (mounted("config-source-contributions") &&
+        selectedConfigSource() &&
+        selectedConfigSource()!.contributed.sources.length +
+          selectedConfigSource()!.contributed.collections.length >
+          0
+          ? "config-source-contributions"
+          : mounted("details-metadata")
+            ? "details-metadata"
+            : "work-area");
       props.focusRegistry?.applyFocus(owner);
     });
   };
@@ -642,19 +700,20 @@ export function ConfigPage(props: {
     </Show>
   );
   const splitMetadata = () => props.mode === "wide" && !!metadata() && !fileProblem();
+  const paneTitle = () =>
+    section() === "config-sources"
+      ? "Config Sources"
+      : section() === "sources"
+        ? "Sources"
+        : section() === "collections"
+          ? "Collections"
+          : "Integrations";
   const surface = (
-    <box flexDirection="row" flexGrow={1} minHeight={0}>
+    <box id="config-page-pane" ref={setPageRoot} flexDirection="row" flexGrow={1} minHeight={0}>
       <Pane
         id="config-work-area"
-        title={
-          section() === "config-sources"
-            ? "Config Sources"
-            : section() === "sources"
-              ? "Sources"
-              : section() === "collections"
-                ? "Collections"
-                : "Integrations"
-        }
+        title={terminal().height < 20 ? undefined : paneTitle()}
+        borderTitle={terminal().height < 20 ? paneTitle() : undefined}
         width={splitMetadata() ? "43%" : "100%"}
       >
         <Show
@@ -687,7 +746,7 @@ export function ConfigPage(props: {
                   </text>
                 </Show>
                 <Show when={!compactSourceLayout()}>
-                  <box flexDirection="column" marginTop={1} marginBottom={1}>
+                  <box flexDirection="column" gap={1} marginTop={1} marginBottom={1}>
                     <Show
                       when={
                         !compactSourceLayout() &&
@@ -875,7 +934,40 @@ export function ConfigPage(props: {
                       fallback={null}
                     >
                       {selectedConfigSource() ? (
-                        <box id="config-source-inspector" flexDirection="column">
+                        <box id="config-source-inspector" flexDirection="column" gap={1}>
+                          <box
+                            id="config-source-update-actions"
+                            flexDirection="row"
+                            flexWrap="wrap"
+                            gap={1}
+                            minWidth={0}
+                            flexShrink={0}
+                          >
+                            {actionCommand(
+                              "config-observe",
+                              "Check / review Config update…",
+                              compactSourceLayout() ? revealWorkCommand : undefined,
+                            )}
+                          </box>
+                          <box
+                            id="config-source-danger-actions"
+                            flexDirection="row"
+                            flexWrap="wrap"
+                            gap={1}
+                            minWidth={0}
+                            flexShrink={0}
+                          >
+                            {actionCommand(
+                              "config-forget",
+                              undefined,
+                              compactSourceLayout() ? revealWorkCommand : undefined,
+                            )}
+                            {actionCommand(
+                              "config-remove",
+                              undefined,
+                              compactSourceLayout() ? revealWorkCommand : undefined,
+                            )}
+                          </box>
                           <text>{`Config Source  ${selectedConfigSource()!.id}`}</text>
                           <text>{`Owner  ${selectedConfigSource()!.owner.file} ${selectedConfigSource()!.owner.pointer}`}</text>
                           <text>{`Binding kind  ${selectedConfigSource()!.binding.kind}`}</text>
@@ -887,33 +979,14 @@ export function ConfigPage(props: {
                           <text>{selectedConfigSourceAdoption()}</text>
                           <text>{`Contributed Sources  ${selectedConfigSource()!.contributed.sources.length}`}</text>
                           <text>{`Contributed Collections  ${selectedConfigSource()!.contributed.collections.length}`}</text>
-                          {selectedConfigSource()!.contributed.sources.map((source) => (
-                            <text>{`Source  ${source.id}`}</text>
-                          ))}
-                          {selectedConfigSource()!.contributed.collections.map((collection) => (
-                            <text>{`Collection  ${collection.id}`}</text>
-                          ))}
-                          {actionCommand(
-                            "config-observe",
-                            "Check / review Config update…",
-                            compactSourceLayout() ? revealWorkCommand : undefined,
-                          )}
-                          {actionCommand(
-                            "config-forget",
-                            undefined,
-                            compactSourceLayout() ? revealWorkCommand : undefined,
-                          )}
-                          {actionCommand(
-                            "config-remove",
-                            undefined,
-                            compactSourceLayout() ? revealWorkCommand : undefined,
-                          )}
-                          {localCommand(
-                            "config.source.back",
-                            "Back to Config Sources",
-                            "Config Sources",
-                            () => props.onBackConfigSourceInspector?.(),
-                          )}
+                          <Show when={!sharedReturn}>
+                            {localCommand(
+                              "config.source.back",
+                              "Back to Config Sources",
+                              "Config Sources",
+                              backConfigSource,
+                            )}
+                          </Show>
                           <DataList
                             id="config-source-contributions"
                             ref={(item: SelectRenderable) => {
@@ -949,19 +1022,19 @@ export function ConfigPage(props: {
                   </>
                 </Show>
                 <Show when={compactSourceLayout() && section() === "sources" && !!selectedSource()}>
-                  <box flexDirection="column">
-                    {actionCommand(
-                      "check-updates",
-                      "Check / update installed Skills",
-                      revealWorkCommand,
-                    )}
-                    {actionCommand("add-skills", "Find and install Skills…", revealWorkCommand)}
-                    {actionCommand(
-                      "remove-source",
-                      "Remove Source declaration…",
-                      revealWorkCommand,
-                    )}
-                    {actionCommand("add-source", "Add Source…", revealWorkCommand)}
+                  <box flexDirection="column" gap={1}>
+                    <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
+                      {actionCommand("check-updates", "Check updates", revealWorkCommand)}
+                      {actionCommand("add-skills", "Find and install…", revealWorkCommand)}
+                      {actionCommand("add-source", "Add Source…", revealWorkCommand)}
+                    </box>
+                    <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
+                      {actionCommand(
+                        "remove-source",
+                        "Remove Source declaration…",
+                        revealWorkCommand,
+                      )}
+                    </box>
                   </box>
                 </Show>
                 <Show
@@ -972,7 +1045,7 @@ export function ConfigPage(props: {
                     props.config.configSourceSurface(props.destination) === "list"
                   }
                 >
-                  <box flexDirection="column">
+                  <box flexDirection="column" gap={1}>
                     {actionCommand("add-config-source", "Add Config Source…", revealWorkCommand)}
                     {actionCommand(
                       "config-observe",
@@ -1068,7 +1141,14 @@ export function ConfigPage(props: {
                       />
                     </Show>
                     <Show when={!!selectedCollectionId()} fallback={null}>
-                      <box id="config-collection-commands" flexDirection="column">
+                      <box
+                        id="config-collection-commands"
+                        flexDirection="row"
+                        flexWrap="wrap"
+                        gap={1}
+                        minWidth={0}
+                        flexShrink={0}
+                      >
                         {!!(selectedCollection() || selectedCollectionUse()) &&
                           actionCommand("set-collection-use")}
                         {!!collectionOwner() &&
@@ -1210,12 +1290,14 @@ export function ConfigPage(props: {
                                 fallback={
                                   <>
                                     <text>Catalog entry unavailable.</text>
-                                    {localCommand(
-                                      "config.catalog.back",
-                                      "Back to Integration",
-                                      "Integration inspector",
-                                      backIntegrationSurface,
-                                    )}
+                                    <Show when={!sharedReturn}>
+                                      {localCommand(
+                                        "config.catalog.back",
+                                        "Back to Integration",
+                                        "Integration inspector",
+                                        backIntegrationSurface,
+                                      )}
+                                    </Show>
                                   </>
                                 }
                               >
@@ -1225,12 +1307,14 @@ export function ConfigPage(props: {
                                     <text>{`Name  ${entry().name}`}</text>
                                     <text>{`Description  ${entry().description || "None"}`}</text>
                                     <text>{`Aliases  ${entry().aliases.join(", ") || "None"}`}</text>
-                                    {localCommand(
-                                      "config.catalog.back",
-                                      "Back to Integration",
-                                      "Integration inspector",
-                                      backIntegrationSurface,
-                                    )}
+                                    <Show when={!sharedReturn}>
+                                      {localCommand(
+                                        "config.catalog.back",
+                                        "Back to Integration",
+                                        "Integration inspector",
+                                        backIntegrationSurface,
+                                      )}
+                                    </Show>
                                   </>
                                 )}
                               </Show>
@@ -1336,26 +1420,52 @@ export function ConfigPage(props: {
                                 />
                               )}
                             </Show>
-                            {selectedIntegration()?.direct ? (
-                              <>
-                                {actionCommand("enable-managed-opencode")}
-                                {actionCommand("disable-managed-opencode")}
-                              </>
-                            ) : (
-                              !!selectedIntegration()?.owner &&
-                              localCommand(
-                                "config.integration.open-owner",
-                                "Open owning Config",
-                                `${selectedIntegration()!.owner.level} ${selectedIntegration()!.owner.file} ${selectedIntegration()!.owner.pointer}`,
-                                () => props.onIntegrationOwner?.(selectedIntegration()!.owner),
-                              )
-                            )}
-                            {localCommand(
-                              "config.integration.back",
-                              "Back to Integrations",
-                              "Integrations",
-                              backIntegrationSurface,
-                            )}
+                            <box flexDirection="column" gap={1} flexShrink={0}>
+                              {selectedIntegration()?.direct ? (
+                                <box
+                                  id="config-integration-management"
+                                  flexDirection="column"
+                                  gap={1}
+                                  minWidth={0}
+                                  flexShrink={0}
+                                >
+                                  <box
+                                    flexDirection="row"
+                                    flexWrap="wrap"
+                                    gap={1}
+                                    minWidth={0}
+                                    flexShrink={0}
+                                  >
+                                    {actionCommand("enable-managed-opencode")}
+                                  </box>
+                                  <box
+                                    flexDirection="row"
+                                    flexWrap="wrap"
+                                    gap={1}
+                                    minWidth={0}
+                                    flexShrink={0}
+                                  >
+                                    {actionCommand("disable-managed-opencode")}
+                                  </box>
+                                </box>
+                              ) : (
+                                !!selectedIntegration()?.owner &&
+                                localCommand(
+                                  "config.integration.open-owner",
+                                  "Open owning Config",
+                                  `${selectedIntegration()!.owner.level} ${selectedIntegration()!.owner.file} ${selectedIntegration()!.owner.pointer}`,
+                                  () => props.onIntegrationOwner?.(selectedIntegration()!.owner),
+                                )
+                              )}
+                              <Show when={!sharedReturn}>
+                                {localCommand(
+                                  "config.integration.back",
+                                  "Back to Integrations",
+                                  "Integrations",
+                                  backIntegrationSurface,
+                                )}
+                              </Show>
+                            </box>
                           </Show>
                         </scrollbox>
                       )}
@@ -1392,15 +1502,19 @@ export function ConfigPage(props: {
         <Show when={!compactSourceLayout() && !splitMetadata() && !fileProblem() && !!metadata()}>
           <box
             flexDirection="column"
+            gap={1}
             flexShrink={0}
             border={["top"]}
             borderColor={tokens().colors.border}
           >
             <Show when={section() === "sources"}>
-              <text fg={tokens().colors.mutedForeground}>MANAGE THIS SOURCE</text>
-              {actionCommand("check-updates", "Check / update installed Skills")}
-              {actionCommand("add-skills", "Find and install Skills…")}
-              {actionCommand("remove-source", "Remove Source declaration…")}
+              <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
+                {actionCommand("check-updates", "Check updates")}
+                {actionCommand("add-skills", "Find and install…")}
+              </box>
+              <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
+                {actionCommand("remove-source", "Remove Source declaration…")}
+              </box>
             </Show>
             <Show
               when={
@@ -1431,14 +1545,18 @@ export function ConfigPage(props: {
           <Show when={section() === "sources"}>
             <box
               flexDirection="column"
+              gap={1}
               flexShrink={0}
               border={["top"]}
               borderColor={tokens().colors.border}
             >
-              <text fg={tokens().colors.mutedForeground}>MANAGE THIS SOURCE</text>
-              {actionCommand("check-updates", "Check / update installed Skills")}
-              {actionCommand("add-skills", "Find and install Skills…")}
-              {actionCommand("remove-source", "Remove Source declaration…")}
+              <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
+                {actionCommand("check-updates", "Check updates")}
+                {actionCommand("add-skills", "Find and install…")}
+              </box>
+              <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
+                {actionCommand("remove-source", "Remove Source declaration…")}
+              </box>
             </box>
           </Show>
           <Show

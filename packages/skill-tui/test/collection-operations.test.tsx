@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { InputRenderable, type Renderable } from "@opentui/core";
+import { InputRenderable, SelectRenderable, type Renderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { createSignal, type Accessor, type JSX } from "solid-js";
 import {
@@ -727,6 +727,7 @@ test("Link and Collection Use drafts are keyboard-editable and emit their exact 
       <CollectionUseOverlay
         level="project"
         collections={[]}
+        availableCollections={[{ id: "team" }, { id: "docs" }]}
         pending={false}
         error={{ code: "WRITE_FAILED", message: "retry" }}
         onPreview={(value) => usePreviews.push(value)}
@@ -737,7 +738,11 @@ test("Link and Collection Use drafts are keyboard-editable and emit their exact 
   );
   try {
     await use.waitFor(() => use.renderer.currentFocusedRenderable?.id === "collection-use-values");
-    await use.mockInput.pressKeys(["t", "e", "a", "m", ",", "d", "o", "c", "s"]);
+    use.mockInput.pressEnter();
+    use.mockInput.pressArrow("down");
+    await use.renderOnce();
+    use.mockInput.pressEnter();
+    await use.flush();
     use.mockInput.pressKey("TAB");
     await use.renderOnce();
     expect(use.renderer.currentFocusedRenderable?.id).toBe("collection-use-cancel");
@@ -1070,6 +1075,7 @@ test("Import, Reference, Link, and Use retain mounted drafts and exact retries",
     <CollectionUseOverlay
       level="project"
       collections={[]}
+      availableCollections={[{ id: "a" }, { id: "b" }]}
       pending={state().pending}
       error={state().error}
       onPreview={(value) => usePreviews.push(value)}
@@ -1080,15 +1086,23 @@ test("Import, Reference, Link, and Use retain mounted drafts and exact retries",
     await use.setup.waitFor(
       () => use.setup.renderer.currentFocusedRenderable?.id === "collection-use-values",
     );
-    const values = input(use.setup, "collection-use-values");
-    await use.setup.mockInput.pressKeys(["a", ",", "b"]);
+    const values = liveRenderable(use.setup, "collection-use-values") as SelectRenderable;
+    use.setup.mockInput.pressEnter();
+    use.setup.mockInput.pressArrow("down");
+    await use.setup.renderOnce();
+    use.setup.mockInput.pressEnter();
+    await use.setup.flush();
     use.setup.mockInput.pressKey("TAB");
     await use.setup.renderOnce();
     const review = await retryChoice(use.setup, "collection-use-review");
     use.patch({ error: { code: "WRITE_FAILED", message: "retry" } });
     await use.setup.renderOnce();
-    expect(input(use.setup, "collection-use-values")).toBe(values);
-    expect(values.value).toBe("a,b");
+    expect(liveRenderable(use.setup, "collection-use-values")).toBe(values);
+    expect(
+      values.options
+        .filter((option) => option.name.startsWith("[x]"))
+        .map((option) => option.value),
+    ).toEqual(["a", "b"]);
     expect(liveRenderable(use.setup, "collection-use-review")).toBe(review);
     expect(use.setup.renderer.currentFocusedRenderable).toBe(review);
     use.patch({ error: undefined });

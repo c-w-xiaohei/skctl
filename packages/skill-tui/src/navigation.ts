@@ -284,6 +284,7 @@ export const resolveEscape = (facts: NavFacts): NavDecision => {
   // A route frame owns its predecessor even while a filtered browser is underneath it.
   if (facts.readerActive && facts.readerInline && facts.focus && readerOwnsFocus(facts.focus))
     return events({ type: "narrow.show-work-area" }, { type: "focus.request", focus: "browser" });
+  if (facts.focus === "collection-tree-issue") return browserLanding(facts);
   if (facts.canReturn) return events({ type: "route.back" });
   if (!facts.focus) return null;
   if (facts.focus === "browser") return events({ type: "focus.request", focus: "local-nav" });
@@ -293,9 +294,7 @@ export const resolveEscape = (facts: NavFacts): NavDecision => {
   if (facts.focus === "collections-query") return browserLanding(facts);
   if (QUERY_INPUT_OWNERS.includes(facts.focus))
     return events({ type: "focus.request", focus: "browser" });
-  if (facts.readerActive && readerOwnsFocus(facts.focus)) {
-    return facts.canReturn ? events({ type: "route.back" }) : null;
-  }
+  if (facts.readerActive && readerOwnsFocus(facts.focus)) return null;
   if (facts.workspaceShell && facts.narrow && facts.narrowLevel === "detail")
     return events({ type: "narrow.show-work-area" }, { type: "focus.request", focus: "browser" });
   if (

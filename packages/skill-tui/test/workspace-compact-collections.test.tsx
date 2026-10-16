@@ -9,6 +9,7 @@ import { createWorkspaceState } from "../src/workspace/state";
 import { directOwner, directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import {
+  expectSharedReturn,
   focusLive,
   openAllInstalledSkills,
   parsedEnter,
@@ -23,7 +24,7 @@ afterEach(() => {
 
 test("Source Installed Skills opens the Skills region and Back can restore Collection browsing", () => {
   const state = createWorkspaceState();
-  state.selectScope("all-installed-skills");
+  state.selectSkillsView("all-installed-skills");
   state.setCollectionBrowserOpen(true);
   const origin = state.snapshot();
   state.showInstalledSkillsFromSource("team-main");
@@ -120,9 +121,8 @@ test.each([
     ) as SelectRenderable;
     expect(browser.options).toHaveLength(1);
     expect(browser.getSelectedOption()?.value).toBe(JSON.stringify(["team-main", "reference"]));
-    await setup!.waitForFrame(
-      (frame) => frame.includes("root / child") && frame.includes("Back to Skills"),
-    );
+    await setup!.waitForFrame((frame) => frame.includes("root / child"));
+    await expectSharedReturn(setup!, "Back to Skills");
     await capture(`collections-compact-${width}x${height}`);
     setup!.mockInput.pressArrow("down");
     await setup!.waitFor(() => !setup!.renderer.root.findDescendantById("installed-skill-browser"));

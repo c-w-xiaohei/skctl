@@ -196,7 +196,7 @@ async function mount(
       (frame) =>
         frame.includes("Source") &&
         frame.includes("team-main") &&
-        (skillScope ? frame.includes("Updated 1 Skill") : frame.includes("Updates available")),
+        (skillScope ? frame.includes("Updated 1") : frame.includes("Updates available")),
       { maxPasses: 200 },
     );
     return {
@@ -245,14 +245,9 @@ async function capture(setup: Setup, name: string) {
 
 function expectHeaderActivitySpacing(setup: Setup, width: number) {
   const status = setup.renderer.root.findDescendantById("process-status")!;
-  const adjacent = setup.renderer.root.findDescendantById(
-    width >= 64 ? "shell-scope-select" : "shell-more-actions",
-  )!;
-  const gap =
-    width >= 64
-      ? adjacent.screenX - (status.screenX + status.width)
-      : status.screenX - (adjacent.screenX + adjacent.width);
-  expect(gap).toBeGreaterThanOrEqual(width >= 64 ? 2 : 1);
+  const adjacent = setup.renderer.root.findDescendantById("shell-more-actions")!;
+  expect(status.screenX - (adjacent.screenX + adjacent.width)).toBeGreaterThanOrEqual(1);
+  expect(status.screenX + status.width).toBeLessThanOrEqual(width - 1);
 }
 
 test.each([
@@ -401,7 +396,7 @@ test("Source cursor update targets that Source without opening Skills or selecti
     await focusLive(setup, "updates-browser");
     await setup.mockInput.typeText("u");
     await setup.waitFor(() => calls.length === 1);
-    await setup.waitForFrame((frame) => frame.includes("Updated 3 Skills"));
+    await setup.waitForFrame((frame) => frame.includes("Updated 3"));
     expect(calls[0]).toMatchObject({
       source: "team-main",
       paths: ["skill-0", "skill-1", "skill-2"],
@@ -429,7 +424,7 @@ test("Source drill-down updates one Skill without selecting or marking other Ski
       exactRevision: revision,
       expectedBaseline: "checked-baseline",
     });
-    await setup.waitForFrame((frame) => frame.includes("Updated 1 Skill"), { maxPasses: 200 });
+    await setup.waitForFrame((frame) => frame.includes("Updated 1"), { maxPasses: 200 });
     const first = setup.renderer.root.findDescendantById(
       "source-updates-browser-row-team-main%00skill-0:cell-status",
     ) as TextRenderable;
@@ -618,12 +613,27 @@ test.each([
     const mounted = await mount(width, height, true);
     try {
       const { setup, calls } = mounted;
+      const chromeGeometry = () =>
+        [
+          "shell-context-panel",
+          "shell-activity",
+          "workarea-navigation-pane",
+          "route-back-slot",
+          "section-nav",
+          "route-content",
+        ].map((id) => {
+          const node = setup.renderer.root.findDescendantById(id)!;
+          return [node.screenX, node.screenY, node.width, node.height];
+        });
+      await setup.flush();
+      const chrome = chromeGeometry();
       await enterLive(setup, "updates-update-all");
       await setup.waitFor(() => calls.length === 1);
       const status = () =>
         setup.renderer.root.findDescendantById("process-status") as TextRenderable;
       await setup.waitFor(() => status()?.plainText.includes("Updating"));
       await setup.flush();
+      expect(chromeGeometry()).toEqual(chrome);
       expectHeaderActivitySpacing(setup, width);
       const header = setup.renderer.root.findDescendantById("global-bar")!;
       expect(status().screenX + status().width).toBeLessThanOrEqual(width - 1);
@@ -641,6 +651,8 @@ test.each([
         await parsedEnter(setup);
       }
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
+      await setup.flush();
+      expect(chromeGeometry()).toEqual(chrome);
       expect(status().plainText).toContain("Updating");
       expect(mounted.signal()?.aborted).toBe(false);
       expect(calls).toHaveLength(1);
@@ -674,6 +686,7 @@ test.each([
       await setup.waitFor(() => calls.length === 2);
       await setup.waitFor(() => status().plainText.includes("Updated"));
       await setup.flush();
+      expect(chromeGeometry()).toEqual(chrome);
       expect(status().screenX + status().width).toBeLessThanOrEqual(width - 1);
       expectHeaderActivitySpacing(setup, width);
       for (const id of ["shell-scope-select", "shell-more-actions"]) {
@@ -817,7 +830,7 @@ test("Source drill-down cannot widen a Skill-scoped update to other installed Sk
   const mounted = await mount(80, 24, false, true);
   try {
     const { setup, calls } = mounted;
-    await setup.waitForFrame((frame) => frame.includes("Updated 1 Skill"));
+    await setup.waitForFrame((frame) => frame.includes("Updated 1"));
     calls.length = 0;
     await enterLive(setup, "updates-browser");
     await setup.waitForFrame((frame) => frame.includes("Research"));

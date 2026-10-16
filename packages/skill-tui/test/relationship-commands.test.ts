@@ -233,7 +233,7 @@ test("Collection Use, Reference, and Link preserve current relationship intents"
     ["relationship.open-owner", true, expect.anything()],
     ["relationship.edit-use", true, { kind: "collection-use-edit", collection: "team", owner }],
   ]);
-  expect(relationshipCommands("team", { kind: "relation", relation: reference })[1]).toMatchObject({
+  expect(relationshipCommands("team", { kind: "relation", relation: reference })[2]).toMatchObject({
     id: "relationship.remove-reference",
     verb: "Remove Reference",
     destination: "Review removal",
@@ -255,9 +255,9 @@ test("Collection Use, Reference, and Link preserve current relationship intents"
     { ...link, owner: undefined, intent: undefined },
   ])
     expect(
-      relationshipCommands("team", { kind: "relation", relation }).every(
-        (item) => !item.enabled && item.disabledReason?.includes("owner unavailable"),
-      ),
+      relationshipCommands("team", { kind: "relation", relation })
+        .filter((item) => item.id !== "relationship.open-collection")
+        .every((item) => !item.enabled && item.disabledReason?.includes("owner unavailable")),
     ).toBe(true);
 });
 
@@ -379,6 +379,16 @@ test("command matrix retains every command field and legal danger boundary", () 
     readonly name: string;
     readonly subject: Parameters<typeof relationshipCommands>[1];
     readonly expected: readonly RelationshipCommand[];
+  };
+  const openCollection: RelationshipCommand = {
+    id: "relationship.open-collection",
+    keys: ["enter", "return"],
+    verb: "Open Collection",
+    destination: "shared",
+    scope: "page",
+    enabled: true,
+    danger: false,
+    intent: { kind: "collection-open-collection", collection: "team", target: "shared" },
   };
   const rows: readonly MatrixCase[] = [
     {
@@ -807,6 +817,7 @@ test("command matrix retains every command field and legal danger boundary", () 
         relation: relation("collection-reference", owner),
       },
       expected: [
+        openCollection,
         {
           id: "relationship.open-owner",
           keys: ["enter", "return"],
@@ -851,6 +862,7 @@ test("command matrix retains every command field and legal danger boundary", () 
         relation: relation("collection-reference", contributed),
       },
       expected: [
+        openCollection,
         {
           id: "relationship.open-owner",
           keys: ["enter", "return"],
@@ -896,6 +908,7 @@ test("command matrix retains every command field and legal danger boundary", () 
         relation: relation("collection-reference", undefined),
       },
       expected: [
+        openCollection,
         {
           id: "relationship.open-owner",
           keys: ["enter", "return"],

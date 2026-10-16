@@ -21,6 +21,7 @@ export function DataList(props: DataListProps) {
   const [callbacks, options] = splitProps(props, [
     "ref",
     "options",
+    "selectedIndex",
     "onMouseDown",
     "onChange",
     "onSelect",
@@ -47,6 +48,8 @@ export function DataList(props: DataListProps) {
     target?.off("blurred", blur);
     renderer.off("frame", measureWidth);
   });
+  // Native Select clamps against its current options: apply the controlled
+  // index after replacement options, not through the earlier prop spread.
   return (
     <select
       {...options}
@@ -71,6 +74,7 @@ export function DataList(props: DataListProps) {
             }
           : option,
       )}
+      selectedIndex={callbacks.selectedIndex}
       {...selectColors(tokens())}
       selectedBackgroundColor={focused() ? tokens().colors.primary : tokens().colors.surface}
       selectedTextColor={focused() ? tokens().colors.primaryForeground : tokens().colors.foreground}

@@ -15,6 +15,18 @@ export interface SectionTabOption<Value extends string> {
   readonly value: Value;
 }
 
+const tabGap = 1;
+const tabText = (option: SectionTabOption<string>, compact = false) =>
+  ` ${compact ? (option.compactLabel ?? option.label) : option.label} `;
+
+/** Painted triggers and their separating cells share one width contract. */
+export function sectionTabsWidth(options: readonly SectionTabOption<string>[], compact = false) {
+  return (
+    options.reduce((width, option) => width + Bun.stringWidth(tabText(option, compact)), 0) +
+    Math.max(0, options.length - 1) * tabGap
+  );
+}
+
 /**
  * A controlled TuiParts tab strip. Each physical trigger is a native Tab; the
  * focus registry is rebound to whichever one physically owns focus so the
@@ -51,11 +63,7 @@ export function SectionTabs<Value extends string>(props: {
   let revealValue: Value | undefined;
   let disposed = false;
 
-  const labelFor = (option: SectionTabOption<Value>) =>
-    props.compact ? (option.compactLabel ?? option.label) : option.label;
-  const tabText = (option: SectionTabOption<Value>) => `  ${labelFor(option)}  `;
-  const rowWidth = () =>
-    props.options.reduce((width, option) => width + Bun.stringWidth(tabText(option)), 0);
+  const rowWidth = () => sectionTabsWidth(props.options, props.compact);
   const selectedTab = () => tabs.get(props.value);
 
   const directionTo = (next: Value, current: Value) =>
@@ -299,7 +307,7 @@ export function SectionTabs<Value extends string>(props: {
         contentOptions={{ width: rowWidth(), maxWidth: rowWidth(), flexDirection: "row" }}
         horizontalScrollbarOptions={{ visible: false }}
       >
-        <Tabs.List width={rowWidth()} height={1} flexDirection="row">
+        <Tabs.List width={rowWidth()} height={1} flexDirection="row" gap={tabGap}>
           <For each={props.options.map((option) => option.value)}>
             {(value) => {
               const option = () => props.options.find((option) => option.value === value)!;
@@ -309,7 +317,7 @@ export function SectionTabs<Value extends string>(props: {
                   id={`${props.id}-tab-${value}`}
                   value={value}
                   ref={(target) => mountTab(value, target)}
-                  width={Bun.stringWidth(tabText(option()))}
+                  width={Bun.stringWidth(tabText(option(), props.compact))}
                   height={1}
                   flexShrink={0}
                   backgroundColor={
@@ -326,6 +334,10 @@ export function SectionTabs<Value extends string>(props: {
                     pointerWasSelected = value === props.value;
                     props.onPrimaryPointerEntry?.(value);
                     focusTab(value);
+                    // Down/up may arrive in one terminal read, before native
+                    // focus propagation selects the roving target. Commit via
+                    // the native selection entry without activating content.
+                    tabs.get(value)?.select();
                   }}
                   onMouseUp={(event) => {
                     if (
@@ -338,7 +350,7 @@ export function SectionTabs<Value extends string>(props: {
                   }}
                 >
                   <text
-                    content={tabText(option())}
+                    content={tabText(option(), props.compact)}
                     selectable={false}
                     fg={
                       focusedValue() === value

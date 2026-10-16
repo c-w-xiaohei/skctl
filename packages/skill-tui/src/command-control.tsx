@@ -10,6 +10,8 @@ import { hasModalKeyModifier } from "./modal-controls";
 export function CommandControl(props: {
   readonly id: string;
   readonly record: CommandRecord;
+  /** Bounded inline caption; command discovery retains the full verb and target. */
+  readonly label?: string;
   readonly register?: (target: Renderable) => void | (() => void);
   readonly execute: () => void;
   readonly keyboard?: boolean;
@@ -97,7 +99,7 @@ export function CommandControl(props: {
     <box flexDirection="column" flexShrink={0}>
       <Button
         id={props.id}
-        label={props.record.verb}
+        label={props.label ?? props.record.verb}
         intent={props.record.danger ? "danger" : (props.intent ?? "neutral")}
         disabled={!props.record.enabled}
         alignSelf="flex-start"

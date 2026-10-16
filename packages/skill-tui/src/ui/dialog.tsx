@@ -1,13 +1,17 @@
 /** @jsxImportSource @opentui/solid */
 // Source: https://tuiparts.sh/r/solid/dialog.json, @tuiparts/solid@0.0.5 (MIT).
 import { Dialog as DialogPrimitive } from "@tuiparts/solid/dialog";
-import { useTerminalDimensions } from "@opentui/solid";
-import { children, splitProps } from "solid-js";
+import type { DialogPopupRenderable } from "@tuiparts/core/dialog";
+import type { Renderable } from "@opentui/core";
+import { useRenderer, useTerminalDimensions } from "@opentui/solid";
+import { children, createSignal, onCleanup, splitProps } from "solid-js";
 import { tint } from "./theme";
 import { useTheme } from "./use-theme";
 export interface DialogProps extends DialogPrimitive.Root.Props {}
 export interface DialogContentProps extends DialogPrimitive.Popup.Props {
   backdropColor?: DialogPrimitive.Backdrop.Props["backgroundColor"];
+  /** Optional trigger-relative placement; other dialogs retain centered layout. */
+  anchor?: () => Renderable | undefined;
 }
 export function Dialog(props: DialogProps) {
   return <DialogPrimitive.Root {...props} />;
@@ -24,12 +28,39 @@ export function DialogTrigger(props: DialogPrimitive.Trigger.Props) {
   );
 }
 export function DialogContent(props: DialogContentProps) {
-  const [recipe, popup] = splitProps(props, ["backdropColor", "children"]);
+  const [recipe, popup] = splitProps(props, ["backdropColor", "children", "anchor", "ref"]);
   // The primitive spreads reactive geometry together with children. Resolve
   // the child tree once so resizing does not recreate controls or their drafts.
   const content = children(() => recipe.children);
   const tokens = useTheme();
   const terminal = useTerminalDimensions();
+  const renderer = useRenderer();
+  let target: DialogPopupRenderable | undefined;
+  const [position, setPosition] = createSignal(
+    { left: 0, top: 0 },
+    {
+      equals: (left, right) => left.left === right.left && left.top === right.top,
+    },
+  );
+  const place = () => {
+    const anchor = recipe.anchor?.();
+    if (!anchor || anchor.isDestroyed || !target || target.isDestroyed) return;
+    const below = anchor.screenY + anchor.height;
+    setPosition({
+      left: Math.max(0, Math.min(anchor.screenX, renderer.width - target.width)),
+      top: Math.max(
+        0,
+        Math.min(
+          below + target.height <= renderer.height ? below : anchor.screenY - target.height,
+          renderer.height - target.height,
+        ),
+      ),
+    });
+  };
+  if (recipe.anchor) {
+    renderer.on("frame", place);
+    onCleanup(() => renderer.off("frame", place));
+  }
   return (
     <DialogPrimitive.Portal
       position="absolute"
@@ -66,6 +97,13 @@ export function DialogContent(props: DialogContentProps) {
           paddingLeft={tokens().density.paddingX}
           paddingRight={tokens().density.paddingX}
           {...popup}
+          position={recipe.anchor ? "absolute" : popup.position}
+          left={recipe.anchor ? position().left : popup.left}
+          top={recipe.anchor ? position().top : popup.top}
+          ref={(value) => {
+            target = value;
+            if (typeof recipe.ref === "function") recipe.ref(value);
+          }}
         >
           {content()}
         </DialogPrimitive.Popup>

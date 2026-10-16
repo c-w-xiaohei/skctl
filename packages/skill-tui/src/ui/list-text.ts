@@ -1,17 +1,10 @@
-/** Align terminal columns without cutting a wide character in half. */
+import { truncateTableText } from "./data-table-layout";
+
+/** Align single-line terminal columns without splitting a grapheme cluster. */
 export function fitColumn(value: string, width: number): string {
   const available = Math.max(1, width);
-  if (Bun.stringWidth(value) <= available)
-    return value + " ".repeat(available - Bun.stringWidth(value));
-  let result = "";
-  let used = 0;
-  for (const character of value) {
-    const size = Bun.stringWidth(character);
-    if (used + size > available - 1) break;
-    result += character;
-    used += size;
-  }
-  return result + "…" + " ".repeat(Math.max(0, available - used - 1));
+  const text = truncateTableText(value, available);
+  return text + " ".repeat(Math.max(0, available - Bun.stringWidth(text)));
 }
 
 export function formatColumns(

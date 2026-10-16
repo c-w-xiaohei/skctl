@@ -137,7 +137,7 @@ export function findCollectionFilterPath(
  */
 export function deriveCollectionFilterTree(
   projection: ManagementProjection | undefined,
-  expanded: Readonly<Record<string, boolean>> = {},
+  expanded: Readonly<Record<string, boolean>> | "all" = {},
 ): CollectionFilterTree {
   if (!projection || projection.effective.status !== "complete")
     return {
@@ -179,7 +179,7 @@ export function deriveCollectionFilterTree(
           ? `Collection '${collection}' is unavailable`
           : undefined,
     });
-    if (!view || !expandable || !expanded[key]) return;
+    if (!view || !expandable || (expanded !== "all" && !expanded[key])) return;
 
     const nextAncestors = new Set(ancestors);
     nextAncestors.add(collection);

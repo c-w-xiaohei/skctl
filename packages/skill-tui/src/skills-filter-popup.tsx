@@ -50,7 +50,7 @@ export function SkillsFilterPopup(props: {
   const terminal = useTerminalDimensions();
   const controls = useModalControls()!;
   const tokens = useTheme();
-  const problems = () => state.scope() === "problems";
+  const problems = () => state.skillsView() === "problems";
   const dimensions = () => (problems() ? problemFilterDimensions : filterDimensions("skills"));
   const [dimension, setDimension] = createSignal(untrack(() => dimensions()[0] ?? "Collection"));
   const [search, setSearch] = createSignal("");
@@ -78,7 +78,7 @@ export function SkillsFilterPopup(props: {
     const projection = props.projection();
     return projection
       ? filterSkills(
-          state.scope() === "unassigned"
+          state.skillsView() === "unassigned"
             ? unassignedSkills(projection)
             : projection.installedSkills,
           {
@@ -106,7 +106,7 @@ export function SkillsFilterPopup(props: {
     return problems()
       ? filterProblemRows(problemRows(projection), state.query(), state.filters()).length
       : filterSkills(
-          state.scope() === "unassigned"
+          state.skillsView() === "unassigned"
             ? unassignedSkills(projection)
             : projection.installedSkills,
           {

@@ -3,19 +3,23 @@ import { Show, untrack, type JSXElement } from "solid-js";
 import type { LayoutMode } from "../types";
 import { useTheme } from "./use-theme";
 
+const routeBackWidth = 6;
+export const stackedNavigationBelow = 80;
+export const compactControlsBelow = 100;
+
 export interface RouteShellSlots {
-  readonly globalBar: JSXElement | (() => JSXElement);
-  readonly sectionNav: JSXElement | (() => JSXElement);
-  readonly routeTitle: JSXElement | (() => JSXElement);
+  readonly scopeControls: JSXElement | (() => JSXElement);
+  readonly activity: JSXElement | (() => JSXElement);
+  readonly back: JSXElement | (() => JSXElement);
+  readonly pageNavigation: JSXElement | (() => JSXElement);
   readonly content: JSXElement | (() => JSXElement);
   readonly commandStatus: JSXElement | (() => JSXElement);
 }
 
 export interface RouteShellProps {
   readonly mode: LayoutMode;
+  readonly columns: number;
   readonly slots: RouteShellSlots;
-  readonly compactTitle?: boolean;
-  readonly hideTitle?: boolean;
 }
 
 function Slot(props: { readonly value: JSXElement | (() => JSXElement) }) {
@@ -23,9 +27,10 @@ function Slot(props: { readonly value: JSXElement | (() => JSXElement) }) {
   return <>{content}</>;
 }
 
-/** Application chrome owns layout; page state and commands stay with their owners. */
+/** Fixed chrome slots. Commands and activity may change, never the navigation geometry. */
 export function RouteShell(props: RouteShellProps) {
   const tokens = useTheme();
+  const stacked = () => props.columns < stackedNavigationBelow;
   return (
     <Show
       when={props.mode !== "too-small"}
@@ -45,31 +50,69 @@ export function RouteShell(props: RouteShellProps) {
       >
         <box
           id="global-bar"
-          height={props.mode === "narrow" ? 3 : 2}
+          height={stacked() ? 3 : 2}
+          flexDirection="column"
           flexShrink={0}
           paddingX={1}
           border={["bottom"]}
           borderColor={tokens().colors.border}
         >
-          <Slot value={props.slots.globalBar} />
-          <Slot value={props.slots.sectionNav} />
-        </box>
-        <box flexDirection="row" flexGrow={1} minHeight={0}>
-          <box flexDirection="column" flexGrow={1} minWidth={0} minHeight={0} paddingX={1}>
-            <Show when={!props.hideTitle}>
-              <box
-                id="route-title"
-                flexDirection="column"
-                flexShrink={0}
-                height={(props.compactTitle ?? false) ? 1 : 2}
-              >
-                <Slot value={props.slots.routeTitle} />
+          <box flexDirection={stacked() ? "column" : "row"} height={stacked() ? 2 : 1}>
+            <box
+              id="section-nav"
+              flexGrow={stacked() ? 0 : 1}
+              flexBasis={stacked() ? undefined : 0}
+              flexShrink={1}
+              minWidth={0}
+              height={1}
+              width={stacked() ? "100%" : "auto"}
+            >
+              <Slot value={props.slots.pageNavigation} />
+            </box>
+            <box
+              id="shell-controls"
+              flexDirection="row"
+              gap={1}
+              height={1}
+              width={stacked() ? "100%" : "auto"}
+              flexShrink={0}
+            >
+              <box id="workarea-navigation-pane" width={routeBackWidth} height={1} flexShrink={0}>
+                <box
+                  id="route-back-slot"
+                  width={routeBackWidth}
+                  flexShrink={0}
+                  height={1}
+                  overflow="hidden"
+                >
+                  <Slot value={props.slots.back} />
+                </box>
               </box>
-            </Show>
-            <box id="route-content" flexGrow={1} minHeight={0} minWidth={0}>
-              <Slot value={props.slots.content} />
+              <box id="shell-context-panel" flexDirection="row" gap={1} flexShrink={0} height={1}>
+                <Slot value={props.slots.scopeControls} />
+              </box>
+              <box
+                id="shell-activity"
+                width={
+                  stacked()
+                    ? "auto"
+                    : props.columns < compactControlsBelow
+                      ? 9
+                      : Math.min(36, 18 + Math.max(0, props.columns - 132))
+                }
+                flexGrow={stacked() ? 1 : 0}
+                flexBasis={stacked() ? 0 : undefined}
+                flexShrink={0}
+                minWidth={0}
+                height={1}
+              >
+                <Slot value={props.slots.activity} />
+              </box>
             </box>
           </box>
+        </box>
+        <box id="route-content" flexGrow={1} minHeight={0} minWidth={0} paddingX={1}>
+          <Slot value={props.slots.content} />
         </box>
         <box
           id="command-status"

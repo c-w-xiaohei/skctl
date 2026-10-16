@@ -1,4 +1,4 @@
-import type { Renderable } from "@opentui/core";
+import type { Renderable, ScrollBoxRenderable } from "@opentui/core";
 import type { CommandRecord } from "./types";
 import type { SourceRemovalReview } from "./effects";
 import type { DiscoveryReview, UpdateReview } from "./effects";
@@ -7,11 +7,22 @@ import type { CollectionReview } from "./effects";
 import type { AddMembershipPreviewRequest } from "./effects";
 import type { ConfigDeclarationOwner } from "@skill-cli/core";
 import { InputRenderable, SelectRenderable } from "@opentui/core";
-import { createEffect, createSignal, Index, onMount, type JSX } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  Index,
+  onCleanup,
+  onMount,
+  type JSX,
+} from "solid-js";
 import { CommandControl } from "./command-control";
 import { Input } from "./ui/input";
 import { DataList } from "./ui/data-list";
-import { useTerminalDimensions } from "@opentui/solid";
+import { FormField } from "./ui/form";
+import { useTheme } from "./ui/use-theme";
+import type { ButtonProps } from "./ui/button";
+import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import {
   createModalControlRegistry,
   useModalControl,
@@ -24,17 +35,62 @@ function ModalBody(props: {
   readonly controls?: ReturnType<typeof createModalControlRegistry>;
 }) {
   const terminal = useTerminalDimensions();
+  const tokens = useTheme();
+  const renderer = useRenderer();
   const register = useModalControl("modal-impact-content", props.controls);
+  let body: ScrollBoxRenderable | undefined;
+  const revealFocus = () => {
+    const focused = renderer.currentFocusedRenderable;
+    if (!body || body.isDestroyed || !focused || focused.isDestroyed) return;
+    for (let ancestor = focused.parent; ancestor; ancestor = ancestor.parent) {
+      if (ancestor !== body) continue;
+      if (focused.height > body.viewport.height) {
+        body.scrollChildIntoView(focused.id);
+        break;
+      }
+      const top = body.viewport.screenY;
+      const bottom = top + body.viewport.height;
+      if (focused.screenY < top) body.scrollBy(focused.screenY - top);
+      else if (focused.screenY + focused.height > bottom)
+        body.scrollBy(focused.screenY + focused.height - bottom);
+      break;
+    }
+  };
+  const revealAfterLayout = () => {
+    revealFocus();
+    // A focus/resize can coincide with changing form content. Recheck once
+    // after that layout, not continuously while the user scrolls the body.
+    renderer.once("frame", revealFocus);
+    renderer.requestRender();
+  };
+  const scheduleReveal = () => {
+    renderer.off("frame", revealFocus);
+    renderer.off("frame", revealAfterLayout);
+    renderer.once("frame", revealAfterLayout);
+    renderer.requestRender();
+  };
+  if (props.controls) renderer.on("focused_renderable", scheduleReveal);
+  onCleanup(() => {
+    renderer.off("focused_renderable", scheduleReveal);
+    renderer.off("frame", revealFocus);
+    renderer.off("frame", revealAfterLayout);
+  });
   return (
     <scrollbox
       border
       borderStyle="rounded"
+      borderColor={tokens().colors.border}
+      backgroundColor={tokens().colors.background}
       margin={1}
       padding={1}
       height={Math.max(1, terminal().height - 2)}
       minHeight={0}
       scrollX={false}
-      ref={props.controls ? register : undefined}
+      ref={(target: ScrollBoxRenderable) => {
+        body = target;
+        if (props.controls) register(target);
+      }}
+      onSizeChange={scheduleReveal}
       contentOptions={{ flexDirection: "column", flexShrink: 0 }}
     >
       {props.children}
@@ -47,6 +103,7 @@ export function ModalCommand(props: {
   readonly id: string;
   readonly record: CommandRecord;
   readonly initialFocus?: boolean;
+  readonly intent?: ButtonProps["intent"];
   readonly order?: number;
   readonly execute: () => void;
   readonly controls?: ReturnType<typeof createModalControlRegistry>;
@@ -69,6 +126,7 @@ export function ModalCommand(props: {
       id={props.id}
       record={props.record}
       initialFocus={props.initialFocus}
+      intent={props.intent}
       register={(value) => {
         target = value;
         if (props.record.enabled) register(value);
@@ -113,11 +171,19 @@ export function InstalledSkillPreviewOverlay(props: {
   readonly cancelling: boolean;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const rebind = props.request.kind === "rebind";
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, props.onCancel);
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>{`${rebind ? "Rebind" : "Uninstall"} Skill preview`}</text>
         <text>{`Installed Skill: ${props.request.address.source}/${props.request.address.path}`}</text>
@@ -144,37 +210,47 @@ export function InstalledSkillPreviewFailureOverlay(props: {
   readonly onRetry: () => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const rebind = props.request.kind === "rebind";
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, props.onCancel);
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>{`${rebind ? "Rebind" : "Uninstall"} Skill preview failed`}</text>
         <text>{`Installed Skill: ${props.request.address.source}/${props.request.address.path}`}</text>
         {rebind && <text>{`Replacement: ${props.request.owner}/${props.request.ownerPath}`}</text>}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
         {props.cancelling && <text>Cancelling preview</text>}
-        <ModalCommand
-          id="installed-skill-preview-failure-cancel"
-          controls={controls}
-          record={modalCommand("installed.preview.cancel", "Cancel", "Return to Details")}
-          initialFocus
-          execute={props.onCancel}
-        />
-        <ModalCommand
-          id="installed-skill-preview-failure-retry"
-          controls={controls}
-          record={modalCommand(
-            "installed.preview.retry",
-            props.pending ? "Cancelling" : "Retry",
-            "Repeat this exact preview",
-            !props.pending,
-            false,
-            props.pending ? "Wait for preview settlement" : undefined,
-          )}
-          execute={props.onRetry}
-        />
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="installed-skill-preview-failure-cancel"
+            controls={controls}
+            record={modalCommand("installed.preview.cancel", "Cancel", "Return to Details")}
+            initialFocus
+            execute={props.onCancel}
+          />
+          <ModalCommand
+            id="installed-skill-preview-failure-retry"
+            controls={controls}
+            record={modalCommand(
+              "installed.preview.retry",
+              props.pending ? "Cancelling" : "Retry",
+              "Repeat this exact preview",
+              !props.pending,
+              false,
+              props.pending ? "Wait for preview settlement" : undefined,
+            )}
+            execute={props.onRetry}
+          />
+        </box>
         <text>Cancel is selected by default</text>
       </ModalBody>
     </box>
@@ -189,6 +265,7 @@ export function InstalledSkillReviewOverlay(props: {
   readonly onCancel: () => void;
   readonly onResolveMembership: (owner: ConfigDeclarationOwner) => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, props.onCancel);
   const uninstall = props.review.kind === "uninstall";
@@ -209,7 +286,14 @@ export function InstalledSkillReviewOverlay(props: {
         `Identity proof: ${props.review.impact.proof}`,
       ];
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody controls={controls}>
         <text>{uninstall ? "Uninstall Skill" : "Rebind Skill"}</text>
         <text>{`Installed Skill: ${props.review.address.source}/${props.review.address.path}`}</text>
@@ -218,47 +302,50 @@ export function InstalledSkillReviewOverlay(props: {
         ))}
         {blocked && <text>Operation is blocked by current dependencies.</text>}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="installed-skill-review-cancel"
-          controls={controls}
-          record={modalCommand("installed.cancel", "Cancel", "Details")}
-          initialFocus
-          execute={props.onCancel}
-        />
-        {blocked &&
-          directMemberships.map((owner, index) => (
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="installed-skill-review-cancel"
+            controls={controls}
+            record={modalCommand("installed.cancel", "Cancel", "Details")}
+            initialFocus
+            execute={props.onCancel}
+          />
+          {blocked &&
+            directMemberships.map((owner, index) => (
+              <ModalCommand
+                id={`installed-skill-review-resolve-${index}`}
+                controls={controls}
+                record={modalCommand(
+                  `installed.resolve.${index}`,
+                  `Resolve References: ${owner.level} (${owner.pointer})`,
+                  owner.file,
+                )}
+                execute={() => props.onResolveMembership(owner)}
+              />
+            ))}
+          {!blocked && (
             <ModalCommand
-              id={`installed-skill-review-resolve-${index}`}
+              id="installed-skill-review-confirm"
+              intent="primary"
               controls={controls}
               record={modalCommand(
-                `installed.resolve.${index}`,
-                `Resolve References: ${owner.level} (${owner.pointer})`,
-                owner.file,
+                "installed.confirm",
+                props.pending
+                  ? "Applying"
+                  : props.error
+                    ? "Retry"
+                    : uninstall
+                      ? "Uninstall Skill"
+                      : "Rebind Skill",
+                "Apply reviewed operation",
+                !props.pending,
+                true,
+                props.pending ? "Wait for the current operation to settle" : undefined,
               )}
-              execute={() => props.onResolveMembership(owner)}
+              execute={props.onConfirm}
             />
-          ))}
-        {!blocked && (
-          <ModalCommand
-            id="installed-skill-review-confirm"
-            controls={controls}
-            record={modalCommand(
-              "installed.confirm",
-              props.pending
-                ? "Applying"
-                : props.error
-                  ? "Retry"
-                  : uninstall
-                    ? "Uninstall Skill"
-                    : "Rebind Skill",
-              "Apply reviewed operation",
-              !props.pending,
-              true,
-              props.pending ? "Wait for the current operation to settle" : undefined,
-            )}
-            execute={props.onConfirm}
-          />
-        )}
+          )}
+        </box>
         <text>Cancel is selected by default</text>
       </ModalBody>
     </box>
@@ -270,6 +357,7 @@ export function RebindSourceOverlay(props: {
   readonly onSelect: (source: string, ownerPath: string) => void;
   readonly onClose: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   const [ownerPath, setOwnerPath] = createSignal("");
   const [owner, setOwner] = createSignal<string>();
@@ -281,7 +369,14 @@ export function RebindSourceOverlay(props: {
     return !!owner() && !!path && !path.startsWith("/") && !path.split("/").includes("..");
   };
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>Rebind Skill</text>
         <DataList
@@ -310,27 +405,30 @@ export function RebindSourceOverlay(props: {
           value={ownerPath()}
           onInput={setOwnerPath}
         />
-        <ModalCommand
-          id="rebind-preview"
-          order={30}
-          controls={controls}
-          record={modalCommand(
-            "rebind.review",
-            "Review Rebind",
-            "Preview identity proof",
-            validPath(),
-            false,
-            "Select a replacement Source and enter a valid Skill path",
-          )}
-          execute={() => props.onSelect(owner()!, ownerPath().trim())}
-        />
-        <ModalCommand
-          id="rebind-cancel"
-          order={40}
-          controls={controls}
-          record={modalCommand("rebind.cancel", "Cancel", "Return to Details")}
-          execute={props.onClose}
-        />
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="rebind-preview"
+            intent="primary"
+            order={30}
+            controls={controls}
+            record={modalCommand(
+              "rebind.review",
+              "Review Rebind",
+              "Preview identity proof",
+              validPath(),
+              false,
+              "Select a replacement Source and enter a valid Skill path",
+            )}
+            execute={() => props.onSelect(owner()!, ownerPath().trim())}
+          />
+          <ModalCommand
+            id="rebind-cancel"
+            order={40}
+            controls={controls}
+            record={modalCommand("rebind.cancel", "Cancel", "Return to Details")}
+            execute={props.onClose}
+          />
+        </box>
         {!validPath() && <text>Enter a valid replacement Source-root-relative Skill path.</text>}
       </ModalBody>
     </box>
@@ -351,11 +449,19 @@ export function CollectionHandoffOverlay(props: {
   }) => void;
   readonly onClose: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   const registerChoice = useModalControl("collection-handoff-choice", controls);
   useModalControlTraversal(controls, props.onClose);
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>Add to collection</text>
         <DataList
@@ -397,11 +503,19 @@ export function InstalledSkillChooserOverlay(props: {
   ) => void;
   readonly onClose: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   const registerChoice = useModalControl("installed-skill-choice", controls);
   useModalControlTraversal(controls, props.onClose);
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>Select Installed Skill</text>
         <DataList
@@ -455,6 +569,7 @@ export function CollectionCreateOverlay(
     readonly onCancel: () => void;
   },
 ) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   const allowedLevels = props.allowedLevels ?? [];
   const selectable = allowedLevels.length > 0;
@@ -468,7 +583,14 @@ export function CollectionCreateOverlay(
   let idInput: InputRenderable | undefined;
   onMount(() => queueMicrotask(() => (selectable ? levelChoice : idInput)?.focus()));
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>Create Collection</text>
         {selectable ? (
@@ -510,26 +632,29 @@ export function CollectionCreateOverlay(
           />
         )}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="collection-create-cancel"
-          controls={controls}
-          record={modalCommand("collection-create.cancel", "Cancel", "Discard draft")}
-          initialFocus={props.fixed && !selectable}
-          execute={props.onCancel}
-        />
-        <ModalCommand
-          id="collection-create-submit"
-          controls={controls}
-          record={modalCommand(
-            "collection-create.submit",
-            props.pending ? "Creating" : "Create",
-            "Create this collection",
-            !props.pending && !!collection().trim(),
-            false,
-            props.pending ? "Wait for creation to settle" : "Enter a Collection ID",
-          )}
-          execute={() => props.onSubmit({ level: level()!, collection: collection().trim() })}
-        />
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="collection-create-cancel"
+            controls={controls}
+            record={modalCommand("collection-create.cancel", "Cancel", "Discard draft")}
+            initialFocus={props.fixed && !selectable}
+            execute={props.onCancel}
+          />
+          <ModalCommand
+            id="collection-create-submit"
+            intent="primary"
+            controls={controls}
+            record={modalCommand(
+              "collection-create.submit",
+              props.pending ? "Creating" : "Create",
+              "Create this collection",
+              !props.pending && !!collection().trim(),
+              false,
+              props.pending ? "Wait for creation to settle" : "Enter a Collection ID",
+            )}
+            execute={() => props.onSubmit({ level: level()!, collection: collection().trim() })}
+          />
+        </box>
         <text>↑↓ move between controls · Enter create · Esc discard draft</text>
       </ModalBody>
     </box>
@@ -549,6 +674,7 @@ export function MembershipAddOverlay(props: {
   readonly onPreview: (intent: AddMembershipPreviewRequest) => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   const [name, setName] = createSignal(props.initialName);
   const registerName = useModalControl("membership-add-name", controls);
@@ -556,7 +682,14 @@ export function MembershipAddOverlay(props: {
   let nameInput: InputRenderable | undefined;
   onMount(() => queueMicrotask(() => nameInput?.focus()));
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>Add Membership</text>
         <text>{`Address: ${props.address.source}/${props.address.path}`}</text>
@@ -573,33 +706,36 @@ export function MembershipAddOverlay(props: {
         />
         <text>Review this exact stable entry name with Core.</text>
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="membership-add-cancel"
-          controls={controls}
-          record={modalCommand("membership-add.cancel", "Cancel", "Discard draft")}
-          execute={props.onCancel}
-        />
-        <ModalCommand
-          id="membership-add-preview"
-          controls={controls}
-          record={modalCommand(
-            "membership-add.preview",
-            "Continue to confirmation",
-            "Review the Core-authorized membership before applying",
-            !props.pending && !!name().trim(),
-            false,
-            props.pending ? "Wait for the current review to settle" : "Enter a stable entry name",
-          )}
-          execute={() =>
-            props.onPreview({
-              kind: "add-to-collection",
-              level: props.level,
-              collection: props.collection,
-              address: props.address,
-              name: name().trim(),
-            })
-          }
-        />
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="membership-add-cancel"
+            controls={controls}
+            record={modalCommand("membership-add.cancel", "Cancel", "Discard draft")}
+            execute={props.onCancel}
+          />
+          <ModalCommand
+            id="membership-add-preview"
+            intent="primary"
+            controls={controls}
+            record={modalCommand(
+              "membership-add.preview",
+              "Continue to confirmation",
+              "Review the Core-authorized membership before applying",
+              !props.pending && !!name().trim(),
+              false,
+              props.pending ? "Wait for the current review to settle" : "Enter a stable entry name",
+            )}
+            execute={() =>
+              props.onPreview({
+                kind: "add-to-collection",
+                level: props.level,
+                collection: props.collection,
+                address: props.address,
+                name: name().trim(),
+              })
+            }
+          />
+        </box>
       </ModalBody>
     </box>
   );
@@ -618,6 +754,7 @@ export function MembershipBatchDraftOverlay(props: {
   readonly onPreview: () => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   // Native inputs retain their edit buffer while the parent records each change in the session.
   const [names, setNames] = createSignal(props.additions.map((item) => item.name));
@@ -633,7 +770,14 @@ export function MembershipBatchDraftOverlay(props: {
         : undefined;
   useModalControlTraversal(controls, props.onCancel);
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>{`Add to ${props.collection}`}</text>
         <Index each={props.additions}>
@@ -660,29 +804,32 @@ export function MembershipBatchDraftOverlay(props: {
         </Index>
         {error() && <text>{error()}</text>}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="membership-batch-cancel"
-          controls={controls}
-          record={modalCommand("membership-batch.cancel", "Cancel", "Discard draft")}
-          execute={props.onCancel}
-        />
-        <ModalCommand
-          id="membership-batch-review"
-          controls={controls}
-          record={modalCommand(
-            "membership-batch.review",
-            "Review",
-            "Review one atomic batch",
-            !props.pending && !invalid(),
-            false,
-            props.pending
-              ? "Wait for the current review to settle"
-              : invalid()
-                ? error()
-                : undefined,
-          )}
-          execute={props.onPreview}
-        />
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="membership-batch-cancel"
+            controls={controls}
+            record={modalCommand("membership-batch.cancel", "Cancel", "Discard draft")}
+            execute={props.onCancel}
+          />
+          <ModalCommand
+            id="membership-batch-review"
+            intent="primary"
+            controls={controls}
+            record={modalCommand(
+              "membership-batch.review",
+              "Review",
+              "Review one atomic batch",
+              !props.pending && !invalid(),
+              false,
+              props.pending
+                ? "Wait for the current review to settle"
+                : invalid()
+                  ? error()
+                  : undefined,
+            )}
+            execute={props.onPreview}
+          />
+        </box>
       </ModalBody>
     </box>
   );
@@ -697,11 +844,19 @@ export function MembershipRemovalPlanOverlay(props: {
   readonly onContinue: () => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, props.onCancel);
   const canContinue = () => props.executableCount > 0 && !props.pending;
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody controls={controls}>
         <text>{`Remove from ${props.collection}`}</text>
         <text>{`${props.executableCount} direct Membership${props.executableCount === 1 ? "" : "s"} can be removed`}</text>
@@ -709,30 +864,32 @@ export function MembershipRemovalPlanOverlay(props: {
           <text>{line}</text>
         ))}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="membership-removal-plan"
-          controls={controls}
-          record={modalCommand("membership-removal.cancel", "Cancel", "Keep selections")}
-          initialFocus
-          execute={props.onCancel}
-        />
-        {props.executableCount > 0 ? (
+        <box flexDirection="column" gap={1} flexShrink={0}>
           <ModalCommand
-            id="membership-removal-plan-continue"
+            id="membership-removal-plan"
             controls={controls}
-            record={modalCommand(
-              "membership-removal.continue",
-              props.pending ? "Continue" : "Continue",
-              "Review the direct Membership delta",
-              canContinue(),
-              false,
-              props.pending ? "Wait for the current review to settle" : undefined,
-            )}
-            execute={props.onContinue}
+            record={modalCommand("membership-removal.cancel", "Cancel", "Keep selections")}
+            initialFocus
+            execute={props.onCancel}
           />
-        ) : (
-          <text>No direct Membership can be removed; Cancel keeps the current selections.</text>
-        )}
+          {props.executableCount > 0 ? (
+            <ModalCommand
+              id="membership-removal-plan-continue"
+              controls={controls}
+              record={modalCommand(
+                "membership-removal.continue",
+                props.pending ? "Continue" : "Continue",
+                "Review the direct Membership delta",
+                canContinue(),
+                false,
+                props.pending ? "Wait for the current review to settle" : undefined,
+              )}
+              execute={props.onContinue}
+            />
+          ) : (
+            <text>No direct Membership can be removed; Cancel keeps the current selections.</text>
+          )}
+        </box>
         <text>Cancel is focused by default. Use ↓ to Continue.</text>
       </ModalBody>
     </box>
@@ -766,6 +923,7 @@ export function SourceRegistrationOverlay(props: {
   }) => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   const [level, setLevel] = createSignal(props.level ?? "project");
   const [kind, setKind] = createSignal<"local" | "git" | "github">("local");
@@ -801,8 +959,15 @@ export function SourceRegistrationOverlay(props: {
   };
   useModalControlTraversal(controls, props.onCancel);
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
-      <ModalBody>
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
+      <ModalBody controls={controls}>
         <text>{`Add ${props.kind === "source" ? "Source" : "Config Source"}`}</text>
         {props.level ? (
           <text>{`Config level: ${props.level}`}</text>
@@ -858,72 +1023,88 @@ export function SourceRegistrationOverlay(props: {
             option && setKind(option.value as "local" | "git" | "github")
           }
         />
-        <Input
-          id="source-register-id"
-          ref={registerId}
-          focused={false}
-          value={id()}
-          placeholder="Source ID"
-          onInput={setId}
-        />
-        {kind() !== "github" && (
+        <FormField label="Source ID" labelPosition="beside" labelWidth={12}>
           <Input
-            id="source-register-origin"
-            ref={(value: InputRenderable) => {
-              registerOrigin(value);
-            }}
+            id="source-register-id"
+            ref={registerId}
             focused={false}
-            value={origin()}
-            placeholder={kind() === "git" ? "Canonical remote URL" : "Configured local path"}
-            onInput={setOrigin}
+            value={id()}
+            placeholder="Source ID"
+            onInput={setId}
           />
+        </FormField>
+        {kind() !== "github" && (
+          <FormField
+            label={kind() === "git" ? "Git origin" : "Local path"}
+            labelPosition="beside"
+            labelWidth={12}
+          >
+            <Input
+              id="source-register-origin"
+              ref={(value: InputRenderable) => {
+                registerOrigin(value);
+              }}
+              focused={false}
+              value={origin()}
+              placeholder={kind() === "git" ? "Canonical remote URL" : "Configured local path"}
+              onInput={setOrigin}
+            />
+          </FormField>
         )}
         {kind() === "github" && (
           <>
-            <Input
-              id="source-register-github-owner"
-              ref={(value: InputRenderable) => {
-                registerOwner(value);
-              }}
-              focused={false}
-              value={owner()}
-              placeholder="GitHub owner"
-              onInput={setOwner}
-            />
-            <Input
-              id="source-register-github-repository"
-              ref={(value: InputRenderable) => {
-                registerRepository(value);
-              }}
-              focused={false}
-              value={repository()}
-              placeholder="GitHub repository"
-              onInput={setRepository}
-            />
+            <FormField label="GitHub owner" labelPosition="beside" labelWidth={12}>
+              <Input
+                id="source-register-github-owner"
+                ref={(value: InputRenderable) => {
+                  registerOwner(value);
+                }}
+                focused={false}
+                value={owner()}
+                placeholder="GitHub owner"
+                onInput={setOwner}
+              />
+            </FormField>
+            <FormField label="Repository" labelPosition="beside" labelWidth={12}>
+              <Input
+                id="source-register-github-repository"
+                ref={(value: InputRenderable) => {
+                  registerRepository(value);
+                }}
+                focused={false}
+                value={repository()}
+                placeholder="GitHub repository"
+                onInput={setRepository}
+              />
+            </FormField>
           </>
         )}
         {kind() !== "local" && (
+          <FormField label="Tracked ref" labelPosition="beside" labelWidth={12}>
+            <Input
+              id="source-register-ref"
+              ref={(value: InputRenderable) => {
+                registerRef(value);
+              }}
+              focused={false}
+              value={ref()}
+              placeholder="Tracked ref"
+              onInput={setRef}
+            />
+          </FormField>
+        )}
+        <FormField label="Source root" labelPosition="beside" labelWidth={12}>
           <Input
-            id="source-register-ref"
+            id="source-register-root"
             ref={(value: InputRenderable) => {
-              registerRef(value);
+              registerRoot(value);
             }}
             focused={false}
-            value={ref()}
-            placeholder="Tracked ref"
-            onInput={setRef}
+            value={root()}
+            placeholder="Source root"
+            onInput={setRoot}
           />
-        )}
-        <Input
-          id="source-register-root"
-          ref={(value: InputRenderable) => {
-            registerRoot(value);
-          }}
-          focused={false}
-          value={root()}
-          placeholder="Source root"
-          onInput={setRoot}
-        />
+        </FormField>
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
         {!valid() && (
           <text>
@@ -934,56 +1115,59 @@ export function SourceRegistrationOverlay(props: {
                 : "Enter an ID, configured local path, and source root."}
           </text>
         )}
-        <ModalCommand
-          id="source-register-choice"
-          controls={controls}
-          order={80}
-          record={modalCommand("source-register.cancel", "Cancel", "Discard draft")}
-          execute={props.onCancel}
-        />
-        <ModalCommand
-          id="source-register-submit"
-          controls={controls}
-          order={90}
-          record={modalCommand(
-            "source-register.submit",
-            props.pending ? "Registering" : "Register",
-            "Register this immutable binding",
-            !props.pending && valid(),
-            false,
-            props.pending
-              ? "Wait for the current operation to settle"
-              : "Complete the required source fields",
-          )}
-          execute={() =>
-            props.onSubmit({
-              level: level(),
-              id: id().trim(),
-              binding:
-                kind() === "github"
-                  ? {
-                      kind: "github",
-                      owner: owner().trim(),
-                      repository: repository().trim(),
-                      origin: `https://github.com/${owner().trim()}/${repository().trim()}`,
-                      ref: ref().trim(),
-                      root: root().trim(),
-                    }
-                  : kind() === "git"
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="source-register-choice"
+            controls={controls}
+            order={80}
+            record={modalCommand("source-register.cancel", "Cancel", "Discard draft")}
+            execute={props.onCancel}
+          />
+          <ModalCommand
+            id="source-register-submit"
+            intent="primary"
+            controls={controls}
+            order={90}
+            record={modalCommand(
+              "source-register.submit",
+              props.pending ? "Registering" : "Register",
+              "Register this immutable binding",
+              !props.pending && valid(),
+              false,
+              props.pending
+                ? "Wait for the current operation to settle"
+                : "Complete the required source fields",
+            )}
+            execute={() =>
+              props.onSubmit({
+                level: level(),
+                id: id().trim(),
+                binding:
+                  kind() === "github"
                     ? {
-                        kind: "git",
-                        origin: origin().trim(),
+                        kind: "github",
+                        owner: owner().trim(),
+                        repository: repository().trim(),
+                        origin: `https://github.com/${owner().trim()}/${repository().trim()}`,
                         ref: ref().trim(),
                         root: root().trim(),
                       }
-                    : {
-                        kind: "local",
-                        path: origin().trim(),
-                        root: root().trim(),
-                      },
-            })
-          }
-        />
+                    : kind() === "git"
+                      ? {
+                          kind: "git",
+                          origin: origin().trim(),
+                          ref: ref().trim(),
+                          root: root().trim(),
+                        }
+                      : {
+                          kind: "local",
+                          path: origin().trim(),
+                          root: root().trim(),
+                        },
+              })
+            }
+          />
+        </box>
         <text>↑↓ move between controls · Enter select · Esc close</text>
       </ModalBody>
     </box>
@@ -1001,6 +1185,7 @@ export function CollectionImportOverlay(props: {
   ) => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   const [from, setFrom] = createSignal(props.from);
   const [into, setInto] = createSignal(props.into);
@@ -1008,7 +1193,14 @@ export function CollectionImportOverlay(props: {
   const registerInto = useModalControl("collection-import-into", controls);
   useModalControlTraversal(controls, props.onCancel);
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>Import Collection</text>
         <Input
@@ -1032,32 +1224,35 @@ export function CollectionImportOverlay(props: {
           onInput={setInto}
         />
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="collection-import-cancel"
-          controls={controls}
-          record={modalCommand("collection-import.cancel", "Cancel", "Discard draft")}
-          execute={props.onCancel}
-        />
-        <ModalCommand
-          id="collection-import-review"
-          controls={controls}
-          record={modalCommand(
-            "collection-import.review",
-            "Review Import",
-            "Preview all-or-none import",
-            !props.pending && !!from().trim() && !!into().trim(),
-            false,
-            props.pending ? "Wait for the current review to settle" : "Enter both collection IDs",
-          )}
-          execute={() =>
-            props.onPreview({
-              kind: "collection-import",
-              level: props.level,
-              from: from().trim(),
-              into: into().trim(),
-            })
-          }
-        />
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="collection-import-cancel"
+            controls={controls}
+            record={modalCommand("collection-import.cancel", "Cancel", "Discard draft")}
+            execute={props.onCancel}
+          />
+          <ModalCommand
+            id="collection-import-review"
+            intent="primary"
+            controls={controls}
+            record={modalCommand(
+              "collection-import.review",
+              "Review Import",
+              "Preview all-or-none import",
+              !props.pending && !!from().trim() && !!into().trim(),
+              false,
+              props.pending ? "Wait for the current review to settle" : "Enter both collection IDs",
+            )}
+            execute={() =>
+              props.onPreview({
+                kind: "collection-import",
+                level: props.level,
+                from: from().trim(),
+                into: into().trim(),
+              })
+            }
+          />
+        </box>
       </ModalBody>
     </box>
   );
@@ -1077,6 +1272,7 @@ export function ReferenceOverlay(props: {
   ) => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   const [name, setName] = createSignal(props.name);
   const [target, setTarget] = createSignal(props.target);
@@ -1087,7 +1283,14 @@ export function ReferenceOverlay(props: {
   useModalControlTraversal(controls, props.onCancel);
   const verb = props.remove ? "Remove Reference" : "Add Reference";
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>{verb}</text>
         <Input
@@ -1123,37 +1326,40 @@ export function ReferenceOverlay(props: {
           />
         )}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="reference-cancel"
-          controls={controls}
-          record={modalCommand("reference.cancel", "Cancel", "Discard draft")}
-          execute={props.onCancel}
-        />
-        <ModalCommand
-          id="reference-review"
-          controls={controls}
-          record={modalCommand(
-            "reference.review",
-            props.pending ? "Reviewing" : `Review ${verb}`,
-            "Preview this reference",
-            !props.pending && !!name().trim() && !!target().trim(),
-            false,
-            props.pending
-              ? "Wait for the current review to settle"
-              : "Enter a reference name and target",
-          )}
-          execute={() =>
-            props.onPreview({
-              kind: "reference",
-              level: props.level,
-              collection: props.collection,
-              name: name().trim(),
-              target: target().trim(),
-              description: description().trim(),
-              remove: props.remove,
-            })
-          }
-        />
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="reference-cancel"
+            controls={controls}
+            record={modalCommand("reference.cancel", "Cancel", "Discard draft")}
+            execute={props.onCancel}
+          />
+          <ModalCommand
+            id="reference-review"
+            intent="primary"
+            controls={controls}
+            record={modalCommand(
+              "reference.review",
+              props.pending ? "Reviewing" : `Review ${verb}`,
+              "Preview this reference",
+              !props.pending && !!name().trim() && !!target().trim(),
+              false,
+              props.pending
+                ? "Wait for the current review to settle"
+                : "Enter a reference name and target",
+            )}
+            execute={() =>
+              props.onPreview({
+                kind: "reference",
+                level: props.level,
+                collection: props.collection,
+                name: name().trim(),
+                target: target().trim(),
+                description: description().trim(),
+                remove: props.remove,
+              })
+            }
+          />
+        </box>
       </ModalBody>
     </box>
   );
@@ -1171,13 +1377,21 @@ export function LinkChangeOverlay(props: {
   ) => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   const [target, setTarget] = createSignal(props.target);
   const registerTarget = useModalControl("link-target", controls);
   useModalControlTraversal(controls, props.onCancel);
   const verb = props.linked ? "Add Link" : "Remove Link";
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody>
         <text>{verb}</text>
         <Input
@@ -1191,33 +1405,36 @@ export function LinkChangeOverlay(props: {
           onInput={setTarget}
         />
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="link-cancel"
-          controls={controls}
-          record={modalCommand("link.cancel", "Cancel", "Discard draft")}
-          execute={props.onCancel}
-        />
-        <ModalCommand
-          id="link-review"
-          controls={controls}
-          record={modalCommand(
-            "link.review",
-            props.pending ? "Reviewing" : `Review ${verb}`,
-            "Preview link paths",
-            !props.pending && !!target().trim(),
-            false,
-            props.pending ? "Wait for the current review to settle" : "Enter a target collection",
-          )}
-          execute={() =>
-            props.onPreview({
-              kind: "link-change",
-              level: props.level,
-              collection: props.collection,
-              target: target().trim(),
-              linked: props.linked,
-            })
-          }
-        />
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="link-cancel"
+            controls={controls}
+            record={modalCommand("link.cancel", "Cancel", "Discard draft")}
+            execute={props.onCancel}
+          />
+          <ModalCommand
+            id="link-review"
+            intent="primary"
+            controls={controls}
+            record={modalCommand(
+              "link.review",
+              props.pending ? "Reviewing" : `Review ${verb}`,
+              "Preview link paths",
+              !props.pending && !!target().trim(),
+              false,
+              props.pending ? "Wait for the current review to settle" : "Enter a target collection",
+            )}
+            execute={() =>
+              props.onPreview({
+                kind: "link-change",
+                level: props.level,
+                collection: props.collection,
+                target: target().trim(),
+                linked: props.linked,
+              })
+            }
+          />
+        </box>
       </ModalBody>
     </box>
   );
@@ -1225,7 +1442,13 @@ export function LinkChangeOverlay(props: {
 
 export function CollectionUseOverlay(props: {
   readonly level: "global" | "project" | "local";
+  /** Exact direct Use at this host level, not effective roots or the cursor item. */
   readonly collections: readonly string[];
+  readonly availableCollections: readonly { readonly id: string; readonly description?: string }[];
+  readonly inventoryUnavailable?: boolean;
+  readonly currentCollection?: string;
+  readonly onCurrentChange?: (collection: string) => void;
+  readonly onChange?: (collections: readonly string[]) => void;
   readonly pending: boolean;
   readonly error?: { readonly code: string; readonly message: string };
   readonly onPreview: (
@@ -1233,55 +1456,147 @@ export function CollectionUseOverlay(props: {
   ) => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
+  const terminal = useTerminalDimensions();
   const controls = createModalControlRegistry();
-  const [collections, setCollections] = createSignal(props.collections.join(","));
+  const initialCollections = [...props.collections];
+  const retainedChoices = [
+    ...new Set([
+      ...initialCollections,
+      ...(props.currentCollection ? [props.currentCollection] : []),
+    ]),
+  ];
+  const [collections, setCollections] = createSignal(initialCollections);
+  const [currentCollection, setCurrentCollection] = createSignal(
+    props.currentCollection ?? props.availableCollections[0]?.id ?? initialCollections[0],
+  );
   const registerCollections = useModalControl("collection-use-values", controls);
   useModalControlTraversal(controls, props.onCancel);
-  const values = () =>
-    collections()
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
+  // Keep unavailable current IDs in the choice list even after unchecking them,
+  // so removal is deliberate and reversible within the draft.
+  const choices = createMemo(() => [
+    ...props.availableCollections.map((item) => ({ ...item, unavailable: false })),
+    ...[
+      ...new Set([
+        ...retainedChoices,
+        ...collections(),
+        ...(currentCollection() ? [currentCollection()!] : []),
+      ]),
+    ]
+      .filter((id) => !props.availableCollections.some((item) => item.id === id))
+      .map((id) => ({ id, description: undefined, unavailable: true })),
+  ]);
+  const currentIndex = () =>
+    Math.max(
+      0,
+      choices().findIndex((item) => item.id === currentCollection()),
+    );
+  const current = () => choices()[currentIndex()];
+  const toggle = (id: string) => {
+    if (props.pending) return;
+    const values = collections();
+    const next = values.includes(id) ? values.filter((value) => value !== id) : [...values, id];
+    setCollections(next);
+    props.onChange?.(next);
+  };
+  let list: SelectRenderable | undefined;
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
-      <ModalBody>
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
+      <ModalBody controls={controls}>
         <text>Set Collection Use</text>
-        <Input
+        <text>{`Config level: ${props.level} · ${collections().length} selected`}</text>
+        <DataList
           id="collection-use-values"
-          ref={(value: InputRenderable) => {
+          ref={(value: SelectRenderable) => {
+            list = value;
             registerCollections(value);
           }}
           focused
-          value={collections()}
-          placeholder="Collection IDs, comma separated"
-          onInput={setCollections}
+          height={Math.max(1, Math.min(choices().length, 8, terminal().height - 12))}
+          flexShrink={0}
+          selectedIndex={currentIndex()}
+          showDescription={false}
+          keyBindings={[{ name: "space", action: "select-current" }]}
+          options={choices().map((item) => ({
+            name: `${collections().includes(item.id) ? "[x]" : "[ ]"} ${item.unavailable ? "Unavailable: " : ""}${item.id}`,
+            description: item.description ?? "",
+            value: item.id,
+          }))}
+          onChange={(_index, option) => {
+            if (!option) return;
+            setCurrentCollection(option.value);
+            props.onCurrentChange?.(option.value);
+          }}
+          onSelect={(_index, option) => option && toggle(option.value)}
+          onRowPress={(_event, hit) => {
+            list?.setSelectedIndex(hit.index);
+            // Only the explicit check gutter toggles. Ordinary row clicks move
+            // the current choice without changing the checked mutation set.
+            if (hit.x >= 3 && hit.x <= 5) {
+              const item = choices()[hit.index];
+              if (item) toggle(item.id);
+            }
+            return true;
+          }}
         />
+        {current() && <text wrapMode="word">{`Collection: ${current()!.id}`}</text>}
+        {current()?.unavailable && (
+          <text wrapMode="word">
+            Unavailable in the effective Collections; uncheck to remove from this Use.
+          </text>
+        )}
+        {current()?.description && (
+          <text wrapMode="word" maxHeight={2}>
+            {current()!.description}
+          </text>
+        )}
+        {props.inventoryUnavailable && (
+          <text wrapMode="word">
+            Effective Collections unavailable. Core will validate the proposed Use.
+          </text>
+        )}
+        {!choices().length && (
+          <text>No available Collections. An empty Use can still be reviewed.</text>
+        )}
+        {!collections().length && (
+          <text>No Collections selected — review writes an explicit empty Use.</text>
+        )}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="collection-use-cancel"
-          controls={controls}
-          record={modalCommand("collection-use.cancel", "Cancel", "Discard draft")}
-          execute={props.onCancel}
-        />
-        <ModalCommand
-          id="collection-use-review"
-          controls={controls}
-          record={modalCommand(
-            "collection-use.review",
-            props.pending ? "Reviewing" : "Review Collection Use",
-            "Preview disclosure",
-            !props.pending,
-            false,
-            props.pending ? "Wait for the current review to settle" : undefined,
-          )}
-          execute={() =>
-            props.onPreview({
-              kind: "collection-use",
-              level: props.level,
-              collections: values(),
-            })
-          }
-        />
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="collection-use-cancel"
+            controls={controls}
+            record={modalCommand("collection-use.cancel", "Cancel", "Discard draft")}
+            execute={props.onCancel}
+          />
+          <ModalCommand
+            id="collection-use-review"
+            intent="primary"
+            controls={controls}
+            record={modalCommand(
+              "collection-use.review",
+              props.pending ? "Reviewing" : "Review Collection Use",
+              "Preview disclosure",
+              !props.pending,
+              false,
+              props.pending ? "Wait for the current review to settle" : undefined,
+            )}
+            execute={() =>
+              props.onPreview({
+                kind: "collection-use",
+                level: props.level,
+                collections: [...collections()],
+              })
+            }
+          />
+        </box>
       </ModalBody>
     </box>
   );
@@ -1294,6 +1609,7 @@ export function CollectionReviewOverlay(props: {
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, props.onCancel);
   const impact = props.review.impact;
@@ -1384,8 +1700,8 @@ export function CollectionReviewOverlay(props: {
       case "collection-use":
         return [
           `Owner: ${ownerLine(impact.owner)}`,
-          `Old: ${impact.oldCollections.join(", ")}`,
-          `New: ${impact.newCollections.join(", ")}`,
+          `Old: ${impact.oldCollections.join(", ") || "(empty)"}`,
+          `New: ${impact.newCollections.join(", ") || "(empty)"}`,
           `Complete: ${impact.proposedComplete ? "yes" : "no"}`,
           ...impact.newlyExposed.map((item) => `Expose: ${item.selector}`),
           ...impact.removedAtOwner.map((item) => `Remove: ${item.selector}`),
@@ -1401,7 +1717,14 @@ export function CollectionReviewOverlay(props: {
     }
   };
   return (
-    <box position="absolute" left={0} top={0} width="100%" height="100%" backgroundColor="#111111">
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      backgroundColor={tokens().colors.background}
+    >
       <ModalBody controls={controls}>
         <text>{verb}</text>
         {lines().map((line) => (
@@ -1409,28 +1732,35 @@ export function CollectionReviewOverlay(props: {
         ))}
         {!impact.allowed && <text>Operation is blocked by current dependencies.</text>}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="collection-review-choice"
-          controls={controls}
-          record={modalCommand("collection-review.cancel", "Cancel", "Keep current configuration")}
-          initialFocus
-          execute={props.onCancel}
-        />
-        {impact.allowed && (
+        <box flexDirection="column" gap={1} flexShrink={0}>
           <ModalCommand
-            id="collection-review-confirm"
+            id="collection-review-choice"
             controls={controls}
             record={modalCommand(
-              "collection-review.confirm",
-              props.pending ? `${verb}...` : props.error ? `Retry ${verb}` : verb,
-              `Apply reviewed ${verb.toLowerCase()}`,
-              !props.pending,
-              destructive,
-              props.pending ? "Wait for the current operation to settle" : undefined,
+              "collection-review.cancel",
+              "Cancel",
+              "Keep current configuration",
             )}
-            execute={props.onConfirm}
+            initialFocus
+            execute={props.onCancel}
           />
-        )}
+          {impact.allowed && (
+            <ModalCommand
+              id="collection-review-confirm"
+              intent="primary"
+              controls={controls}
+              record={modalCommand(
+                "collection-review.confirm",
+                props.pending ? `${verb}...` : props.error ? `Retry ${verb}` : verb,
+                `Apply reviewed ${verb.toLowerCase()}`,
+                !props.pending,
+                destructive,
+                props.pending ? "Wait for the current operation to settle" : undefined,
+              )}
+              execute={props.onConfirm}
+            />
+          )}
+        </box>
         <text>Cancel is selected by default</text>
       </ModalBody>
     </box>
@@ -1447,6 +1777,7 @@ export function SourceSelectionOverlay(props: {
   readonly onSubmit: () => void;
   readonly onCancel: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   const terminal = useTerminalDimensions();
   const discovery = props.review.kind === "discovery";
@@ -1500,7 +1831,7 @@ export function SourceSelectionOverlay(props: {
       top={0}
       width="100%"
       height="100%"
-      backgroundColor="#111111"
+      backgroundColor={tokens().colors.background}
       onMouseDown={(event) => {
         event.stopPropagation();
         event.preventDefault();
@@ -1524,27 +1855,30 @@ export function SourceSelectionOverlay(props: {
             if (candidate?.selectable && !props.pending) props.onToggle(candidate.path);
           }}
         />
-        <ModalCommand
-          id="source-operation-cancel"
-          controls={controls}
-          record={modalCommand("source-operation.cancel", "Cancel", "Keep this selection")}
-          execute={props.onCancel}
-        />
-        <ModalCommand
-          id="source-operation-submit"
-          controls={controls}
-          record={modalCommand(
-            "source-operation.submit",
-            `${props.pending ? "Applying" : discovery ? "Install" : "Update"} ${props.selected.length} Skills`,
-            "Apply selected Skills",
-            !props.pending && props.selected.length > 0,
-            false,
-            props.pending
-              ? "Wait for the current operation to settle"
-              : "Select at least one eligible Skill",
-          )}
-          execute={props.onSubmit}
-        />
+        <box flexDirection="column" gap={1} flexShrink={0}>
+          <ModalCommand
+            id="source-operation-cancel"
+            controls={controls}
+            record={modalCommand("source-operation.cancel", "Cancel", "Keep this selection")}
+            execute={props.onCancel}
+          />
+          <ModalCommand
+            id="source-operation-submit"
+            intent="primary"
+            controls={controls}
+            record={modalCommand(
+              "source-operation.submit",
+              `${props.pending ? "Applying" : discovery ? "Install" : "Update"} ${props.selected.length} Skills`,
+              "Apply selected Skills",
+              !props.pending && props.selected.length > 0,
+              false,
+              props.pending
+                ? "Wait for the current operation to settle"
+                : "Select at least one eligible Skill",
+            )}
+            execute={props.onSubmit}
+          />
+        </box>
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
         <text>
           {discovery
@@ -1564,6 +1898,7 @@ export function SourceObservationOverlay(props: {
   readonly onRetry: () => void;
   readonly onClose: () => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, props.onClose);
   const failed = () => !!props.error;
@@ -1575,7 +1910,7 @@ export function SourceObservationOverlay(props: {
       top={0}
       width="100%"
       height="100%"
-      backgroundColor="#111111"
+      backgroundColor={tokens().colors.background}
     >
       <ModalBody>
         <text>{props.title}</text>
@@ -1588,25 +1923,31 @@ export function SourceObservationOverlay(props: {
               : "Observing"}
         </text>
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="source-observation-progress"
-          controls={controls}
-          record={modalCommand(
-            "source-observation.close",
-            failed() && !props.cancelling ? "Close" : "Cancel",
-            "Selected Source",
-          )}
-          initialFocus
-          execute={props.onClose}
-        />
-        {failed() && !props.cancelling && (
+        <box flexDirection="column" gap={1} flexShrink={0}>
           <ModalCommand
-            id="source-observation-retry"
+            id="source-observation-progress"
             controls={controls}
-            record={modalCommand("source-observation.retry", "Retry", "Observe this Source again")}
-            execute={props.onRetry}
+            record={modalCommand(
+              "source-observation.close",
+              failed() && !props.cancelling ? "Close" : "Cancel",
+              "Selected Source",
+            )}
+            initialFocus
+            execute={props.onClose}
           />
-        )}
+          {failed() && !props.cancelling && (
+            <ModalCommand
+              id="source-observation-retry"
+              controls={controls}
+              record={modalCommand(
+                "source-observation.retry",
+                "Retry",
+                "Observe this Source again",
+              )}
+              execute={props.onRetry}
+            />
+          )}
+        </box>
         <text>{failed() && !props.cancelling ? "Escape Close" : "Escape Cancel"}</text>
       </ModalBody>
     </box>
@@ -1624,6 +1965,7 @@ export function SourceRemovalOverlay(props: {
     address: { readonly source: string; readonly path: string },
   ) => void;
 }) {
+  const tokens = useTheme();
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, props.onCancel);
   const blocked = !props.review.impact.allowed;
@@ -1634,7 +1976,7 @@ export function SourceRemovalOverlay(props: {
       top={0}
       width="100%"
       height="100%"
-      backgroundColor="#111111"
+      backgroundColor={tokens().colors.background}
       onMouseDown={(event) => {
         event.stopPropagation();
         event.preventDefault();
@@ -1655,43 +1997,46 @@ export function SourceRemovalOverlay(props: {
           <text>Remove this direct Source declaration?</text>
         )}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <ModalCommand
-          id="source-removal-choice"
-          controls={controls}
-          record={modalCommand("source-removal.cancel", "Cancel", "Keep this Source")}
-          initialFocus
-          execute={props.onCancel}
-        />
-        {blocked ? (
-          props.review.impact.repairs.flatMap((repair, index) =>
-            repair.actions.map((action) => (
-              <ModalCommand
-                id={`source-removal-repair-${index}-${action}`}
-                controls={controls}
-                record={modalCommand(
-                  `source-removal.repair.${index}.${action}`,
-                  `${action === "rebind" ? "Rebind" : "Uninstall"} ${repair.address.source}/${repair.address.path}`,
-                  `Open ${action} repair`,
-                )}
-                execute={() => props.onRepair(action, repair.address)}
-              />
-            )),
-          )
-        ) : (
+        <box flexDirection="column" gap={1} flexShrink={0}>
           <ModalCommand
-            id="source-removal-confirm"
+            id="source-removal-choice"
             controls={controls}
-            record={modalCommand(
-              "source-removal.confirm",
-              props.pending ? "Removing..." : "Remove Source",
-              "Remove the direct declaration",
-              !props.pending,
-              true,
-              props.pending ? "Wait for the current operation to settle" : undefined,
-            )}
-            execute={props.onConfirm}
+            record={modalCommand("source-removal.cancel", "Cancel", "Keep this Source")}
+            initialFocus
+            execute={props.onCancel}
           />
-        )}
+          {blocked ? (
+            props.review.impact.repairs.flatMap((repair, index) =>
+              repair.actions.map((action) => (
+                <ModalCommand
+                  id={`source-removal-repair-${index}-${action}`}
+                  controls={controls}
+                  record={modalCommand(
+                    `source-removal.repair.${index}.${action}`,
+                    `${action === "rebind" ? "Rebind" : "Uninstall"} ${repair.address.source}/${repair.address.path}`,
+                    `Open ${action} repair`,
+                  )}
+                  execute={() => props.onRepair(action, repair.address)}
+                />
+              )),
+            )
+          ) : (
+            <ModalCommand
+              id="source-removal-confirm"
+              intent="primary"
+              controls={controls}
+              record={modalCommand(
+                "source-removal.confirm",
+                props.pending ? "Removing..." : "Remove Source",
+                "Remove the direct declaration",
+                !props.pending,
+                true,
+                props.pending ? "Wait for the current operation to settle" : undefined,
+              )}
+              execute={props.onConfirm}
+            />
+          )}
+        </box>
         <text>↑↓ move between controls · Enter select · Esc close</text>
         <text>Cancel is selected by default</text>
       </ModalBody>

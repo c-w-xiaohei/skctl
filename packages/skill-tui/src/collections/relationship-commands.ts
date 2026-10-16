@@ -213,6 +213,18 @@ const relationCommands = (
     ];
   if (relation.kind === "collection-reference")
     return [
+      command(
+        "relationship.open-collection",
+        "Open Collection",
+        relation.target ?? "Collection target unavailable",
+        !!relation.target && relation.targetAvailable !== false,
+        relation.target
+          ? { kind: "collection-open-collection", collection, target: relation.target }
+          : undefined,
+        relation.target && relation.targetAvailable !== false
+          ? undefined
+          : "Referenced Collection is unavailable",
+      ),
       open("relationship.open-owner", "Open owning Config"),
       command(
         "relationship.remove-reference",

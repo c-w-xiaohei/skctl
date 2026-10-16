@@ -6,9 +6,9 @@ import { selectScrollOffset } from "../src/select-scroll";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 
-test("RENDER Source Skills and details return restore the selected Source and list viewport", async () => {
+test("RENDER empty Source details return restores the selected Source and list viewport", async () => {
   const projection = workspaceProjection();
-  const sources = Array.from({ length: 8 }, (_, index) => ({
+  const sources = Array.from({ length: 18 }, (_, index) => ({
     ...projection.effective.sources[0]!,
     id: `source-${index}`,
   }));
@@ -53,44 +53,32 @@ test("RENDER Source Skills and details return restore the selected Source and li
     }
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
     const browser = (await focusLive(setup, "source-browser")) as SelectRenderable;
-    for (let index = 1; index < 8; index++) {
+    for (let index = 1; index < 18; index++) {
       setup.mockInput.pressArrow("down");
       await setup.waitFor(() => browser.getSelectedIndex() === index);
     }
-    expect(browser.getSelectedOption()?.value).toBe("source-7");
+    expect(browser.getSelectedOption()?.value).toBe("source-17");
     const savedOffset = selectScrollOffset(browser);
     expect(savedOffset).toBeGreaterThan(0);
 
     await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-updates-browser"));
-    await setup.waitForFrame((frame) => frame.includes("source-7"));
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-updates-browser");
-    setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
-    const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
-    const details = choices.options.findIndex(
-      (option) => option.value.id === "source-updates.source-details",
-    );
-    expect(details).toBeGreaterThanOrEqual(0);
-    expect(choices.options[details]!.value.destination).toBe("source-7");
-    for (let index = 0; index < details; index++) setup.mockInput.pressArrow("down");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-toggle"));
+    expect(setup.renderer.root.findDescendantById("source-updates-browser")).toBeUndefined();
+    await focusLive(setup, "source-details-toggle");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
-    await setup.waitForFrame((frame) => frame.includes("source-7"));
-    await parsedEscape(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-updates-browser"));
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-updates-browser");
+    await setup.waitForFrame((frame) => frame.includes("source-17"));
     await parsedEscape(setup);
     await setup.waitFor(() => {
       const returned = setup.renderer.root.findDescendantById("source-browser");
       return (
-        returned instanceof SelectRenderable && returned.getSelectedOption()?.value === "source-7"
+        returned instanceof SelectRenderable && returned.getSelectedOption()?.value === "source-17"
       );
     });
 
     const returned = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;
     expect(returned).not.toBe(browser);
-    expect(returned.getSelectedOption()?.value).toBe("source-7");
+    expect(returned.getSelectedOption()?.value).toBe("source-17");
     expect(selectScrollOffset(returned)).toBe(savedOffset);
     expect(setup.renderer.currentFocusedRenderable).toBe(returned);
     expect(acquisitions).toEqual([]);

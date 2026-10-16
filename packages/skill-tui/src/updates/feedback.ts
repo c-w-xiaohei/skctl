@@ -7,10 +7,11 @@ export interface UpdateFeedback {
   readonly title: string;
   readonly body: string;
   readonly recovery: "inspect-skill" | "inspect-source" | "recheck";
+  readonly uncertain?: true;
   readonly detail: string;
 }
 
-/** One issue per Source; raw diagnostics stay in the opt-in detail view. */
+/** Known batch failures share a Source notice; uncertain outcomes retain each Skill. */
 export function updateFeedback(
   addresses: readonly UpdateAddress[],
   groups: readonly UpdateGroup[],
@@ -18,18 +19,29 @@ export function updateFeedback(
 ): readonly UpdateFeedback[] {
   const allowed = new Set(addresses.map((address) => `${address.source}\0${address.path}`));
   const sources = new Map<string, UpdateFeedback>();
+  const uncertain = new Map<string, UpdateFeedback>();
+  const uncertainSources = new Set<string>();
+  const messages = new Map<string, Set<string>>();
+  const collect = (notices: Map<string, UpdateFeedback>, key: string, notice: UpdateFeedback) => {
+    const diagnostics = messages.get(key) ?? new Set<string>();
+    diagnostics.add(notice.detail);
+    messages.set(key, diagnostics);
+    notices.set(key, { ...(notices.get(key) ?? notice), detail: [...diagnostics].join("\n\n") });
+  };
   const explain = (
     source: string,
     detail: string,
     issue?: UpdateIssue,
-    unknown = false,
+    unknownAddress?: UpdateAddress,
   ): UpdateFeedback => {
-    if (unknown)
+    if (unknownAddress)
       return {
         source,
+        address: unknownAddress,
         title: "Result not confirmed",
         body: "Inspect installed content before retrying.",
-        recovery: "inspect-source",
+        recovery: "inspect-skill",
+        uncertain: true,
         detail,
       };
     const common = { source, address: issue?.address, detail };
@@ -72,25 +84,34 @@ export function updateFeedback(
     }
   };
   for (const result of run?.results ?? []) {
-    if (!result.message || !allowed.has(`${result.address.source}\0${result.address.path}`))
-      continue;
-    const current = sources.get(result.address.source);
-    if (!current || result.status === "unknown") {
-      sources.set(
-        result.address.source,
-        explain(result.address.source, result.message, result.issue, result.status === "unknown"),
+    const key = `${result.address.source}\0${result.address.path}`;
+    if (!allowed.has(key)) continue;
+    if (result.status === "unknown") {
+      uncertainSources.add(result.address.source);
+      collect(
+        uncertain,
+        key,
+        explain(
+          result.address.source,
+          result.message ||
+            groups.find((group) => group.source === result.address.source)?.error ||
+            "No diagnostic was returned. The update result is not confirmed.",
+          result.issue,
+          result.address,
+        ),
       );
-    } else if (!current.detail.includes(result.message)) {
-      sources.set(result.address.source, {
-        ...current,
-        detail: `${current.detail}\n\n${result.message}`,
-      });
-    }
+    } else if (result.message)
+      collect(
+        sources,
+        result.address.source,
+        explain(result.address.source, result.message, result.issue),
+      );
   }
   for (const group of groups) {
     if (
       !group.error ||
       sources.has(group.source) ||
+      uncertainSources.has(group.source) ||
       !addresses.some((address) => address.source === group.source)
     )
       continue;
@@ -106,5 +127,5 @@ export function updateFeedback(
           : {}),
     });
   }
-  return [...sources.values()];
+  return [...uncertain.values(), ...sources.values()];
 }

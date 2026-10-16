@@ -46,8 +46,10 @@ test("Source drill-down cannot show another Source's diagnostic or recovery targ
   expect(notices).toHaveLength(1);
   expect(notices[0]).toMatchObject({
     source: second.source,
+    address: second,
     title: "Result not confirmed",
-    recovery: "inspect-source",
+    recovery: "inspect-skill",
+    uncertain: true,
     detail: "second failure",
   });
   expect(notices[0]!.body).not.toContain("kept");

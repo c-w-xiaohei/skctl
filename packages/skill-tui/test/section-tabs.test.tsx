@@ -3,7 +3,7 @@ import { afterEach, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { createSignal, Show } from "solid-js";
-import { SectionTabs } from "../src/components/section-tabs";
+import { SectionTabs, sectionTabsWidth } from "../src/components/section-tabs";
 import { createFocusRegistry } from "../src/focus";
 
 let setup: Awaited<ReturnType<typeof testRender>> | undefined;
@@ -100,6 +100,26 @@ test("focusing an inactive native tab releases the previous roving stop before i
   setup!.mockInput.pressEnter();
   await setup!.waitFor(() => value() === "sources");
   expect(first.focused).toBe(false);
+});
+
+test("painted tab states have a real separating cell that cannot activate the next tab", async () => {
+  const { value } = await renderTabs();
+  const tabs = ["skills", "collections", "sources"].map((name) =>
+    setup!.renderer.root.findDescendantById(`workspace-section-browser-tab-${name}`)!,
+  );
+  for (let index = 1; index < tabs.length; index++)
+    expect(tabs[index]!.screenX - tabs[index - 1]!.screenX - tabs[index - 1]!.width).toBe(1);
+  const measured = tabs.at(-1)!.screenX + tabs.at(-1)!.width - tabs[0]!.screenX;
+  expect(measured).toBe(
+    sectionTabsWidth([
+      { label: "Skills", value: "skills" },
+      { label: "Collections", value: "collections" },
+      { label: "Sources", value: "sources" },
+    ]),
+  );
+  await setup!.mockMouse.click(tabs[0]!.screenX + tabs[0]!.width, tabs[0]!.screenY);
+  await setup!.flush();
+  expect(value()).toBe("skills");
 });
 
 test("an unavailable native tab cannot blur the live roving stop", async () => {
