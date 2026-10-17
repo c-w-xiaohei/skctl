@@ -1,10 +1,14 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
-import { BoxRenderable, ScrollBoxRenderable, TextRenderable } from "@opentui/core";
+import {
+  BoxRenderable,
+  ScrollBoxRenderable,
+  TextRenderable,
+  type BaseRenderable,
+} from "@opentui/core";
 import { KeyCodes } from "@opentui/core/testing";
 import { testRender } from "@opentui/solid";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEscape } from "./reader-test-controls";
@@ -67,16 +71,6 @@ async function renderApp(core: ReturnType<typeof directSourceCore>, width: numbe
   };
 }
 
-async function capture(setup: Setup, name: string) {
-  const output = process.env.UPDATE_TABLE_CAPTURE_DIR;
-  if (!output) return;
-  // A text-property update can precede the native draw captured below.
-  for (let i = 0; i < 3; i++) await setup.renderOnce();
-  await mkdir(output, { recursive: true });
-  await writeFile(join(output, `${name}.txt`), setup.captureCharFrame());
-  await writeFile(join(output, `${name}.json`), JSON.stringify(setup.captureSpans(), null, 2));
-}
-
 test.each([
   [80, 16],
   [80, 24],
@@ -85,12 +79,14 @@ test.each([
   "RENDER App update table keeps status, scrolling and actions usable at %ix%i",
   async (width, height) => {
     const calls: string[] = [];
+    const reads: unknown[] = [];
+    const failure = `Remote unavailable: ${"fixture network diagnostic. ".repeat(20)}`;
     const fixture = projection(12);
     const mounted = await renderApp(
       directSourceCore(fixture, {
         checkUpdate: async ({ source }) => {
           calls.push(source);
-          if (source === "source-12") throw new Error("Remote unavailable: fixture network error");
+          if (source === "source-12") throw new Error(failure);
           return {
             value: {
               source,
@@ -104,7 +100,8 @@ test.each([
             diagnostics: [],
           };
         },
-        loadInstalled: async () => {
+        loadInstalled: async (request) => {
+          reads.push(request);
           throw new Error("The update table must not read Skill content");
         },
       }),
@@ -113,33 +110,65 @@ test.each([
     );
     try {
       const setup = await mounted.mount();
-      const failed = "updates-browser-row-group%3Asource-12:cell-status";
-      await setup.waitFor(() => text(setup, failed) === "Check failed", { maxPasses: 200 });
-      for (let i = 0; i < 3; i++) await setup.renderOnce();
-      expect(new Set(calls).size).toBe(12);
+      const failed = "updates-browser-row-source-12:cell-status";
+      await setup.waitFor(() => text(setup, failed) === "Check needed", { maxPasses: 200 });
+      expect([...calls].sort()).toEqual(
+        fixture.effective.sources.map((source) => source.id).sort(),
+      );
       const browser = await focusLive(setup, "updates-browser");
       expect(browser).toBeInstanceOf(BoxRenderable);
       expect(browser.height).toBeGreaterThanOrEqual(2);
       setup.mockInput.pressKey(KeyCodes.END);
       for (let i = 0; i < 3; i++) await setup.renderOnce();
-      const body = setup.renderer.root.findDescendantById(
-        "updates-browser-body",
-      ) as ScrollBoxRenderable;
-      const row = setup.renderer.root.findDescendantById("updates-browser-row-group%3Asource-12")!;
+      const body = setup.renderer.root.findDescendantById("updates-browser-body");
+      if (!(body instanceof ScrollBoxRenderable))
+        throw new Error("Expected native overview viewport");
+      const row = setup.renderer.root.findDescendantById("updates-browser-row-source-12")!;
+      expect(row.screenY).toBeGreaterThanOrEqual(body.viewport.screenY);
       expect(row.screenY + row.height).toBeLessThanOrEqual(
         body.viewport.screenY + body.viewport.height,
       );
-      expect(setup.captureCharFrame()).toContain("Remote unavailable:");
-      setup.mockInput.pressArrow("down");
+      await setup.mockInput.typeText("d");
+      const detailText = (node: BaseRenderable): string =>
+        node instanceof TextRenderable
+          ? node.plainText
+          : node.getChildren().map(detailText).join("");
+      await setup.waitFor(() => {
+        const pane = setup.renderer.root.findDescendantById("updates-feedback-pane");
+        return pane instanceof ScrollBoxRenderable && detailText(pane).includes(failure);
+      });
+      expect(
+        detailText(setup.renderer.root.findDescendantById("updates-feedback-pane")!),
+      ).toContain(failure);
+      await parsedEscape(setup);
+      const firstAction = height <= 18 ? "updates-feedback-recover" : "updates-update-all";
+      for (
+        let step = 0;
+        step < 8 && setup.renderer.currentFocusedRenderable?.id !== firstAction;
+        step++
+      ) {
+        setup.mockInput.pressTab();
+        await setup.renderOnce();
+      }
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe(firstAction);
+      if (height > 18) setup.mockInput.pressArrow("right");
+      setup.mockInput.pressArrow("right");
       await setup.renderOnce();
-      const check = setup.renderer.root.findDescendantById("updates-check")!;
-      expect(setup.renderer.currentFocusedRenderable).toBe(check);
-      expect(check.screenY + check.height).toBeLessThan(height);
-      await capture(setup, `overview-${width}x${height}`);
+      const action = setup.renderer.root.findDescendantById(
+        height <= 18 ? "updates-feedback-details" : "updates-check",
+      )!;
+      expect(setup.renderer.currentFocusedRenderable).toBe(action);
+      const pane = setup.renderer.root.findDescendantById("updates-page")!;
+      expect(action.screenY).toBeGreaterThanOrEqual(pane.screenY + 1);
+      expect(action.screenY + action.height).toBeLessThanOrEqual(pane.screenY + pane.height - 1);
+      expect(action.screenX).toBeGreaterThanOrEqual(pane.screenX + 1);
+      expect(action.screenX + action.width).toBeLessThanOrEqual(pane.screenX + pane.width - 1);
+      expect(action.screenY + action.height).toBeLessThan(height);
       await focusLive(setup, "updates-browser");
       setup.mockInput.pressKey(KeyCodes.HOME);
       for (let i = 0; i < 3; i++) await setup.renderOnce();
       expect(setup.captureCharFrame()).not.toContain("Remote unavailable:");
+      expect(reads).toEqual([]);
     } finally {
       await mounted.dispose();
     }
@@ -148,30 +177,36 @@ test.each([
 
 test("RENDER App Source table submits one selected Skill once at the checked exact revision", async () => {
   const requests: unknown[] = [];
+  const checks: string[] = [];
+  const reads: unknown[] = [];
   const fixture = projection(1, 120);
   const mounted = await renderApp(
     directSourceCore(fixture, {
-      checkUpdate: async ({ source }) => ({
-        value: {
-          source,
-          kind: "github",
-          exactRevision: revision,
-          changed: fixture.installedSkills.map((skill) => ({
-            path: skill.address.path,
-            name: skill.name,
-            description: skill.description,
-          })),
-          removed: [],
-          added: [],
-          unchanged: [],
-        },
-        diagnostics: [],
-      }),
+      checkUpdate: async ({ source }) => {
+        checks.push(source);
+        return {
+          value: {
+            source,
+            kind: "github",
+            exactRevision: revision,
+            changed: fixture.installedSkills.map((skill) => ({
+              path: skill.address.path,
+              name: skill.name,
+              description: skill.description,
+            })),
+            removed: [],
+            added: [],
+            unchanged: [],
+          },
+          diagnostics: [],
+        };
+      },
       update: async (request) => {
         requests.push(request);
         return { value: undefined, diagnostics: [] };
       },
-      loadInstalled: async () => {
+      loadInstalled: async (request) => {
+        reads.push(request);
         throw new Error("Table navigation and submit must not read Skill content");
       },
     }),
@@ -180,10 +215,9 @@ test("RENDER App Source table submits one selected Skill once at the checked exa
   );
   try {
     const setup = await mounted.mount();
-    await setup.waitFor(
-      () => text(setup, "updates-browser-row-group%3Ateam-main:cell-updates") === "120",
-      { maxPasses: 200 },
-    );
+    await setup.waitFor(() => text(setup, "updates-browser-row-team-main:cell-updates") === "120", {
+      maxPasses: 200,
+    });
     await enterLive(setup, "updates-browser");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("source-updates-browser-header-skill"),
@@ -196,18 +230,20 @@ test("RENDER App Source table submits one selected Skill once at the checked exa
     const lastRow = `source-updates-browser-row-${encodeURIComponent("team-main\u0000skill-119")}`;
     await setup.waitFor(() => text(setup, `${lastRow}:check`)?.includes("✓") === true);
     expect(requests).toEqual([]);
-    await capture(setup, "source-120-80x24");
-    await enterLive(setup, "source-updates-submit");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-review-execute"));
-    await enterLive(setup, "updates-review-execute");
+    const body = setup.renderer.root.findDescendantById("source-updates-browser-body");
+    if (!(body instanceof ScrollBoxRenderable)) throw new Error("Expected native Source viewport");
+    const row = setup.renderer.root.findDescendantById(lastRow)!;
+    expect(row.screenY).toBeGreaterThanOrEqual(body.viewport.screenY);
+    expect(row.screenY + row.height).toBeLessThanOrEqual(
+      body.viewport.screenY + body.viewport.height,
+    );
+    await enterLive(setup, "source-updates-update-all");
     await setup.waitFor(() => requests.length === 1);
-    expect(requests[0]).toMatchObject({
-      source: "team-main",
-      paths: ["skill-119"],
-      exactRevision: revision,
-    });
-    expect(requests).toHaveLength(1);
-    await parsedEscape(setup);
+    expect(requests).toEqual([
+      { source: "team-main", paths: ["skill-119"], exactRevision: revision },
+    ]);
+    expect(checks).toEqual(["team-main"]);
+    expect(reads).toEqual([]);
   } finally {
     await mounted.dispose();
   }

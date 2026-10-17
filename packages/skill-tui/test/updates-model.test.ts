@@ -97,12 +97,18 @@ test("MODEL collection scope follows references, dedupes members, and intersects
   expect(scope.includesReferences).toBe(true);
 });
 
-test("MODEL selection only includes observed changed roots; new and removed remain informational", () => {
+test("MODEL draft selection is explicit and bounded; added and removed roots remain informational", () => {
   const state = createUpdatesState(buildUpdateScope(projection(), { kind: "workspace" }));
   state.observe(observation("team-main", ["guide"]));
+  expect(state.selected()).toEqual([]);
+  state.toggle({ source: "team-main", path: "new" });
+  state.toggle({ source: "team-main", path: "old" });
+  expect(state.selected()).toEqual([]);
+  state.toggle({ source: "team-main", path: "guide" });
   state.toggle({ source: "team-main", path: "new" });
   expect(state.selected()).toEqual([{ source: "team-main", path: "guide" }]);
   state.toggle({ source: "team-main", path: "guide" });
+  expect(state.selected()).toEqual([]);
   expect(state.disabledReason()).toBe("Select at least one changed Skill");
 });
 
@@ -119,24 +125,29 @@ test("MODEL retry excludes successful sources and submission blocks projection d
   state.toggle({ source: "team-main", path: "guide" });
   expect(state.selected()).toEqual([{ source: "team-main", path: "guide" }]);
   const changed = workspaceProjection({ includeDirect: false });
-  expect(
-    updateSubmission(scope, [{ source: "team-main", path: "guide" }], changed).reason,
-  ).toContain("no longer installed");
+  const result = updateSubmission(scope, [{ source: "team-main", path: "guide" }], changed);
+  if (!("reason" in result)) throw new Error("Expected missing installation rejection");
+  expect(result.reason).toContain("no longer installed");
 });
 
-test("MODEL preserves custom exclusions, prunes stale rechecks, and excludes succeeded groups from submit", () => {
+test("MODEL rechecks preserve the explicit draft while eligibility follows current facts and outcomes", () => {
   const state = createUpdatesState(buildUpdateScope(projection(), { kind: "workspace" }));
   state.observe(observation("team-main", ["guide"]));
   state.toggle({ source: "team-main", path: "guide" });
   state.observe(observation("team-main", ["guide", "newly-changed"]));
+  expect(state.selected()).toEqual([{ source: "team-main", path: "guide" }]);
+  state.observe(observation("team-main", []));
+  expect(state.selected()).toEqual([{ source: "team-main", path: "guide" }]);
+  expect(state.eligible()).toEqual([]);
+  state.toggle({ source: "team-main", path: "guide" });
   expect(state.selected()).toEqual([]);
   state.toggle({ source: "team-main", path: "guide" });
-  state.observe(observation("team-main", []));
-  expect(state.selected()).toEqual([]);
+  expect(state.selected()).toEqual([{ source: "team-main", path: "guide" }]);
   state.observe(observation("team-main", ["guide"]));
   state.setResult("team-main", "succeeded");
   expect(state.eligible()).toEqual([]);
-  expect(state.disabledReason()).toBe("Select at least one changed Skill");
+  expect(state.selected()).toEqual([{ source: "team-main", path: "guide" }]);
+  expect(state.disabledReason()).toBeUndefined();
 });
 
 test("MODEL keeps a committed batch fact when a later check fails", () => {
@@ -202,7 +213,9 @@ test("MODEL submission blocks owner, binding, and fresh collection-scope drift",
       },
     ],
   };
-  expect(updateSubmission(scope, selected, unhealthy).reason).toContain("unhealthy");
+  const ownerResult = updateSubmission(scope, selected, unhealthy);
+  if (!("reason" in ownerResult)) throw new Error("Expected unhealthy owner rejection");
+  expect(ownerResult.reason).toContain("unhealthy");
   const bindingChanged = projection();
   if (bindingChanged.effective.status !== "complete") throw new Error("fixture must be complete");
   const bindingChangedProjection = {
@@ -212,9 +225,9 @@ test("MODEL submission blocks owner, binding, and fresh collection-scope drift",
       sources: [{ ...bindingChanged.effective.sources[0]!, origin: "https://example.test/other" }],
     },
   };
-  expect(updateSubmission(scope, selected, bindingChangedProjection).reason).toContain(
-    "binding changed",
-  );
+  const bindingResult = updateSubmission(scope, selected, bindingChangedProjection);
+  if (!("reason" in bindingResult)) throw new Error("Expected changed binding rejection");
+  expect(bindingResult.reason).toContain("binding changed");
   const scopeChanged = projection();
   if (scopeChanged.effective.status !== "complete") throw new Error("fixture must be complete");
   const scopeChangedProjection = {
@@ -224,9 +237,9 @@ test("MODEL submission blocks owner, binding, and fresh collection-scope drift",
       collectionsView: [{ ...scopeChanged.effective.collectionsView[0]!, members: [] }],
     },
   };
-  expect(updateSubmission(scope, selected, scopeChangedProjection).reason).toContain(
-    "current update scope",
-  );
+  const scopeResult = updateSubmission(scope, selected, scopeChangedProjection);
+  if (!("reason" in scopeResult)) throw new Error("Expected changed scope rejection");
+  expect(scopeResult.reason).toContain("current update scope");
 });
 
 test("MODEL submission blocks public installed remote revision changes including missing-present transitions", () => {
@@ -242,9 +255,9 @@ test("MODEL submission blocks public installed remote revision changes including
       },
     ],
   };
-  expect(updateSubmission(scope, selected, changedRevision).reason).toContain(
-    "installed revision changed",
-  );
+  const changedResult = updateSubmission(scope, selected, changedRevision);
+  if (!("reason" in changedResult)) throw new Error("Expected changed revision rejection");
+  expect(changedResult.reason).toContain("installed revision changed");
   const missingRevision = {
     ...original,
     installedSkills: [
@@ -254,7 +267,11 @@ test("MODEL submission blocks public installed remote revision changes including
       },
     ],
   };
-  expect(updateSubmission(scope, selected, missingRevision).reason).toContain(
-    "installed revision changed",
-  );
+  const missingResult = updateSubmission(scope, selected, missingRevision);
+  if (!("reason" in missingResult)) throw new Error("Expected missing revision rejection");
+  expect(missingResult.reason).toContain("installed revision changed");
+  const missingScope = buildUpdateScope(missingRevision, { kind: "source", source: "team-main" });
+  const presentResult = updateSubmission(missingScope, selected, original);
+  if (!("reason" in presentResult)) throw new Error("Expected newly present revision rejection");
+  expect(presentResult.reason).toContain("installed revision changed");
 });
