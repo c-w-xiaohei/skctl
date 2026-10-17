@@ -14,6 +14,7 @@ import {
   OperationResult,
   ReferenceImpact,
   SkillCliError,
+  type ConfigurationCapability,
 } from "./api";
 import {
   mutateConfiguration,
@@ -66,12 +67,7 @@ function editDecision(
 
 export async function previewAddToCollection(
   options: ConfigurationOptions,
-  request: {
-    readonly level?: "global" | "project" | "local";
-    readonly collection: string;
-    readonly address: { readonly source: string; readonly path: string };
-    readonly name: string;
-  },
+  request: Parameters<ConfigurationCapability["previewAddToCollection"]>[0],
   operation?: OperationOptions,
 ): Promise<OperationResult<AddToCollectionImpact>> {
   const workspace = await readWorkspace({ ...options, signal: operation?.signal });
@@ -134,11 +130,7 @@ export async function previewAddToCollection(
 
 export async function previewMembershipRemoval(
   options: ConfigurationOptions,
-  request: {
-    readonly level?: "global" | "project" | "local";
-    readonly collection: string;
-    readonly name: string;
-  },
+  request: Parameters<ConfigurationCapability["previewMembershipRemoval"]>[0],
   operation?: OperationOptions,
 ): Promise<OperationResult<MembershipRemovalImpact>> {
   const workspace = await readWorkspace({ ...options, signal: operation?.signal });
@@ -208,18 +200,7 @@ export async function previewMembershipRemoval(
 
 export async function previewMembershipBatch(
   options: ConfigurationOptions,
-  request: {
-    readonly level?: "global" | "project" | "local";
-    readonly collection: string;
-    readonly additions: readonly {
-      readonly name: string;
-      readonly address: { readonly source: string; readonly path: string };
-    }[];
-    readonly removals: readonly {
-      readonly name: string;
-      readonly expectedAddress: { readonly source: string; readonly path: string };
-    }[];
-  },
+  request: Parameters<ConfigurationCapability["previewMembershipBatch"]>[0],
   operation?: OperationOptions,
 ): Promise<OperationResult<MembershipBatchImpact>> {
   const names = new Set<string>();
@@ -343,11 +324,7 @@ export async function previewMembershipBatch(
 
 export async function previewImport(
   options: ConfigurationOptions,
-  request: {
-    readonly level: "global" | "project" | "local";
-    readonly from: string;
-    readonly into: string;
-  },
+  request: Parameters<ConfigurationCapability["previewImport"]>[0],
   operation?: OperationOptions,
 ): Promise<OperationResult<ImportImpact>> {
   const workspace = await readWorkspace({ ...options, signal: operation?.signal });
@@ -396,14 +373,7 @@ export async function previewImport(
 
 export async function previewReference(
   options: ConfigurationOptions,
-  request: {
-    readonly level?: "global" | "project" | "local";
-    readonly collection: string;
-    readonly name: string;
-    readonly target: string;
-    readonly description: string;
-    readonly remove?: boolean;
-  },
+  request: Parameters<ConfigurationCapability["previewReference"]>[0],
   operation?: OperationOptions,
 ): Promise<OperationResult<ReferenceImpact>> {
   const workspace = await readWorkspace({ ...options, signal: operation?.signal });
@@ -448,12 +418,7 @@ export async function previewReference(
 
 export async function previewLinkChange(
   options: ConfigurationOptions,
-  request: {
-    readonly level: "global" | "project" | "local";
-    readonly collection: string;
-    readonly target: string;
-    readonly linked: boolean;
-  },
+  request: Parameters<ConfigurationCapability["previewLinkChange"]>[0],
   operation?: OperationOptions,
 ): Promise<OperationResult<LinkChangeImpact>> {
   return previewLinkChangeImpact(options, { type: "collection.link.set", ...request }, operation);
@@ -461,10 +426,7 @@ export async function previewLinkChange(
 
 export async function previewCollectionUse(
   options: ConfigurationOptions,
-  request: {
-    readonly level: "global" | "project" | "local";
-    readonly collections: readonly string[];
-  },
+  request: Parameters<ConfigurationCapability["previewCollectionUse"]>[0],
   operation?: OperationOptions,
 ): Promise<OperationResult<CollectionUseImpact>> {
   const workspace = await readWorkspace({ ...options, signal: operation?.signal });
@@ -567,7 +529,7 @@ export async function previewCollectionUse(
 
 export async function previewCollectionRemoval(
   options: ConfigurationOptions,
-  request: { readonly level: "global" | "project" | "local"; readonly collection: string },
+  request: Parameters<ConfigurationCapability["previewCollectionRemoval"]>[0],
   operation?: OperationOptions,
 ): Promise<OperationResult<CollectionRemovalImpact>> {
   const workspace = await readWorkspace({ ...options, signal: operation?.signal });
