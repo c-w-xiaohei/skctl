@@ -1,26 +1,26 @@
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
+import { TextRenderable } from "@opentui/core";
 import { App } from "../src/app";
-import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
+import { directSourceCore } from "./direct-source.fixture";
+import { readerAddress, readerContent, readerProjection } from "./installed-reader.fixture";
 import {
-  readerContent,
-  readerProjection,
-  readerSecondAddress,
-  readerSecondContent,
-} from "./installed-reader.fixture";
+  enterInstalledAddress,
+  live,
+  openAllInstalledSkills,
+  waitForReaderBody,
+} from "./reader-test-controls";
 
 test("RENDER Reader mounts a paintable content surface", async () => {
+  const reads: unknown[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async (request) => ({
-            value:
-              request.address.path === readerSecondAddress.path
-                ? readerSecondContent
-                : readerContent,
-            diagnostics: [],
-          }),
+          loadInstalled: async (request) => {
+            reads.push(request);
+            return { value: readerContent, diagnostics: [] };
+          },
         })}
         exit={() => {}}
       />
@@ -28,9 +28,14 @@ test("RENDER Reader mounts a paintable content surface", async () => {
     { width: 120, height: 40 },
   );
   try {
-    await openReaderFromInspector(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-scrollbox"));
-    expect(setup.renderer.root.findDescendantById("reader-scrollbox")).toBeDefined();
+    await openAllInstalledSkills(setup);
+    await enterInstalledAddress(setup, readerAddress);
+    await waitForReaderBody(setup, "const needle = true;");
+    expect(reads).toEqual([{ address: readerAddress }]);
+    expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
+    const frame = setup.captureCharFrame();
+    for (const text of ["Guide", "needle in prose", "first", "second", "const needle = true;"])
+      expect(frame).toContain(text);
   } finally {
     setup.renderer.destroy();
   }

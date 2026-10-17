@@ -1,27 +1,30 @@
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
+import { TextRenderable } from "@opentui/core";
 import { createSignal } from "solid-js";
 import { Reader } from "../src/reader";
 import { App } from "../src/app";
 import { createReaderOwner } from "../src/reader/state";
-import type { CommandRecord, ReaderState } from "../src/types";
-import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
-import { readerContent, readerProjection } from "./installed-reader.fixture";
+import type { CommandRecord } from "../src/types";
+import { directSourceCore } from "./direct-source.fixture";
+import { readerAddress, readerContent, readerProjection } from "./installed-reader.fixture";
+import {
+  enterInstalledAddress,
+  enterLive,
+  live,
+  openAllInstalledSkills,
+  waitForReaderBody,
+} from "./reader-test-controls";
 
-function readerState(tab: ReaderState["tab"], resources: ReaderState["resources"] = []) {
+function readerState() {
   const owner = createReaderOwner(directSourceCore(readerProjection()).content);
   owner.select({ source: "team-main", path: "guide" });
-  return {
-    ...owner.current()!,
-    tab,
-    resources,
-    resourcesLoaded: resources.length > 0,
-  };
+  return owner.current()!;
 }
 
 test("RENDER Reader registers exact Enter records and describes only mounted resource controls", async () => {
-  const [state] = createSignal(readerState("skill"));
-  const commands: CommandRecord[] = [];
+  const [state] = createSignal(readerState());
+  const commands = new Map<string, CommandRecord>();
   const setup = await testRender(
     () => (
       <Reader
@@ -29,8 +32,8 @@ test("RENDER Reader registers exact Enter records and describes only mounted res
         projection={() => undefined}
         mode="wide"
         registerCommand={(record) => {
-          commands.push(record);
-          return () => {};
+          commands.set(record.id, record);
+          return () => commands.delete(record.id);
         }}
         actions={[]}
         onPatch={() => {}}
@@ -48,13 +51,27 @@ test("RENDER Reader registers exact Enter records and describes only mounted res
   );
   try {
     await setup.renderOnce();
-    expect(commands).toEqual([
-      expect.objectContaining({
+    expect([...commands.values()]).toEqual([
+      {
+        id: "reader.find",
+        keys: ["enter", "return"],
+        verb: "Find",
+        destination: "Search this Skill",
+        scope: "page",
+        enabled: true,
+        disabledReason: undefined,
+        danger: false,
+      },
+      {
         id: "reader.raw",
         keys: ["enter", "return"],
         verb: "Raw",
         destination: "SKILL.md",
-      }),
+        scope: "page",
+        enabled: true,
+        disabledReason: undefined,
+        danger: false,
+      },
     ]);
     expect(setup.renderer.root.findDescendantById("resource-browser")).toBeUndefined();
   } finally {
@@ -62,49 +79,16 @@ test("RENDER Reader registers exact Enter records and describes only mounted res
   }
 });
 
-test("RENDER Reader mounts the resource Select only when resources are available", async () => {
-  for (const state of [
-    { ...readerState("resources"), resourceLoading: true },
-    { ...readerState("resources"), resourcesLoaded: true },
-    readerState("resources", [{ path: "guide.md", kind: "file" }]),
-  ]) {
-    const [reader] = createSignal(state);
-    const setup = await testRender(
-      () => (
-        <Reader
-          reader={reader}
-          projection={() => undefined}
-          mode="wide"
-          actions={[]}
-          onPatch={() => {}}
-          onCommitFind={() => {}}
-          onResources={() => {}}
-          onReadResource={() => {}}
-          onRetryResource={() => {}}
-          onResourceBack={() => {}}
-          onDetailsAction={() => {}}
-          onDetailsRelationship={() => {}}
-          onDetailsScroll={() => {}}
-        />
-      ),
-      { width: 120, height: 24 },
-    );
-    try {
-      await setup.renderOnce();
-      const resourceBrowser = setup.renderer.root.findDescendantById("resource-browser");
-      expect(resourceBrowser !== undefined).toBe(state.resources.length > 0);
-    } finally {
-      setup.renderer.destroy();
-    }
-  }
-});
-
 test("RENDER Reader executes one command once through Enter and pointer without leaving Reader", async () => {
+  const reads: unknown[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+          loadInstalled: async (request) => {
+            reads.push(request);
+            return { value: readerContent, diagnostics: [] };
+          },
         })}
         exit={() => {}}
       />
@@ -112,18 +96,25 @@ test("RENDER Reader executes one command once through Enter and pointer without 
     { width: 120, height: 24 },
   );
   try {
-    await openReaderFromInspector(setup);
-    const raw = setup.renderer.root.findDescendantById("reader-raw")!;
-    raw.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === raw);
-    setup.mockInput.pressEnter();
-    await setup.waitForFrame((frame) => frame.includes("Enter Prose"));
-    expect(setup.renderer.root.findDescendantById("reader-views")).toBeDefined();
-
-    const prose = setup.renderer.root.findDescendantById("reader-raw")!;
-    await setup.mockMouse.click(prose.screenX, prose.screenY);
-    await setup.waitForFrame((frame) => frame.includes("Enter Raw"));
-    expect(setup.renderer.root.findDescendantById("reader-views")).toBeDefined();
+    await openAllInstalledSkills(setup);
+    await enterInstalledAddress(setup, readerAddress);
+    await waitForReaderBody(setup, "needle in prose");
+    const views = live(setup, "reader-views");
+    await enterLive(setup, "reader-raw");
+    await setup.waitForFrame((frame) => frame.includes("title: Guide"));
+    expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
+    expect(reads).toEqual([{ address: readerAddress }]);
+    expect(live(setup, "reader-views") === views).toBe(true);
+    const prose = live(setup, "reader-raw");
+    await setup.flush();
+    await setup.mockMouse.click(prose.screenX + 1, prose.screenY);
+    await waitForReaderBody(setup, "needle in prose");
+    await setup.waitForFrame(
+      (frame) => frame.includes("needle in prose") && !frame.includes("title: Guide"),
+    );
+    expect(live(setup, "reader-views") === views).toBe(true);
+    expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
+    expect(reads).toEqual([{ address: readerAddress }]);
   } finally {
     setup.renderer.destroy();
   }

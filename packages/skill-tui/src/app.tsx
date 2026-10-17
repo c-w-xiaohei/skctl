@@ -3658,29 +3658,34 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         onCollectionDetail={(selected) => {
                           const collection = selected ?? collectionsState.selected();
                           if (!collection) return;
+                          const inCollections = workspaceState.section() === "collections";
                           collectionsState.select(collection);
                           collectionsState.closeInspector();
-                          if (layout.wide()) {
+                          if (layout.wide() && inCollections) {
                             requestFocus("collection-relationships");
                             return;
                           }
                           route.syncCurrent({
-                            object: collection,
+                            section: workspaceState.section(),
+                            ...(inCollections ? { object: collection } : {}),
                             surface: "browser",
-                            focus: "browser",
+                            focus: inCollections
+                              ? "browser"
+                              : (physicalFocusOwner() ?? route.snapshot().current.focus),
                           });
                           route.transition(
                             {
                               destination: "workspace",
                               section: "collections",
                               selection: collection,
-                              surface: "inspector",
+                              surface: layout.wide() ? "browser" : "inspector",
                               focus: "collection-relationships",
                             },
                             () => {
                               collectionsState.select(collection);
                               workspaceState.selectSection("collections");
-                              workspaceState.openDetail();
+                              if (layout.wide()) workspaceState.showList();
+                              else workspaceState.openDetail();
                             },
                           );
                         }}
