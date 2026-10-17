@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { SelectRenderable } from "@opentui/core";
+import { SelectRenderable, TextRenderable } from "@opentui/core";
+import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
-import { readerContent, readerProjection } from "./installed-reader.fixture";
+import { readerContent, readerProjection, readerSecondContent } from "./installed-reader.fixture";
 import type { ManagementProjection } from "@skill-cli/core";
-import { enterLive, parsedEnter } from "./reader-test-controls";
+import { enterLive, live, waitForReaderBody } from "./reader-test-controls";
 
 const diagnostic = (address: { readonly source: string; readonly path: string }, code: string) => ({
   code,
@@ -15,68 +16,9 @@ const diagnostic = (address: { readonly source: string; readonly path: string },
 });
 
 async function openProblems(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("skills-view-tab-current-exposure"),
-  );
-  const currentExposure = setup.renderer.root.findDescendantById(
-    "skills-view-tab-current-exposure",
-  )!;
-  currentExposure!.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === currentExposure);
-  setup.mockInput.pressKey("ARROW_RIGHT");
-  await setup.renderOnce();
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-  const all = setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills")!;
-  all.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === all);
-  setup.mockInput.pressKey("ARROW_RIGHT");
-  await setup.renderOnce();
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-  const unassigned = setup.renderer.root.findDescendantById("skills-view-tab-unassigned")!;
-  unassigned.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === unassigned);
-  setup.mockInput.pressKey("ARROW_RIGHT");
-  await setup.renderOnce();
-  await setup.waitFor(
-    () =>
-      !!setup.renderer.root.findDescendantById("skills-view-tab-problems") &&
-      !!setup.renderer.root.findDescendantById("problems-browser"),
-  );
-  const browser = setup.renderer.root.findDescendantById("problems-browser")!;
-  browser.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
-}
-
-async function openReader(setup: Awaited<ReturnType<typeof testRender>>) {
-  const browser = setup.renderer.root.findDescendantById("problems-browser") as SelectRenderable;
-  browser.focus();
-  await parsedEnter(setup);
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-  );
-  setup.renderer.root.findDescendantById("skill-inspector-open-reader")!.focus();
-  await parsedEnter(setup);
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
-}
-
-async function startSkillUpdate(setup: Awaited<ReturnType<typeof testRender>>) {
-  setup.mockInput.pressKey("p", { ctrl: true });
-  await setup.waitFor(
-    () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
-  );
-  await enterLive(setup, "palette-skill-check-updates");
-  if (!setup.renderer.root.findDescendantById("source-operation-selection"))
-    throw new Error(setup.captureCharFrame());
-  const selection = setup.renderer.root.findDescendantById(
-    "source-operation-selection",
-  ) as SelectRenderable;
-  selection.focus();
-  selection.setSelectedIndex(0);
-  await parsedEnter(setup);
-  await enterLive(setup, "source-operation-submit");
-  await setup.waitFor(
-    () => setup.renderer.root.findDescendantById("source-operation-selection") === undefined,
-  );
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-view-tab-problems"));
+  await enterLive(setup, "skills-view-tab-problems");
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("problems-browser"));
 }
 
 function problemProjection(
@@ -114,19 +56,28 @@ function problemProjection(
 }
 
 for (const refreshed of ["reorder", "fallback", "empty"] as const) {
-  test(`RENDER Problems refresh ${refreshed} synchronizes Inspector and Reader`, async () => {
+  test(`RENDER Problems refresh ${refreshed} reconciles Problems and Reader`, async () => {
     const base = readerProjection();
     const projections = problemProjection(base, refreshed);
     let current = projections.initial;
+    let receipt = current;
+    const updates: unknown[] = [];
+    const exactRevision = "a".repeat(40);
+    const baseline = "problems-baseline";
     const setup = await testRender(
       () => (
         <App
           core={directSourceCore(current, {
-            get: async () => ({ value: current, diagnostics: [] }),
+            get: async () => {
+              receipt = current;
+              return { value: current, diagnostics: [] };
+            },
             checkUpdate: async (request) => ({
               value: {
                 source: request.source,
                 kind: "github" as const,
+                exactRevision,
+                baseline,
                 changed: [{ path: "guide", name: "guide", description: "guide" }],
                 added: [],
                 removed: [],
@@ -134,12 +85,13 @@ for (const refreshed of ["reorder", "fallback", "empty"] as const) {
               },
               diagnostics: [],
             }),
-            update: async () => {
+            update: async (request) => {
+              updates.push(request);
               current = projections.next;
               return { value: undefined, diagnostics: [] };
             },
             loadInstalled: async ({ address }) => ({
-              value: { ...readerContent, address },
+              value: address.path === "guide" ? readerContent : readerSecondContent,
               diagnostics: [],
             }),
           })}
@@ -150,17 +102,27 @@ for (const refreshed of ["reorder", "fallback", "empty"] as const) {
     );
     try {
       await openProblems(setup);
-      await openReader(setup);
-      await startSkillUpdate(setup);
+      await enterLive(setup, "problems-browser");
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
+      await waitForReaderBody(setup, "needle in prose");
+      expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
+      await enterLive(setup, "reader-action-skill-check-updates");
+      await setup.waitFor(() => receipt === projections.next);
+      await setup.waitForFrame((frame) => frame.includes("Updated 1 Skill"));
+      expect(updates).toEqual([
+        { source: "team-main", paths: ["guide"], exactRevision, expectedBaseline: baseline },
+      ]);
+      await enterLive(setup, "route-back");
       if (refreshed === "reorder") {
-        await setup.waitForFrame((frame) => frame.includes("Reader · guide"));
-        expect(setup.captureCharFrame()).toContain("Reader · guide");
+        await waitForReaderBody(setup, "needle in prose");
+        expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
       } else if (refreshed === "fallback") {
-        await setup.waitForFrame((frame) => frame.includes("Reader · reference"));
-        expect(setup.captureCharFrame()).toContain("Reader · reference");
+        await waitForReaderBody(setup, "other needle");
+        expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("reference");
       } else {
-        await setup.waitFor(() => !!setup.renderer.root.findDescendantById("problems-browser"));
-        expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeUndefined();
+        await setup.waitForFrame((frame) => frame.includes("No Problems"));
+        expect((live(setup, "problems-browser") as SelectRenderable).options).toEqual([]);
+        expect(setup.renderer.root.findDescendantById("reader-views")).toBeUndefined();
       }
     } finally {
       setup.renderer.destroy();
@@ -210,8 +172,26 @@ test("RENDER Problems routes integration diagnostics to Config Integrations", as
   );
   try {
     await openProblems(setup);
-    await setup.waitForFrame((frame) => frame.includes("-> Config Integrations"));
-    expect(setup.captureCharFrame()).toContain("-> Config Integrations");
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("warning: integrations") && frame.includes("integration is unavailable"),
+    );
+    const problem = (live(setup, "problems-browser") as SelectRenderable).getSelectedOption()!;
+    expect(problem.name.trimEnd()).toBe("warning: integrations");
+    expect(problem.description.trimEnd()).toBe("integration is unavailable");
+    await enterLive(setup, "problems-browser");
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("config-integrations-browser"),
+    );
+    expect(
+      (live(setup, "shell-section-project-tab-integrations") as TabsTabRenderable).getState()
+        .selected,
+    ).toBe(true);
+    const integration = (
+      live(setup, "config-integrations-browser") as SelectRenderable
+    ).getSelectedOption()!;
+    expect(integration.name.trimEnd()).toBe("Managed OpenCode · Direct");
+    expect(integration.description.trimEnd()).toBe(`${owner.level} ${owner.file} ${owner.pointer}`);
   } finally {
     setup.renderer.destroy();
   }
