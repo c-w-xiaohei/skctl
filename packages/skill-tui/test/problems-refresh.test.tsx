@@ -56,7 +56,7 @@ function problemProjection(
 }
 
 for (const refreshed of ["reorder", "fallback", "empty"] as const) {
-  test(`RENDER Problems refresh ${refreshed} reconciles Problems and Reader`, async () => {
+  test(`RENDER Problems refresh ${refreshed} returns through route predecessors`, async () => {
     const base = readerProjection();
     const projections = problemProjection(base, refreshed);
     let current = projections.initial;
@@ -117,9 +117,26 @@ for (const refreshed of ["reorder", "fallback", "empty"] as const) {
         await waitForReaderBody(setup, "needle in prose");
         expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
       } else if (refreshed === "fallback") {
+        await waitForReaderBody(setup, "needle in prose");
+        expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
+        await enterLive(setup, "route-back");
+        const problems = live(setup, "problems-browser") as SelectRenderable;
+        expect(problems.options).toHaveLength(1);
+        const selected = problems.getSelectedOption()!;
+        expect(selected.name.trimEnd()).toBe("warning: Installed Skill team-main/reference");
+        expect(selected.description.trimEnd()).toBe("SECOND");
+        expect(JSON.parse(selected.value).intent).toEqual({
+          kind: "installed-skill",
+          address: { source: "team-main", path: "reference" },
+        });
+        expect(setup.renderer.root.findDescendantById("reader-views")).toBeUndefined();
+        await enterLive(setup, "problems-browser");
         await waitForReaderBody(setup, "other needle");
         expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("reference");
       } else {
+        expect(setup.renderer.root.findDescendantById("reader-views")).toBeUndefined();
+        expect(live(setup, "route-back").id).toBe("route-back");
+        await enterLive(setup, "route-back");
         await setup.waitForFrame((frame) => frame.includes("No Problems"));
         expect((live(setup, "problems-browser") as SelectRenderable).options).toEqual([]);
         expect(setup.renderer.root.findDescendantById("reader-views")).toBeUndefined();
