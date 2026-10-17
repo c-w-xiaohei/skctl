@@ -4,12 +4,10 @@ import type {
   ManagementProjection,
   MemberOriginPath,
 } from "@skill-cli/core";
-import type { CollectionRelationRow, CollectionRelationshipIntent } from "./relationship-inspector";
+import type { CollectionRelationRow } from "./relationship-inspector";
 
 const ownerText = (owner: ConfigDeclarationOwner): string =>
   `${owner.level} ${owner.file} ${owner.pointer}`;
-const ownerProvenanceText = (owner: ConfigDeclarationOwner): string | undefined =>
-  owner.contribution ? `Config Source ${ownerText(owner.contribution.configSource)}` : undefined;
 const ownerKey = (owner: ConfigDeclarationOwner): string =>
   JSON.stringify([owner.level, owner.file, owner.pointer, owner.namespace, owner.contribution]);
 const relationKey = (
@@ -50,7 +48,6 @@ export const collectionRelationRows = (
     label: "Collection Use",
     owner,
     effect: `${selectors.length} selector${selectors.length === 1 ? "" : "s"} exposed`,
-    provenance: ownerProvenanceText(owner),
     intent: { kind: "collection-use", collection: collectionId, owner },
   }));
   if (effective.use.includes(collectionId) && useOwners.length === 0)
@@ -76,7 +73,6 @@ export const collectionRelationRows = (
       targetAvailable: effective.collectionsView.some((item) => item.id === reference.collection),
       owner: reference.owner,
       effect: "Browse referenced Collection",
-      provenance: ownerProvenanceText(reference.owner),
       intent: {
         kind: "collection-reference" as const,
         collection: collectionId,
@@ -104,7 +100,6 @@ export const collectionRelationRows = (
         target: link.collection,
         owner: link.owner,
         effect: `${linkedSelectors.length} selector${linkedSelectors.length === 1 ? "" : "s"} exposed`,
-        provenance: ownerProvenanceText(link.owner),
         intent: {
           kind: "collection-link" as const,
           collection: collectionId,
@@ -134,41 +129,6 @@ export const compactAddress = (address: {
   if (value.length <= 24) return value;
   const leaf = address.path.split("/").at(-1) ?? address.path;
   return `${address.source}/.../${leaf}`;
-};
-
-export const collectionMemberOriginIntent = (
-  collection: string,
-  member: {
-    readonly name: string;
-    readonly address: { readonly source: string; readonly path: string };
-  },
-  path: MemberOriginPath,
-): CollectionRelationshipIntent | undefined => {
-  if (path.kind === "direct" && path.owner?.contribution)
-    return { kind: "collection-contribution", collection, owner: path.owner };
-  if (path.kind === "direct" && path.owner)
-    return {
-      kind: "collection-direct",
-      collection,
-      name: member.name,
-      address: member.address,
-      owner: path.owner,
-    };
-  if (path.kind === "repository-derived")
-    return {
-      kind: "collection-producer",
-      collection,
-      address: { source: path.source, path: path.path },
-    };
-  const link = path.kind === "via-link" ? path.links[0] : undefined;
-  return link?.owner
-    ? {
-        kind: "collection-link",
-        collection: link.collection,
-        target: link.linkedCollection,
-        owner: link.owner,
-      }
-    : undefined;
 };
 
 export interface CollectionRemovalRow {

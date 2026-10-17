@@ -12,11 +12,8 @@ import {
   collectionFilterValues,
   filterCollections,
 } from "../src/collections-filter";
-import {
-  collectionRemovalPlan,
-  collectionMemberOriginIntent,
-  collectionRelationRows,
-} from "../src/collections-page";
+import { collectionRemovalPlan, collectionRelationRows } from "../src/collections-page";
+import { relationshipCommands } from "../src/collections/relationship-commands";
 import { collectionRelationKey } from "../src/collections/relationship-inspector";
 import {
   collectionOriginKey,
@@ -149,19 +146,19 @@ test("COLLECTION direct Membership intent preserves entry, address, Collection, 
     pointer: "/collections/engineering",
   };
   expect(
-    collectionMemberOriginIntent(
-      "engineering",
-      {
+    relationshipCommands("engineering", {
+      kind: "membership",
+      member: {
         name: "stable-review",
         address: { source: "team-main", path: "review" },
       },
-      {
+      origin: {
         kind: "direct",
         collection: "engineering",
         entryName: "stable-review",
         owner,
       },
-    ),
+    }).find((command) => command.id === "membership.remove")?.intent,
   ).toEqual({
     kind: "collection-direct",
     collection: "engineering",
@@ -190,37 +187,49 @@ test("COLLECTION member origins preserve contribution, producer, and outer Link 
   };
   const member = { name: "guide", address: { source: "team", path: "guide" } };
   expect(
-    collectionMemberOriginIntent("engineering", member, {
-      kind: "direct",
-      collection: "engineering",
-      entryName: "guide",
-      owner,
-    }),
+    relationshipCommands("engineering", {
+      kind: "membership",
+      member,
+      origin: {
+        kind: "direct",
+        collection: "engineering",
+        entryName: "guide",
+        owner,
+      },
+    }).find((command) => command.id === "membership.open-source")?.intent,
   ).toMatchObject({
     kind: "collection-contribution",
     collection: "engineering",
     owner,
   });
   expect(
-    collectionMemberOriginIntent("engineering", member, {
-      kind: "repository-derived",
-      repository: "acme/team",
-      source: "team",
-      path: "guide",
-    }),
+    relationshipCommands("engineering", {
+      kind: "membership",
+      member,
+      origin: {
+        kind: "repository-derived",
+        repository: "acme/team",
+        source: "team",
+        path: "guide",
+      },
+    }).find((command) => command.id === "membership.open-source")?.intent,
   ).toEqual({
     kind: "collection-producer",
     collection: "engineering",
     address: { source: "team", path: "guide" },
   });
   expect(
-    collectionMemberOriginIntent("engineering", member, {
-      kind: "via-link",
-      links: [
-        { collection: "engineering", linkedCollection: "shared", owner },
-        { collection: "shared", linkedCollection: "nested", owner },
-      ],
-    }),
+    relationshipCommands("engineering", {
+      kind: "membership",
+      member,
+      origin: {
+        kind: "via-link",
+        links: [
+          { collection: "engineering", linkedCollection: "shared", owner },
+          { collection: "shared", linkedCollection: "nested", owner },
+        ],
+      },
+    }).find((command) => command.id === "membership.unlink")?.intent,
   ).toMatchObject({
     kind: "collection-link",
     collection: "engineering",
@@ -1429,11 +1438,11 @@ test("COLLECTION Relations unify Use, Reference, and Link with owners, effects, 
       }),
     ]),
   );
-  expect(
-    collectionRelationRows("root", projection)
-      .map((row) => row.provenance)
-      .join("\n"),
-  ).toContain("Config Source");
+  expect(collectionRelationRows("root", projection).map((row) => row.owner?.contribution)).toEqual([
+    contribution.contribution,
+    contribution.contribution,
+    contribution.contribution,
+  ]);
 });
 
 test("COLLECTION Relations retain an authoritative empty Collection Use owner", () => {

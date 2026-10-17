@@ -38,7 +38,6 @@ export type { CollectionRelationshipIntent } from "./collections/relationship-in
 
 export {
   collectionRelationRows,
-  collectionMemberOriginIntent,
   collectionRemovalPlan,
   type CollectionRemovalRow,
 } from "./collections/relationship-model";

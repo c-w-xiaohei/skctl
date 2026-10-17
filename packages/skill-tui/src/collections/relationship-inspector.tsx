@@ -108,7 +108,6 @@ export interface CollectionRelationRow {
   readonly targetAvailable?: boolean;
   readonly owner?: ConfigDeclarationOwner;
   readonly effect: string;
-  readonly provenance?: string;
   readonly intent?: CollectionRelationshipIntent;
 }
 
@@ -137,7 +136,6 @@ export interface CollectionMemberOriginRow {
   readonly key: string;
   readonly value: string;
   readonly path?: MemberOriginPath;
-  readonly intent?: CollectionRelationshipIntent;
 }
 
 const ownerText = (owner: ConfigDeclarationOwner) =>

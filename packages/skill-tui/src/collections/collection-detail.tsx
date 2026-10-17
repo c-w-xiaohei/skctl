@@ -19,12 +19,7 @@ import {
   type CollectionMemberOriginRow,
   type CollectionRelationRow,
 } from "./relationship-inspector";
-import {
-  collectionMemberOriginIntent,
-  collectionRelationRows,
-  compactAddress,
-  pathText,
-} from "./relationship-model";
+import { collectionRelationRows, compactAddress, pathText } from "./relationship-model";
 import { relationshipCommands } from "./relationship-commands";
 
 function CurrentRowCommands(props: { readonly commands: readonly ExecutableCommand[] }) {
@@ -75,7 +70,6 @@ export function CollectionDetail(
       key: collectionOriginKey(collection.id, member, path, index),
       value: `${member.name}:${index}`,
       path,
-      intent: path ? collectionMemberOriginIntent(collection.id, member, path) : undefined,
     }));
     const summaries = [...new Set(origins.map((row) => row.origin))];
     const value =
