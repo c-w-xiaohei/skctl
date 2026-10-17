@@ -5,7 +5,7 @@ import {
   type Renderable,
 } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { ConfigLevelView, ManagementProjection } from "@skill-cli/core";
 import type { ActionRecord } from "./actions";
 import type {
@@ -22,7 +22,7 @@ import type { ConfigReadonly } from "./config/state";
 import type { ConfigDeclarationOwner, SourceBindingView } from "@skill-cli/core";
 import type { FocusRegistry, FocusTarget } from "./focus";
 import type { NavKey } from "./navigation";
-import { configDeclarationOwnerKey } from "./config/state";
+import { configIntegrationRows } from "./config/state";
 import { CommandControl } from "./command-control";
 import { usePageReturn } from "./page-navigation";
 import { DataList } from "./ui/data-list";
@@ -46,20 +46,26 @@ type ConfigActionId =
 
 type ConfigSource = ConfigLevelView["direct"]["configSources"][number];
 
-const configSourceBindingText = (binding: ConfigSource["binding"], includeKind = true) =>
-  [
-    ...(includeKind ? [`Binding kind  ${binding.kind}`] : []),
-    binding.kind === "local"
-      ? `Local path  ${binding.path}`
-      : `Canonical Origin  ${binding.origin}`,
-    `Source Root  ${binding.root}`,
-    ...(binding.kind === "local" ? [] : [`Tracked ref  ${binding.ref}`]),
-  ].join("\n");
-
-const configSourceAdoptionText = (adoption: ConfigSource["adoption"]) =>
-  adoption.status === "adopted"
-    ? `Applied commit  ${adoption.commit}`
-    : `Adoption  ${adoption.status}`;
+type DetailFact = readonly [label: string, value: string];
+const factsText = (facts: readonly DetailFact[]) =>
+  facts.map(([label, value]) => `${label}  ${value}`).join("\n");
+const bindingFacts = (
+  binding: ConfigSource["binding"] | Pick<SourceBindingView, "kind" | "origin" | "root" | "ref">,
+): readonly DetailFact[] => [
+  ["Binding kind", binding.kind],
+  "path" in binding ? ["Local path", binding.path] : ["Canonical Origin", binding.origin],
+  ["Source Root", binding.root],
+  ...("ref" in binding && binding.ref !== undefined ? [["Tracked ref", binding.ref] as const] : []),
+];
+const configSourceDetails = (source: ConfigSource) => ({
+  binding: bindingFacts(source.binding),
+  adoption: [
+    ["Adoption", source.adoption.status],
+    ...(source.adoption.status === "adopted"
+      ? [["Applied commit", source.adoption.commit] as const]
+      : []),
+  ] satisfies DetailFact[],
+});
 
 export function ConfigPage(props: {
   readonly config: ConfigReadonly;
@@ -130,15 +136,6 @@ export function ConfigPage(props: {
   ];
   const selectedSourceId = () => selection() ?? sourceItems()[0]?.id;
   const selectedSource = () => sourceItems().find((item) => item.id === selectedSourceId());
-  const selectedSourceFacts = () => {
-    const source = selectedSource();
-    const direct = value()?.direct.sources.find((item) => item.id === source?.id);
-    return {
-      source,
-      owner: source?.contribution?.configSource ?? direct?.ref.owner,
-      trackedRef: typeof source?.ref === "string" ? source.ref : direct?.trackedRef,
-    };
-  };
   const fileProblem = () => {
     const file = value()?.file;
     return file && file.status !== "valid" && file.status !== "missing" ? file : undefined;
@@ -170,10 +167,11 @@ export function ConfigPage(props: {
     const configSourceFacts = () => {
       const source = configSource();
       if (!source) return "Config Source  Unavailable";
-      return `Config Source  ${source.id}\n${configSourceAdoptionText(source.adoption)}\n${configSourceBindingText(source.binding)}`;
+      const facts = configSourceDetails(source);
+      return `Config Source  ${source.id}\n${factsText(facts.adoption.slice(-1))}\n${factsText(facts.binding)}`;
     };
     if (handoff.kind === "source-declaration")
-      return `Source declaration  ${handoff.source.id}\nOwner  ${owner}\nBinding kind  ${handoff.source.kind}\nCanonical Origin  ${handoff.source.origin}\nSource Root  ${handoff.source.root}${handoff.source.ref ? `\nTracked ref  ${handoff.source.ref}` : ""}`;
+      return `Source declaration  ${handoff.source.id}\nOwner  ${owner}\n${factsText(bindingFacts({ ...handoff.source, ref: handoff.source.ref || undefined }))}`;
     if (handoff.kind === "source-contribution")
       return `Config Source host  ${owner}\nContributed Source  ${handoff.source.id}\nContributed declaration  ${handoff.source.contribution?.declaration.pointer ?? "Unavailable"}\n${configSourceFacts()}`;
     if (handoff.kind === "collection-membership")
@@ -192,34 +190,6 @@ export function ConfigPage(props: {
       return `Managed OpenCode integration\nOwner  ${owner}\nRead-only owner context. Edit the owning Config directly.`;
     if (handoff.kind === "uninstall-membership")
       return `Uninstall Membership handoff  ${handoff.address.source}/${handoff.address.path}\nCollection  ${handoff.collection ?? "Unavailable"}${handoff.entry ? `\nEntry  ${handoff.entry}` : ""}\nOwner  ${owner}\nEdit this exact Membership owner to resolve the blocker.`;
-    return undefined;
-  };
-  const sourceText = () => {
-    if (section() === "sources") {
-      const { source, owner, trackedRef } = selectedSourceFacts();
-      if (!source) return undefined;
-      const provenance = source.contribution ? "Config Source" : "Direct";
-      return `Selected Source  ${source.id}\nBinding kind  ${source.kind}\nCanonical Origin  ${source.origin}\nSource Root  ${source.root}\nTracked ref  ${trackedRef ?? "None"}\nProvenance  ${provenance}${owner ? `\n${source.contribution ? "Config Source owner" : "Owner"}  ${owner.level} ${owner.file} ${owner.pointer}` : ""}`;
-    }
-    if (section() === "config-sources") {
-      if (props.handoff?.kind === "source-contribution") return undefined;
-      const source = value()?.direct.configSources.find(
-        (item) => item.owner.pointer === selection(),
-      );
-      if (!source) return undefined;
-      return `Selected > ${source.id}\nConfig Source  ${source.id}\nOwner  ${source.owner.file} ${source.owner.pointer}\n${configSourceBindingText(source.binding)}\n${configSourceAdoptionText(source.adoption)}`;
-    }
-    return undefined;
-  };
-  const declarationText = () => {
-    if (section() === "collections") {
-      const collection = (value()?.direct.collections ?? []).find(
-        (item) => item.id === selection(),
-      );
-      return collection
-        ? `Selected Collection  ${collection.id}\nOwner  ${collection.owner.file} ${collection.owner.pointer}`
-        : undefined;
-    }
     return undefined;
   };
   const bindings = new Map<string, () => void>();
@@ -247,36 +217,11 @@ export function ConfigPage(props: {
   const selectedConfigSource = () =>
     value()?.direct.configSources.find((item) => item.owner.pointer === selection()) ??
     (compactSourceLayout() ? value()?.direct.configSources[0] : undefined);
-  const selectedConfigSourceBinding = () => {
+  const selectedConfigSourceDetails = createMemo(() => {
     const source = selectedConfigSource();
-    if (!source) return "Binding unavailable";
-    return configSourceBindingText(source.binding, false);
-  };
-  const selectedConfigSourceAdoption = () => {
-    const adoption = selectedConfigSource()?.adoption;
-    if (!adoption) return "Adoption unavailable";
-    return configSourceAdoptionText(adoption);
-  };
-  const integrationRows = () => {
-    const current = value();
-    if (!current) return [];
-    const direct = current.direct.integrations.map((integration) => ({
-      owner: integration.owner,
-      direct: true,
-      key: configDeclarationOwnerKey(integration.owner),
-    }));
-    const effective = props.projection()?.effective.agent.integration ?? [];
-    return [
-      ...direct,
-      ...effective
-        .filter((owner) => !direct.some((row) => row.key === configDeclarationOwnerKey(owner)))
-        .map((owner) => ({
-          owner,
-          direct: false,
-          key: configDeclarationOwnerKey(owner),
-        })),
-    ];
-  };
+    return source ? { source, ...configSourceDetails(source) } : undefined;
+  });
+  const integrationRows = () => configIntegrationRows(props.projection(), value());
   const selectedIntegration = () => integrationRows().find((row) => row.key === selection());
   const integrationStatus = () => props.projection()?.effective.agent.status;
   const integrationReasons = () => props.projection()?.effective.agent.reasons ?? [];
@@ -389,6 +334,8 @@ export function ConfigPage(props: {
         )
       : null;
   };
+  const configSourceUpdate = (reveal?: (target: Renderable) => void) =>
+    actionCommand("config-observe", "Check / review Config update…", reveal);
   const SourceActions = (options: { readonly compact?: boolean }) => {
     const reveal = () => (options.compact ? revealWorkCommand : undefined);
     return (
@@ -649,10 +596,13 @@ export function ConfigPage(props: {
       return "Collections group Skills for reuse; select a Collection to manage its Use.";
     return "Integrations connect this Config to agent hosts.";
   };
-  const sourceOrDeclarationText = () => sourceText() ?? declarationText();
-  const metadata = () => handoffText() ?? sourceOrDeclarationText();
-  const metadataFields = (): readonly MetadataField[] => {
-    if (props.handoff) return [];
+  const selectedDetails = createMemo<
+    | {
+        readonly text?: string;
+        readonly fields: readonly MetadataField[];
+      }
+    | undefined
+  >(() => {
     const field = (label: string, text: string): MetadataField => ({
       label,
       value: text || ".",
@@ -660,56 +610,80 @@ export function ConfigPage(props: {
       wrap: "word",
       narrow: "stack",
     });
+    const bindingField = ([label, text]: DetailFact) =>
+      field(
+        label === "Binding kind"
+          ? "Kind"
+          : label === "Canonical Origin"
+            ? "Origin"
+            : label === "Source Root"
+              ? "Root"
+              : label,
+        text,
+      );
     if (section() === "sources") {
-      const { source, owner, trackedRef } = selectedSourceFacts();
-      if (!source) return [];
-      return [
-        field("Source", source.id),
-        field("Kind", source.kind),
-        field("Origin", source.origin),
-        field("Root", source.root),
-        field("Tracked ref", trackedRef ?? "None"),
-        field(
-          "Editable",
-          source.contribution ? "No · contributed by a Config Source" : "Yes · direct declaration",
-        ),
-        ...(owner
-          ? [field("Owner", `${owner.level} ${owner.file}`), field("Declaration", owner.pointer)]
-          : []),
-      ];
+      const source = selectedSource();
+      if (!source) return undefined;
+      const direct = value()?.direct.sources.find((item) => item.id === source.id);
+      const owner = source.contribution?.configSource ?? direct?.ref.owner;
+      const trackedRef = typeof source.ref === "string" ? source.ref : direct?.trackedRef;
+      const binding = bindingFacts({ ...source, ref: trackedRef ?? "None" });
+      return {
+        text: `Selected Source  ${source.id}\n${factsText(binding)}\nProvenance  ${source.contribution ? "Config Source" : "Direct"}${owner ? `\n${source.contribution ? "Config Source owner" : "Owner"}  ${owner.level} ${owner.file} ${owner.pointer}` : ""}`,
+        fields: [
+          field("Source", source.id),
+          ...binding.map(bindingField),
+          field(
+            "Editable",
+            source.contribution
+              ? "No · contributed by a Config Source"
+              : "Yes · direct declaration",
+          ),
+          ...(owner
+            ? [field("Owner", `${owner.level} ${owner.file}`), field("Declaration", owner.pointer)]
+            : []),
+        ],
+      };
     }
     if (section() === "config-sources") {
-      const source = selectedConfigSource();
-      if (!source) return [];
-      return [
-        field("Config Source", source.id),
-        field("Kind", source.binding.kind),
-        field(
-          source.binding.kind === "local" ? "Local path" : "Origin",
-          source.binding.kind === "local" ? source.binding.path : source.binding.origin,
-        ),
-        field("Root", source.binding.root),
-        ...(source.binding.kind === "local" ? [] : [field("Tracked ref", source.binding.ref)]),
-        field("Adoption", source.adoption.status),
-        ...(source.adoption.status === "adopted"
-          ? [field("Applied commit", source.adoption.commit)]
-          : []),
-        field("Owner", source.owner.file),
-        field("Declaration", source.owner.pointer),
-      ];
+      const facts = selectedConfigSourceDetails();
+      if (!facts) return undefined;
+      const { source } = facts;
+      return {
+        text:
+          source.owner.pointer === selection() && props.handoff?.kind !== "source-contribution"
+            ? `Selected > ${source.id}\nConfig Source  ${source.id}\nOwner  ${source.owner.file} ${source.owner.pointer}\n${factsText(facts.binding)}\n${factsText(facts.adoption.slice(-1))}`
+            : undefined,
+        fields: [
+          field("Config Source", source.id),
+          ...facts.binding.map(bindingField),
+          ...facts.adoption.map(([label, value]) => field(label, value)),
+          field("Owner", source.owner.file),
+          field("Declaration", source.owner.pointer),
+        ],
+      };
     }
-    return [];
-  };
+    const collection = section() === "collections" ? selectedCollection() : undefined;
+    return collection
+      ? {
+          text: `Selected Collection  ${collection.id}\nOwner  ${collection.owner.file} ${collection.owner.pointer}`,
+          fields: [],
+        }
+      : undefined;
+  });
+  const metadata = () => handoffText() ?? selectedDetails()?.text;
   const Metadata = () => (
     <Show
-      when={metadataFields().length}
+      when={
+        !props.handoff && selectedDetails()?.fields.length ? selectedDetails()?.fields : undefined
+      }
       fallback={
         <text selectable wrapMode="word">
           {metadata()}
         </text>
       }
     >
-      <MetadataGrid fields={metadataFields()} />
+      {(fields) => <MetadataGrid fields={fields()} />}
     </Show>
   );
   const splitMetadata = () => props.mode === "wide" && !!metadata() && !fileProblem();
@@ -945,9 +919,7 @@ export function ConfigPage(props: {
                             minWidth={0}
                             flexShrink={0}
                           >
-                            {actionCommand(
-                              "config-observe",
-                              "Check / review Config update…",
+                            {configSourceUpdate(
                               compactSourceLayout() ? revealWorkCommand : undefined,
                             )}
                           </box>
@@ -973,12 +945,14 @@ export function ConfigPage(props: {
                           <text>{`Config Source  ${selectedConfigSource()!.id}`}</text>
                           <text>{`Owner  ${selectedConfigSource()!.owner.file} ${selectedConfigSource()!.owner.pointer}`}</text>
                           <text>{`Binding kind  ${selectedConfigSource()!.binding.kind}`}</text>
-                          {selectedConfigSourceBinding()
-                            .split("\n")
-                            .map((line) => (
-                              <text>{line}</text>
-                            ))}
-                          <text>{selectedConfigSourceAdoption()}</text>
+                          {selectedConfigSourceDetails()!
+                            .binding.slice(1)
+                            .flatMap(([label, text]) =>
+                              `${label}  ${text}`.split("\n").map((line) => <text>{line}</text>),
+                            )}
+                          <text>
+                            {factsText(selectedConfigSourceDetails()!.adoption.slice(-1))}
+                          </text>
                           <text>{`Contributed Sources  ${selectedConfigSource()!.contributed.sources.length}`}</text>
                           <text>{`Contributed Collections  ${selectedConfigSource()!.contributed.collections.length}`}</text>
                           <Show when={!sharedReturn}>
@@ -1038,11 +1012,7 @@ export function ConfigPage(props: {
                 >
                   <box flexDirection="column" gap={1}>
                     {actionCommand("add-config-source", "Add Config Source…", revealWorkCommand)}
-                    {actionCommand(
-                      "config-observe",
-                      "Check / review Config update…",
-                      revealWorkCommand,
-                    )}
+                    {configSourceUpdate(revealWorkCommand)}
                   </box>
                 </Show>
                 <Show when={compactSourceLayout() && section() === "sources" && !!selectedSource()}>
@@ -1508,7 +1478,7 @@ export function ConfigPage(props: {
               }
             >
               <text fg={tokens().colors.mutedForeground}>UPDATE THIS CONFIG SOURCE</text>
-              {actionCommand("config-observe", "Check / review Config update…")}
+              {configSourceUpdate()}
             </Show>
           </box>
         </Show>
@@ -1551,7 +1521,7 @@ export function ConfigPage(props: {
               borderColor={tokens().colors.border}
             >
               <text fg={tokens().colors.mutedForeground}>UPDATE THIS CONFIG SOURCE</text>
-              {actionCommand("config-observe", "Check / review Config update…")}
+              {configSourceUpdate()}
             </box>
           </Show>
         </Pane>

@@ -38,25 +38,26 @@ const valuesFor = (
     return config.direct.configSources.map((item) => item.owner.pointer);
   if (section === "collections")
     return [...config.direct.collections.map((item) => item.id), ...config.contributed.collections];
-  return projection
-    ? integrationValues(projection, config)
-    : config.direct.integrations.map((item) => item.owner.pointer);
+  return configIntegrationRows(projection, config).map((row) => row.key);
 };
 
-const integrationValues = (
-  projection: ManagementProjection,
-  config: ConfigLevelView,
-): readonly string[] => [
-  ...config.direct.integrations.map((item) => configDeclarationOwnerKey(item.owner)),
-  ...(projection.effective.agent.integration ?? [])
-    .filter(
-      (owner) =>
-        !config.direct.integrations.some(
-          (item) => configDeclarationOwnerKey(item.owner) === configDeclarationOwnerKey(owner),
-        ),
-    )
-    .map((owner) => configDeclarationOwnerKey(owner)),
-];
+export const configIntegrationRows = (
+  projection: ManagementProjection | undefined,
+  config: ConfigLevelView | undefined,
+) => {
+  if (!config) return [];
+  const direct = config.direct.integrations.map(({ owner }) => ({
+    owner,
+    direct: true,
+    key: configDeclarationOwnerKey(owner),
+  }));
+  return [
+    ...direct,
+    ...(projection?.effective.agent.integration ?? [])
+      .filter((owner) => !direct.some((row) => row.key === configDeclarationOwnerKey(owner)))
+      .map((owner) => ({ owner, direct: false, key: configDeclarationOwnerKey(owner) })),
+  ];
+};
 
 const nearest = (
   selected: string | undefined,

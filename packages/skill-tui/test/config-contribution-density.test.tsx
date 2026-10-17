@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { SelectRenderable, TextRenderable, type BaseRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { ManagementProjection } from "@skill-cli/core";
+import { createSignal } from "solid-js";
 import { ConfigPage } from "../src/config-page";
 import { createConfigState } from "../src/config/state";
 import { workspaceProjection } from "./direct-source.fixture";
@@ -88,7 +89,9 @@ for (const scenario of cases) {
     { name: "short", width: 52, height: 12 },
   ]) {
     test(`RENDER ${scenario.name} stays dense and hands off the selected item at ${size.name} size`, async () => {
-      const projection = contributionProjection(scenario.sources, scenario.collections);
+      const [projection, setProjection] = createSignal<ManagementProjection>(
+        contributionProjection(scenario.sources, scenario.collections),
+      );
       const state = createConfigState();
       state.land("project", "config-sources", "/configSources/shared-config");
       state.openConfigSourceInspector("project");
@@ -97,7 +100,7 @@ for (const scenario of cases) {
         () => (
           <ConfigPage
             config={state}
-            projection={() => projection}
+            projection={projection}
             destination="project"
             actions={[]}
             onSelect={() => {}}
@@ -126,6 +129,34 @@ for (const scenario of cases) {
         );
         expect(inspectorText).toContain("Canonical Origin  https://github.com/acme/shared-config");
         expect(inspectorText).toContain("Applied commit  abc123");
+        if (scenario.name === "zero contributions" && size.name === "wide") {
+          setProjection((current) => ({
+            ...current,
+            configs: current.configs.map((config) => ({
+              ...config,
+              direct: {
+                ...config.direct,
+                configSources: config.direct.configSources.map((source) => ({
+                  ...source,
+                  binding: { kind: "local" as const, path: "/live/config", root: "" },
+                  adoption: { status: "live" as const },
+                })),
+              },
+            })),
+          }));
+          await setup.waitFor(() => {
+            const current = setup.renderer.root.findDescendantById("config-source-inspector");
+            return !!current && textNodes(current).includes("Adoption  live");
+          });
+          const current = setup.renderer.root.findDescendantById("config-source-inspector")!;
+          expect(textNodes(current)).toContain("Local path  /live/config");
+          expect(textNodes(current)).toContain("Source Root  ");
+          expect(
+            textNodes(current).some((line) =>
+              /Applied commit|Tracked ref|Canonical Origin/.test(line),
+            ),
+          ).toBe(false);
+        }
 
         const names = [
           ...scenario.sources.map((id) => `Source  ${id}`),
