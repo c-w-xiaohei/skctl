@@ -8,18 +8,36 @@ import { StateCoordinator } from "../../src/internal/state";
 
 async function fixture(config = "{}\n") {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-impact-"));
+  const previous = process.env.SKILL_CLI_STATE_DIR;
   const state = join(root, "state");
-  const global = join(root, "global.jsonc");
-  await mkdir(join(root, "skills", "review"), { recursive: true });
-  await writeFile(join(root, "skill-cli.jsonc"), config);
-  await writeFile(global, "{}\n");
-  await writeFile(
-    join(root, "skills", "review", "SKILL.md"),
-    "---\nname: review\ndescription: Review\n---\n",
-  );
-  process.env.SKILL_CLI_STATE_DIR = state;
-  const core = createSkillCliCore({ cwd: root, userConfigPath: global });
-  return { root, state, global, core };
+  const cleanup = async () => {
+    try {
+      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
+      else process.env.SKILL_CLI_STATE_DIR = previous;
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+  try {
+    process.env.SKILL_CLI_STATE_DIR = state;
+    const global = join(root, "global.jsonc");
+    await mkdir(join(root, "skills", "review"), { recursive: true });
+    await writeFile(join(root, "skill-cli.jsonc"), config);
+    await writeFile(global, "{}\n");
+    await writeFile(
+      join(root, "skills", "review", "SKILL.md"),
+      "---\nname: review\ndescription: Review\n---\n",
+    );
+    const core = createSkillCliCore({ cwd: root, userConfigPath: global });
+    return { root, state, global, core, cleanup };
+  } catch (error) {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Impact fixture setup and cleanup failed");
+    }
+    throw error;
+  }
 }
 
 function assertPublicImpact(value: unknown) {
@@ -85,8 +103,7 @@ test("MGMT-002 removes a direct zero-installed Source while preserving other dec
         .catch(() => undefined),
     ).toBe(stateBefore);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -129,8 +146,7 @@ test("MGMT-003 stale Source removal rejects newly installed owners then permits 
       {},
     );
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -195,8 +211,7 @@ test("MGMT-010 Uninstall impact preserves repository-derived and Link origin pat
       JSON.parse(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).sources.remote,
     ).toBeDefined();
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -258,8 +273,7 @@ test("MGMT-011 stale Uninstall rejects a new direct Membership without changing 
     await value.core.management.uninstall({ source: "local", paths: ["review"] });
     expect((await value.core.workspace.get()).value.installedSkills).toEqual([]);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -300,8 +314,7 @@ test("MGMT-004 contributed Sources allow management reads but reject host remova
       code: "INVALID_ARGUMENT",
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -381,8 +394,7 @@ test("MGMT-018/019/020/021 Link, Use, and Collection impacts retain exact declar
       }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -423,8 +435,7 @@ test("MGMT-020 Collection Use reports selected-owner deltas, completeness, and a
     });
     assertPublicImpact(impact.value);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -465,8 +476,7 @@ test("MGMT-026 keeps Membership Link and Use removal choices distinct", async ()
     });
     for (const impact of [membership.value, link.value, use.value]) assertPublicImpact(impact);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -509,8 +519,7 @@ test("MGMT-021 Collection removal distinguishes selected ownership and retained 
     });
     assertPublicImpact(impact.value);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -528,8 +537,7 @@ test("MGMT-021 Collection removal reports exact outgoing Link dependencies", asy
       blockers: [{ reason: "link", owner: { pointer: "/collections/source/links/0" } }],
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -601,8 +609,7 @@ test("MGMT-021 Collection removal execution revalidates outgoing Links without c
     });
     expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).not.toContain('"source"');
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -659,8 +666,7 @@ test("MGMT-013/015/026 previews direct membership ownership and alternate link p
     assertPublicImpact(add.value);
     assertPublicImpact(remove.value);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -737,8 +743,7 @@ test("MGMT-013/015/016/017 expose owner-specific collection operations without U
     assertPublicImpact(removal.value);
     assertPublicImpact(imported.value);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -770,8 +775,7 @@ test("MGMT-013/015 reports repository-derived choices and preserves direct alter
     });
     expect(via.value).toMatchObject({ decision: { kind: "via-link" }, allowed: false });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -840,8 +844,7 @@ test("MGMT-012/018/019/026 previews prospective Link graphs with exact retained 
     });
     assertPublicImpact(add.value);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -895,8 +898,7 @@ test("MGMT-012 reports repository and plural Link paths without a false direct M
         { kind: "via-link", links: [{ linkedCollection: "acme/skills" }] },
       ]);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -987,8 +989,7 @@ test("MGMT-013 distinguishes direct contributed derived and composed Add-to-Coll
       ).value,
     ).toMatchObject({ decision: { kind: "direct" }, allowed: true });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -1028,8 +1029,7 @@ test("MGMT-015 removes only direct Memberships while derived and via-Link origin
         .members,
     ).toEqual({});
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -1078,8 +1078,7 @@ test("MGMT-015 reports repository-derived Membership removal as a producer actio
       allowed: false,
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -1116,8 +1115,7 @@ test("MGMT-019 Remove Link reports whole-member fan-out and retained direct alte
     ]);
     assertPublicImpact(impact.value);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -1148,8 +1146,7 @@ test("MGMT-021 blocks dependent direct removal and refuses contributed or derive
       ).value,
     ).toMatchObject({ decision: { kind: "missing" }, allowed: false });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -1206,8 +1203,7 @@ test("MGMT-021 refuses contributed and repository-derived Collection removal as 
       ).value,
     ).toMatchObject({ decision: { kind: "repository-derived" }, allowed: false });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -1229,8 +1225,7 @@ test("MGMT-033 explicit observations remain caller-owned and absent from declara
     for (const field of ["candidates", "changed", "added", "removed", "unchanged", "exactRevision"])
       expect(persisted).not.toContain(`"${field}"`);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });
 
@@ -1247,7 +1242,6 @@ test("MGMT-032 management mutations return focused results without an embedded W
     expect(result).toEqual({ value: undefined, diagnostics: [] });
     expect("workspace" in result).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(value.root, { recursive: true, force: true });
+    await value.cleanup();
   }
 });

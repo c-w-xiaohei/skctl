@@ -26,12 +26,61 @@ import {
 
 const test = bunTest.serial;
 
-test("network is rejected by actual Project Local and reusable readers", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-network-scopes-"));
+async function configResources(prefix: string) {
+  const root = await mkdtemp(join(tmpdir(), prefix));
   const previous = process.env.SKILL_CLI_STATE_DIR;
+  const state = join(root, "state");
+  const cleanup = async () => {
+    try {
+      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
+      else process.env.SKILL_CLI_STATE_DIR = previous;
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+  try {
+    process.env.SKILL_CLI_STATE_DIR = state;
+    return { root, state, cleanup };
+  } catch (error) {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Config resource setup and cleanup failed");
+    }
+    throw error;
+  }
+}
+
+test("config resources restore state and remove their root after a thrown operation", async () => {
+  const previous = process.env.SKILL_CLI_STATE_DIR;
+  process.env.SKILL_CLI_STATE_DIR = "outer-state";
+  const failure = new Error("operation failed");
+  let root: string | undefined;
+  try {
+    const resources = await configResources("skill-cli-cleanup-proof-");
+    root = resources.root;
+    try {
+      throw failure;
+    } finally {
+      await resources.cleanup();
+    }
+  } catch (error) {
+    expect(error).toBe(failure);
+  } finally {
+    try {
+      expect(process.env.SKILL_CLI_STATE_DIR).toBe("outer-state");
+      await expect(lstat(root!)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
+      else process.env.SKILL_CLI_STATE_DIR = previous;
+    }
+  }
+});
+
+test("network is rejected by actual Project Local and reusable readers", async () => {
+  const { root, cleanup } = await configResources("skill-cli-network-scopes-");
   const text = '{"network":{"proxy":"http://proxy.test:7890"}}';
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     expect(() => validateConfigBytes(Buffer.from(text))).toThrow();
     for (const name of ["skill-cli.jsonc", "skill-cli.local.jsonc"]) {
       await writeFile(join(root, "skill-cli.jsonc"), "{}");
@@ -67,17 +116,13 @@ test("network is rejected by actual Project Local and reusable readers", async (
     );
     expect(preview.value.effective.status).toBe("unavailable");
   } finally {
-    if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previous;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("both manual Config state writers emit v3 and retain unrelated Remote tree evidence", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-state-v3-"));
-  const previous = process.env.SKILL_CLI_STATE_DIR;
+  const { root, cleanup } = await configResources("skill-cli-config-state-v3-");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(
       join(root, "skill-cli.jsonc"),
       '{"configSources":{"one":{"kind":"git","origin":"https://example.test/one.git","root":"","ref":"main"},"two":{"kind":"git","origin":"https://example.test/two.git","root":"","ref":"main"}}}',
@@ -129,18 +174,14 @@ test("both manual Config state writers emit v3 and retain unrelated Remote tree 
       configs: {},
     });
   } finally {
-    if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previous;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("missing user document inherits but inaccessible user parent fails closed", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-network-permissions-"));
+  const { root, cleanup } = await configResources("skill-cli-network-permissions-");
   const parent = join(root, "private");
-  const previous = process.env.SKILL_CLI_STATE_DIR;
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     await mkdir(parent);
     const options = { cwd: root, userConfigPath: join(parent, "policy.jsonc") };
@@ -153,19 +194,18 @@ test("missing user document inherits but inaccessible user parent fails closed",
       "missing",
     );
   } finally {
-    await chmod(parent, 0o700);
-    if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previous;
-    await rm(root, { recursive: true, force: true });
+    try {
+      await chmod(parent, 0o700);
+    } finally {
+      await cleanup();
+    }
   }
 });
 
 test("user proxy survives JSONC declaration edits and never enters Workspace or binding facts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-user-network-"));
+  const { root, cleanup } = await configResources("skill-cli-user-network-");
   const global = join(root, "user", "config.jsonc");
-  const previous = process.env.SKILL_CLI_STATE_DIR;
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await mkdir(join(root, "user"));
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     const proxy = "http://user:secret@proxy.test:7890";
@@ -203,18 +243,14 @@ test("user proxy survives JSONC declaration edits and never enters Workspace or 
     expect((await core.workspace.get()).value.effective.sources).toEqual(before.effective.sources);
     expect(await core.management.getUpdateBaseline({ source: "team" })).toEqual(baseline);
   } finally {
-    if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previous;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-001 creates only the selected Global Project or Local Source target with exact bindings", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-source-targets-"));
+  const { root, cleanup } = await configResources("skill-cli-source-targets-");
   const global = join(root, "global", "config.jsonc");
-  const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     const core = createSkillCliCore({ cwd: root, userConfigPath: global });
     const cases = [
@@ -268,16 +304,13 @@ test("MGMT-001 creates only the selected Global Project or Local Source target w
     }
     expect(await lstat(global)).toMatchObject({});
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("GitHub Source shorthand remains readable after registration", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-github-source-"));
-  const state = join(root, "state");
+  const { root, cleanup } = await configResources("skill-cli-github-source-");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     const core = createSkillCliCore({ cwd: root });
 
@@ -298,16 +331,13 @@ test("GitHub Source shorthand remains readable after registration", async () => 
       }),
     );
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("Use changes are atomic, report their locked delta, and reject duplicate set entries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-use-changes-"));
-  const state = join(root, "state");
+  const { root, cleanup } = await configResources("skill-cli-use-changes-");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(
       join(root, "skill-cli.jsonc"),
       JSON.stringify({ collections: { alpha: {}, beta: {} }, use: [] }),
@@ -345,18 +375,16 @@ test("Use changes are atomic, report their locked delta, and reject duplicate se
       }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("global mutations work without a project but project targets remain strict", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-global-only-edit-"));
+  const { root, cleanup } = await configResources("skill-cli-global-only-edit-");
   const cwd = join(root, "outside-project");
   const global = join(root, "global", "config.jsonc");
   try {
     await mkdir(cwd);
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
 
     await changeConfiguration(
       { cwd, userConfigPath: global },
@@ -381,13 +409,12 @@ test("global mutations work without a project but project targets remain strict"
       ),
     ).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("global mutations without an explicit project do not start Git", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-global-no-git-"));
+  const { root, cleanup } = await configResources("skill-cli-global-no-git-");
   const cwd = join(root, "outside-project");
   const global = join(root, "global", "config.jsonc");
   const bin = join(root, "bin");
@@ -399,7 +426,6 @@ test("global mutations without an explicit project do not start Git", async () =
     await writeFile(join(bin, "git"), `#!/bin/sh\n: > "${gitCalled}"\nexit 1\n`, {
       mode: 0o755,
     });
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     process.env.PATH = `${bin}:${previousPath}`;
 
     await changeConfiguration(
@@ -410,18 +436,19 @@ test("global mutations without an explicit project do not start Git", async () =
     expect(await lstat(gitCalled).catch(() => undefined)).toBeUndefined();
     expect(JSON.parse(await readFile(global, "utf8")).collections.team).toEqual({});
   } finally {
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    try {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    } finally {
+      await cleanup();
+    }
   }
 });
 
 test("global mutations ignore an invalid project config", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-global-only-project-config-"));
+  const { root, cleanup } = await configResources("skill-cli-global-only-project-config-");
   const global = join(root, "global", "config.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(join(root, "skill-cli.jsonc"), '{ "unknown": true }\n');
 
     await changeConfiguration(
@@ -431,16 +458,14 @@ test("global mutations ignore an invalid project config", async () => {
 
     expect(JSON.parse(await readFile(global, "utf8")).collections.team).toEqual({});
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("collection declaration errors identify the collection, scope, and target config", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-collection-declaration-error-"));
+  const { root, cleanup } = await configResources("skill-cli-collection-declaration-error-");
   const global = join(root, "global", "config.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await expect(
       changeConfiguration(
         { cwd: root, userConfigPath: global },
@@ -454,17 +479,15 @@ test("collection declaration errors identify the collection, scope, and target c
       ),
     ).rejects.toThrow(`Collection "team" is not directly declared at global scope in ${global}`);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("member removal distinguishes a missing Collection from a missing membership", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-member-removal-error-"));
+  const { root, cleanup } = await configResources("skill-cli-member-removal-error-");
   const global = join(root, "global", "config.jsonc");
   try {
     await mkdir(join(root, "global"));
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(global, '{ "collections": { "team": {} } }\n');
     await expect(
       changeConfiguration(
@@ -486,17 +509,15 @@ test("member removal distinguishes a missing Collection from a missing membershi
       `Membership "review" is not directly declared in Collection "team" at global scope in ${global}`,
     );
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("local mutations remain strict without a project", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-local-no-project-"));
+  const { root, cleanup } = await configResources("skill-cli-local-no-project-");
   const cwd = join(root, "outside-project");
   try {
     await mkdir(cwd);
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await expect(
       changeConfiguration(
         { cwd },
@@ -504,13 +525,12 @@ test("local mutations remain strict without a project", async () => {
       ),
     ).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("global mutations respect global Config Source contributions", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-global-contribution-owner-"));
+  const { root, cleanup } = await configResources("skill-cli-global-contribution-owner-");
   const cwd = join(root, "outside-project");
   const global = join(root, "global", "config.jsonc");
   const module = join(root, "module");
@@ -518,7 +538,6 @@ test("global mutations respect global Config Source contributions", async () => 
     await mkdir(cwd);
     await mkdir(module);
     await mkdir(join(root, "global"));
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(
       join(module, "config.jsonc"),
       '{ "sources": { "core": { "kind": "local", "path": "./skills", "root": "" } } }\n',
@@ -539,20 +558,19 @@ test("global mutations respect global Config Source contributions", async () => 
       ),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("global mutations respect adopted Remote Config Source contributions", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-global-remote-contribution-owner-"));
+  const { root, state, cleanup } = await configResources(
+    "skill-cli-global-remote-contribution-owner-",
+  );
   const cwd = join(root, "outside-project");
   const global = join(root, "global", "config.jsonc");
-  const state = join(root, "state");
   try {
     await mkdir(cwd);
     await mkdir(join(root, "global"));
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(
       global,
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config.git", "root": "", "ref": "main" } } }\n',
@@ -577,8 +595,7 @@ test("global mutations respect adopted Remote Config Source contributions", asyn
       ),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
@@ -601,11 +618,9 @@ async function privateTree(root: string) {
 }
 
 test("selected-target declaration edits preserve unrelated JSONC comments", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-edit-"));
+  const { root, cleanup } = await configResources("skill-cli-edit-");
   const config = join(root, "skill-cli.jsonc");
-  const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     const initial = '{\n  // retain me\n  "collections": {}\n}\n';
     await writeFile(config, initial);
     await changeConfiguration(
@@ -623,17 +638,14 @@ test("selected-target declaration edits preserve unrelated JSONC comments", asyn
       initial.slice(0, initial.indexOf('"collections"')),
     );
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("direct qualified Source IDs remain editable while actual Config Source contributions are immutable", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-owner-"));
+  const { root, cleanup } = await configResources("skill-cli-config-owner-");
   const config = join(root, "skill-cli.jsonc");
-  const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(config, "{}\n");
     await changeConfiguration(
       { cwd: root },
@@ -668,8 +680,7 @@ test("direct qualified Source IDs remain editable while actual Config Source con
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     expect(await readFile(config, "utf8")).toBe(host);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
@@ -726,11 +737,9 @@ test("Config Source Roots reject invalid paths before publication", async () => 
 });
 
 test("invalid pre-existing host Config Source Roots block unrelated mutations", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-existing-config-source-root-"));
+  const { root, cleanup } = await configResources("skill-cli-existing-config-source-root-");
   const config = join(root, "skill-cli.jsonc");
-  const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     for (const binding of [
       { kind: "local" as const, path: "./module", root: "." },
       {
@@ -751,55 +760,53 @@ test("invalid pre-existing host Config Source Roots block unrelated mutations", 
       expect(await readFile(config, "utf8")).toBe(`${initial}\n`);
     }
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("rejected configuration reads and edits leave declaration bytes untouched", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-edit-reject-"));
+  const { root, state, cleanup } = await configResources("skill-cli-edit-reject-");
   const config = join(root, "skill-cli.jsonc");
-  const state = join(root, "state");
-  process.env.SKILL_CLI_STATE_DIR = state;
-  await mkdir(join(state, "snapshots"), { recursive: true });
-  await mkdir(join(state, "configs"));
-  await mkdir(join(state, "transactions"));
-  await mkdir(join(state, "staging"));
-  const initial = '{ "unknown": true }\n';
-  await writeFile(config, initial);
-  const before = await privateTree(state);
-  await expect(
-    changeConfiguration(
-      { cwd: root },
-      { type: "use.set", level: "project", collections: ["team"] },
-    ),
-  ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
-  expect(await readFile(config, "utf8")).toBe(initial);
-  expect(await privateTree(state)).toEqual(before);
+  try {
+    await mkdir(join(state, "snapshots"), { recursive: true });
+    await mkdir(join(state, "configs"));
+    await mkdir(join(state, "transactions"));
+    await mkdir(join(state, "staging"));
+    const initial = '{ "unknown": true }\n';
+    await writeFile(config, initial);
+    const before = await privateTree(state);
+    await expect(
+      changeConfiguration(
+        { cwd: root },
+        { type: "use.set", level: "project", collections: ["team"] },
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+    expect(await readFile(config, "utf8")).toBe(initial);
+    expect(await privateTree(state)).toEqual(before);
 
-  const linked = join(root, "linked.jsonc");
-  await symlink(config, linked);
-  await expect(
-    changeConfiguration(
-      { cwd: root, userConfigPath: linked },
-      {
-        type: "source.register",
-        level: "global",
-        id: "team",
-        binding: { kind: "local", path: "./skills", root: "" },
-      },
-    ),
-  ).rejects.toMatchObject({ code: "CONFIG_SYMLINK" });
-  expect((await lstat(linked)).isSymbolicLink()).toBe(true);
-  expect(await privateTree(state)).toEqual(before);
-  delete process.env.SKILL_CLI_STATE_DIR;
+    const linked = join(root, "linked.jsonc");
+    await symlink(config, linked);
+    await expect(
+      changeConfiguration(
+        { cwd: root, userConfigPath: linked },
+        {
+          type: "source.register",
+          level: "global",
+          id: "team",
+          binding: { kind: "local", path: "./skills", root: "" },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG_SYMLINK" });
+    expect((await lstat(linked)).isSymbolicLink()).toBe(true);
+    expect(await privateTree(state)).toEqual(before);
+  } finally {
+    await cleanup();
+  }
 });
 
 test("invalid UTF-8 and oversized declarations are rejected without rewriting them", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-text-"));
+  const { root, state, cleanup } = await configResources("skill-cli-config-text-");
   const config = join(root, "skill-cli.jsonc");
-  const state = join(root, "state");
-  process.env.SKILL_CLI_STATE_DIR = state;
   try {
     await mkdir(join(state, "snapshots"), { recursive: true });
     await mkdir(join(state, "configs"));
@@ -827,16 +834,13 @@ test("invalid UTF-8 and oversized declarations are rejected without rewriting th
     expect((await readFile(config)).byteLength).toBe(oversized.byteLength);
     expect(await privateTree(state)).toEqual(beforeOversized);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-014 creates a real empty Collection and rejects duplicate creation atomically", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-collection-edit-"));
-  const state = join(root, "state");
+  const { root, cleanup } = await configResources("skill-cli-collection-edit-");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     const core = createSkillCliCore({ cwd: root });
     await core.configuration.change({
@@ -901,16 +905,14 @@ test("MGMT-014 creates a real empty Collection and rejects duplicate creation at
       JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).collections.target,
     ).toBeUndefined();
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-014 creates empty Collections only at selected Global Project and Local levels", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-collection-levels-"));
+  const { root, cleanup } = await configResources("skill-cli-collection-levels-");
   const global = join(root, "global", "config.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     const core = createSkillCliCore({ cwd: root, userConfigPath: global });
     for (const [level, collection, file] of [
@@ -922,15 +924,13 @@ test("MGMT-014 creates empty Collections only at selected Global Project and Loc
       expect(JSON.parse(await readFile(file, "utf8")).collections[collection]).toEqual({});
     }
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-017 adds and removes a named direct Reference with zero member exposure", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-reference-edit-"));
+  const { root, cleanup } = await configResources("skill-cli-reference-edit-");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(
       join(root, "skill-cli.jsonc"),
       JSON.stringify({ collections: { source: {}, target: {} } }),
@@ -1020,16 +1020,14 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(hostBytes);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-027 enables and disables managed OpenCode only at the selected Config level", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-managed-levels-"));
+  const { root, cleanup } = await configResources("skill-cli-managed-levels-");
   const global = join(root, "global", "config.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await mkdir(join(root, "global"));
     await writeFile(global, "{}\n");
     await writeFile(
@@ -1054,17 +1052,15 @@ test("MGMT-027 enables and disables managed OpenCode only at the selected Config
       expect(JSON.parse(await readFile(file, "utf8")).agents).toBeUndefined();
     }
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-028 blocks invalid target and sibling graph edits while preserving unknown bytes and state", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-invalid-mutation-"));
+  const { root, cleanup } = await configResources("skill-cli-invalid-mutation-");
   const project = join(root, "skill-cli.jsonc");
   const local = join(root, "skill-cli.local.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     const unknown = Buffer.from([0xff, 0xfe, 0xfd]);
     await writeFile(project, "{ invalid\n");
     await writeFile(local, unknown);
@@ -1094,15 +1090,13 @@ test("MGMT-028 blocks invalid target and sibling graph edits while preserving un
     expect(await readFile(project, "utf8")).toBe(validTarget);
     expect((await lstat(local)).isSymbolicLink()).toBe(true);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-032 configuration mutations return focused facts and never embed Workspace", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-focused-result-"));
+  const { root, cleanup } = await configResources("skill-cli-focused-result-");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     const result = await createSkillCliCore({ cwd: root }).configuration.change({
       type: "collection.create",
@@ -1116,16 +1110,13 @@ test("MGMT-032 configuration mutations return focused facts and never embed Work
     });
     expect("workspace" in result.value).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-015/018/020/021 revalidate direct ownership and dependencies under the mutation lock", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-collection-stale-"));
-  const state = join(root, "state");
+  const { root, cleanup } = await configResources("skill-cli-collection-stale-");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(
       join(root, "skill-cli.jsonc"),
       JSON.stringify({
@@ -1165,17 +1156,14 @@ test("MGMT-015/018/020/021 revalidate direct ownership and dependencies under th
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(beforeRemoval);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-015/016/017 reject stale member, import, and Reference definitions without publishing bytes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-operation-stale-"));
-  const state = join(root, "state");
+  const { root, cleanup } = await configResources("skill-cli-operation-stale-");
   const file = join(root, "skill-cli.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(
       file,
       JSON.stringify({
@@ -1222,17 +1210,14 @@ test("MGMT-015/016/017 reject stale member, import, and Reference definitions wi
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(file, "utf8")).toBe(before);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-016 import validates all current source members atomically", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-import-stale-"));
-  const state = join(root, "state");
+  const { root, cleanup } = await configResources("skill-cli-import-stale-");
   const file = join(root, "skill-cli.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(
       file,
       JSON.stringify({
@@ -1268,17 +1253,14 @@ test("MGMT-016 import validates all current source members atomically", async ()
     ).rejects.toMatchObject({ code: "EXPOSURE_CONFLICT" });
     expect(await readFile(file, "utf8")).toBe(before);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-019 Link execution revalidates a stale preview without publishing conflicting bytes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-link-stale-"));
-  const state = join(root, "state");
+  const { root, cleanup } = await configResources("skill-cli-link-stale-");
   const config = join(root, "skill-cli.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(
       config,
       JSON.stringify({
@@ -1320,17 +1302,14 @@ test("MGMT-019 Link execution revalidates a stale preview without publishing con
     ).rejects.toMatchObject({ code: "EXPOSURE_CONFLICT" });
     expect(await readFile(config, "utf8")).toBe(before);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-019 Link removal revalidates current alternatives and exact Link ownership", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-link-remove-stale-"));
-  const state = join(root, "state");
+  const { root, cleanup } = await configResources("skill-cli-link-remove-stale-");
   const config = join(root, "skill-cli.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(
       config,
       JSON.stringify({
@@ -1386,17 +1365,14 @@ test("MGMT-019 Link removal revalidates current alternatives and exact Link owne
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     expect(await readFile(config, "utf8")).toBe(before);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-019 Link execution uses current graph facts after a preview is blocked or becomes cyclic", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-link-current-"));
-  const state = join(root, "state");
+  const { root, cleanup } = await configResources("skill-cli-link-current-");
   const config = join(root, "skill-cli.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(
       config,
       JSON.stringify({
@@ -1484,16 +1460,14 @@ test("MGMT-019 Link execution uses current graph facts after a preview is blocke
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(config, "utf8")).toBe(before);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-029 Collection Use rejects a newly incomplete graph unchanged then succeeds from current repaired facts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-use-stale-"));
+  const { root, cleanup } = await configResources("skill-cli-use-stale-");
   const file = join(root, "skill-cli.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     const complete = JSON.stringify({ collections: { team: {} } });
     await writeFile(file, complete);
     const core = createSkillCliCore({ cwd: root });
@@ -1515,16 +1489,14 @@ test("MGMT-029 Collection Use rejects a newly incomplete graph unchanged then su
     await core.configuration.change({ type: "use.set", level: "project", collections: ["team"] });
     expect(JSON.parse(await readFile(file, "utf8")).use).toEqual(["team"]);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("MGMT-029 Collection removal rejects a newly introduced dependency unchanged then succeeds after removal", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-collection-remove-stale-"));
+  const { root, cleanup } = await configResources("skill-cli-collection-remove-stale-");
   const file = join(root, "skill-cli.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     const independent = JSON.stringify({ collections: { source: {}, target: {} } });
     await writeFile(file, independent);
     const core = createSkillCliCore({ cwd: root });
@@ -1559,16 +1531,14 @@ test("MGMT-029 Collection removal rejects a newly introduced dependency unchange
     });
     expect(JSON.parse(await readFile(file, "utf8")).collections.target).toBeUndefined();
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("membership batches preview and publish one direct Collection delta atomically", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-membership-batch-"));
+  const { root, cleanup } = await configResources("skill-cli-membership-batch-");
   const file = join(root, "skill-cli.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(
       file,
       JSON.stringify({
@@ -1678,16 +1648,14 @@ test("membership batches preview and publish one direct Collection delta atomica
       expect(await readFile(file, "utf8")).toBe(before);
     }
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("membership batches reject duplicate request names and contributed Collection ownership", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-membership-batch-blocked-"));
+  const { root, cleanup } = await configResources("skill-cli-membership-batch-blocked-");
   const module = join(root, "module");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await mkdir(module);
     await writeFile(join(module, "config.jsonc"), '{ "collections": { "team": {} } }\n');
     await writeFile(
@@ -1725,15 +1693,13 @@ test("membership batches reject duplicate request names and contributed Collecti
       }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("membership batch preview includes direct and incoming Link selector deltas", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-membership-batch-links-"));
+  const { root, cleanup } = await configResources("skill-cli-membership-batch-links-");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(
       join(root, "skill-cli.jsonc"),
       JSON.stringify({
@@ -1761,17 +1727,16 @@ test("membership batch preview includes direct and incoming Link selector deltas
       false,
     );
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("membership batch rejects a Link introduced after review without publishing bytes or state", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-membership-batch-reviewed-impact-"));
+  const { root, state, cleanup } = await configResources(
+    "skill-cli-membership-batch-reviewed-impact-",
+  );
   const file = join(root, "skill-cli.jsonc");
-  const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(file, JSON.stringify({ collections: { parent: {}, team: {} } }));
     const core = createSkillCliCore({ cwd: root });
     const request = {
@@ -1807,16 +1772,14 @@ test("membership batch rejects a Link introduced after review without publishing
       beforeState,
     );
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("membership batch accepts an unrelated graph change after review", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-membership-batch-unrelated-impact-"));
+  const { root, cleanup } = await configResources("skill-cli-membership-batch-unrelated-impact-");
   const file = join(root, "skill-cli.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(file, JSON.stringify({ collections: { other: {}, parent: {}, team: {} } }));
     const core = createSkillCliCore({ cwd: root });
     const request = {
@@ -1842,15 +1805,13 @@ test("membership batch accepts an unrelated graph change after review", async ()
       }),
     ).resolves.toMatchObject({ value: { changed: true } });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("membership batch preview blocks unavailable effective management despite a direct owner", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-membership-batch-unavailable-"));
+  const { root, cleanup } = await configResources("skill-cli-membership-batch-unavailable-");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(join(root, "skill-cli.jsonc"), '{ "collections": { "team": {} } }\n');
     await writeFile(join(root, "skill-cli.local.jsonc"), "{ invalid\n");
     const preview = await createSkillCliCore({ cwd: root }).configuration.previewMembershipBatch({
@@ -1865,17 +1826,14 @@ test("membership batch preview blocks unavailable effective management despite a
       allowed: false,
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("membership batches normalize names and leave effectless deltas unpublished", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-membership-batch-noop-"));
+  const { root, state, cleanup } = await configResources("skill-cli-membership-batch-noop-");
   const file = join(root, "skill-cli.jsonc");
-  const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
     const normalized = "caf\u00e9";
     const decomposed = "cafe\u0301";
     await writeFile(
@@ -1914,16 +1872,14 @@ test("membership batches normalize names and leave effectless deltas unpublished
     expect(await readFile(file, "utf8")).toBe(before);
     expect((await new StateCoordinator(state).read()).generation).toBe(generation);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
 
 test("membership batches preserve all bytes for mixed valid and invalid changes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-membership-batch-mixed-failure-"));
+  const { root, cleanup } = await configResources("skill-cli-membership-batch-mixed-failure-");
   const file = join(root, "skill-cli.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
     await writeFile(
       file,
       JSON.stringify({
@@ -1947,7 +1903,6 @@ test("membership batches preserve all bytes for mixed valid and invalid changes"
       old: { source: "local", path: "old" },
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 });
