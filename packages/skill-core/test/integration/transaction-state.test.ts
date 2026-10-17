@@ -31,58 +31,43 @@ async function snapshot(root: string) {
     private: await collect(state),
   };
 }
-async function childChange(project: string, state: string, global: string, hook: string) {
+const registerTeamSource =
+  'configuration.change({ type: "source.register", level: "project", id: "team", binding: { kind: "local", path: "./skills", root: "" } })';
+const installReview = 'management.install({ source: "team", paths: ["review"] })';
+const uninstallReview = 'management.uninstall({ source: "team", paths: ["review"] })';
+type Fixture = Awaited<ReturnType<typeof fixture>>;
+async function expectTransactionCrash(value: Fixture, operation: string, hook: string) {
   const entry = join(import.meta.dir, "../../src/create-core.ts");
-  const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({ cwd: ${JSON.stringify(project)}, userConfigPath: ${JSON.stringify(global)} }).configuration.change({ type: "source.register", level: "project", id: "team", binding: { kind: "local", path: "./skills", root: "" } });`;
+  const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; const core = createSkillCliCore({ cwd: ${JSON.stringify(value.project)}, userConfigPath: ${JSON.stringify(value.global)} }); await core.${operation};`;
   const child = Bun.spawn({
     cmd: [process.execPath, "--eval", script],
-    env: { ...process.env, SKILL_CLI_STATE_DIR: state, SKILL_CLI_TEST_CRASH_AT: hook },
+    env: { ...process.env, SKILL_CLI_STATE_DIR: value.state, SKILL_CLI_TEST_CRASH_AT: hook },
     stdout: "pipe",
     stderr: "pipe",
   });
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const exit = await Promise.race([
     child.exited,
-    Bun.sleep(15_000).then(() => {
-      child.kill();
-      return -1;
+    new Promise<-1>((resolve) => {
+      timer = setTimeout(() => resolve(-1), 15_000);
     }),
   ]);
-  expect(exit).toBe(97);
-}
-async function childInstall(project: string, state: string, global: string, hook: string) {
-  const entry = join(import.meta.dir, "../../src/create-core.ts");
-  const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({ cwd: ${JSON.stringify(project)}, userConfigPath: ${JSON.stringify(global)} }).management.install({ source: "team", paths: ["review"] });`;
-  const child = Bun.spawn({
-    cmd: [process.execPath, "--eval", script],
-    env: { ...process.env, SKILL_CLI_STATE_DIR: state, SKILL_CLI_TEST_CRASH_AT: hook },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const exit = await Promise.race([
-    child.exited,
-    Bun.sleep(15_000).then(() => {
-      child.kill();
-      return -1;
-    }),
-  ]);
-  expect(exit).toBe(97);
-}
-async function childUninstall(project: string, state: string, global: string, hook: string) {
-  const entry = join(import.meta.dir, "../../src/create-core.ts");
-  const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({ cwd: ${JSON.stringify(project)}, userConfigPath: ${JSON.stringify(global)} }).management.uninstall({ source: "team", paths: ["review"] });`;
-  const child = Bun.spawn({
-    cmd: [process.execPath, "--eval", script],
-    env: { ...process.env, SKILL_CLI_STATE_DIR: state, SKILL_CLI_TEST_CRASH_AT: hook },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const exit = await Promise.race([
-    child.exited,
-    Bun.sleep(15_000).then(() => {
-      child.kill();
-      return -1;
-    }),
-  ]);
+  if (timer) clearTimeout(timer);
+  if (exit === -1) {
+    child.kill("SIGTERM");
+    const stopped = await Promise.race([
+      child.exited.then(() => true),
+      Bun.sleep(1_000).then(() => false),
+    ]);
+    if (!stopped) {
+      child.kill("SIGKILL");
+      const killed = await Promise.race([
+        child.exited.then(() => true),
+        Bun.sleep(1_000).then(() => false),
+      ]);
+      if (!killed) throw new Error("Timed-out transaction child did not exit after SIGKILL");
+    }
+  }
   expect(exit).toBe(97);
 }
 async function childGuardCrash(state: string, hook = "lock-critical-enter") {
@@ -131,7 +116,7 @@ async function installFixture() {
 test("TX-003 public committed-marker crash rolls a declaration forward on fresh workspace read", async () => {
   const value = await fixture();
   try {
-    await childChange(value.project, value.state, value.global, "marker-committed-after");
+    await expectTransactionCrash(value, registerTeamSource, "marker-committed-after");
     expect(await readFile(join(value.project, "skill-cli.jsonc"), "utf8")).toBe("{}\n");
     process.env.SKILL_CLI_STATE_DIR = value.state;
     const core = createSkillCliCore({ cwd: value.project, userConfigPath: value.global });
@@ -171,7 +156,7 @@ test("TX-005 a crash at atomic lock publication leaves a live owned guard that i
 test("TX-004 fresh public workspace read never overwrites an unknown declaration edit", async () => {
   const value = await fixture();
   try {
-    await childChange(value.project, value.state, value.global, "marker-committed-after");
+    await expectTransactionCrash(value, registerTeamSource, "marker-committed-after");
     const config = join(value.project, "skill-cli.jsonc");
     await writeFile(config, "{\n  // human edit\n}\n");
     process.env.SKILL_CLI_STATE_DIR = value.state;
@@ -197,7 +182,7 @@ test("TX-002/TX-003 stage, immutable, and marker boundaries are recovered only t
   ]) {
     const value = await fixture();
     try {
-      await childChange(value.project, value.state, value.global, hook);
+      await expectTransactionCrash(value, registerTeamSource, hook);
       process.env.SKILL_CLI_STATE_DIR = value.state;
       await createSkillCliCore({
         cwd: value.project,
@@ -215,7 +200,7 @@ test("TX-002/TX-003 stage, immutable, and marker boundaries are recovered only t
 test("TX-003/ST-003 state replacement crash rolls forward a valid public install and rejects stale generation", async () => {
   const value = await installFixture();
   try {
-    await childInstall(value.project, value.state, value.global, "state-replace-before");
+    await expectTransactionCrash(value, installReview, "state-replace-before");
     const statePath = join(value.state, "state.json");
     await writeFile(
       statePath,
@@ -236,7 +221,7 @@ test("TX-003/ST-003 state replacement crash rolls forward a valid public install
 test("TX-003 state replacement crash rolls installed state forward through an untouched public workspace read", async () => {
   const value = await installFixture();
   try {
-    await childInstall(value.project, value.state, value.global, "state-replace-before");
+    await expectTransactionCrash(value, installReview, "state-replace-before");
     process.env.SKILL_CLI_STATE_DIR = value.state;
     await createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get();
     const state = JSON.parse(await readFile(join(value.state, "state.json"), "utf8"));
@@ -276,7 +261,7 @@ test("TX-003 a legacy migration combined with uninstall rolls forward once and p
         configs: {},
       })}\n`,
     );
-    await childUninstall(value.project, value.state, value.global, "state-replace-before");
+    await expectTransactionCrash(value, uninstallReview, "state-replace-before");
     await writeFile(
       join(value.state, "state.json"),
       JSON.stringify({ version: 1, generation: 9, installed: [], configs: {} }),
@@ -324,7 +309,7 @@ test("TX-003 a crashed legacy migration and uninstall recovers as one v3 generat
         configs: {},
       })}\n`,
     );
-    await childUninstall(value.project, value.state, value.global, "state-replace-before");
+    await expectTransactionCrash(value, uninstallReview, "state-replace-before");
     process.env.SKILL_CLI_STATE_DIR = value.state;
     await createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get();
     expect(JSON.parse(await readFile(join(value.state, "state.json"), "utf8"))).toEqual({
@@ -540,7 +525,7 @@ test("TX-001 unmarked orphan staging is removed by a fresh public workspace oper
 test("TX-004 tampered marker stage or target conflicts before changing any bytes", async () => {
   const value = await fixture();
   try {
-    await childChange(value.project, value.state, value.global, "marker-committed-after");
+    await expectTransactionCrash(value, registerTeamSource, "marker-committed-after");
     const transaction = (await readdir(join(value.state, "transactions"))).find((name) =>
       name.endsWith(".json"),
     )!;
