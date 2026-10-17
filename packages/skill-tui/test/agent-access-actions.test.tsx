@@ -1,16 +1,18 @@
 import { expect, test } from "bun:test";
-import {
-  BoxRenderable,
-  CodeRenderable,
-  ScrollBoxRenderable,
-  SelectRenderable,
-  type BaseRenderable,
-} from "@opentui/core";
+import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import type { TuiCore } from "../src/effects";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
+import {
+  openAgentAccess,
+  press,
+  rowId,
+  selected,
+  settleHighlighting,
+  waitForBody,
+} from "./agent-access-test-controls";
 import {
   enterLive,
   focusLive,
@@ -68,36 +70,12 @@ function projection() {
   };
 }
 
-async function openTree(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
-  await setup.flush();
-  const tree = live(setup, "current-exposure-browser");
-  expect(tree).toBeInstanceOf(ScrollBoxRenderable);
-  return tree as ScrollBoxRenderable;
-}
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
 const rootPathKey = JSON.stringify([["root", null]]);
 const referencePathKey = JSON.stringify([
   ["root", null],
   ["child", { name: "reading", target: "child" }],
 ]);
-const rowId = (key: string) => `current-exposure-browser-row-${encodeURIComponent(key)}`;
-const selected = (setup: Setup, key: string) =>
-  (live(setup, rowId(key)) as BoxRenderable).backgroundColor.a > 0;
-
-async function press(setup: Setup, key: string) {
-  await new Promise<void>((resolve) => {
-    const observed = () => {
-      setup.renderer.keyInput.off("keypress", observed);
-      resolve();
-    };
-    setup.renderer.keyInput.prependListener("keypress", observed);
-    setup.mockInput.pressKey(key);
-  });
-  await setup.flush();
-}
-
 async function palette(setup: Setup) {
   await enterLive(setup, "shell-more-actions");
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
@@ -114,22 +92,6 @@ async function choosePaletteAction(setup: Setup, choices: SelectRenderable, id: 
   expect(choices.getSelectedOption()?.value).toMatchObject({ id, enabled: true });
   await parsedEnter(setup);
   await setup.flush();
-}
-
-async function settleHighlighting(node: BaseRenderable): Promise<void> {
-  if (node instanceof CodeRenderable) await node.highlightingDone;
-  for (const child of node.getChildren()) await settleHighlighting(child);
-}
-
-async function waitForBody(setup: Setup, text: string) {
-  const contains = (node: BaseRenderable): boolean =>
-    (node instanceof CodeRenderable && node.plainText.includes(text)) ||
-    node.getChildren().some(contains);
-  await setup.waitFor(() => contains(setup.renderer.root));
-  await setup.renderOnce();
-  await settleHighlighting(setup.renderer.root);
-  await setup.flush();
-  expect(setup.captureCharFrame()).toContain(text);
 }
 
 test("RENDER Agent access Reference full text is adjacent and scrollable; global Actions preserves its exact update scope", async () => {
@@ -149,7 +111,7 @@ test("RENDER Agent access Reference full text is adjacent and scrollable; global
     { width: 144, height: 16 },
   );
   try {
-    const tree = await openTree(setup);
+    const tree = await openAgentAccess(setup);
     await focusLive(setup, "current-exposure-browser");
     await press(setup, "ARROW_RIGHT");
     expect(tree.content.getChildren()).toHaveLength(2);
@@ -208,7 +170,7 @@ test("RENDER Agent access Reference Enter stays in the tree and optional Details
     { width: 144, height: 24 },
   );
   try {
-    const tree = await openTree(setup);
+    const tree = await openAgentAccess(setup);
     await focusLive(setup, "current-exposure-browser");
     await press(setup, "RETURN");
     expect(tree.content.getChildren()).toHaveLength(2);
@@ -290,7 +252,7 @@ test("RENDER Agent access Reader Update submits only its current Skill despite o
     { width: 144, height: 40 },
   );
   try {
-    await openTree(setup);
+    await openAgentAccess(setup);
     await press(setup, "ARROW_RIGHT");
     await selectTreeName(setup, skillKey("reference"));
     await waitForBody(setup, "Body reference");
@@ -417,7 +379,7 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
     { width: 144, height: 40 },
   );
   try {
-    await openTree(setup);
+    await openAgentAccess(setup);
     const inventory = await openAllInstalledSkills(setup);
     expect(inventory).toBeInstanceOf(SelectRenderable);
     await press(setup, " ");
@@ -562,7 +524,7 @@ test("RENDER Agent access late A content cannot replace selected B or B's Reader
     { width: 144, height: 40 },
   );
   try {
-    await openTree(setup);
+    await openAgentAccess(setup);
     await press(setup, "ARROW_RIGHT");
     await selectTreeName(setup, skillKey("guide"));
     await setup.waitFor(() => reads.length === 1);

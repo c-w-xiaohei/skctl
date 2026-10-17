@@ -1,16 +1,12 @@
 import { expect, test } from "bun:test";
-import {
-  BoxRenderable,
-  CodeRenderable,
-  ScrollBoxRenderable,
-  type BaseRenderable,
-} from "@opentui/core";
+import { BoxRenderable, ScrollBoxRenderable, type BaseRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { ButtonRenderable } from "@tuiparts/core/button";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { focusLive, live, openReaderTab, parsedEnter, parsedEscape } from "./reader-test-controls";
+import { openAgentAccess, press, rowId, selected, waitForBody } from "./agent-access-test-controls";
 
 const rootPathKey = JSON.stringify([["root", null]]);
 const itemName = (index: number) => `edge-skill-${String(index).padStart(3, "0")}`;
@@ -113,48 +109,7 @@ function scrolledDisclosureProjection() {
   };
 }
 
-async function openAgentAccess(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
-  await setup.flush();
-  const tree = live(setup, "current-exposure-browser");
-  expect(tree).toBeInstanceOf(ScrollBoxRenderable);
-  return tree as ScrollBoxRenderable;
-}
-
-type Setup = Awaited<ReturnType<typeof testRender>>;
-const rowId = (key: string) => `current-exposure-browser-row-${encodeURIComponent(key)}`;
 const rows = (tree: ScrollBoxRenderable) => tree.content.getChildren();
-const selected = (setup: Setup, key: string) =>
-  (live(setup, rowId(key)) as BoxRenderable).backgroundColor.a > 0;
-
-async function press(setup: Setup, key: string) {
-  await new Promise<void>((resolve) => {
-    const observed = () => {
-      setup.renderer.keyInput.off("keypress", observed);
-      resolve();
-    };
-    setup.renderer.keyInput.prependListener("keypress", observed);
-    setup.mockInput.pressKey(key);
-  });
-  await setup.flush();
-}
-
-async function settleHighlighting(node: BaseRenderable): Promise<void> {
-  if (node instanceof CodeRenderable) await node.highlightingDone;
-  for (const child of node.getChildren()) await settleHighlighting(child);
-}
-
-async function waitForBody(setup: Setup, text: string) {
-  const contains = (node: BaseRenderable): boolean =>
-    (node instanceof CodeRenderable && node.plainText.includes(text)) ||
-    node.getChildren().some(contains);
-  await setup.waitFor(() => contains(setup.renderer.root));
-  await setup.renderOnce();
-  await settleHighlighting(setup.renderer.root);
-  await setup.flush();
-  expect(setup.captureCharFrame()).toContain(text);
-}
-
 function treeFailure(
   setup: Awaited<ReturnType<typeof testRender>>,
   tree: ScrollBoxRenderable,
