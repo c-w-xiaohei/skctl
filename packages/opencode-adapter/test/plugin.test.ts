@@ -70,26 +70,37 @@ describe("OpenCode plugin", () => {
     expect(continued.system).toEqual([refreshed]);
   });
 
-  test("both hooks fail open and report only once", async () => {
-    const root = await mkdtemp(join(tmpdir(), "skill-cli-adapter-test-"));
-    roots.push(root);
-    process.env.PATH = root;
-    const log = console.error;
-    const diagnostics: string[] = [];
-    console.error = (value) => diagnostics.push(String(value));
-    try {
-      const hooks = await plugin(input(root));
-      const chatOutput = { system: [] as string[] };
-      const compactionOutput = { context: [] as string[], prompt: undefined };
+  test.each(["missing CLI", "nonzero CLI with hostile output"])(
+    "both hooks fail open and report only once for %s",
+    async (failure) => {
+      const root = await mkdtemp(join(tmpdir(), "skill-cli-adapter-test-"));
+      roots.push(root);
+      if (failure === "nonzero CLI with hostile output") {
+        const stderr = `secret-token=very-secret\\000\\001\\037\\177😀${"x".repeat(2048)}`;
+        await writeFile(
+          join(root, "skill-cli"),
+          `#!/bin/sh\n/bin/printf '%s' 'stdout-sensitive-marker'\n/bin/printf '%b' '${stderr}' >&2\nexit 7\n`,
+        );
+        await chmod(join(root, "skill-cli"), 0o755);
+      }
+      process.env.PATH = root;
+      const log = console.error;
+      const diagnostics: string[] = [];
+      console.error = (value) => diagnostics.push(String(value));
+      try {
+        const hooks = await plugin(input(root));
+        const chatOutput = { system: [] as string[] };
+        const compactionOutput = { context: [] as string[], prompt: undefined };
 
-      await hooks["experimental.chat.system.transform"]!({ model: {} as never }, chatOutput);
-      await hooks["experimental.session.compacting"]!({ sessionID: "session" }, compactionOutput);
+        await hooks["experimental.chat.system.transform"]!({ model: {} as never }, chatOutput);
+        await hooks["experimental.session.compacting"]!({ sessionID: "session" }, compactionOutput);
 
-      expect(chatOutput.system).toEqual([]);
-      expect(compactionOutput.context).toEqual([]);
-      expect(diagnostics).toEqual(["skill-cli managed catalog is unavailable"]);
-    } finally {
-      console.error = log;
-    }
-  });
+        expect(chatOutput.system).toEqual([]);
+        expect(compactionOutput.context).toEqual([]);
+        expect(diagnostics).toEqual(["skill-cli managed catalog is unavailable"]);
+      } finally {
+        console.error = log;
+      }
+    },
+  );
 });

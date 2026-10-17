@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
-import {
-  createProcessClient,
-  redactDiagnostic,
-  type ChildProcess,
-  type ProcessRunner,
-} from "../src/process.ts";
+import { createProcessClient, type ChildProcess, type ProcessRunner } from "../src/process.ts";
 
 const encoder = new TextEncoder();
 const catalog =
@@ -204,18 +199,5 @@ describe("process client", () => {
       globalThis.setTimeout = set;
       globalThis.clearTimeout = clear;
     }
-  });
-
-  test("redacts and truncates diagnostics", () => {
-    const diagnostic = redactDiagnostic(
-      `${"😀秘密".repeat(2_000)} Authorization: Bearer secret /tmp/secret %TEMP%\\secret`,
-    );
-    expect(encoder.encode(diagnostic).byteLength).toBeLessThanOrEqual(4096);
-    expect(diagnostic).toEndWith(" [truncated]");
-    expect(diagnostic).not.toMatch(/secret|\/tmp\/|%temp%/i);
-  });
-
-  test("replaces control characters in diagnostics without changing Unicode", () => {
-    expect(redactDiagnostic("a\u0000b\n\u007fc😀")).toBe("a b  c😀");
   });
 });

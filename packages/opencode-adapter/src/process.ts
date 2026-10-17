@@ -212,46 +212,6 @@ function text(bytes: Uint8Array): string {
   }
 }
 
-const diagnosticLimit = 4096;
-const truncatedMarker = " [truncated]";
-
-function truncateDiagnostic(value: string, limit: number): string {
-  if (Buffer.byteLength(value) <= limit) return value;
-  const contentLimit = limit - Buffer.byteLength(truncatedMarker);
-  let output = "";
-  let length = 0;
-  for (const character of value) {
-    const characterLength = Buffer.byteLength(character);
-    if (length + characterLength > contentLimit) break;
-    output += character;
-    length += characterLength;
-  }
-  return `${output}${truncatedMarker}`;
-}
-
-export function redactDiagnostic(value: string, limit = diagnosticLimit): string {
-  const redacted = value
-    // oxlint-disable-next-line no-control-regex -- Diagnostics intentionally replace ASCII controls.
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(
-      /"(?:[a-z]:[\\/][^"\r\n]*?[\\/]appdata[\\/]local[\\/]temp|%(?:temp|tmp)%)[\\/][^"\r\n]*"/gi,
-      '"[temp]"',
-    )
-    .replace(
-      /(?:[a-z]:[\\/][^\r\n;]*?[\\/]appdata[\\/]local[\\/]temp|%(?:temp|tmp)%)[\\/][^\r\n;]*?(?=\s+[a-z][\w-]*=|;|$)/gi,
-      "[temp]",
-    )
-    .replace(/https?:\/\/[^\s/@]+:[^\s/@]+@/gi, "https://[redacted]@")
-    .replace(/\bbearer\s+[^\s]+/gi, "[redacted]")
-    .replace(
-      /\b(?:authorization|token|api[-_]?key|cookie|set-cookie)\s*[:=]\s*[^\s]+/gi,
-      "[redacted]",
-    )
-    .replace(/\b\w+\s*=\s*(?:bearer\s+)?[^\s]+/gi, "[redacted]")
-    .replace(/(?:\/tmp\/|\/var\/folders\/)[^\s]+/g, "[temp]");
-  return truncateDiagnostic(redacted, limit);
-}
-
 export function createProcessClient(options: ProcessClientOptions = {}) {
   const env = { ...process.env, ...options.env };
   const path = options.path ?? env.PATH ?? "";
