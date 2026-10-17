@@ -36,7 +36,11 @@ test("READ-001/005/006 reads undisclosed installed content structurally and clas
           path: "data.bin",
         })
       ).value,
-    ).toMatchObject({ kind: "not-text", reason: "binary" });
+    ).toMatchObject({
+      kind: "not-text",
+      reason: "binary",
+      metadata: { path: "data.bin", kind: "file", size: 3 },
+    });
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });
@@ -174,6 +178,13 @@ test("READ-004/005/006/011 structural resources are live, deterministic, bounded
         })
       ).value,
     ).toMatchObject({ kind: "not-text", reason: "binary" });
+    setContentHookForTest(async () => {
+      await writeFile(join(skill, "a.txt"), Buffer.alloc(1_048_577, "x"));
+    });
+    await expect(
+      core.content.readInstalled({ address: { source: "local", path: "tree" }, path: "a.txt" }),
+    ).rejects.toMatchObject({ code: "TEXT_TOO_LARGE" });
+    setContentHookForTest();
     for (const path of ["../SKILL.md", "/etc/passwd", "nested\\z.md", "bad\0name"])
       await expect(
         core.content.readInstalled({ address: { source: "local", path: "tree" }, path }),
@@ -184,7 +195,13 @@ test("READ-004/005/006/011 structural resources are live, deterministic, bounded
     ).rejects.toMatchObject({ code: "UNSUPPORTED_ENTRY" });
     await expect(
       core.content.readInstalled({ address: { source: "local", path: "tree" }, path: "link" }),
-    ).resolves.toMatchObject({ value: { kind: "not-text", reason: "unsupported" } });
+    ).resolves.toMatchObject({
+      value: {
+        kind: "not-text",
+        reason: "unsupported",
+        metadata: { path: "link", kind: "symlink" },
+      },
+    });
     await rm(join(skill, "link"));
     let deep = skill;
     for (let index = 0; index < 33; index += 1) {
@@ -195,6 +212,7 @@ test("READ-004/005/006/011 structural resources are live, deterministic, bounded
       core.content.listInstalledResources({ address: { source: "local", path: "tree" } }),
     ).rejects.toMatchObject({ code: "TEXT_TOO_LARGE" });
   } finally {
+    setContentHookForTest();
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }

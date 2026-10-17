@@ -237,44 +237,25 @@ export function createContent(_factory: CoreFactoryOptions): ContentCapability {
         const { candidate: file, stat: metadata } = await safeEntry(found.root, request.path);
         cancelled(options);
         if (!metadata) throw new SkillCliError("RESOURCE_NOT_FOUND", "Resource not found");
+        const notText = (
+          reason: "unsupported" | "too-large" | "binary",
+          metadata: ResourceDescriptor,
+        ) => ({
+          value: { kind: "not-text" as const, path: request.path, reason, metadata },
+          diagnostics: [],
+        });
         if (!metadata.isFile() || metadata.isSymbolicLink())
-          return {
-            value: {
-              kind: "not-text" as const,
-              path: request.path,
-              reason: "unsupported" as const,
-              metadata: {
-                path: request.path,
-                kind: metadata.isSymbolicLink() ? "symlink" : "directory",
-              },
-            },
-            diagnostics: [],
-          };
+          return notText("unsupported", {
+            path: request.path,
+            kind: metadata.isSymbolicLink() ? "symlink" : "directory",
+          });
         const resource = descriptor(request.path, metadata);
-        if (metadata.size > 1_048_576)
-          return {
-            value: {
-              kind: "not-text" as const,
-              path: request.path,
-              reason: "too-large" as const,
-              metadata: resource,
-            },
-            diagnostics: [],
-          };
+        if (metadata.size > 1_048_576) return notText("too-large", resource);
         await contentSignal("reader-before-read");
         cancelled(options);
         const bytes = await readFile(file);
         cancelled(options);
-        if (bytes.includes(0))
-          return {
-            value: {
-              kind: "not-text" as const,
-              path: request.path,
-              reason: "binary" as const,
-              metadata: resource,
-            },
-            diagnostics: [],
-          };
+        if (bytes.includes(0)) return notText("binary", resource);
         try {
           return {
             value: {
@@ -287,15 +268,7 @@ export function createContent(_factory: CoreFactoryOptions): ContentCapability {
           };
         } catch (error) {
           if (error instanceof SkillCliError && error.code === "INVALID_UTF8")
-            return {
-              value: {
-                kind: "not-text" as const,
-                path: request.path,
-                reason: "binary" as const,
-                metadata: resource,
-              },
-              diagnostics: [],
-            };
+            return notText("binary", resource);
           throw error;
         }
       });
