@@ -82,12 +82,17 @@ test("supervision forwards termination, awaits child status and removes listener
     },
     signals,
   );
+  const lateForward = signals.listeners("SIGTERM")[0];
+  expect(lateForward).toBeDefined();
   signals.emit("SIGTERM");
   expect(received).toEqual(["SIGTERM"]);
   expect(signals.listenerCount("SIGTERM")).toBe(1);
   finish(143);
   expect(await result).toBe(143);
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
+  lateForward?.();
+  signals.emit("SIGTERM");
+  expect(received).toEqual(["SIGTERM"]);
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGWINCH"])
     expect(signals.listenerCount(signal)).toBe(0);
   expect(
     await superviseTui({ exited: Promise.resolve(7), signalCode: null, kill: () => {} }, signals),
@@ -98,6 +103,18 @@ test("supervision forwards termination, awaits child status and removes listener
       signals,
     ),
   ).toBe(143);
+  expect(
+    await superviseTui({ exited: Promise.resolve(0), signalCode: 35, kill: () => {} }, signals),
+  ).toBe(163);
+  expect(
+    await superviseTui({ exited: Promise.resolve(7), signalCode: 35, kill: () => {} }, signals),
+  ).toBe(7);
+  expect(
+    await superviseTui({ exited: Promise.resolve(0), signalCode: 0, kill: () => {} }, signals),
+  ).toBe(0);
+  expect(
+    await superviseTui({ exited: Promise.resolve(0), signalCode: null, kill: () => {} }, signals),
+  ).toBe(0);
   await expect(
     superviseTui(
       { exited: Promise.reject(new Error("wait failed")), signalCode: null, kill: () => {} },
