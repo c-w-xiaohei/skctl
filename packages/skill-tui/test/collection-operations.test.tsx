@@ -346,7 +346,7 @@ test("Collection Create is keyboard-editable and submits its exact typed value",
   }
 });
 
-test("fixed Config Collection Create retains its ID through same-mounted error and retry", async () => {
+test("fixed-level Collection Create retains its editable ID through same-mounted error and retry", async () => {
   const submitted: unknown[] = [];
   const form = await renderReactiveForm((state) => (
     <CollectionCreateOverlay
@@ -756,48 +756,7 @@ test("Link and Collection Use drafts are keyboard-editable and emit their exact 
   }
 });
 
-test("Create and Membership retain the same mounted input and exact retry draft", async () => {
-  const created: unknown[] = [];
-  const create = await renderReactiveForm((state) => (
-    <CollectionCreateOverlay
-      level="project"
-      collection=""
-      pending={state().pending}
-      error={state().error}
-      onSubmit={(value) => created.push(value)}
-      onCancel={() => {}}
-    />
-  ));
-  try {
-    await create.setup.waitFor(
-      () => create.setup.renderer.currentFocusedRenderable?.id === "collection-create-id",
-    );
-    const id = input(create.setup, "collection-create-id");
-    await create.setup.mockInput.pressKeys(["t", "e", "a", "m"]);
-    create.setup.mockInput.pressKey("TAB");
-    await create.setup.renderOnce();
-    const submit = await retryChoice(create.setup, "collection-create-submit");
-    expect(create.setup.renderer.currentFocusedRenderable).toBe(submit);
-    create.patch({ error: { code: "WRITE_FAILED", message: "retry" } });
-    await create.setup.renderOnce();
-    expect(input(create.setup, "collection-create-id")).toBe(id);
-    expect(id.value).toBe("team");
-    const retrySubmit = liveRenderable(create.setup, "collection-create-submit");
-    expect(retrySubmit).toBe(submit);
-    expect(create.setup.renderer.currentFocusedRenderable).toBe(retrySubmit);
-    create.patch({ error: undefined });
-    await create.setup.renderOnce();
-    const finalSubmit = liveRenderable(create.setup, "collection-create-submit");
-    expect(finalSubmit).toBe(submit);
-    expect(create.setup.renderer.currentFocusedRenderable).toBe(finalSubmit);
-    create.setup.mockInput.pressEnter();
-    expect(created).toEqual([
-      { level: "project", collection: "team" },
-      { level: "project", collection: "team" },
-    ]);
-  } finally {
-    create.setup.renderer.destroy();
-  }
+test("Membership retains the same mounted input and exact retry draft", async () => {
   const previews: unknown[] = [];
   const member = await renderReactiveForm((state) => (
     <MembershipAddOverlay
