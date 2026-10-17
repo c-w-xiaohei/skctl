@@ -1,68 +1,51 @@
 import { expect, test } from "bun:test";
-import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
+import {
+  BoxRenderable,
+  ScrollBoxRenderable,
+  SelectRenderable,
+  TextRenderable,
+} from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
-import { exposurePathKey } from "../src/collections/state";
+import { exposureTreePathKey } from "../src/collections/agent-access-tree";
+import { skillAddressKey } from "../src/types";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerAddress, readerContent, readerProjection } from "./installed-reader.fixture";
 import {
-  enterReaderDetailsAction,
-  enterReaderDetailsRelationship,
   enterInstalledAddress,
   enterLive,
   live,
+  openAllInstalledSkills,
+  openReaderTab,
+  parsedEnter,
   parsedEscape,
+  selectedReaderTab,
 } from "./reader-test-controls";
 
-const exposureOwner = {
-  level: "project" as const,
-  file: "/workspace/skill-cli/skill-cli.jsonc",
-  pointer: "/use/0",
-};
-const collectionOwner = { ...exposureOwner, pointer: "/collections/engineering" };
-
-function exposureProjection() {
+test("Reader action and selector relationship return from the exposure Tree to their exact physical commands", async () => {
   const base = readerProjection();
-  const configs = base.configs.map((config) =>
-    config.level === "project"
-      ? {
-          ...config,
-          direct: {
-            ...config.direct,
-            collections: [{ id: "engineering", owner: collectionOwner }],
-            collectionUse: [{ collection: "engineering", owner: exposureOwner }],
-          },
-        }
-      : config,
-  );
   const effective = base.effective;
   if (effective.status !== "complete") throw new Error("Expected complete fixture projection");
-  const installedSkills = base.installedSkills.map((skill) =>
-    skill.address.path === readerAddress.path && skill.address.source === readerAddress.source
-      ? {
-          ...skill,
-          description: "Reader return context. ".repeat(160),
-          selectorViews: {
-            status: "complete" as const,
-            values: [
-              {
-                selector: "guide",
-                collection: "engineering",
-                entry: "guide",
-                paths: [],
-                exposurePaths: [
-                  { owner: exposureOwner, segments: [{ collection: "engineering" }] },
-                ],
-                useOwners: [exposureOwner],
-              },
-            ],
-          },
-        }
-      : skill,
-  );
-  return {
+  const exposureOwner = {
+    level: "project" as const,
+    file: "/workspace/skill-cli/skill-cli.jsonc",
+    pointer: "/use/0",
+  };
+  const collectionOwner = { ...exposureOwner, pointer: "/collections/engineering" };
+  const projection = {
     ...base,
-    configs,
+    configs: base.configs.map((config) =>
+      config.level === "project"
+        ? {
+            ...config,
+            direct: {
+              ...config.direct,
+              collections: [{ id: "engineering", owner: collectionOwner }],
+              collectionUse: [{ collection: "engineering", owner: exposureOwner }],
+            },
+          }
+        : config,
+    ),
     effective: {
       ...effective,
       collections: ["engineering"],
@@ -80,97 +63,132 @@ function exposureProjection() {
         },
       ],
     },
-    installedSkills,
-  };
-}
-
-for (const invocation of [
-  {
-    name: "Reader Details action",
-    enter: async (setup: Awaited<ReturnType<typeof testRender>>) =>
-      enterReaderDetailsAction(setup, "skill-open-collection-use"),
-  },
-  {
-    name: "Reader selector relationship",
-    enter: async (setup: Awaited<ReturnType<typeof testRender>>) =>
-      enterReaderDetailsRelationship(setup, "selectors"),
-  },
-]) {
-  test(`${invocation.name} returns Collection exposure Back to the initiating physical command`, async () => {
-    const projection = exposureProjection();
-    let contentReads = 0;
-    const setup = await testRender(
-      () => (
-        <App
-          core={directSourceCore(projection, {
-            loadInstalled: async (request) => {
-              contentReads++;
-              return {
-                value: { ...readerContent, address: request.address },
-                diagnostics: [],
-              };
+    installedSkills: [
+      {
+        ...base.installedSkills[0]!,
+        description: "Reader return context. ".repeat(160),
+        selectorViews: {
+          status: "complete" as const,
+          values: [
+            {
+              selector: "guide",
+              collection: "engineering",
+              entry: "guide",
+              paths: [],
+              exposurePaths: [{ owner: exposureOwner, segments: [{ collection: "engineering" }] }],
+              useOwners: [exposureOwner],
             },
-          })}
-          exit={() => {}}
-        />
-      ),
-      { width: 120, height: 40 },
+          ],
+        },
+      },
+    ],
+  };
+  let contentReads = 0;
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(projection, {
+          loadInstalled: async () => {
+            contentReads++;
+            return { value: readerContent, diagnostics: [] };
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await openAllInstalledSkills(setup);
+    await enterInstalledAddress(setup, readerAddress);
+    await openReaderTab(setup, 2);
+    await parsedEnter(setup);
+    await setup.flush();
+    setup.mockInput.pressArrow("right");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-description-toggle",
     );
-    try {
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
-      );
-      await enterInstalledAddress(setup, readerAddress);
-      await enterLive(setup, "skill-inspector-open-reader");
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("reader-tabs-tab-details"),
-      );
-      const detailsTab = live(setup, "reader-tabs-tab-details");
-      await setup.renderOnce();
-      await setup.mockMouse.click(detailsTab.screenX + 1, detailsTab.screenY);
-      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
+    await parsedEnter(setup);
+    await enterLive(setup, "reader-tabs-tab-details");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
+    const initialDetails = live(setup, "reader-details") as ScrollBoxRenderable;
+    await setup.flush();
+    await setup.mockMouse.scroll(initialDetails.screenX + 1, initialDetails.screenY + 1, "down");
+    await setup.waitFor(() => initialDetails.scrollTop > 0);
+    for (const id of [
+      "reader-description-toggle",
+      "reader-details-relationship-source",
+      "reader-details-relationship-config",
+      "reader-details-relationship-selectors",
+      "reader-details-metadata",
+      "reader-details-manage",
+    ]) {
+      setup.mockInput.pressArrow("right");
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
+    }
+    await parsedEnter(setup);
+    for (const [key, path] of [
+      [
+        "ARROW_DOWN",
+        [
+          "reader-reload",
+          "reader-details-action-skill-add-to-collection",
+          "reader-details-action-skill-open-collection-use",
+        ],
+      ],
+      [
+        "ARROW_UP",
+        [
+          "reader-details-action-skill-add-to-collection",
+          "reader-reload",
+          "reader-details-manage",
+          "reader-details-metadata",
+          "reader-details-relationship-selectors",
+        ],
+      ],
+    ] as const) {
+      const initiatingId = path.at(-1)!;
+      for (const id of path) {
+        setup.mockInput.pressKey(key);
+        await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
+      }
+      await setup.flush();
       const details = live(setup, "reader-details") as ScrollBoxRenderable;
-      await setup.renderOnce();
-      const initiatingId =
-        invocation.name === "Reader Details action"
-          ? "reader-details-action-skill-open-collection-use"
-          : "reader-details-relationship-selectors";
-      details.scrollChildIntoView(initiatingId);
-      await setup.renderOnce();
-      await setup.mockMouse.scroll(details.screenX + 1, details.screenY + 1, "down");
-      await setup.renderOnce();
+      await setup.mockMouse.scroll(
+        details.screenX + 1,
+        details.screenY + 1,
+        key === "ARROW_DOWN" ? "down" : "up",
+      );
+      await setup.flush();
       const savedScroll = details.scrollTop;
       expect(savedScroll).toBeGreaterThan(0);
-
-      await invocation.enter(setup);
+      await parsedEnter(setup);
       await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("current-exposure-browser"),
+        () => setup.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
       );
-      expect(
-        (live(setup, "current-exposure-browser") as SelectRenderable).getSelectedOption()?.value,
-      ).toBe(exposurePathKey({ segments: [{ collection: "engineering" }] }));
+      expect(live(setup, "current-exposure-browser")).toBeInstanceOf(ScrollBoxRenderable);
+      const rowId = `current-exposure-browser-row-${encodeURIComponent(
+        exposureTreePathKey({ segments: [{ collection: "engineering" }] }),
+      )}`;
+      await setup.waitFor(() => (live(setup, rowId) as BoxRenderable).backgroundColor.a > 0);
+      expect((live(setup, `${rowId}-name`) as TextRenderable).plainText.trim()).toBe("engineering");
+      expect(live(setup, "current-exposure-browser").focused).toBe(true);
+      expect(setup.captureCharFrame()).toContain("engineering");
       await parsedEscape(setup);
-
-      await setup.waitFor(
-        () =>
-          setup.renderer.currentFocusedRenderable?.id ===
-          (invocation.name === "Reader Details action"
-            ? "reader-details-action-skill-open-collection-use"
-            : "reader-details-relationship-selectors"),
-      );
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe(
-        invocation.name === "Reader Details action"
-          ? "reader-details-action-skill-open-collection-use"
-          : "reader-details-relationship-selectors",
-      );
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === initiatingId);
+      await setup.flush();
       expect(setup.renderer.currentFocusedRenderable?.focused).toBe(true);
-      expect(live(setup, "reader-details")).toBeInstanceOf(ScrollBoxRenderable);
       expect((live(setup, "reader-details") as ScrollBoxRenderable).scrollTop).toBe(savedScroll);
       expect(setup.renderer.root.findDescendantById("reader-tabs-viewport")).toBeDefined();
-      expect(setup.captureCharFrame()).toContain(`${readerAddress.source}/${readerAddress.path}`);
+      expect(selectedReaderTab(setup)).toBe(2);
+      expect(
+        (live(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value,
+      ).toBe(skillAddressKey(readerAddress));
+      expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
+      expect(setup.captureCharFrame()).toContain("guide");
       expect(contentReads).toBe(1);
-    } finally {
-      setup.renderer.destroy();
     }
-  });
-}
+  } finally {
+    setup.renderer.destroy();
+  }
+});

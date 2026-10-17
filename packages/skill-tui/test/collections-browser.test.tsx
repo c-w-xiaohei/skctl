@@ -1226,7 +1226,7 @@ test("RENDER unavailable Agent access routes to authoritative Problems without i
   }
 });
 
-test("RENDER empty Agent Collection Enter stays in the tree and explicit Details returns to that tree", async () => {
+test("RENDER empty Agent Collection Enter stays in the tree and explicit Details returns to its command", async () => {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
   const owner = {
@@ -1286,8 +1286,9 @@ test("RENDER empty Agent Collection Enter stays in the tree and explicit Details
     );
     await parsedEscape(setup);
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
+      () => setup.renderer.currentFocusedRenderable?.id === "agent-access-collection-details",
     );
+    expect(setup.renderer.currentFocusedRenderable?.focused).toBe(true);
     expect(setup.captureCharFrame()).toContain("Agent access");
     expect(setup.renderer.root.findDescendantById("collection-browser")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("current-exposure-browser")).toBeInstanceOf(
