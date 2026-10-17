@@ -478,24 +478,50 @@ test("UPDATES controller rebases checked public facts per source without blockin
 test("UPDATES controller teardown never publishes a late fulfilled update", async () => {
   const initial = projection(["first"]);
   const state = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
-  state.observe(observation("first", ["guide"]));
+  state.toggle({ source: "first", path: "guide" });
   const pending = deferred<{ value: undefined; diagnostics: [] }>();
+  const started = deferred<void>();
+  let signal: AbortSignal | undefined;
+  let reads = 0;
+  const published: ManagementProjection[] = [];
   const controller = createUpdateController(
     {
-      workspace: { get: async () => ({ value: initial, diagnostics: [] }) },
+      workspace: {
+        get: async () => {
+          reads++;
+          return { value: initial, diagnostics: [] };
+        },
+      },
       management: {
-        checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
-        update: () => pending.promise,
+        checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
+        update: (_request, options) => {
+          signal = options?.signal;
+          started.resolve();
+          return pending.promise;
+        },
       },
     },
     state,
+    { onProjection: (snapshot) => published.push(snapshot) },
   );
   const running = controller.submit();
-  await Promise.resolve();
+  await started.promise;
+  expect(controller.active()).toBe(true);
+  expect(signal?.aborted).toBe(false);
+  expect(reads).toBe(2);
+  const before = { run: controller.run(), groups: state.groups(), selected: state.selected() };
   controller.teardown();
+  expect(signal?.aborted).toBe(true);
+  expect(controller.active()).toBe(false);
   pending.resolve({ value: undefined, diagnostics: [] });
-  await running;
-  expect(state.group("first")?.status).toBe("updating");
+  expect(await running).toBe(false);
+  expect(reads).toBe(2);
+  expect(published).toEqual([]);
+  expect(controller.run()).toBe(before.run);
+  expect(state.groups()).toBe(before.groups);
+  expect(state.selected()).toBe(before.selected);
+  expect(state.group("first")?.committed).toBeUndefined();
+  expect(controller.active()).toBe(false);
 });
 
 test("UPDATES effects own one persistent same-scope draft and do not check automatically", async () => {
@@ -983,238 +1009,4 @@ test("UPDATES controller forwards Core's captured baseline unchanged", async () 
     exactRevision: "a".repeat(40),
     expectedBaseline: "captured-baseline",
   });
-});
-
-test("UPDATES review snapshots an explicit workspace subset without changing the draft", async () => {
-  const snapshot = projection(["first"], ["guide", "reference"]);
-  const core = directSourceCore(snapshot);
-  const effects = testEffects({
-    ...core,
-    management: {
-      ...core.management,
-      checkUpdate: async () => ({
-        value: observation("first", ["guide", "reference"]),
-        diagnostics: [],
-      }),
-    },
-  });
-  const workspace = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
-  await effects.checkUpdates();
-  workspace.toggle({ source: "first", path: "reference" });
-  const before = workspace.selected();
-  const review = await effects.reviewUpdates([{ source: "first", path: "guide" }]);
-  expect(review?.addresses).toEqual([{ source: "first", path: "guide" }]);
-  expect(review?.excluded).toEqual([{ source: "first", path: "reference" }]);
-  expect(Object.isFrozen(review)).toBe(true);
-  expect(Object.isFrozen(review?.addresses)).toBe(true);
-  expect(workspace.selected()).toEqual(before);
-});
-
-test("UPDATES review accepts an explicit whole-Source list while Source precision draft stays empty", async () => {
-  const snapshot = projection(["first"], ["guide", "reference", "third"]);
-  const core = directSourceCore(snapshot);
-  const effects = testEffects({
-    ...core,
-    management: {
-      ...core.management,
-      checkUpdate: async () => ({
-        value: observation("first", ["guide", "reference", "third"]),
-        diagnostics: [],
-      }),
-    },
-  });
-  const source = effects.selectUpdatesScope({ kind: "source", source: "first" }, snapshot)!;
-  await effects.checkUpdates();
-  const review = await effects.reviewUpdates([
-    { source: "first", path: "guide" },
-    { source: "first", path: "reference" },
-    { source: "first", path: "third" },
-  ]);
-  expect(review?.addresses).toHaveLength(3);
-  expect(source.selected()).toEqual([]);
-});
-
-test("UPDATES explicit Source review works without a mounted Updates draft", async () => {
-  const snapshot = projection(["first"], ["guide", "reference", "third"]);
-  const core = directSourceCore(snapshot);
-  const effects = testEffects({
-    ...core,
-    management: {
-      ...core.management,
-      checkUpdate: async () => ({
-        value: observation("first", ["guide", "reference", "third"]),
-        diagnostics: [],
-      }),
-    },
-  });
-  await effects.refresh();
-  await effects.startUpdateChecks(snapshot);
-  for (
-    let attempt = 0;
-    attempt < 20 && effects.updateCheck("first")?.status !== "changed";
-    attempt++
-  )
-    await Promise.resolve();
-  expect(effects.updateCheck("first")?.status).toBe("changed");
-  expect(effects.sourceReviewAvailability("first")).toMatchObject({ available: true });
-  const review = await effects.reviewSourceUpdates("first");
-  expect(review?.scope).toEqual({ kind: "source", source: "first" });
-  expect(review?.addresses).toHaveLength(3);
-  expect(effects.updates()).toBeUndefined();
-});
-
-test("UPDATES discarded review cannot execute and never mutates Core", async () => {
-  const snapshot = projection(["first"]);
-  const updates: unknown[] = [];
-  const core = directSourceCore(snapshot);
-  const effects = testEffects({
-    ...core,
-    management: {
-      ...core.management,
-      checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
-      update: async (request) => {
-        updates.push(request);
-        return { value: undefined, diagnostics: [] };
-      },
-    },
-  });
-  effects.selectUpdatesScope({ kind: "workspace" }, snapshot);
-  await effects.checkUpdates();
-  const review = await effects.reviewUpdates([{ source: "first", path: "guide" }]);
-  expect(review).toBeDefined();
-  effects.discardUpdateReview(review!);
-  expect(await effects.submitReviewedUpdates(review!)).toBe(false);
-  expect(updates).toEqual([]);
-});
-
-test("UPDATES reviewed partial batch preserves only its fulfilled source as committed", async () => {
-  const snapshot = projection(["first", "second"]);
-  const core = directSourceCore(snapshot);
-  const effects = testEffects({
-    ...core,
-    workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    management: {
-      ...core.management,
-      checkUpdate: async ({ source }) => ({
-        value: observation(source, ["guide"]),
-        diagnostics: [],
-      }),
-      update: async ({ source }) => {
-        if (source === "second") throw new Error("second failed");
-        return { value: undefined, diagnostics: [] };
-      },
-    },
-  });
-  const state = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
-  await effects.checkUpdates();
-  const review = await effects.reviewUpdates([
-    { source: "first", path: "guide" },
-    { source: "second", path: "guide" },
-  ]);
-  expect(await effects.submitReviewedUpdates(review!)).toBe(true);
-  expect(state.group("first")?.committed).toBe(true);
-  expect(state.group("second")?.committed).toBeUndefined();
-  expect(state.group("second")?.status).toBe("partial");
-});
-
-test("UPDATES stopping a reviewed batch marks its initiating draft unknown without retargeting navigation", async () => {
-  const snapshot = projection(["first", "second"]);
-  const pending = deferred<{ value: undefined; diagnostics: [] }>();
-  let markStarted!: () => void;
-  const started = new Promise<void>((resolve) => (markStarted = resolve));
-  const core = directSourceCore(snapshot);
-  const effects = testEffects({
-    ...core,
-    workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    management: {
-      ...core.management,
-      checkUpdate: async ({ source }) => ({
-        value: observation(source, ["guide"]),
-        diagnostics: [],
-      }),
-      update: () => {
-        markStarted();
-        return pending.promise;
-      },
-    },
-  });
-  const workspace = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
-  await effects.checkUpdates();
-  const review = await effects.reviewUpdates([{ source: "first", path: "guide" }]);
-  const running = effects.submitReviewedUpdates(review!);
-  await started;
-  effects.selectUpdatesScope({ kind: "source", source: "second" }, snapshot);
-  expect(effects.stopUpdates()).toBe(true);
-  pending.reject(new SkillCliError("CANCELLED", "cancelled"));
-  await running;
-  expect(workspace.group("first")?.status).toBe("cancelled");
-  expect(workspace.selected()).toEqual([{ source: "second", path: "guide" }]);
-});
-
-test("UPDATES reviewed Stop mirrors later reviewed source as not-run without calling it", async () => {
-  const snapshot = projection(["first", "second"]);
-  const pending = deferred<{ value: undefined; diagnostics: [] }>();
-  let started!: () => void;
-  const firstStarted = new Promise<void>((resolve) => (started = resolve));
-  const calls: string[] = [];
-  const core = directSourceCore(snapshot);
-  const effects = testEffects({
-    ...core,
-    workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    management: {
-      ...core.management,
-      checkUpdate: async ({ source }) => ({
-        value: observation(source, ["guide"]),
-        diagnostics: [],
-      }),
-      update: ({ source }) => {
-        calls.push(source);
-        if (source === "first") {
-          started();
-          return pending.promise;
-        }
-        return Promise.resolve({ value: undefined, diagnostics: [] });
-      },
-    },
-  });
-  const owner = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
-  await effects.checkUpdates();
-  const review = await effects.reviewUpdates([
-    { source: "first", path: "guide" },
-    { source: "second", path: "guide" },
-  ]);
-  const running = effects.submitReviewedUpdates(review!);
-  await firstStarted;
-  effects.stopUpdates();
-  pending.reject(new SkillCliError("CANCELLED", "cancelled"));
-  await running;
-  expect(calls).toEqual(["first"]);
-  expect(owner.group("first")?.status).toBe("cancelled");
-  expect(owner.group("second")?.status).toBe("not-run");
-});
-
-test("UPDATES reviewed success transfers workspace refresh failure detail", async () => {
-  const snapshot = projection(["first"]);
-  const core = directSourceCore(snapshot);
-  let reads = 0;
-  const effects = testEffects({
-    ...core,
-    workspace: {
-      get: async () => {
-        if (++reads === 2) throw new Error("refresh unavailable");
-        return { value: snapshot, diagnostics: [] };
-      },
-    },
-    management: {
-      ...core.management,
-      checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
-      update: async () => ({ value: undefined, diagnostics: [] }),
-    },
-  });
-  const owner = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
-  await effects.checkUpdates();
-  const review = await effects.reviewUpdates([{ source: "first", path: "guide" }]);
-  expect(await effects.submitReviewedUpdates(review!)).toBe(true);
-  expect(owner.group("first")?.committed).toBe(true);
-  expect(owner.group("first")?.committedMessage).toContain("Workspace is stale");
 });

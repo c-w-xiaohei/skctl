@@ -40,10 +40,12 @@ function fixture(sources = ["team-main"], paths = ["first", "second"]) {
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((yes) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
     resolve = yes;
+    reject = no;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 test("quiet updates start with no selection, check missing Sources and submit exact revisions", async () => {
@@ -201,10 +203,49 @@ test("Stop during checking prevents mutation and keeps not-run targets for expli
   expect(controller.retryable()).toEqual(snapshot.installedSkills.map((skill) => skill.address));
 });
 
-test("Stop after fulfilled publication retains the committed receipt and skips later Sources", async () => {
+test.each(["fulfilled", "rejected"] as const)(
+  "Stop after %s mutation skips later Sources without inventing rollback",
+  async (outcome) => {
+    const { snapshot, observation } = fixture(["first-source", "second-source"], ["guide"]);
+    const pending = deferred<{ value: undefined; diagnostics: [] }>();
+    const started = deferred<void>();
+    const state = createUpdatesState(buildUpdateScope(snapshot, { kind: "workspace" }));
+    const calls: string[] = [];
+    const controller = createUpdateController(
+      {
+        workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
+        management: {
+          checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
+          update: ({ source }) => {
+            calls.push(source);
+            started.resolve();
+            return pending.promise;
+          },
+        },
+      },
+      state,
+    );
+    const request = controller.submit();
+    await started.promise;
+    controller.stop();
+    if (outcome === "fulfilled") pending.resolve({ value: undefined, diagnostics: [] });
+    else pending.reject(new SkillCliError("CANCELLED", "cancelled"));
+    expect(await request).toBe(false);
+    expect(calls).toEqual(["first-source"]);
+    expect(controller.run()?.results.map((result) => result.status)).toEqual([
+      outcome === "fulfilled" ? "updated" : "unknown",
+      "not-run",
+    ]);
+    expect(state.group("first-source")?.status).toBe(
+      outcome === "fulfilled" ? "succeeded" : "cancelled",
+    );
+    expect(state.group("first-source")?.committed).toBe(outcome === "fulfilled" ? true : undefined);
+    expect(controller.retryable()).toEqual([{ source: "second-source", path: "guide" }]);
+  },
+);
+
+test("a fulfilled Source stays committed when the next mutation is unknown and neither is retried", async () => {
   const { snapshot, observation } = fixture(["first-source", "second-source"], ["guide"]);
-  const pending = deferred<{ value: undefined; diagnostics: [] }>();
-  const started = deferred<void>();
   const state = createUpdatesState(buildUpdateScope(snapshot, { kind: "workspace" }));
   const calls: string[] = [];
   const controller = createUpdateController(
@@ -212,33 +253,9 @@ test("Stop after fulfilled publication retains the committed receipt and skips l
       workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
       management: {
         checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
-        update: ({ source }) => {
+        update: async ({ source }) => {
           calls.push(source);
-          started.resolve();
-          return pending.promise;
-        },
-      },
-    },
-    state,
-  );
-  const request = controller.submit();
-  await started.promise;
-  controller.stop();
-  pending.resolve({ value: undefined, diagnostics: [] });
-  expect(await request).toBe(false);
-  expect(calls).toEqual(["first-source"]);
-  expect(controller.run()?.results.map((result) => result.status)).toEqual(["updated", "not-run"]);
-});
-
-test("unknown mutation outcomes are not offered as automatic continuation", async () => {
-  const { snapshot, observation } = fixture();
-  const state = createUpdatesState(buildUpdateScope(snapshot, { kind: "workspace" }));
-  const controller = createUpdateController(
-    {
-      workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      management: {
-        checkUpdate: async () => ({ value: observation("team-main"), diagnostics: [] }),
-        update: async () => {
+          if (source === "first-source") return { value: undefined, diagnostics: [] };
           throw new Error("Publication outcome unknown");
         },
       },
@@ -246,8 +263,52 @@ test("unknown mutation outcomes are not offered as automatic continuation", asyn
     state,
   );
   expect(await controller.submit()).toBe(false);
-  expect(controller.run()?.results.every((result) => result.status === "unknown")).toBe(true);
+  expect(controller.run()?.results.map((result) => result.status)).toEqual(["updated", "unknown"]);
+  expect(state.group("first-source")).toMatchObject({ status: "succeeded", committed: true });
+  expect(state.group("second-source")?.status).toBe("partial");
+  expect(state.group("second-source")?.committed).toBeUndefined();
   expect(controller.retryable()).toEqual([]);
+  expect(await controller.submit(controller.retryable())).toBe(false);
+  expect(calls).toEqual(["first-source", "second-source"]);
+});
+
+test("Effects retain the committed receipt when the post-publication workspace refresh fails", async () => {
+  const { snapshot, observation } = fixture();
+  let reads = 0;
+  let updates = 0;
+  const effects = testEffects(
+    directSourceCore(snapshot, {
+      get: async () => {
+        if (++reads === 3) throw new Error("refresh unavailable");
+        return { value: snapshot, diagnostics: [] };
+      },
+      checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
+      update: async () => {
+        expect(reads).toBe(2);
+        updates++;
+        return { value: undefined, diagnostics: [] };
+      },
+    }),
+  );
+  try {
+    const state = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
+    expect(await effects.submitUpdates()).toBe(true);
+    expect(reads).toBe(3);
+    expect(updates).toBe(1);
+    expect(state.group("team-main")).toMatchObject({ status: "succeeded", committed: true });
+    expect(state.group("team-main")?.committedMessage).toContain(
+      "could not refresh workspace: refresh unavailable",
+    );
+    expect(effects.updateRun()?.results.map((result) => result.status)).toEqual([
+      "updated",
+      "updated",
+    ]);
+    expect(effects.updatesRetryable()).toEqual([]);
+    expect(await effects.continueUpdates()).toBe(false);
+    expect(updates).toBe(1);
+  } finally {
+    effects.teardown();
+  }
 });
 
 test("Core's explicit pre-publication rejection is failed, not unknown; the atomic batch stays installed", async () => {
@@ -378,51 +439,81 @@ test("Effects reuse a fresh baseline-valid check without a Review owner", async 
   }
 });
 
-test("the process task retains its origin and Stop target after switching the displayed draft", async () => {
-  const { snapshot, observation } = fixture(["first-source", "other-source"], ["guide"]);
-  const started = deferred<void>();
-  const pending = deferred<{ value: undefined; diagnostics: [] }>();
-  let signal: AbortSignal | undefined;
-  const calls: string[] = [];
-  const effects = testEffects(
-    directSourceCore(snapshot, {
-      checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
-      update: (request, options) => {
-        calls.push(request.source);
-        signal = options?.signal;
-        started.resolve();
-        return pending.promise;
-      },
-    }),
-  );
-  try {
-    effects.selectUpdatesScope({ kind: "source", source: "first-source" }, snapshot);
-    const request = effects.submitUpdates();
-    await started.promise;
-    const firstRun = effects.updateRun();
-    effects.selectUpdatesScope({ kind: "source", source: "other-source" }, snapshot);
-    expect(effects.updateTaskEntry()).toEqual({ kind: "source", source: "first-source" });
-    expect(effects.updateRun() === firstRun).toBe(true);
-    expect(effects.updatesActive()).toBe(true);
-    expect(signal?.aborted).toBe(false);
-    // Closing an unrelated view/overlay does not own this process task.
-    effects.cancel();
-    expect(signal?.aborted).toBe(false);
-    expect(await effects.submitUpdates()).toBe(false);
-    expect(effects.stopUpdates()).toBe(true);
-    expect(effects.updateRun()?.phase).toBe("stopping");
-    expect(signal?.aborted).toBe(true);
-    pending.resolve({ value: undefined, diagnostics: [] });
-    await request;
-    expect(effects.updatesActive()).toBe(false);
-    expect(effects.updateRun()?.results.map((result) => result.status)).toEqual(["updated"]);
-    expect(effects.updates()?.scope.entry).toEqual({ kind: "source", source: "other-source" });
-    expect(calls).toEqual(["first-source"]);
-  } finally {
-    pending.resolve({ value: undefined, diagnostics: [] });
-    effects.teardown();
-  }
-});
+test.each(["fulfilled", "rejected"] as const)(
+  "the %s process task retains its origin and Stop target after switching the displayed draft",
+  async (outcome) => {
+    const { snapshot, observation } = fixture(["first-source", "other-source"], ["guide"]);
+    const started = deferred<void>();
+    const pending = deferred<{ value: undefined; diagnostics: [] }>();
+    let signal: AbortSignal | undefined;
+    const calls: string[] = [];
+    const effects = testEffects(
+      directSourceCore(snapshot, {
+        checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
+        update: (request, options) => {
+          calls.push(request.source);
+          signal = options?.signal;
+          started.resolve();
+          return pending.promise;
+        },
+      }),
+    );
+    try {
+      const origin = effects.selectUpdatesScope(
+        { kind: "source", source: "first-source" },
+        snapshot,
+      )!;
+      origin.toggle({ source: "first-source", path: "guide" });
+      const request = effects.submitUpdates();
+      await started.promise;
+      const firstRun = effects.updateRun();
+      const displayed = effects.selectUpdatesScope(
+        { kind: "source", source: "other-source" },
+        snapshot,
+      )!;
+      displayed.toggle({ source: "other-source", path: "guide" });
+      const displayedGroups = displayed.groups();
+      const displayedSelection = displayed.selected();
+      expect(displayedSelection).toEqual([{ source: "other-source", path: "guide" }]);
+      expect(effects.updateTaskEntry()).toEqual({ kind: "source", source: "first-source" });
+      expect(effects.updateRun() === firstRun).toBe(true);
+      expect(effects.updatesActive()).toBe(true);
+      expect(signal?.aborted).toBe(false);
+      // Closing an unrelated view/overlay does not own this process task.
+      effects.cancel();
+      expect(signal?.aborted).toBe(false);
+      expect(await effects.submitUpdates()).toBe(false);
+      expect(effects.stopUpdates()).toBe(true);
+      expect(effects.updateRun()?.phase).toBe("stopping");
+      expect(signal?.aborted).toBe(true);
+      if (outcome === "fulfilled") pending.resolve({ value: undefined, diagnostics: [] });
+      else pending.reject(new SkillCliError("CANCELLED", "cancelled"));
+      expect(await request).toBe(false);
+      expect(effects.updatesActive()).toBe(false);
+      expect(effects.updateRun()?.results.map((result) => result.status)).toEqual([
+        outcome === "fulfilled" ? "updated" : "unknown",
+      ]);
+      expect(origin.group("first-source")?.status).toBe(
+        outcome === "fulfilled" ? "succeeded" : "cancelled",
+      );
+      expect(origin.group("first-source")?.committed).toBe(
+        outcome === "fulfilled" ? true : undefined,
+      );
+      expect(origin.selected()).toEqual(
+        outcome === "fulfilled" ? [] : [{ source: "first-source", path: "guide" }],
+      );
+      expect(effects.updatesRetryable()).toEqual([]);
+      expect(effects.updates()?.scope.entry).toEqual({ kind: "source", source: "other-source" });
+      expect(effects.updates()).toBe(displayed);
+      expect(displayed.groups()).toBe(displayedGroups);
+      expect(displayed.selected()).toBe(displayedSelection);
+      expect(calls).toEqual(["first-source"]);
+    } finally {
+      pending.resolve({ value: undefined, diagnostics: [] });
+      effects.teardown();
+    }
+  },
+);
 
 test("explicit continuation uses the task's not-run targets, not the currently displayed scope", async () => {
   const { snapshot, observation } = fixture(["first-source", "second-source"], ["guide"]);
