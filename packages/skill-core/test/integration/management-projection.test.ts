@@ -796,64 +796,6 @@ test("PROJ-019 attributes nested Config Source contributions by exact owner and 
   }
 });
 
-test("PROJ-004/006 separates Local Config Source host and reusable declaration owners", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-contribution-"));
-  const global = join(root, "global.jsonc");
-  const state = join(root, "state");
-  try {
-    process.env.SKILL_CLI_STATE_DIR = state;
-    await mkdir(join(root, "reusable"));
-    await writeFile(
-      join(root, "reusable", "config.jsonc"),
-      JSON.stringify({
-        sources: { review: { kind: "local", path: "./skills", root: "" } },
-        collections: { reviews: {} },
-      }),
-    );
-    await writeFile(
-      global,
-      JSON.stringify({
-        configSources: { shared: { kind: "local", path: "./reusable", root: "" } },
-      }),
-    );
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    const config = (await createSkillCliCore({ cwd: root, userConfigPath: global }).workspace.get())
-      .value.configs[0]!;
-    expect(config.contributed.sources).toEqual([
-      expect.objectContaining({
-        id: "shared/review",
-        provenance: {
-          level: "global",
-          file: join(root, "reusable", "config.jsonc"),
-          pointer: "/sources/review",
-          namespace: "shared",
-        },
-        contribution: {
-          configSource: { level: "global", file: global, pointer: "/configSources/shared" },
-          declaration: {
-            level: "global",
-            file: join(root, "reusable", "config.jsonc"),
-            pointer: "/sources/review",
-            namespace: "shared",
-          },
-        },
-      }),
-    ]);
-    expect(config.direct.configSources[0]!.contributed.collections[0]!.owner.contribution).toEqual({
-      configSource: { level: "global", file: global, pointer: "/configSources/shared" },
-      declaration: {
-        level: "global",
-        file: join(root, "reusable", "config.jsonc"),
-        pointer: "/collections/reviews",
-        namespace: "shared",
-      },
-    });
-  } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test("PROJ-020 captures every concrete Config and private state exactly once under one workspace lock", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-capture-"));
   const global = join(root, "global.jsonc");
@@ -957,7 +899,7 @@ test("PROJ-005 projects adopted Remote Config Source commit and contributions wi
   }
 });
 
-test("PROJ-006 preserves Global Project and Local Config Source host owners", async () => {
+test("PROJ-004/006 preserves Config Source host and reusable declaration owners across levels", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-hosts-"));
   const global = join(root, "global.jsonc");
   const state = join(root, "state");
@@ -966,7 +908,10 @@ test("PROJ-006 preserves Global Project and Local Config Source host owners", as
     await mkdir(join(root, "reusable"));
     await writeFile(
       join(root, "reusable", "config.jsonc"),
-      JSON.stringify({ sources: { shared: { kind: "local", path: "./skills", root: "" } } }),
+      JSON.stringify({
+        sources: { review: { kind: "local", path: "./skills", root: "" } },
+        collections: { reviews: {} },
+      }),
     );
     for (const [level, file] of [
       ["global", global],
@@ -985,12 +930,37 @@ test("PROJ-006 preserves Global Project and Local Config Source host owners", as
       const projection = (
         await createSkillCliCore({ cwd: root, userConfigPath: global }).workspace.get()
       ).value;
-      const source = projection.configs.find((config) => config.level === level)!.contributed
-        .sources[0]!;
-      expect(source.contribution!.configSource).toEqual({
-        level,
-        file,
-        pointer: "/configSources/shared",
+      const config = projection.configs.find((config) => config.level === level)!;
+      expect(config.contributed.sources).toEqual([
+        expect.objectContaining({
+          id: "shared/review",
+          provenance: {
+            level,
+            file: join(root, "reusable", "config.jsonc"),
+            pointer: "/sources/review",
+            namespace: "shared",
+          },
+          contribution: {
+            configSource: { level, file, pointer: "/configSources/shared" },
+            declaration: {
+              level,
+              file: join(root, "reusable", "config.jsonc"),
+              pointer: "/sources/review",
+              namespace: "shared",
+            },
+          },
+        }),
+      ]);
+      expect(
+        config.direct.configSources[0]!.contributed.collections[0]!.owner.contribution,
+      ).toEqual({
+        configSource: { level, file, pointer: "/configSources/shared" },
+        declaration: {
+          level,
+          file: join(root, "reusable", "config.jsonc"),
+          pointer: "/collections/reviews",
+          namespace: "shared",
+        },
       });
     }
   } finally {
