@@ -452,4 +452,3 @@ export type CollectionsReadonly = Pick<
   | "scroll"
   | "selectRow"
 >;
-export type CollectionsCommands = Omit<CollectionsState, keyof CollectionsReadonly>;

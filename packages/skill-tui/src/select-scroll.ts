@@ -9,11 +9,6 @@ type Renderer = {
   requestRender(): void;
 };
 
-export type SelectStateRestore = (() => void) & {
-  readonly cancel: () => void;
-  readonly isApplyingSelection: () => boolean;
-};
-
 export type SelectScrollRestore = () => void;
 
 const native = (target: SelectRenderable): NativeSelect => {
@@ -34,18 +29,6 @@ export const setSelectScrollOffset = (target: SelectRenderable, offset: number):
 const maximumScrollOffset = (target: SelectRenderable): number => {
   const visibleItems = Math.max(1, Math.floor(target.height / (target.showDescription ? 2 : 1)));
   return Math.max(0, target.options.length - visibleItems);
-};
-
-/** OpenTUI updates its native viewport before this public selection event. */
-export const trackSelectScroll = (target: SelectRenderable, save: (offset: number) => void) => {
-  const listener = () => save(selectScrollOffset(target));
-  const release = () => {
-    target.off("selectionChanged", listener);
-    target.off("destroyed", release);
-  };
-  target.on("selectionChanged", listener);
-  target.once("destroyed", release);
-  return release;
 };
 
 export const restoreSelectScroll = (

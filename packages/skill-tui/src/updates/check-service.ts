@@ -385,5 +385,3 @@ export function createUpdateCheckService(
     },
   };
 }
-
-export type UpdateCheckService = ReturnType<typeof createUpdateCheckService>;

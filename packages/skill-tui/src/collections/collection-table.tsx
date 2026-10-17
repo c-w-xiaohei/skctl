@@ -1,5 +1,3 @@
-import type { CollectionRelationshipIntent } from "./relationship-inspector";
-
 export interface CollectionTableColumn {
   readonly key: string;
   readonly label: string;
@@ -25,15 +23,3 @@ export const collectionRelationColumns: readonly CollectionTableColumn[] = [
   { key: "owner", label: "Owner" },
   { key: "effect", label: "Effect" },
 ];
-
-export type CollectionEntryDomain = {
-  readonly name: string;
-  readonly address: { readonly source: string; readonly path: string };
-};
-
-export type CollectionRelationDomain = {
-  readonly intent?: CollectionRelationshipIntent;
-};
-
-export const collectionOptionText = (row: CollectionTableRow): string =>
-  `${row.cells.join("  ")} -> ${row.destination}`;

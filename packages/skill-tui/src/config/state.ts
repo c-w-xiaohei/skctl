@@ -224,4 +224,3 @@ export type ConfigReadonly = Pick<
   | "openConfigSourceInspector"
   | "backConfigSourceSurface"
 >;
-export type ConfigCommands = Omit<ConfigState, keyof ConfigReadonly>;

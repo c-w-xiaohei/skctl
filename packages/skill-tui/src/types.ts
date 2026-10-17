@@ -227,8 +227,6 @@ export type RouteHandoff =
       readonly owner: import("@skill-cli/core").ConfigDeclarationOwner;
     };
 
-export const sectionFor = (destination: Destination): Section =>
-  destination === "workspace" ? "skills" : "sources";
 export const validSections = (destination: Destination): readonly Section[] =>
   destination === "workspace"
     ? ["skills", "collections", "sources", "updates"]

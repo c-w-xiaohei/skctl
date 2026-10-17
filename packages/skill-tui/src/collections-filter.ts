@@ -96,15 +96,3 @@ export function collectionFilterValues(
   if (dimension === "Exposure") return collectionAgentValues;
   return collectionProblemValues;
 }
-
-export const collectionContributionText = (collection: CollectionView): string => {
-  const values = [
-    ...collection.declared.map((owner) =>
-      owner.contribution
-        ? `${owner.level} / ${owner.contribution.configSource.pointer}`
-        : owner.level,
-    ),
-    ...(collection.repository.derived ? ["Repository"] : []),
-  ];
-  return values.length ? values.join(" + ") : "Empty";
-};

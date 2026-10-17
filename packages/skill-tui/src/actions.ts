@@ -15,7 +15,6 @@ import {
 } from "./workspace/state";
 import { unassignedSkills, type CollectionsSnapshot } from "./collections/state";
 import { configDeclarationOwnerKey, type ConfigSnapshot } from "./config/state";
-import type { MemberOriginPath } from "@skill-cli/core";
 
 export interface PageActionFacts {
   readonly workspace: WorkspaceSnapshot;
@@ -93,51 +92,6 @@ export function selectedConfigIntegrationOwner(
     (owner) => configDeclarationOwnerKey(owner) === selected,
   );
 }
-
-/** Context-only controls for Collection inspectors; mutation controls stay review-backed. */
-export const collectionOriginActions = (
-  path: MemberOriginPath | undefined,
-): readonly Pick<ActionIntent, "id" | "title" | "description">[] => {
-  if (!path) return [];
-  if (path.kind === "repository-derived")
-    return [
-      {
-        id: "skill-open-source",
-        title: "Open Skill / Source",
-        description: "Open the repository-owned Installed Skill and Source",
-      },
-    ];
-  if (path.kind === "via-link")
-    return [
-      {
-        id: "skill-open-collection-use",
-        title: "Open owning Link",
-        description: "Open the Link that contributes this origin",
-      },
-    ];
-  if (path.owner?.contribution)
-    return [
-      {
-        id: "open-config-source",
-        title: "Open Config Source",
-        description: "Open the contributing Config Source",
-      },
-    ];
-  return path.owner
-    ? [
-        {
-          id: "open-config",
-          title: "Open owning Config",
-          description: "Open the direct Membership owner",
-        },
-        {
-          id: "remove-membership",
-          title: "Remove Membership",
-          description: "Review the direct Membership removal before applying it",
-        },
-      ]
-    : [];
-};
 
 export type DirectSourceIntent = {
   readonly kind: "source-removal";
@@ -305,17 +259,6 @@ export function selectedSourceContext(
     directOwner: direct?.ref.owner,
     destination,
   };
-}
-
-export function directSourceOwner(
-  projection: ManagementProjection,
-  sourceId: string,
-): ConfigDeclarationOwner | undefined {
-  for (const config of projection.configs) {
-    const direct = config.direct.sources.find((source) => source.id === sourceId);
-    if (direct) return direct.ref.owner;
-  }
-  return undefined;
 }
 
 function reachableActionIntents(
