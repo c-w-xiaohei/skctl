@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { restoreSelectScroll, restoreSelectState, selectScrollOffset } from "../src/select-scroll";
+import { restoreSelectState, selectScrollOffset } from "../src/select-scroll";
 
 type Listener = () => void;
 
@@ -12,7 +12,12 @@ const target = (scrollOffset: number, options = 20, height = 5) => {
     scrollOffset,
     rendered: 0,
     once(event: string, listener: Listener) {
-      listeners.set(event, listener);
+      const onceListener = () => {
+        if (listeners.get(event) !== onceListener) return;
+        listeners.delete(event);
+        listener();
+      };
+      listeners.set(event, onceListener);
     },
     on(event: string, listener: Listener) {
       listeners.set(event, listener);
@@ -27,108 +32,195 @@ const target = (scrollOffset: number, options = 20, height = 5) => {
     emit(event: string) {
       listeners.get(event)?.();
     },
+    hasListener(event: string) {
+      return listeners.has(event);
+    },
   };
 };
 
-test("Select scroll adapter clamps on FRAME and rejects an incompatible runtime", async () => {
-  const listeners = new Set<Listener>();
-  const renderer = {
-    once(_event: "frame", listener: Listener) {
-      listeners.add(listener);
+const rendererFixture = () => {
+  const frames = new Set<Listener>();
+  return {
+    frames,
+    renderer: {
+      once(_event: "frame", listener: Listener) {
+        frames.add(listener);
+      },
+      off(_event: "frame", listener: Listener) {
+        frames.delete(listener);
+      },
+      requestRender() {},
     },
-    off(_event: "frame", listener: Listener) {
-      listeners.delete(listener);
+    flushFrame() {
+      const pending = [...frames];
+      frames.clear();
+      pending.forEach((listener) => listener());
     },
-    requestRender() {},
   };
-  const select = target(0);
-  restoreSelectScroll(renderer, select as never, 99);
-  await Promise.resolve();
-  expect(listeners.size).toBe(1);
-  [...listeners].forEach((listener) => listener());
-  await Promise.resolve();
-  expect(select.scrollOffset).toBe(15);
-  expect(select.rendered).toBe(1);
+};
+
+test("Select scroll facade rejects an incompatible runtime", () => {
   expect(() => selectScrollOffset({} as never)).toThrow("scrollOffset is unavailable");
 });
 
-test("Select scroll adapter ignores a FRAME callback after its target unmounts", async () => {
-  const listeners = new Set<Listener>();
-  const renderer = {
-    once(_event: "frame", listener: Listener) {
-      listeners.add(listener);
-    },
-    off(_event: "frame", listener: Listener) {
-      listeners.delete(listener);
-    },
-    requestRender() {},
+test.each([
+  { name: "maximum", saved: 15, expected: 15 },
+  { name: "zero", saved: 0, expected: 0 },
+])("Select state restores a valid $name viewport after selection", async ({ saved, expected }) => {
+  const { frames, renderer, flushFrame } = rendererFixture();
+  const select = target(4);
+  let selected = -1;
+  select.setSelectedIndex = (index: number) => {
+    selected = index;
+    select.scrollOffset = 4;
+    select.emit("selectionChanged");
   };
-  const select = target(0);
-  restoreSelectScroll(renderer, select as never, 4);
+  let saves = 0;
+
+  restoreSelectState(
+    renderer,
+    select as never,
+    19,
+    saved,
+    () => saves++,
+    () => true,
+  );
   await Promise.resolve();
+  expect(selected).toBe(19);
+  expect(frames.size).toBe(1);
+  flushFrame();
+  expect(select.scrollOffset).toBe(expected);
+  expect(select.rendered).toBe(1);
+  expect(saves).toBe(0);
+});
+
+test("Select state preserves the native viewport for an invalid saved offset", async () => {
+  const { renderer, flushFrame } = rendererFixture();
+  const select = target(2);
+  select.setSelectedIndex = () => {
+    select.scrollOffset = 6;
+    select.emit("selectionChanged");
+  };
+
+  restoreSelectState(
+    renderer,
+    select as never,
+    19,
+    99,
+    () => {},
+    () => true,
+  );
+  await Promise.resolve();
+  flushFrame();
+  expect(select.scrollOffset).toBe(6);
+});
+
+test("Select state refuses a detached target before semantic selection", async () => {
+  const { frames, renderer } = rendererFixture();
+  const select = target(0);
+  let selected = -1;
+  let saves = 0;
+  select.setSelectedIndex = (index: number) => (selected = index);
+
+  restoreSelectState(
+    renderer,
+    select as never,
+    7,
+    3,
+    () => saves++,
+    () => true,
+  );
   select.parent = undefined;
-  [...listeners].forEach((listener) => listener());
   await Promise.resolve();
-  expect(select.scrollOffset).toBe(0);
+  expect(selected).toBe(-1);
+  expect(frames.size).toBe(0);
   expect(select.rendered).toBe(0);
+  expect(saves).toBe(0);
 });
 
-test("Select scroll adapter leaves no listener for zero offset or destroyed target", async () => {
-  const listeners = new Set<Listener>();
-  const renderer = {
-    once(_event: "frame", listener: Listener) {
-      listeners.add(listener);
-    },
-    off(_event: "frame", listener: Listener) {
-      listeners.delete(listener);
-    },
-    requestRender() {},
-  };
-  const zero = target(0);
-  restoreSelectScroll(renderer, zero as never, 0);
-  await Promise.resolve();
-  expect(listeners.size).toBe(0);
-
+test("Select state cancels a scheduled viewport replay when the target is destroyed", async () => {
+  const { frames, renderer } = rendererFixture();
   const select = target(0);
-  restoreSelectScroll(renderer, select as never, 4);
+  let saves = 0;
+  select.setSelectedIndex = () => {
+    select.scrollOffset = 6;
+  };
+
+  restoreSelectState(
+    renderer,
+    select as never,
+    7,
+    3,
+    () => saves++,
+    () => true,
+  );
   await Promise.resolve();
-  expect(listeners.size).toBe(1);
+  const staleFrame = [...frames][0];
+  expect(frames.size).toBe(1);
+  expect(select.hasListener("selectionChanged")).toBe(true);
   select.emit("destroyed");
-  expect(listeners.size).toBe(0);
+  expect(frames.size).toBe(0);
+  expect(select.hasListener("selectionChanged")).toBe(false);
+  staleFrame();
+  await Promise.resolve();
+  expect(select.scrollOffset).toBe(6);
+  expect(select.rendered).toBe(0);
+  expect(saves).toBe(0);
 });
 
-test("Select scroll adapter only restores the current target after replacement", async () => {
-  const listeners = new Set<Listener>();
-  const renderer = {
-    once(_event: "frame", listener: Listener) {
-      listeners.add(listener);
-    },
-    off(_event: "frame", listener: Listener) {
-      listeners.delete(listener);
-    },
-    requestRender() {},
+test("Select state replacement is guarded by mount identity, not target singleton", async () => {
+  const { frames, renderer, flushFrame } = rendererFixture();
+  const oldTarget = target(0);
+  const newTarget = target(0);
+  let current = oldTarget;
+  let oldSaves = 0;
+  let newSaves = 0;
+  oldTarget.setSelectedIndex = () => {
+    oldTarget.scrollOffset = 2;
   };
-  const select = target(0);
-  restoreSelectScroll(renderer, select as never, 2);
-  restoreSelectScroll(renderer, select as never, 7);
+  newTarget.setSelectedIndex = () => {
+    newTarget.scrollOffset = 4;
+  };
+
+  const cancelOld = restoreSelectState(
+    renderer,
+    oldTarget as never,
+    7,
+    5,
+    () => oldSaves++,
+    () => current === oldTarget,
+  );
   await Promise.resolve();
-  expect(listeners.size).toBe(1);
-  [...listeners].forEach((listener) => listener());
+  const oldFrame = [...frames][0];
+  current = newTarget;
+  oldFrame();
+  expect(frames.size).toBe(0);
+  expect(oldTarget.scrollOffset).toBe(2);
+  expect(oldTarget.rendered).toBe(0);
+  expect(oldSaves).toBe(0);
+  restoreSelectState(
+    renderer,
+    newTarget as never,
+    8,
+    6,
+    () => newSaves++,
+    () => current === newTarget,
+  );
   await Promise.resolve();
-  expect(select.scrollOffset).toBe(7);
+  expect(frames.size).toBe(1);
+  oldFrame();
+  flushFrame();
+  expect(oldTarget.scrollOffset).toBe(2);
+  expect(newTarget.scrollOffset).toBe(6);
+  expect(oldTarget.rendered).toBe(0);
+  expect(newTarget.rendered).toBe(1);
+  expect(oldSaves).toBe(0);
+  expect(newSaves).toBe(0);
+  cancelOld();
 });
 
 test("Select state defers semantic restoration one microtask and suppresses restoration telemetry", async () => {
-  const frames = new Set<Listener>();
-  const renderer = {
-    once(_event: "frame", listener: Listener) {
-      frames.add(listener);
-    },
-    off(_event: "frame", listener: Listener) {
-      frames.delete(listener);
-    },
-    requestRender() {},
-  };
+  const { frames, renderer } = rendererFixture();
   const select = target(0);
   let selected = -1;
   let saves = 0;
@@ -159,16 +251,7 @@ test("Select state defers semantic restoration one microtask and suppresses rest
 });
 
 test("Select state cancels an obsolete viewport replay when the user selects first", async () => {
-  const frames = new Set<Listener>();
-  const renderer = {
-    once(_event: "frame", listener: Listener) {
-      frames.add(listener);
-    },
-    off(_event: "frame", listener: Listener) {
-      frames.delete(listener);
-    },
-    requestRender() {},
-  };
+  const { frames, renderer } = rendererFixture();
   const select = target(0);
   let saves = 0;
   let selected = -1;
@@ -196,16 +279,7 @@ test("Select state cancels an obsolete viewport replay when the user selects fir
 });
 
 test("Select state ignores a stale mount before selection or frame replay", async () => {
-  const frames = new Set<Listener>();
-  const renderer = {
-    once(_event: "frame", listener: Listener) {
-      frames.add(listener);
-    },
-    off(_event: "frame", listener: Listener) {
-      frames.delete(listener);
-    },
-    requestRender() {},
-  };
+  const { frames, renderer } = rendererFixture();
   const select = target(0);
   let current = true;
   let selected = -1;

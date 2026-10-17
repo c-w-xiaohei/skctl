@@ -1,15 +1,12 @@
 import type { SelectRenderable } from "@opentui/core";
 
 type NativeSelect = { scrollOffset: number };
-const pending = new WeakMap<SelectRenderable, () => void>();
 
 type Renderer = {
   once(event: "frame", listener: () => void): unknown;
   off(event: "frame", listener: () => void): unknown;
   requestRender(): void;
 };
-
-export type SelectScrollRestore = () => void;
 
 const native = (target: SelectRenderable): NativeSelect => {
   const value = target as unknown as Partial<NativeSelect>;
@@ -29,40 +26,6 @@ export const setSelectScrollOffset = (target: SelectRenderable, offset: number):
 const maximumScrollOffset = (target: SelectRenderable): number => {
   const visibleItems = Math.max(1, Math.floor(target.height / (target.showDescription ? 2 : 1)));
   return Math.max(0, target.options.length - visibleItems);
-};
-
-export const restoreSelectScroll = (
-  renderer: Renderer,
-  target: SelectRenderable,
-  saved: number,
-  options: { readonly clampToOptions?: boolean } = {},
-): SelectScrollRestore => {
-  if (saved <= 0) return () => {};
-  pending.get(target)?.();
-  const restore = () =>
-    queueMicrotask(() => {
-      if (pending.get(target) !== cancel) return;
-      pending.delete(target);
-      if (!target.parent) return;
-      const maximum = maximumScrollOffset(target);
-      native(target).scrollOffset =
-        options.clampToOptions === false
-          ? Math.max(0, saved)
-          : Math.max(0, Math.min(saved, maximum));
-      target.requestRender();
-    });
-  const cancel = () => {
-    if (pending.get(target) === cancel) pending.delete(target);
-    renderer.off("frame", restore);
-  };
-  pending.set(target, cancel);
-  queueMicrotask(() => {
-    if (pending.get(target) !== cancel || !target.parent) return;
-    renderer.once("frame", restore);
-    renderer.requestRender();
-  });
-  target.once("destroyed", cancel);
-  return cancel;
 };
 
 /**
