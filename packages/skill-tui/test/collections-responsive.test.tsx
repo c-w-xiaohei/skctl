@@ -90,6 +90,38 @@ function collectionProjection() {
   };
 }
 
+function renderCollectionDetail(
+  collections: Parameters<typeof CollectionsPage>[0]["collections"],
+  projection: Parameters<typeof CollectionsPage>[0]["projection"],
+  width: number,
+  height: number,
+) {
+  return testRender(
+    () => (
+      <CollectionsPage
+        collections={collections}
+        mode="medium"
+        surface="detail"
+        projection={projection}
+        onSelect={() => {}}
+        onQuery={() => {}}
+        onFilter={() => {}}
+        onClear={() => {}}
+        onClearAll={() => {}}
+        onFilterOpen={() => {}}
+        onFilterDimension={() => {}}
+        onFilterSearch={() => {}}
+        onFilterClose={() => {}}
+        onTab={() => {}}
+        onInspectorFocus={() => {}}
+        onDetail={() => {}}
+        onRelationship={() => {}}
+      />
+    ),
+    { width, height },
+  );
+}
+
 test("RENDER Collection Inspector replaces the Work Area with exactly Entries and Relations", async () => {
   const collections = createCollectionsState();
   collections.select("engineering");
@@ -564,30 +596,7 @@ test("RENDER Collection Relations Enter is inspectable without opening a mutatio
   collections.selectTab("engineering", "relations");
   collections.selectRow("engineering", "relations", "collection-reference:0");
   collections.openRelation("engineering", "collection-reference:0");
-  const setup = await testRender(
-    () => (
-      <CollectionsPage
-        collections={collections}
-        mode="medium"
-        surface="detail"
-        projection={() => relationProjection}
-        onSelect={() => {}}
-        onQuery={() => {}}
-        onFilter={() => {}}
-        onClear={() => {}}
-        onClearAll={() => {}}
-        onFilterOpen={() => {}}
-        onFilterDimension={() => {}}
-        onFilterSearch={() => {}}
-        onFilterClose={() => {}}
-        onTab={() => {}}
-        onInspectorFocus={() => {}}
-        onDetail={() => {}}
-        onRelationship={() => {}}
-      />
-    ),
-    { width: 80, height: 24 },
-  );
+  const setup = await renderCollectionDetail(collections, () => relationProjection, 80, 24);
   try {
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
@@ -603,30 +612,7 @@ test("RENDER Membership inspector names the object and exposes origin plus metad
   const collections = createCollectionsState();
   collections.select("engineering");
   collections.openMembership("engineering", "guide:0");
-  const setup = await testRender(
-    () => (
-      <CollectionsPage
-        collections={collections}
-        mode="medium"
-        surface="detail"
-        projection={() => collectionProjection()}
-        onSelect={() => {}}
-        onQuery={() => {}}
-        onFilter={() => {}}
-        onClear={() => {}}
-        onClearAll={() => {}}
-        onFilterOpen={() => {}}
-        onFilterDimension={() => {}}
-        onFilterSearch={() => {}}
-        onFilterClose={() => {}}
-        onTab={() => {}}
-        onInspectorFocus={() => {}}
-        onDetail={() => {}}
-        onRelationship={() => {}}
-      />
-    ),
-    { width: 79, height: 24 },
-  );
+  const setup = await renderCollectionDetail(collections, () => collectionProjection(), 79, 24);
   try {
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-origin"),
@@ -765,30 +751,7 @@ test("RENDER contributed Membership and Reference retain Config Source provenanc
   const collections = createCollectionsState();
   collections.select("engineering");
   collections.openMembership("engineering", "guide:0");
-  const setup = await testRender(
-    () => (
-      <CollectionsPage
-        collections={collections}
-        mode="medium"
-        surface="detail"
-        projection={() => projection}
-        onSelect={() => {}}
-        onQuery={() => {}}
-        onFilter={() => {}}
-        onClear={() => {}}
-        onClearAll={() => {}}
-        onFilterOpen={() => {}}
-        onFilterDimension={() => {}}
-        onFilterSearch={() => {}}
-        onFilterClose={() => {}}
-        onTab={() => {}}
-        onInspectorFocus={() => {}}
-        onDetail={() => {}}
-        onRelationship={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
+  const setup = await renderCollectionDetail(collections, () => projection, 120, 40);
   try {
     await setup.waitForFrame((frame) => frame.includes("Membership guide"));
     expect(setup.captureCharFrame()).toContain(
@@ -969,30 +932,7 @@ test("RENDER Collection Relations keep Collection Use, Reference, and Link owner
 test("RENDER Collections and relationships keep actionable identities primary", async () => {
   const collections = createCollectionsState();
   collections.select("engineering");
-  const setup = await testRender(
-    () => (
-      <CollectionsPage
-        collections={collections}
-        mode="medium"
-        surface="detail"
-        projection={() => collectionProjection()}
-        onSelect={() => {}}
-        onQuery={() => {}}
-        onFilter={() => {}}
-        onClear={() => {}}
-        onClearAll={() => {}}
-        onFilterOpen={() => {}}
-        onFilterDimension={() => {}}
-        onFilterSearch={() => {}}
-        onFilterClose={() => {}}
-        onTab={() => {}}
-        onInspectorFocus={() => {}}
-        onDetail={() => {}}
-        onRelationship={() => {}}
-      />
-    ),
-    { width: 160, height: 40 },
-  );
+  const setup = await renderCollectionDetail(collections, () => collectionProjection(), 160, 40);
   try {
     await setup.renderOnce();
     const relationships = setup.renderer.root.findDescendantById(
@@ -1341,30 +1281,7 @@ test("TASK7 RENDER Collection browser preserves query, selection, and scroll thr
 test("RENDER wide Collections replace the Work Area without a permanent third Inspector", async () => {
   const collections = createCollectionsState();
   collections.select("engineering");
-  const setup = await testRender(
-    () => (
-      <CollectionsPage
-        collections={collections}
-        mode="medium"
-        surface="detail"
-        projection={() => collectionProjection()}
-        onSelect={() => {}}
-        onQuery={() => {}}
-        onFilter={() => {}}
-        onClear={() => {}}
-        onClearAll={() => {}}
-        onFilterOpen={() => {}}
-        onFilterDimension={() => {}}
-        onFilterSearch={() => {}}
-        onFilterClose={() => {}}
-        onTab={() => {}}
-        onInspectorFocus={() => {}}
-        onDetail={() => {}}
-        onRelationship={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
+  const setup = await renderCollectionDetail(collections, () => collectionProjection(), 120, 40);
   try {
     await setup.renderOnce();
     expect(setup.renderer.root.findDescendantById("collections-inspector-panel")).toBeUndefined();
@@ -1380,30 +1297,7 @@ test("RENDER wide Collections replace the Work Area without a permanent third In
 test("RENDER Collection entry arrow preview preserves compact origin context", async () => {
   const collections = createCollectionsState();
   collections.select("engineering");
-  const setup = await testRender(
-    () => (
-      <CollectionsPage
-        collections={collections}
-        mode="medium"
-        surface="detail"
-        projection={() => collectionProjection()}
-        onSelect={() => {}}
-        onQuery={() => {}}
-        onFilter={() => {}}
-        onClear={() => {}}
-        onClearAll={() => {}}
-        onFilterOpen={() => {}}
-        onFilterDimension={() => {}}
-        onFilterSearch={() => {}}
-        onFilterClose={() => {}}
-        onTab={() => {}}
-        onInspectorFocus={() => {}}
-        onDetail={() => {}}
-        onRelationship={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
+  const setup = await renderCollectionDetail(collections, () => collectionProjection(), 120, 40);
   try {
     await setup.renderOnce();
     const entries = setup.renderer.root.findDescendantById(
@@ -1430,29 +1324,11 @@ test.each([120, 80, 43])(
   async (width) => {
     const collections = createCollectionsState();
     collections.select("engineering");
-    const setup = await testRender(
-      () => (
-        <CollectionsPage
-          collections={collections}
-          mode="medium"
-          surface="detail"
-          projection={() => collectionProjection()}
-          onSelect={() => {}}
-          onQuery={() => {}}
-          onFilter={() => {}}
-          onClear={() => {}}
-          onClearAll={() => {}}
-          onFilterOpen={() => {}}
-          onFilterDimension={() => {}}
-          onFilterSearch={() => {}}
-          onFilterClose={() => {}}
-          onTab={() => {}}
-          onInspectorFocus={() => {}}
-          onDetail={() => {}}
-          onRelationship={() => {}}
-        />
-      ),
-      { width, height: 30 },
+    const setup = await renderCollectionDetail(
+      collections,
+      () => collectionProjection(),
+      width,
+      30,
     );
     try {
       await setup.renderOnce();
