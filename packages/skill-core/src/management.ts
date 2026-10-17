@@ -171,16 +171,6 @@ function contributionImpact(
   };
 }
 
-function emptyDelta(): ConfigSourceImpact["delta"] {
-  return {
-    addedSources: [],
-    changedSources: [],
-    removedSources: [],
-    addedCollections: [],
-    changedCollections: [],
-    removedCollections: [],
-  };
-}
 function sameObservation(
   observation: import("./api").ConfigSourceObservation,
   id: string,
@@ -409,7 +399,7 @@ export function createManagement(
       };
     }
     const active = proposed ?? contributions;
-    let delta = emptyDelta();
+    let delta: ConfigSourceImpact["delta"];
     if (kind === "config-source-adopt") {
       const addedSources = active.sources.filter(
         (candidate) => !contributions.sources.some((current) => current.id === candidate.id),
@@ -437,7 +427,6 @@ export function createManagement(
         );
       });
       delta = {
-        ...delta,
         addedSources,
         changedSources,
         removedSources,
@@ -447,8 +436,11 @@ export function createManagement(
       };
     } else {
       delta = {
-        ...delta,
+        addedSources: [],
+        changedSources: [],
         removedSources: contributions.sources,
+        addedCollections: [],
+        changedCollections: [],
         removedCollections: contributions.collections,
       };
     }
@@ -456,13 +448,12 @@ export function createManagement(
       ...delta.changedSources.map((item) => item.id),
       ...delta.removedSources.map((item) => item.id),
     ]);
-    const affectedInstalled = workspace.value.installedSkills
-      .filter(
-        (item) =>
-          item.address.source.startsWith(`${id}/`) &&
-          (kind !== "config-source-adopt" || changedOwners.has(item.address.source)),
-      )
-      .map((item) => item.address);
+    const affectedInstalledItems = workspace.value.installedSkills.filter(
+      (item) =>
+        item.address.source.startsWith(`${id}/`) &&
+        (kind !== "config-source-adopt" || changedOwners.has(item.address.source)),
+    );
+    const affectedInstalled = affectedInstalledItems.map((item) => item.address);
     const semanticBlockers =
       kind === "config-source-adopt" && proposedReusable && exactRevision
         ? await coordinator.withLock(async () => {
@@ -502,14 +493,7 @@ export function createManagement(
         contributions: active,
         delta,
         affectedInstalled,
-        disappearingSelectors: workspace.value.installedSkills
-          .filter((item) =>
-            affectedInstalled.some(
-              (address) =>
-                address.source === item.address.source && address.path === item.address.path,
-            ),
-          )
-          .flatMap((item) => item.selectors),
+        disappearingSelectors: affectedInstalledItems.flatMap((item) => item.selectors),
         blockers,
         allowed: !blockers.length,
       },
