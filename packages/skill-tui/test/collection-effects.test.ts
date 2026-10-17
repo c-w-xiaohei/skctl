@@ -172,7 +172,7 @@ test("membership batch previews and publishes one atomic same-owner delta", asyn
       },
     }),
   );
-  const review = await effects.previewMembershipBatch({
+  const review = await effects.previewCollection({
     kind: "membership-batch",
     level: "project",
     collection: "team",
@@ -246,7 +246,7 @@ test("membership batch rejects an allowed impact from a different same-level dec
     }),
   );
   expect(
-    await effects.previewMembershipBatch({
+    await effects.previewCollection({
       kind: "membership-batch",
       level: "project",
       collection: "team",
@@ -312,8 +312,8 @@ test("a CANCELLED membership batch preview leaves its exact additions retryable 
       }),
     }),
   );
-  expect(await effects.previewMembershipBatch(intent)).toBeUndefined();
-  const review = await effects.previewMembershipBatch(intent);
+  expect(await effects.previewCollection(intent)).toBeUndefined();
+  const review = await effects.previewCollection(intent);
   expect(review?.intent).toEqual(intent);
   expect({ previews, changes }).toEqual({ previews: 2, changes: 0 });
   expect(effects.operation.problem()).toBeUndefined();
@@ -358,7 +358,7 @@ test("collection membership preview and change use exact typed payloads then ref
       },
     }),
   );
-  const review = await effects.previewAddToCollection({
+  const review = await effects.previewCollection({
     kind: "add-to-collection",
     level: "project",
     collection: "team",
@@ -405,13 +405,13 @@ test("collection previews reject duplicate, cancel once, suppress late completio
     }),
   });
   const effects = createTuiEffects(core);
-  const pending = effects.previewCollectionUse({
+  const pending = effects.previewCollection({
     kind: "collection-use",
     level: "project",
     collections: ["team"],
   });
   expect(
-    await effects.previewCollectionUse({
+    await effects.previewCollection({
       kind: "collection-use",
       level: "project",
       collections: ["team"],
@@ -475,8 +475,8 @@ test("a CANCELLED collection preview leaves the exact draft intent retryable", a
       }),
     }),
   );
-  expect(await effects.previewCollectionUse(intent)).toBeUndefined();
-  const review = await effects.previewCollectionUse(intent);
+  expect(await effects.previewCollection(intent)).toBeUndefined();
+  const review = await effects.previewCollection(intent);
   expect(review?.kind).toBe("collection-use");
   expect(previews).toBe(2);
   expect(effects.operation.problem()).toBeUndefined();
@@ -500,7 +500,7 @@ test("a CANCELLED collection execution retains the live review and blocks duplic
       },
     }),
   );
-  const review = await effects.previewCollectionUse({
+  const review = await effects.previewCollection({
     kind: "collection-use",
     level: "project",
     collections: ["team"],
@@ -538,7 +538,7 @@ test("collection previews reject structurally mismatched impacts and refresh fai
     }),
   );
   expect(
-    await effects.previewLinkChange({
+    await effects.previewCollection({
       kind: "link-change",
       level: "project",
       collection: "team",
@@ -589,7 +589,7 @@ test("membership removal requires the exact level and affected address before on
     }),
   );
   expect(
-    await effects.previewMembershipRemoval({
+    await effects.previewCollection({
       kind: "membership-removal",
       level: "global",
       collection: "team",
@@ -597,7 +597,7 @@ test("membership removal requires the exact level and affected address before on
       expectedAddress: { source: "team-main", path: "review" },
     }),
   ).toBeUndefined();
-  const review = await effects.previewMembershipRemoval({
+  const review = await effects.previewCollection({
     kind: "membership-removal",
     level: "project",
     collection: "team",
@@ -665,7 +665,7 @@ test("membership add and removal record complete preview, mutation, and refresh 
       },
     }),
   );
-  const add = await effects.previewAddToCollection({
+  const add = await effects.previewCollection({
     kind: "add-to-collection",
     level: "project",
     collection: "team",
@@ -696,7 +696,7 @@ test("membership add and removal record complete preview, mutation, and refresh 
     { kind: "workspace" },
   ]);
   calls.length = 0;
-  const removal = await effects.previewMembershipRemoval({
+  const removal = await effects.previewCollection({
     kind: "membership-removal",
     level: "project",
     collection: "team",
@@ -736,7 +736,7 @@ test("add membership binds the exact Core-authorized stable name", async () => {
       }),
     }),
   );
-  const review = await effects.previewAddToCollection({
+  const review = await effects.previewCollection({
     kind: "add-to-collection",
     level: "project",
     collection: "team",
@@ -761,7 +761,7 @@ test("add membership executes only the live Core-authorized intent", async () =>
       }),
     }),
   );
-  const review = await effects.previewAddToCollection({
+  const review = await effects.previewCollection({
     kind: "add-to-collection",
     level: "project",
     collection: "team",
@@ -813,7 +813,7 @@ test("repository-derived add review truthfully exposes a create-direct-contribut
       }),
     }),
   );
-  const review = await effects.previewAddToCollection({
+  const review = await effects.previewCollection({
     kind: "add-to-collection",
     level: "project",
     collection: "team",
@@ -865,7 +865,7 @@ test("add membership rejects mismatched direct and authorized declaration owners
     }),
   );
   expect(
-    await effects.previewAddToCollection({
+    await effects.previewCollection({
       kind: "add-to-collection",
       level: "project",
       collection: "team",
@@ -903,7 +903,7 @@ test("link preview rejects an allowed impact without its direct owner", async ()
     }),
   );
   expect(
-    await effects.previewLinkChange({
+    await effects.previewCollection({
       kind: "link-change",
       level: "project",
       collection: "team",
@@ -963,7 +963,7 @@ test("every remaining collection intent emits its exact ConfigChange once", asyn
     { kind: "workspace" },
   ]);
   calls.length = 0;
-  const imported = await effects.previewImport({
+  const imported = await effects.previewCollection({
     kind: "collection-import",
     level: "project",
     from: "from",
@@ -980,7 +980,7 @@ test("every remaining collection intent emits its exact ConfigChange once", asyn
     { kind: "workspace" },
   ]);
   calls.length = 0;
-  const reference = await effects.previewReference({
+  const reference = await effects.previewCollection({
     kind: "reference",
     level: "project",
     collection: "team",
@@ -1016,7 +1016,7 @@ test("every remaining collection intent emits its exact ConfigChange once", asyn
     { kind: "workspace" },
   ]);
   calls.length = 0;
-  const referenceRemoval = await effects.previewReference({
+  const referenceRemoval = await effects.previewCollection({
     kind: "reference",
     level: "project",
     collection: "team",
@@ -1052,7 +1052,7 @@ test("every remaining collection intent emits its exact ConfigChange once", asyn
     { kind: "workspace" },
   ]);
   calls.length = 0;
-  const link = await effects.previewLinkChange({
+  const link = await effects.previewCollection({
     kind: "link-change",
     level: "project",
     collection: "team",
@@ -1078,7 +1078,7 @@ test("every remaining collection intent emits its exact ConfigChange once", asyn
     { kind: "workspace" },
   ]);
   calls.length = 0;
-  const linkRemoval = await effects.previewLinkChange({
+  const linkRemoval = await effects.previewCollection({
     kind: "link-change",
     level: "project",
     collection: "team",
@@ -1105,7 +1105,7 @@ test("every remaining collection intent emits its exact ConfigChange once", asyn
     { kind: "workspace" },
   ]);
   calls.length = 0;
-  const use = await effects.previewCollectionUse({
+  const use = await effects.previewCollection({
     kind: "collection-use",
     level: "project",
     collections: ["team"],
@@ -1117,7 +1117,7 @@ test("every remaining collection intent emits its exact ConfigChange once", asyn
     { kind: "workspace" },
   ]);
   calls.length = 0;
-  const removal = await effects.previewCollectionRemoval({
+  const removal = await effects.previewCollection({
     kind: "collection-removal",
     level: "project",
     collection: "team",
@@ -1162,7 +1162,7 @@ test("collection execute retries after failure and a late mutation success refre
       },
     }),
   );
-  const review = await effects.previewCollectionUse({
+  const review = await effects.previewCollection({
     kind: "collection-use",
     level: "project",
     collections: ["team"],
@@ -1177,7 +1177,7 @@ test("collection execute retries after failure and a late mutation success refre
   expect(effects.operation.notice()).toBe("Collection updated; Workspace is stale");
 });
 
-test("unified Collection preview keeps the latest exact live review across named and unified entry points", async () => {
+test("Collection preview keeps the latest exact live review", async () => {
   const changes: unknown[] = [];
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
@@ -1189,7 +1189,7 @@ test("unified Collection preview keeps the latest exact live review across named
       }),
     }),
   );
-  const previous = await effects.previewCollectionUse({
+  const previous = await effects.previewCollection({
     kind: "collection-use",
     level: "project",
     collections: ["old"],

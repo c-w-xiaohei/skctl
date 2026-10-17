@@ -912,27 +912,6 @@ export function createTuiEffects(
     createCollection: (intent: Extract<CollectionIntent, { readonly kind: "collection-create" }>) =>
       executeCollection(intent),
     previewCollection: reviewCollection,
-    previewAddToCollection: (
-      intent: Extract<CollectionIntent, { readonly kind: "add-to-collection" }>,
-    ) => reviewCollection(intent),
-    previewMembershipRemoval: (
-      intent: Extract<CollectionIntent, { readonly kind: "membership-removal" }>,
-    ) => reviewCollection(intent),
-    previewMembershipBatch: (
-      intent: Extract<CollectionIntent, { readonly kind: "membership-batch" }>,
-    ) => reviewCollection(intent),
-    previewImport: (intent: Extract<CollectionIntent, { readonly kind: "collection-import" }>) =>
-      reviewCollection(intent),
-    previewReference: (intent: Extract<CollectionIntent, { readonly kind: "reference" }>) =>
-      reviewCollection(intent),
-    previewLinkChange: (intent: Extract<CollectionIntent, { readonly kind: "link-change" }>) =>
-      reviewCollection(intent),
-    previewCollectionUse: (
-      intent: Extract<CollectionIntent, { readonly kind: "collection-use" }>,
-    ) => reviewCollection(intent),
-    previewCollectionRemoval: (
-      intent: Extract<CollectionIntent, { readonly kind: "collection-removal" }>,
-    ) => reviewCollection(intent),
     confirmCollection: (reviewed: CollectionReview) => executeCollection(reviewed),
     pending: () => foreground !== undefined,
     pendingKind: () => foreground?.kind,
