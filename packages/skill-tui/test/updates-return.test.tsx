@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import {
   DiffRenderable,
+  InputRenderable,
   ScrollBoxRenderable,
   SelectRenderable,
   TextRenderable,
@@ -177,7 +178,11 @@ test("RED shared Back closes a preview exactly once: aborts its read, ignores it
       );
       return status instanceof TextRenderable && status.plainText === "Update available";
     });
-    await focusLive(setup, "source-updates-browser");
+    const sourceBrowser = await focusLive(setup, "source-updates-browser");
+    const sourcePage = setup.renderer.root.findDescendantById("source-updates-page");
+    const sourceBody = setup.renderer.root.findDescendantById("source-updates-browser-body");
+    expect(sourcePage).toBeDefined();
+    expect(sourceBody).toBeInstanceOf(ScrollBoxRenderable);
     await setup.mockInput.typeText("/");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "source-updates-query",
@@ -189,6 +194,36 @@ test("RED shared Back closes a preview exactly once: aborts its read, ignores it
         setup.renderer.currentFocusedRenderable?.id === "source-updates-browser" &&
         setup.captureCharFrame().includes("Filter: guide"),
     );
+    expect(setup.renderer.currentFocusedRenderable).toBe(sourceBrowser);
+    expect(setup.renderer.root.findDescendantById("source-updates-page")).toBe(sourcePage);
+    expect(setup.renderer.root.findDescendantById("source-updates-browser-body")).toBe(sourceBody);
+    expect(sourceBrowser.isDestroyed).toBe(false);
+    await setup.mockInput.typeText("/");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "source-updates-query",
+    );
+    const queryInput = setup.renderer.currentFocusedRenderable;
+    if (!(queryInput instanceof InputRenderable)) throw new Error("Expected native Source query");
+    expect(queryInput.value).toBe("guide");
+    await setup.mockInput.typeText("-cancelled");
+    expect(queryInput.value).toBe("guide-cancelled");
+    expect(setup.renderer.currentFocusedRenderable).toBe(queryInput);
+    expect(queryInput.isDestroyed).toBe(false);
+    await parsedEscape(setup);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === sourceBrowser);
+    expect(setup.captureCharFrame()).toContain("Filter: guide");
+    for (const caption of ["All Skills", "Updates only"]) {
+      await enterLive(setup, "source-updates-show-all");
+      await setup.waitFor(() => setup.captureCharFrame().includes(caption));
+      expect(setup.renderer.root.findDescendantById("source-updates-page")).toBe(sourcePage);
+      expect(setup.renderer.root.findDescendantById("source-updates-browser")).toBe(sourceBrowser);
+      expect(setup.renderer.root.findDescendantById("source-updates-browser-body")).toBe(
+        sourceBody,
+      );
+      expect(sourceBrowser.isDestroyed).toBe(false);
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-updates-show-all");
+    }
+    await focusLive(setup, "source-updates-browser");
     await setup.mockInput.typeText(" ");
     const checkId = "source-updates-browser-row-team-main%00guide:check";
     await setup.waitFor(

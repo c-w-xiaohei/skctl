@@ -1,4 +1,4 @@
-import { batch, createSignal } from "solid-js";
+import { batch, createMemo, createSignal } from "solid-js";
 import type { ManagementProjection } from "@skill-cli/core";
 import {
   skillAddressKey,
@@ -39,14 +39,7 @@ export interface WorkspaceSnapshot {
   readonly filters: Readonly<Record<string, string>>;
   readonly sourceFilter?: string;
   readonly scrolls: Readonly<Record<string, number>>;
-  readonly sourceUpdatesView?: {
-    readonly source: string;
-    readonly query: string;
-    readonly filter: "all" | "updates";
-  };
-  readonly sourceUpdatesViews: Readonly<
-    Record<string, { readonly query: string; readonly filter: "all" | "updates" }>
-  >;
+  readonly sourceUpdatesSource?: string;
   readonly sourceBrowseViews?: Readonly<Record<string, SourceBrowseView>>;
 }
 
@@ -305,10 +298,11 @@ const expandedPathFromKey = (key: string): ExposurePath | undefined => {
 export function createWorkspaceState(
   onReconciledSkill?: (selectedSkill: SkillAddress | undefined) => void,
 ) {
-  // Navigation frames intentionally restore durable workspace snapshots. Source
-  // query/filter state is session-local UI context, so an older predecessor
-  // frame must never rewind it after a Source → Skill → Back round-trip.
-  const sourceUpdatesViews = new Map<string, { query: string; filter: "all" | "updates" }>();
+  // Session preferences outlive route frames, which restore only the active Source.
+  const defaultSourceUpdatesPreference = { query: "", filter: "updates" as const };
+  const [sourceUpdatesPreferences, setSourceUpdatesPreferences] = createSignal<
+    ReadonlyMap<string, { readonly query: string; readonly filter: "all" | "updates" }>
+  >(new Map());
   const [snapshot, setSnapshot] = createSignal<WorkspaceSnapshot>({
     skillsView: "current-exposure",
     section: "skills",
@@ -317,7 +311,6 @@ export function createWorkspaceState(
     query: "",
     filters: {},
     scrolls: {},
-    sourceUpdatesViews: {},
     expandedExposurePaths: {},
     expandedCollectionPaths: {},
   });
@@ -327,17 +320,17 @@ export function createWorkspaceState(
       const next = change(current);
       return JSON.stringify(next) === JSON.stringify(current) ? current : next;
     });
+  const sourceUpdatesSource = createMemo(() => snapshot().sourceUpdatesSource);
+  const sourceUpdatesView = createMemo(() => {
+    const source = sourceUpdatesSource();
+    return source === undefined
+      ? undefined
+      : { source, ...(sourceUpdatesPreferences().get(source) ?? defaultSourceUpdatesPreference) };
+  });
   return {
     snapshot,
     restore(next: WorkspaceSnapshot) {
-      let restored = structuredClone(next);
-      const active = restored.sourceUpdatesView;
-      if (active) {
-        const retained = sourceUpdatesViews.get(active.source);
-        if (retained)
-          restored = { ...restored, sourceUpdatesView: { source: active.source, ...retained } };
-      }
-      setSnapshot(restored);
+      setSnapshot(structuredClone(next));
     },
     skillsView: () => snapshot().skillsView,
     section: () => snapshot().section,
@@ -357,7 +350,7 @@ export function createWorkspaceState(
     query: () => snapshot().query,
     filters: () => snapshot().filters,
     sourceFilter: () => snapshot().sourceFilter,
-    sourceUpdatesView: () => snapshot().sourceUpdatesView,
+    sourceUpdatesView,
     sourceBrowseView: (source: string): SourceBrowseView =>
       snapshot().sourceBrowseViews?.[source] ?? {},
     patchSourceBrowseView(source: string, patch: Partial<SourceBrowseView>) {
@@ -554,60 +547,31 @@ export function createWorkspaceState(
         ...current,
         section: "updates",
         readerOpen: false,
-        sourceUpdatesView: {
-          source,
-          ...(sourceUpdatesViews.get(source) ?? { query: "", filter: "updates" }),
-        },
+        sourceUpdatesSource: source,
       }));
     },
     clearSourceUpdatesView() {
-      update((current) =>
-        current.sourceUpdatesView ? { ...current, sourceUpdatesView: undefined } : current,
-      );
+      update((current) => ({ ...current, sourceUpdatesSource: undefined }));
     },
     setSourceUpdatesQuery(query: string) {
-      const source = snapshot().sourceUpdatesView?.source;
-      if (source) {
-        const current = sourceUpdatesViews.get(source) ?? { query: "", filter: "updates" as const };
-        sourceUpdatesViews.set(source, { ...current, query });
-      }
-      update((current) =>
-        current.sourceUpdatesView
-          ? {
-              ...current,
-              sourceUpdatesView: { ...current.sourceUpdatesView, query },
-              sourceUpdatesViews: {
-                ...current.sourceUpdatesViews,
-                [current.sourceUpdatesView.source]: {
-                  ...current.sourceUpdatesViews[current.sourceUpdatesView.source],
-                  query,
-                },
-              },
-            }
-          : current,
-      );
+      const source = snapshot().sourceUpdatesSource;
+      if (source === undefined) return;
+      setSourceUpdatesPreferences((current) => {
+        const preference = current.get(source) ?? defaultSourceUpdatesPreference;
+        return preference.query === query
+          ? current
+          : new Map(current).set(source, { ...preference, query });
+      });
     },
     setSourceUpdatesFilter(filter: "all" | "updates") {
-      const source = snapshot().sourceUpdatesView?.source;
-      if (source) {
-        const current = sourceUpdatesViews.get(source) ?? { query: "", filter: "updates" as const };
-        sourceUpdatesViews.set(source, { ...current, filter });
-      }
-      update((current) =>
-        current.sourceUpdatesView
-          ? {
-              ...current,
-              sourceUpdatesView: { ...current.sourceUpdatesView, filter },
-              sourceUpdatesViews: {
-                ...current.sourceUpdatesViews,
-                [current.sourceUpdatesView.source]: {
-                  ...current.sourceUpdatesViews[current.sourceUpdatesView.source],
-                  filter,
-                },
-              },
-            }
-          : current,
-      );
+      const source = snapshot().sourceUpdatesSource;
+      if (source === undefined) return;
+      setSourceUpdatesPreferences((current) => {
+        const preference = current.get(source) ?? defaultSourceUpdatesPreference;
+        return preference.filter === filter
+          ? current
+          : new Map(current).set(source, { ...preference, filter });
+      });
     },
     clearSourceFilter() {
       update((current) => ({

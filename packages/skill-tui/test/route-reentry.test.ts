@@ -176,6 +176,33 @@ test("ROUTE-REENTRY Updates Source is distinct despite ordinary target equality 
   });
 });
 
+test("ROUTE-REENTRY a preselected Source does not replace the predecessor Source identity", () => {
+  const workspace = createWorkspaceState();
+  const config = createConfigState();
+  const route = createRoute({ workspace, config });
+  const target = (source: string) => ({
+    destination: "workspace" as const,
+    section: "updates" as const,
+    sublocation: { kind: "updates" as const, entry: updateScope.entry, source },
+  });
+  route.transition(target("alpha"), () => workspace.showSourceUpdates("alpha"));
+  workspace.setSourceUpdatesQuery("alpha-latest");
+  workspace.setSourceUpdatesFilter("all");
+  // A caller may establish the destination before the route captures its predecessor.
+  workspace.showSourceUpdates("beta");
+  workspace.setSourceUpdatesQuery("beta-latest");
+  route.push(target("beta"));
+  route.back();
+  expect(route.snapshot().current.sublocation).toMatchObject({ kind: "updates", source: "alpha" });
+  expect(workspace.sourceUpdatesView()).toEqual({
+    source: "alpha",
+    query: "alpha-latest",
+    filter: "all",
+  });
+  workspace.showSourceUpdates("beta");
+  expect(workspace.sourceUpdatesView()?.query).toBe("beta-latest");
+});
+
 test("ROUTE-REENTRY Problems diagnostic keys are distinct despite identical ordinary targets", () => {
   const workspace = createWorkspaceState();
   const config = createConfigState();

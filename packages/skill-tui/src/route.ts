@@ -233,7 +233,7 @@ export function createRoute(
         return {
           kind: "updates",
           entry: structuredClone(state.scope.entry),
-          source: pages.workspace.sourceUpdatesView()?.source,
+          source: pages.workspace.snapshot().sourceUpdatesSource,
         };
     }
     const key = pages.workspace.diagnosticDetail();
@@ -332,12 +332,11 @@ export function createRoute(
             : {}),
         }
       : {}),
-    // Keep live Source query/filter preferences when the layer is unchanged;
-    // retain the old Source only if this event already changed its identity.
+    // Retain the predecessor Source if this event already changed its identity.
     ...(active.context === "workspace" &&
     active.section === "updates" &&
-    live.sourceUpdatesView?.source !== active.workspace.sourceUpdatesView?.source
-      ? { sourceUpdatesView: active.workspace.sourceUpdatesView }
+    live.sourceUpdatesSource !== active.workspace.sourceUpdatesSource
+      ? { sourceUpdatesSource: active.workspace.sourceUpdatesSource }
       : {}),
   });
   const apply = (
@@ -566,7 +565,7 @@ export function createRoute(
     pages.workspace.readerOpen() ||
     pages.workspace.collectionBrowserOpen() ||
     !!pages.workspace.diagnosticDetail() ||
-    !!pages.workspace.sourceUpdatesView() ||
+    pages.workspace.snapshot().sourceUpdatesSource !== undefined ||
     !!pages.collections?.inspector() ||
     !!pages.collections?.filter().open ||
     (destination !== "workspace" &&
