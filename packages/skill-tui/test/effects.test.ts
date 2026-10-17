@@ -1,15 +1,7 @@
 import { expect, test } from "bun:test";
 import { SkillCliError } from "@skill-cli/core";
-import { skillAddressKey } from "@skill-cli/core";
 import { createTuiEffects } from "../src/effects";
-import { createOperationState } from "../src/operation-state";
-import {
-  activeReader,
-  beginReaderRequest,
-  createReaderState,
-  reduceReaderState,
-  type ReaderEvent,
-} from "../src/reader/state";
+import { createReaderOwner } from "../src/reader/state";
 import {
   directOwner,
   directSourceCore,
@@ -145,10 +137,6 @@ test("Reader effects retain an inactive aborted request's accepted cache update 
         readonly diagnostics: [];
       }) => void)
     | undefined;
-  let state = createReaderState();
-  const dispatch = (event: ReaderEvent) => {
-    state = reduceReaderState(state, event);
-  };
   const core = directSourceCore(workspaceProjection(), {
     loadInstalled: (request) =>
       request.address.path === "alpha"
@@ -166,24 +154,14 @@ test("Reader effects retain an inactive aborted request's accepted cache update 
             diagnostics: [],
           }),
   });
-  const effects = createTuiEffects(
-    core,
-    createOperationState(),
-    testProjection().projection.outcomes,
-    dispatch,
-    (address, request) => {
-      const begun = beginReaderRequest(state, address, request);
-      state = begun.state;
-      return begun.event;
-    },
-  );
+  const owner = createReaderOwner(core.content);
   const alpha = { source: "team-main", path: "alpha" };
   const beta = { source: "team-main", path: "beta" };
 
-  dispatch({ type: "select", address: alpha });
-  const first = effects.loadReader(alpha);
-  dispatch({ type: "select", address: beta });
-  await effects.loadReader(beta);
+  owner.select(alpha);
+  const first = owner.load(alpha);
+  owner.select(beta);
+  await owner.load(beta);
   resolveAlpha!({
     value: {
       address: alpha,
@@ -196,8 +174,9 @@ test("Reader effects retain an inactive aborted request's accepted cache update 
   });
   await first;
 
-  expect(activeReader(state)).toMatchObject({ address: beta, text: "beta" });
-  expect(state.cache[skillAddressKey(alpha)]).toMatchObject({ text: "alpha", loading: false });
+  expect(owner.current()).toMatchObject({ address: beta, text: "beta" });
+  // Existing baseline conflict: cancelled content is deliberately not accepted by production.
+  expect(owner.cached(alpha)).toMatchObject({ text: "alpha", loading: false });
 });
 
 test("MGMT-006 discovers once and installs selected observed paths at the exact revision before one refresh", async () => {

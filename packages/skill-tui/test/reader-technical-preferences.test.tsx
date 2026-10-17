@@ -3,8 +3,7 @@ import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
 import { AccordionTriggerRenderable } from "@tuiparts/core/accordion";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
-import { activeReader, createReaderState, reduceReaderState } from "../src/reader/state";
-import { skillAddressKey } from "../src/types";
+import { createReaderOwner } from "../src/reader/state";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection, readerSecondAddress } from "./installed-reader.fixture";
 import {
@@ -21,26 +20,24 @@ import {
 const firstAddress = { source: "team-main", path: "guide" };
 
 test("Reader cache keeps technical disclosure per address through selection and semantic restore", () => {
-  let state = reduceReaderState(createReaderState(), { type: "select", address: firstAddress });
-  state = reduceReaderState(state, {
-    type: "patch",
-    value: { tab: "details", detailsMetadataOpen: true, detailsDescriptionOpen: true },
-  });
-  const saved = activeReader(state)!;
+  const owner = createReaderOwner(directSourceCore(readerProjection()).content);
+  owner.select(firstAddress);
+  owner.patch({ tab: "details", detailsMetadataOpen: true, detailsDescriptionOpen: true });
+  const saved = owner.current()!;
 
-  state = reduceReaderState(state, { type: "select", address: readerSecondAddress });
-  expect(activeReader(state)?.detailsMetadataOpen).toBeUndefined();
-  state = reduceReaderState(state, { type: "patch", value: { detailsManagementOpen: true } });
-  state = reduceReaderState(state, { type: "restore", value: saved });
+  owner.select(readerSecondAddress);
+  expect(owner.current()?.detailsMetadataOpen).toBeUndefined();
+  owner.patch({ detailsManagementOpen: true });
+  owner.restore(saved);
 
-  expect(activeReader(state)).toMatchObject({
+  expect(owner.current()).toMatchObject({
     address: firstAddress,
     tab: "details",
     detailsMetadataOpen: true,
     detailsDescriptionOpen: true,
   });
-  expect(state.cache[skillAddressKey(readerSecondAddress)]?.detailsMetadataOpen).toBeUndefined();
-  expect(state.cache[skillAddressKey(readerSecondAddress)]?.detailsManagementOpen).toBe(true);
+  expect(owner.cached(readerSecondAddress)?.detailsMetadataOpen).toBeUndefined();
+  expect(owner.cached(readerSecondAddress)?.detailsManagementOpen).toBe(true);
 });
 
 test("production App restores expanded technical details on exact relationship Back without leaking to another Skill", async () => {

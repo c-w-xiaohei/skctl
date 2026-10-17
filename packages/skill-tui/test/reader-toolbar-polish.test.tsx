@@ -11,23 +11,16 @@ import type { ActionId, ActionRecord } from "../src/actions";
 import { createCommandRegistry } from "../src/commands";
 import { createFocusRegistry } from "../src/focus";
 import { Reader } from "../src/reader";
-import { activeReader, createReaderState, reduceReaderState } from "../src/reader/state";
+import { createReaderOwner } from "../src/reader/state";
 import { skillAddressKey, type ReaderState } from "../src/types";
 import { readerContent, readerProjection, readerSecondContent } from "./installed-reader.fixture";
 import { parsedEnter } from "./reader-test-controls";
+import { directSourceCore } from "./direct-source.fixture";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
 async function mountReader(width = 90, height = 13) {
   const projection = readerProjection();
-  let initial = createReaderState();
-  for (const content of [readerSecondContent, readerContent]) {
-    initial = reduceReaderState(initial, { type: "select", address: content.address });
-    initial = reduceReaderState(initial, {
-      type: "patch",
-      value: { text: content.markdownText, rawText: content.rawText },
-    });
-  }
   const calls: { id: ActionId | "reload"; address: string }[] = [];
   let api!: {
     reader: () => ReaderState;
@@ -39,11 +32,14 @@ async function mountReader(width = 90, height = 13) {
   };
   const setup = await testRender(
     () => {
-      const [owner, setOwner] = createSignal(initial);
+      const owner = createReaderOwner(directSourceCore(projection).content);
+      for (const content of [readerSecondContent, readerContent]) {
+        owner.select(content.address);
+        owner.patch({ text: content.markdownText, rawText: content.rawText });
+      }
       const [paneWidth, setWidth] = createSignal(width);
-      const reader = () => activeReader(owner())!;
-      const patch = (value: Partial<ReaderState>) =>
-        setOwner((current) => reduceReaderState(current, { type: "patch", value }));
+      const reader = () => owner.current()!;
+      const patch = owner.patch;
       const call = (id: ActionId | "reload") =>
         calls.push({ id, address: skillAddressKey(reader().address!) });
       const actions = (): ActionRecord[] =>
@@ -66,13 +62,7 @@ async function mountReader(width = 90, height = 13) {
         commands,
         focus,
         setWidth,
-        select: (index) =>
-          setOwner((current) =>
-            reduceReaderState(current, {
-              type: "select",
-              address: projection.installedSkills[index]!.address,
-            }),
-          ),
+        select: (index) => owner.select(projection.installedSkills[index]!.address),
       };
       return (
         <box width={paneWidth()} height="100%" flexDirection="column">

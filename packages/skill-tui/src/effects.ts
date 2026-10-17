@@ -1,5 +1,4 @@
 import {
-  type OperationResult,
   type DiscoveryObservation,
   type ConfigSourceObservation,
   type ContentCapability,
@@ -18,7 +17,6 @@ import { createSignal } from "solid-js";
 import type { DirectSourceIntent, SourceOperationIntent } from "./actions";
 import type { OperationState } from "./operation-state";
 import type { Diagnostic } from "@skill-cli/core";
-import type { ReaderAddress, ReaderEvent, ReaderRequest } from "./reader/state";
 import type { ProjectionOutcomes } from "./projection";
 import type { TaskState } from "./types";
 import {
@@ -134,24 +132,8 @@ export function createTuiEffects(
   core: TuiCore,
   operation: OperationState,
   projection: ProjectionOutcomes,
-  dispatchReader: (event: ReaderEvent) => void = () => {},
-  beginReader: (
-    address: { readonly source: string; readonly path: string },
-    request: ReaderRequest,
-    path?: string,
-  ) => Extract<ReaderEvent, { readonly type: `${string}.start` }> = () => {
-    throw new Error("Reader owner is required");
-  },
 ) {
   let refreshController: AbortController | undefined;
-  let readerContentRequest:
-    | {
-        readonly controller: AbortController;
-        readonly address: ReaderAddress;
-        readonly epoch: number;
-      }
-    | undefined;
-  let readerResourceController: AbortController | undefined;
   let foreground:
     | {
         readonly id: string;
@@ -439,95 +421,6 @@ export function createTuiEffects(
     return createTaskController(state).submit(targets);
   };
   const stopUpdates = () => (updatesActive() ? (updateTask()?.controller.stop() ?? false) : false);
-
-  // Selection can hit a cache without starting another read; it still owns cancellation.
-  // This never touches the foreground lane or the process-owned update task.
-  const cancelReaderContent = () => {
-    const current = readerContentRequest;
-    if (!current) return;
-    readerContentRequest = undefined;
-    dispatchReader({ type: "content.cancel", address: current.address, epoch: current.epoch });
-    current.controller.abort();
-  };
-  const loadReader = async (address: ReaderAddress) => {
-    if (closed) return undefined;
-    cancelReaderContent();
-    const controller = new AbortController();
-    const start = beginReader(address, "content");
-    const epoch = start.epoch;
-    const current = { controller, address, epoch };
-    readerContentRequest = current;
-    const active = () => !closed && readerContentRequest === current && !controller.signal.aborted;
-    try {
-      const result = await core.content.loadInstalled({ address }, { signal: controller.signal });
-      if (!active()) return undefined;
-      dispatchReader({ type: "content.settle", address, epoch, value: result.value });
-      for (const item of result.diagnostics) {
-        if (!active()) return undefined;
-        dispatchReader({ type: "failure", address, epoch, request: "content", diagnostic: item });
-      }
-      return result;
-    } catch (error) {
-      if (active()) {
-        if (cancelled(error)) dispatchReader({ type: "content.cancel", address, epoch });
-        else
-          dispatchReader({
-            type: "failure",
-            address,
-            epoch,
-            request: "content",
-            diagnostic: diagnostic(error),
-          });
-      }
-      return undefined;
-    } finally {
-      if (readerContentRequest === current) readerContentRequest = undefined;
-    }
-  };
-  // List and body reads share transport ownership; the Reader reducer owns stale epochs.
-  const withReaderResource = async <T>(
-    address: ReaderAddress,
-    request: "resources" | "resource",
-    read: (signal: AbortSignal) => Promise<OperationResult<T>>,
-    settled: (value: T, epoch: number) => ReaderEvent,
-    path?: string,
-  ) => {
-    if (closed) return undefined;
-    readerResourceController?.abort();
-    const controller = new AbortController();
-    readerResourceController = controller;
-    const { epoch } = beginReader(address, request, path);
-    try {
-      const result = await read(controller.signal);
-      if (!closed) {
-        dispatchReader(settled(result.value, epoch));
-        for (const item of result.diagnostics)
-          dispatchReader({ type: "failure", address, epoch, request, diagnostic: item });
-      }
-      return result;
-    } catch (error) {
-      if (!closed && !cancelled(error))
-        dispatchReader({ type: "failure", address, epoch, request, diagnostic: diagnostic(error) });
-      return undefined;
-    } finally {
-      if (readerResourceController === controller) readerResourceController = undefined;
-    }
-  };
-  const listResources = (address: ReaderAddress) =>
-    withReaderResource(
-      address,
-      "resources",
-      (signal) => core.content.listInstalledResources({ address }, { signal }),
-      (resources, epoch) => ({ type: "resources.settle", address, epoch, resources }),
-    );
-  const readResource = (address: ReaderAddress, path: string) =>
-    withReaderResource(
-      address,
-      "resource",
-      (signal) => core.content.readInstalled({ address, path }, { signal }),
-      (value, epoch) => ({ type: "resource.settle", address, epoch, value }),
-      path,
-    );
 
   const review = async (intent: DirectSourceIntent): Promise<SourceRemovalReview | undefined> => {
     return withForeground("preview", undefined, async ({ id, signal, active }) => {
@@ -864,10 +757,6 @@ export function createTuiEffects(
 
   return {
     refresh,
-    loadReader,
-    cancelReaderContent,
-    listResources,
-    readResource,
     review,
     confirm,
     discover,
@@ -1084,8 +973,6 @@ export function createTuiEffects(
       if (!closed) {
         closed = true;
         refreshController?.abort();
-        cancelReaderContent();
-        readerResourceController?.abort();
         foreground?.controller.abort();
         updateChecks.teardown();
         updateTask()?.controller.teardown();

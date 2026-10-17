@@ -46,7 +46,6 @@ import {
   destinations,
   readerOwnsFocus,
   sameSkillAddress,
-  skillAddressKey,
   validSections,
   type Destination,
   type FocusOwner,
@@ -96,13 +95,7 @@ import { deriveAgentAccessTree } from "./collections/agent-access-tree";
 import { deriveCollectionFilterTree } from "./collections/collection-filter-tree";
 import { configDeclarationOwnerKey, createConfigState } from "./config/state";
 import { createOperationState } from "./operation-state";
-import {
-  activeReader,
-  beginReaderRequest,
-  createReaderState,
-  reduceReaderEvent,
-  reduceReaderState,
-} from "./reader/state";
+import { createReaderOwner } from "./reader/state";
 import { SectionTabs } from "./components/section-tabs";
 import {
   dispatchKeyEvent,
@@ -321,24 +314,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   const operation = createOperationState();
   const [overlaySession, setOverlaySession] = createSignal(createOverlaySession());
   const overlayKind = () => overlaySession().kind;
-  const [readerState, setReaderState] = createSignal(createReaderState());
   const [transition, setTransition] = createSignal<string | undefined>();
-  const reader = () => activeReader(readerState());
-  const readerDispatch = (event: Parameters<typeof reduceReaderState>[1]) => {
-    let accepted = false;
-    let activeFailure = false;
-    setReaderState((current) => {
-      const reduced = reduceReaderEvent(current, event);
-      accepted = reduced.accepted;
-      activeFailure =
-        event.type === "failure" &&
-        reduced.state.activeKey === skillAddressKey(event.address) &&
-        activeReader(reduced.state)?.resourceLevel === "content";
-      return reduced.state;
-    });
-    if (accepted && activeFailure && physicalFocusOwner() === "reader-resource-content")
-      requestFocus("reader-resource-content");
-  };
+  const readerOwner = createReaderOwner(props.core.content, () => {
+    if (physicalFocusOwner() === "reader-resource-content") requestFocus("reader-resource-content");
+  });
+  const reader = readerOwner.current;
   const workspaceState = createWorkspaceState((selected) => {
     const address = selected
       ? projection
@@ -358,7 +338,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     if (workspaceState.readerOpen()) {
       const changed = !reader()?.address || !sameSkillAddress(reader()!.address!, address);
       selectReaderSkill(address);
-      if (changed) readerDispatch({ type: "patch", value: { tab: "skill" } });
+      if (changed) readerOwner.patch({ tab: "skill" });
     }
   });
   const collectionsState = createCollectionsState();
@@ -549,7 +529,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       reader()?.address &&
       readerOwnsFocus(target)
     ) {
-      readerDispatch({ type: "patch", value: { focus: target } });
+      readerOwner.patch({ focus: target });
     }
     focus.request(target);
   };
@@ -578,8 +558,8 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     reader,
     (address, surface) => {
       if (reader()?.address && !sameSkillAddress(reader()!.address!, address))
-        effects.cancelReaderContent();
-      readerDispatch({ type: "select", address, surface });
+        readerOwner.cancelContent();
+      readerOwner.select(address, surface);
     },
     (address) => {
       batch(() => {
@@ -601,7 +581,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     },
     (state) => {
       if (!state?.address) return;
-      readerDispatch({ type: "restore", value: state });
+      readerOwner.restore(state);
     },
     () => effects?.updates(),
     (state) => {
@@ -669,48 +649,33 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     const current = projection.workspace();
     if (current) collectionsState.reconcile(current, current);
   };
-  effects = createTuiEffects(
-    props.core,
-    operation,
-    {
-      ...projection.outcomes,
-      applyProjection: (snapshot) => {
-        batch(() => {
-          const changed = (projection.workspace()?.installedSkills ?? []).filter((previous) => {
-            const next = snapshot.installedSkills.find((item) =>
-              sameSkillAddress(item.address, previous.address),
-            );
-            return (
-              !next ||
-              !!previous.owner.relevantLocalRoot ||
-              !!next.owner.relevantLocalRoot ||
-              previous.owner.relevantRemoteRevision !== next.owner.relevantRemoteRevision ||
-              previous.owner.source !== next.owner.source
-            );
-          });
-          if (
-            changed.some(
-              (item) => reader()?.address && sameSkillAddress(item.address, reader()!.address!),
-            )
-          )
-            effects.cancelReaderContent();
-          for (const item of changed)
-            readerDispatch({ type: "content.invalidate", address: item.address });
-          projection.outcomes.applyProjection(snapshot);
+  effects = createTuiEffects(props.core, operation, {
+    ...projection.outcomes,
+    applyProjection: (snapshot) => {
+      batch(() => {
+        const changed = (projection.workspace()?.installedSkills ?? []).filter((previous) => {
+          const next = snapshot.installedSkills.find((item) =>
+            sameSkillAddress(item.address, previous.address),
+          );
+          return (
+            !next ||
+            !!previous.owner.relevantLocalRoot ||
+            !!next.owner.relevantLocalRoot ||
+            previous.owner.relevantRemoteRevision !== next.owner.relevantRemoteRevision ||
+            previous.owner.source !== next.owner.source
+          );
         });
-      },
-    },
-    readerDispatch,
-    (address, request, path) => {
-      let start: ReturnType<typeof beginReaderRequest>["event"] | undefined;
-      setReaderState((current) => {
-        const begun = beginReaderRequest(current, address, request, path);
-        start = begun.event;
-        return begun.state;
+        if (
+          changed.some(
+            (item) => reader()?.address && sameSkillAddress(item.address, reader()!.address!),
+          )
+        )
+          readerOwner.cancelContent();
+        for (const item of changed) readerOwner.invalidate(item.address);
+        projection.outcomes.applyProjection(snapshot);
       });
-      return start!;
     },
-  );
+  });
   const openUpdates = (entry: UpdateScopeEntry, check = false) => {
     const workspace = projection.workspace();
     if (!workspace) return;
@@ -911,9 +876,9 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   const selectReaderSkill = (address: SkillAddress) => {
     const current = reader();
     if (!current?.address || !sameSkillAddress(current.address, address)) {
-      effects.cancelReaderContent();
-      readerDispatch({ type: "resource-abandon" });
-      readerDispatch({ type: "select", address });
+      readerOwner.cancelContent();
+      readerOwner.abandonResource();
+      readerOwner.select(address);
     }
     const selected = reader();
     if (
@@ -921,19 +886,16 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       !selected?.error &&
       (selected?.text === undefined || selected.rawText === undefined)
     )
-      void effects.loadReader(address);
+      void readerOwner.load(address);
     if (selected?.tab === "resources") ensureResources();
   };
   const selectReaderTab = (tab: import("./types").ReaderState["tab"]) => {
-    readerDispatch({ type: "resource-abandon" });
-    readerDispatch({
-      type: "patch",
-      value: {
-        tab,
-        resourceLevel: "list",
-        resourceLoading: false,
-        error: undefined,
-      },
+    readerOwner.abandonResource();
+    readerOwner.patch({
+      tab,
+      resourceLevel: "list",
+      resourceLoading: false,
+      error: undefined,
     });
     setTransition(`Reader view: ${readerTabLabel(tab)}`);
     if (tab === "resources") ensureResources();
@@ -941,10 +903,10 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   const ensureResources = () => {
     const current = reader();
     if (current?.address && !current.resourcesLoaded && !current.resourceLoading && !current.error)
-      void effects.listResources(current.address);
+      void readerOwner.list(current.address);
   };
   const openReaderSkill = (address: SkillAddress, tab?: import("./types").ReaderState["tab"]) => {
-    const selected = readerState().cache[skillAddressKey(address)];
+    const selected = readerOwner.cached(address);
     const readerFocus: FocusOwner = tab
       ? "reader"
       : selected?.tab === "resources"
@@ -977,7 +939,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
           workspaceState.selectSkill(address);
           workspaceState.openReader();
           selectReaderSkill(address);
-          if (tab) readerDispatch({ type: "patch", value: { tab, focus: "reader" } });
+          if (tab) readerOwner.patch({ tab, focus: "reader" });
           if (layout.wide()) workspaceState.showWorkArea();
           else workspaceState.openDetail();
         }),
@@ -1199,14 +1161,14 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     const current = reader();
     untrack(() => {
       if (!selected) {
-        effects.cancelReaderContent();
+        readerOwner.cancelContent();
         workspaceState.closeReader();
         return;
       }
       workspaceState.openReader();
       const changed = !current?.address || !sameSkillAddress(current.address, selected.address);
       selectReaderSkill(selected.address);
-      if (changed) readerDispatch({ type: "patch", value: { tab: "skill" } });
+      if (changed) readerOwner.patch({ tab: "skill" });
     });
   });
   const dispatchAction = async (id: ActionId, returnFocus?: FocusOwner) => {
@@ -1982,12 +1944,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         details ? "reader-details" : "reader-scrollbox",
       );
       if (scrollbox && "scrollTop" in scrollbox)
-        readerDispatch({
-          type: "patch",
-          value: details
+        readerOwner.patch(
+          details
             ? { detailsScroll: Number(scrollbox.scrollTop) }
             : { scroll: Number(scrollbox.scrollTop) },
-        });
+        );
     }
     if (workspaceState.diagnosticDetail()) workspaceState.closeDiagnosticDetail();
     route.back();
@@ -2032,10 +1993,10 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
             if (event.value.tab) selectReaderTab(event.value.tab);
             else {
               if (event.value.resourceLevel === "list") {
-                readerDispatch({ type: "resource-abandon" });
+                readerOwner.abandonResource();
                 setTransition("Back to Resources");
               }
-              readerDispatch({ type: "patch", value: event.value });
+              readerOwner.patch(event.value);
             }
           } else if (event.type === "focus.request") {
             requestFocus(event.focus);
@@ -2391,6 +2352,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     stopThemeFollow();
     stopFocusSubscription();
     effects.teardown();
+    readerOwner.dispose();
   });
   const actionDestination = createMemo(() => route.snapshot().destination);
   const actions = createMemo(() =>
@@ -3397,7 +3359,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                             !reader()?.address || !sameSkillAddress(reader()!.address!, address);
                           workspaceState.selectSkill(address);
                           selectReaderSkill(address);
-                          if (changed) readerDispatch({ type: "patch", value: { tab: "skill" } });
+                          if (changed) readerOwner.patch({ tab: "skill" });
                           workspaceState.openReader();
                           route.syncCurrent({ object: address });
                           if (intent === "open") requestFocus("reader");
@@ -4047,48 +4009,42 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         onReaderPatch={(reader) => {
                           if (reader.raw !== undefined) requestFocus("command:reader.raw");
                           if (reader.tab) selectReaderTab(reader.tab);
-                          else readerDispatch({ type: "patch", value: reader });
+                          else readerOwner.patch(reader);
                         }}
                         onReaderFindCommit={(value) => {
                           const current = reader();
-                          readerDispatch({
-                            type: "patch",
-                            value: {
-                              find: value,
-                              match: current?.find === value ? current.match : 0,
-                            },
+                          readerOwner.patch({
+                            find: value,
+                            match: current?.find === value ? current.match : 0,
                           });
                         }}
                         onResources={() => ensureResources()}
-                        onRetryContent={(address) => void effects.loadReader(address)}
+                        onRetryContent={(address) => void readerOwner.load(address)}
                         onReloadContent={(address) => {
-                          effects.cancelReaderContent();
-                          readerDispatch({ type: "content.invalidate", address });
+                          readerOwner.cancelContent();
+                          readerOwner.invalidate(address);
                         }}
                         onReadResource={(address, path) => {
                           requestFocus("reader-resource-content");
                           const current = reader();
                           if (current?.resource?.path === path && !current.resourceLoading) {
-                            readerDispatch({
-                              type: "patch",
-                              value: {
-                                selectedResource: path,
-                                resourceLevel: "content",
-                                error: undefined,
-                              },
+                            readerOwner.patch({
+                              selectedResource: path,
+                              resourceLevel: "content",
+                              error: undefined,
                             });
-                          } else void effects.readResource(address, path);
+                          } else void readerOwner.read(address, path);
                         }}
                         onRetryResource={(address) => {
                           const current = reader();
                           if (current?.resourceLevel === "content" && current.selectedResource) {
                             requestFocus("reader-resource-content");
-                            void effects.readResource(address, current.selectedResource);
+                            void readerOwner.read(address, current.selectedResource);
                           } else {
                             requestFocus(
                               current?.resources.length ? "reader-resource-list" : "reader",
                             );
-                            void effects.listResources(address);
+                            void readerOwner.list(address);
                           }
                         }}
                         onResourceBack={() =>
@@ -4198,12 +4154,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                               "command:reader.relationship.selectors",
                             );
                         }}
-                        onDetailsScroll={(scroll) =>
-                          readerDispatch({
-                            type: "patch",
-                            value: { detailsScroll: scroll },
-                          })
-                        }
+                        onDetailsScroll={(scroll) => readerOwner.patch({ detailsScroll: scroll })}
                       />
                     ) : (
                       <ConfigPage

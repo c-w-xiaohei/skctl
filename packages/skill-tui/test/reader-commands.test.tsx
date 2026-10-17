@@ -3,18 +3,16 @@ import { testRender } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { Reader } from "../src/reader";
 import { App } from "../src/app";
-import { activeReader, createReaderState, reduceReaderState } from "../src/reader/state";
+import { createReaderOwner } from "../src/reader/state";
 import type { CommandRecord, ReaderState } from "../src/types";
 import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
 
 function readerState(tab: ReaderState["tab"], resources: ReaderState["resources"] = []) {
-  const state = reduceReaderState(createReaderState(), {
-    type: "select",
-    address: { source: "team-main", path: "guide" },
-  });
+  const owner = createReaderOwner(directSourceCore(readerProjection()).content);
+  owner.select({ source: "team-main", path: "guide" });
   return {
-    ...activeReader(state)!,
+    ...owner.current()!,
     tab,
     resources,
     resourcesLoaded: resources.length > 0,

@@ -16,12 +16,6 @@ import { createProjection } from "../src/projection";
 import { createWorkspaceState } from "../src/workspace/state";
 import { createCollectionsState } from "../src/collections/state";
 import { createConfigState } from "../src/config/state";
-import {
-  beginReaderRequest,
-  createReaderState,
-  reduceReaderState,
-  type ReaderOwnerState,
-} from "../src/reader/state";
 import { focusLive, parsedEnter } from "./reader-test-controls";
 
 export function testProjection() {
@@ -34,28 +28,9 @@ export function testProjection() {
   return { projection, operation };
 }
 
-export function testEffects(
-  core: TuiCore,
-  dispatchReader: (event: import("../src/reader/state").ReaderEvent) => void = () => {},
-) {
+export function testEffects(core: TuiCore) {
   const { projection, operation } = testProjection();
-  let reader: ReaderOwnerState = createReaderState();
-  const effects = createTuiEffects(
-    core,
-    operation,
-    projection.outcomes,
-    (event) => {
-      reader = reduceReaderState(reader, event);
-      dispatchReader(event);
-    },
-    (address, request, path) => {
-      const begun = beginReaderRequest(reader, address, request, path);
-      reader = begun.state;
-      dispatchReader(begun.event);
-      return begun.event;
-    },
-  );
-  return { ...effects, operation };
+  return { ...createTuiEffects(core, operation, projection.outcomes), operation };
 }
 
 export const directOwner = {

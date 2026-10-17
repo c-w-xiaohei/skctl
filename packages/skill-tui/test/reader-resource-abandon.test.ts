@@ -1,59 +1,32 @@
 import { expect, test } from "bun:test";
-import { skillAddressKey } from "../src/types";
-import type { ReadInstalledResource } from "../src/types";
-import {
-  activeReader,
-  beginReaderRequest,
-  createReaderState,
-  reduceReaderEvent,
-  reduceReaderState,
-} from "../src/reader/state";
+import { installedContent, pendingReader } from "./reader-owner.fixture";
 
 const alpha = { source: "main", path: "alpha" };
 const beta = { source: "main", path: "beta" };
 
-const deferred = <T>() => {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((settle) => {
-    resolve = settle;
-  });
-  return { promise, resolve };
-};
-
 test("resource Back invalidates a deferred body completion while retaining Reader cache", async () => {
-  let state = reduceReaderState(createReaderState(), { type: "select", address: alpha });
-  state = reduceReaderState(state, {
-    type: "patch",
-    value: {
-      tab: "resources",
-      raw: true,
-      find: "needle",
-      match: 2,
-      scroll: 7,
-      detailsScroll: 11,
-      resourcesLoaded: true,
-      resources: [{ path: "notes.md", kind: "file" }],
-    },
+  const { owner, loads, reads } = pendingReader();
+  owner.select(alpha);
+  owner.patch({
+    tab: "resources",
+    raw: true,
+    find: "needle",
+    match: 2,
+    scroll: 7,
+    detailsScroll: 11,
+    resourcesLoaded: true,
+    resources: [{ path: "notes.md", kind: "file" }],
   });
-  const content = beginReaderRequest(state, alpha, "content");
-  const resource = beginReaderRequest(content.state, alpha, "resource", "notes.md");
-  state = resource.state;
-  const pending = deferred<ReadInstalledResource>();
-  const completion = pending.promise.then((value) => {
-    const result = reduceReaderEvent(state, {
-      type: "resource.settle",
-      address: alpha,
-      epoch: resource.event.epoch,
-      value,
-    });
-    state = result.state;
-    return result.accepted;
+  const content = owner.load(alpha);
+  const resource = owner.read(alpha, "notes.md");
+  owner.abandonResource();
+  reads[0]!.resolve({
+    value: { kind: "text", path: "notes.md", format: "markdown", text: "late body" },
+    diagnostics: [],
   });
-  state = reduceReaderState(state, { type: "resource-abandon" });
-  pending.resolve({ kind: "text", path: "notes.md", format: "markdown", text: "late body" });
-
-  expect(await completion).toBe(false);
-  expect(activeReader(state)).toMatchObject({
+  expect(await resource).toMatchObject({ value: { text: "late body" } });
+  expect(reads[0]!.signal?.aborted).toBe(false);
+  expect(owner.current()).toMatchObject({
     tab: "resources",
     resourceLevel: "list",
     resourceLoading: false,
@@ -67,133 +40,108 @@ test("resource Back invalidates a deferred body completion while retaining Reade
     resourcesLoaded: true,
     resources: [{ path: "notes.md", kind: "file" }],
   });
-  expect(activeReader(state)?.resource).toBeUndefined();
-  const settledContent = reduceReaderEvent(state, {
-    type: "content.settle",
-    address: alpha,
-    epoch: content.event.epoch,
-    value: { markdownText: "current prose", rawText: "current raw" },
+  expect(owner.current()?.resource).toBeUndefined();
+  loads[0]!.resolve({
+    ...installedContent(alpha, "current prose"),
+    value: { ...installedContent(alpha, "current prose").value, rawText: "current raw" },
   });
-  expect(settledContent.accepted).toBe(true);
-  expect(activeReader(settledContent.state)).toMatchObject({
+  await content;
+  expect(owner.current()).toMatchObject({
     resourceLevel: "list",
     text: "current prose",
     loading: false,
   });
+  owner.dispose();
 });
 
 test("tab change rejects a deferred resource failure without overwriting the new view", async () => {
-  let state = reduceReaderState(createReaderState(), { type: "select", address: alpha });
-  const resource = beginReaderRequest(state, alpha, "resource", "notes.md");
-  state = resource.state;
-  const pending = deferred<void>();
-  const completion = pending.promise.then(() => {
-    const result = reduceReaderEvent(state, {
-      type: "failure",
-      request: "resource",
-      address: alpha,
-      epoch: resource.event.epoch,
-      diagnostic: { code: "INTERNAL", severity: "warning", message: "late failure" },
-    });
-    state = result.state;
-    return result.accepted;
-  });
-  state = reduceReaderState(state, { type: "resource-abandon" });
-  state = reduceReaderState(state, { type: "patch", value: { tab: "details" } });
-  pending.resolve();
-
-  expect(await completion).toBe(false);
-  expect(activeReader(state)).toMatchObject({
+  const { owner, reads } = pendingReader();
+  owner.select(alpha);
+  const completion = owner.read(alpha, "notes.md");
+  owner.abandonResource();
+  owner.patch({ tab: "details" });
+  reads[0]!.reject(new Error("late failure"));
+  expect(await completion).toBeUndefined();
+  expect(owner.current()).toMatchObject({
     tab: "details",
     resourceLevel: "list",
     resourceLoading: false,
   });
-  expect(activeReader(state)?.error).toBeUndefined();
+  expect(owner.current()?.error).toBeUndefined();
+  owner.dispose();
 });
 
-test("only the newly allocated resource epoch can settle after abandonment", () => {
-  const selected = reduceReaderState(createReaderState(), { type: "select", address: alpha });
-  const abandoned = beginReaderRequest(selected, alpha, "resource", "old.md");
-  const back = reduceReaderState(abandoned.state, { type: "resource-abandon" });
-  const current = beginReaderRequest(back, alpha, "resource", "current.md");
-  expect(current.event.epoch).toBeGreaterThan(abandoned.event.epoch);
-  const stale = reduceReaderEvent(current.state, {
-    type: "resource.settle",
-    address: alpha,
-    epoch: abandoned.event.epoch,
+test("only the newly allocated resource epoch can settle after abandonment", async () => {
+  const { owner, reads } = pendingReader();
+  owner.select(alpha);
+  const abandoned = owner.read(alpha, "old.md");
+  owner.abandonResource();
+  const current = owner.read(alpha, "current.md");
+  const state = owner.current();
+  reads[0]!.resolve({
     value: { kind: "text", path: "old.md", format: "text", text: "old" },
+    diagnostics: [],
   });
-  expect(stale.accepted).toBe(false);
-  expect(stale.state).toBe(current.state);
-  const settled = reduceReaderEvent(stale.state, {
-    type: "resource.settle",
-    address: alpha,
-    epoch: current.event.epoch,
+  await abandoned;
+  expect(owner.current()).toBe(state);
+  reads[1]!.resolve({
     value: { kind: "text", path: "current.md", format: "text", text: "current" },
+    diagnostics: [],
   });
-  expect(settled.accepted).toBe(true);
-  expect(activeReader(settled.state)).toMatchObject({
+  await current;
+  expect(owner.current()).toMatchObject({
     resourceLevel: "content",
     resourceLoading: false,
     selectedResource: "current.md",
     resource: { text: "current" },
   });
+  owner.dispose();
 });
 
-test("abandonment changes only the active address and preserves a cached resource", () => {
-  let state = reduceReaderState(createReaderState(), { type: "select", address: alpha });
-  const alphaRequest = beginReaderRequest(state, alpha, "resource", "a.txt");
-  state = reduceReaderState(alphaRequest.state, { type: "select", address: beta });
-  const betaRequest = beginReaderRequest(state, beta, "resource", "b.txt");
-  state = reduceReaderState(betaRequest.state, {
-    type: "resource.settle",
-    address: beta,
-    epoch: betaRequest.event.epoch,
+test("abandonment changes only the active address and preserves a cached resource", async () => {
+  const { owner, reads } = pendingReader();
+  owner.select(alpha);
+  const alphaRequest = owner.read(alpha, "a.txt");
+  owner.select(beta);
+  const betaRequest = owner.read(beta, "b.txt");
+  reads[1]!.resolve({
     value: { kind: "text", path: "b.txt", format: "text", text: "cached beta" },
+    diagnostics: [],
   });
-  const alphaBefore = state.cache[skillAddressKey(alpha)];
-  const cached = activeReader(state)?.resource;
-  state = reduceReaderState(state, { type: "resource-abandon" });
-  expect(state.cache[skillAddressKey(alpha)]).toBe(alphaBefore);
-  expect(activeReader(state)?.resource).toBe(cached);
-  expect(activeReader(state)).toMatchObject({ selectedResource: "b.txt", resourceLevel: "list" });
-  const settledAlpha = reduceReaderEvent(state, {
-    type: "resource.settle",
-    address: alpha,
-    epoch: alphaRequest.event.epoch,
+  await betaRequest;
+  const alphaBefore = owner.cached(alpha);
+  const cached = owner.current()?.resource;
+  owner.abandonResource();
+  expect(owner.cached(alpha)).toBe(alphaBefore);
+  expect(owner.current()?.resource).toBe(cached);
+  expect(owner.current()).toMatchObject({ selectedResource: "b.txt", resourceLevel: "list" });
+  // The old transport ignores abort; its address still owns the current epoch.
+  reads[0]!.resolve({
     value: { kind: "text", path: "a.txt", format: "text", text: "current alpha" },
+    diagnostics: [],
   });
-  expect(settledAlpha.accepted).toBe(true);
-  expect(activeReader(settledAlpha.state)).toMatchObject({ address: beta, resourceLevel: "list" });
-  expect(settledAlpha.state.cache[skillAddressKey(alpha)]?.resource).toMatchObject({
-    text: "current alpha",
-  });
+  await alphaRequest;
+  expect(owner.current()).toMatchObject({ address: beta, resourceLevel: "list" });
+  expect(owner.cached(alpha)?.resource).toMatchObject({ text: "current alpha" });
+  owner.dispose();
 });
 
 test("abandonment also rejects a deferred list result in the shared resource lane", async () => {
-  const selected = reduceReaderState(createReaderState(), { type: "select", address: alpha });
-  const request = beginReaderRequest(selected, alpha, "resources");
-  let state = request.state;
-  const pending = deferred<void>();
-  const completion = pending.promise.then(() => {
-    const result = reduceReaderEvent(state, {
-      type: "resources.settle",
-      address: alpha,
-      epoch: request.event.epoch,
-      resources: [{ path: "late.md", kind: "file" }],
-    });
-    state = result.state;
-    return result.accepted;
-  });
-  state = reduceReaderState(state, { type: "resource-abandon" });
-  pending.resolve();
-  expect(await completion).toBe(false);
-  expect(activeReader(state)).toMatchObject({ resourceLoading: false, resources: [] });
+  const { owner, lists } = pendingReader();
+  owner.select(alpha);
+  const completion = owner.list(alpha);
+  owner.abandonResource();
+  const state = owner.current();
+  lists[0]!.resolve({ value: [{ path: "late.md", kind: "file" }], diagnostics: [] });
+  await completion;
+  expect(owner.current()).toBe(state);
+  expect(owner.current()).toMatchObject({ resourceLoading: false, resources: [] });
+  owner.dispose();
 });
 
 test("abandonment without an active Reader declines without allocating an epoch", () => {
-  const state = createReaderState();
-  const result = reduceReaderEvent(state, { type: "resource-abandon" });
-  expect(result.accepted).toBe(false);
-  expect(result.state).toBe(state);
+  const { owner } = pendingReader();
+  owner.abandonResource();
+  expect(owner.current()).toBeUndefined();
+  expect(owner.cached(alpha)).toBeUndefined();
 });
