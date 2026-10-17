@@ -272,9 +272,17 @@ test("a fulfilled Source stays committed when the next mutation is unknown and n
   expect(calls).toEqual(["first-source", "second-source"]);
 });
 
-test("Effects retain the committed receipt when the post-publication workspace refresh fails", async () => {
+test("Effects retain a committed refresh-failure receipt across restoring a drifted Source draft", async () => {
   const { snapshot, observation } = fixture();
+  const drifted = {
+    ...snapshot,
+    installedSkills: snapshot.installedSkills.map((skill) => ({
+      ...skill,
+      owner: { ...skill.owner, relevantRemoteRevision: "e".repeat(40) },
+    })),
+  };
   let reads = 0;
+  let checks = 0;
   let updates = 0;
   const effects = testEffects(
     directSourceCore(snapshot, {
@@ -282,7 +290,10 @@ test("Effects retain the committed receipt when the post-publication workspace r
         if (++reads === 3) throw new Error("refresh unavailable");
         return { value: snapshot, diagnostics: [] };
       },
-      checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
+      checkUpdate: async ({ source }) => {
+        checks++;
+        return { value: observation(source), diagnostics: [] };
+      },
       update: async () => {
         expect(reads).toBe(2);
         updates++;
@@ -291,7 +302,10 @@ test("Effects retain the committed receipt when the post-publication workspace r
     }),
   );
   try {
-    const state = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
+    const state = effects.selectUpdatesScope({ kind: "source", source: "team-main" }, snapshot)!;
+    await effects.checkUpdates();
+    for (const skill of snapshot.installedSkills) state.toggle(skill.address);
+    expect(state.selected()).toEqual(snapshot.installedSkills.map((skill) => skill.address));
     expect(await effects.submitUpdates()).toBe(true);
     expect(reads).toBe(3);
     expect(updates).toBe(1);
@@ -303,8 +317,24 @@ test("Effects retain the committed receipt when the post-publication workspace r
       "updated",
       "updated",
     ]);
+    const receipt = state.group("team-main")?.committedMessage;
+    const checksAfterSubmit = checks;
+    effects.selectUpdatesScope({ kind: "workspace" }, snapshot);
+    const restored = effects.restoreUpdatesScope(state, drifted)!;
+    expect(restored).toBe(state);
+    // The submitted service check is stale; its label cannot erase the committed receipt.
+    expect(restored.group("team-main")).toMatchObject({
+      status: "failed",
+      stale: true,
+      committed: true,
+    });
+    expect(restored.group("team-main")?.committedMessage).toBe(receipt);
+    expect(restored.selected()).toEqual([]);
+    expect(effects.updatesSubmittable()).toEqual([]);
     expect(effects.updatesRetryable()).toEqual([]);
     expect(await effects.continueUpdates()).toBe(false);
+    expect(checks).toBe(checksAfterSubmit);
+    expect(reads).toBe(3);
     expect(updates).toBe(1);
   } finally {
     effects.teardown();
@@ -472,6 +502,13 @@ test.each(["fulfilled", "rejected"] as const)(
         snapshot,
       )!;
       displayed.toggle({ source: "other-source", path: "guide" });
+      expect(displayed.selected()).toEqual([{ source: "other-source", path: "guide" }]);
+      expect(effects.selectUpdatesScope(origin.scope.entry, snapshot)).toBe(origin);
+      expect(effects.updateTaskEntry()).toEqual({ kind: "source", source: "first-source" });
+      expect(effects.updateRun()).toBe(firstRun);
+      expect(effects.updatesActive()).toBe(true);
+      expect(signal?.aborted).toBe(false);
+      expect(effects.selectUpdatesScope(displayed.scope.entry, snapshot)).toBe(displayed);
       const displayedGroups = displayed.groups();
       const displayedSelection = displayed.selected();
       expect(displayedSelection).toEqual([{ source: "other-source", path: "guide" }]);
