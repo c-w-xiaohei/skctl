@@ -101,7 +101,6 @@ export async function readWorkspaceUnlocked(
   const configs: WorkspaceView["configs"][number][] = [];
   const sources = new Map<string, InternalSourceBinding>();
   const collections = new Set<string>();
-  const declaredCollections = new Set<string>();
   const collectionContributions: CollectionContribution[] = [];
   const configSources = new Set<string>();
   const use = new Set<string>();
@@ -244,18 +243,16 @@ export async function readWorkspaceUnlocked(
             `Source is declared more than once: ${source.id}`,
           );
         sources.set(source.id, source);
-        const { bindingDigest: _bindingDigest, ...view } = source;
         return {
-          ...view,
+          ...publicSource(source),
           ...(source.ref ? { trackedRef: source.ref } : {}),
           ref: { id, owner: { level: input.level, file: input.file, pointer: `/sources/${id}` } },
         };
       });
     for (const id of Object.keys(value.collections ?? {})) {
       parseQualifiedName(id);
-      if (declaredCollections.has(id))
+      if (collections.has(id))
         throw new SkillCliError("CONFIG_CONFLICT", `Collection is declared more than once: ${id}`);
-      declaredCollections.add(id);
       collections.add(id);
       collectionContributions.push({
         kind: "declared",
@@ -274,141 +271,126 @@ export async function readWorkspaceUnlocked(
     managed ||= value.agents?.opencode === "managed";
     if (value.agents?.opencode === "managed")
       integrationOwners.push({ level: input.level, file: input.file, pointer: "/agents/opencode" });
-    const contributedSources: InternalSourceBinding[] = [];
-    const contributedCollections: {
-      readonly id: string;
-      readonly owner: ConfigDeclarationOwner;
-    }[] = [];
-    for (const [configId, binding] of Object.entries(value.configSources ?? {})) {
-      parseQualifiedName(configId);
-      if (configSources.has(configId))
-        throw new SkillCliError(
-          "CONFIG_CONFLICT",
-          `Config Source is declared more than once: ${configId}`,
-        );
-      configSources.add(configId);
-      const override = remoteConfigOverride?.id === configId ? remoteConfigOverride : undefined;
-      const prepared = reusableConfigs.get(configId);
-      // A Remote Config Source is valid before adoption and contributes no bytes yet.
-      if (!prepared) continue;
-      const reusable = prepared.value;
-      const appliedCommit = override?.commit ?? state.configs[configId]?.commit;
-      const namespace = (id: string) => `${configId}/${parseQualifiedName(id)}`;
-      const hostOwner: ConfigDeclarationOwner = {
-        level: input.level,
-        file: input.file,
-        pointer: `/configSources/${configId}`,
-      };
-      const declarationOwner = (pointer: string): DeclarationProvenance => ({
-        level: input.level,
-        ...(binding.kind === "local"
-          ? {
-              file: join(
+    const configSourceViews = Object.entries(value.configSources ?? {}).map(
+      ([configId, binding]) => {
+        parseQualifiedName(configId);
+        if (configSources.has(configId))
+          throw new SkillCliError(
+            "CONFIG_CONFLICT",
+            `Config Source is declared more than once: ${configId}`,
+          );
+        configSources.add(configId);
+        const applied =
+          remoteConfigOverride?.id === configId ? remoteConfigOverride : state.configs[configId];
+        // A Remote Config Source is valid before adoption and contributes no bytes yet.
+        const prepared = reusableConfigs.get(configId);
+        const namespace = (id: string) => `${configId}/${parseQualifiedName(id)}`;
+        const hostOwner: ConfigDeclarationOwner = {
+          level: input.level,
+          file: input.file,
+          pointer: `/configSources/${configId}`,
+        };
+        const localFile =
+          binding.kind === "local"
+            ? join(
                 canonicalLocalOrigin(binding.path, dirname(input.file)),
                 binding.root,
                 "config.jsonc",
-              ),
-            }
-          : {}),
-        pointer,
-        namespace: binding.kind === "local" ? configId : `${configId}@${appliedCommit!}`,
-      });
-      for (const id of Object.keys(reusable.sources ?? {})) {
-        const contribution = {
-          configSource: hostOwner,
-          declaration: declarationOwner(`/sources/${id}`),
-        };
-        const source = {
-          ...prepared.sources.get(namespace(id))!,
-          provenance: contribution.declaration,
-          contribution,
-        };
-        if (sources.has(source.id))
-          throw new SkillCliError(
-            "CONFIG_CONFLICT",
-            `Source is declared more than once: ${source.id}`,
-          );
-        sources.set(source.id, source);
-        contributedSources.push(source);
-      }
-      for (const id of Object.keys(reusable.collections ?? {})) {
-        const namespaced = namespace(id);
-        if (declaredCollections.has(namespaced))
-          throw new SkillCliError(
-            "CONFIG_CONFLICT",
-            `Collection is declared more than once: ${namespaced}`,
-          );
-        declaredCollections.add(namespaced);
-        collections.add(namespaced);
-        const owner: ConfigDeclarationOwner = {
+              )
+            : undefined;
+        const declarationOwner = (pointer: string): DeclarationProvenance => ({
           level: input.level,
-          file: input.file,
-          pointer: `/configSources/${configId}/collections/${id}`,
-          namespace: binding.kind === "local" ? configId : `${configId}@${appliedCommit!}`,
-          contribution: {
+          ...(localFile ? { file: localFile } : {}),
+          pointer,
+          namespace: binding.kind === "local" ? configId : `${configId}@${applied?.commit}`,
+        });
+        const contributedSources = Object.keys(prepared?.value.sources ?? {}).map((id) => {
+          const contribution = {
             configSource: hostOwner,
-            declaration: declarationOwner(`/collections/${id}`),
+            declaration: declarationOwner(`/sources/${id}`),
+          };
+          const source = {
+            ...prepared!.sources.get(namespace(id))!,
+            provenance: contribution.declaration,
+            contribution,
+          };
+          if (sources.has(source.id))
+            throw new SkillCliError(
+              "CONFIG_CONFLICT",
+              `Source is declared more than once: ${source.id}`,
+            );
+          sources.set(source.id, source);
+          return source;
+        });
+        const contributedCollections = Object.entries(prepared?.value.collections ?? {}).map(
+          ([id, declaration]) => {
+            const namespaced = namespace(id);
+            if (collections.has(namespaced))
+              throw new SkillCliError(
+                "CONFIG_CONFLICT",
+                `Collection is declared more than once: ${namespaced}`,
+              );
+            collections.add(namespaced);
+            const provenance = declarationOwner(`/collections/${id}`);
+            const owner: ConfigDeclarationOwner = {
+              ...hostOwner,
+              pointer: `/configSources/${configId}/collections/${id}`,
+              namespace: provenance.namespace,
+              contribution: { configSource: hostOwner, declaration: provenance },
+            };
+            collectionContributions.push({
+              kind: "declared",
+              id: namespaced,
+              declaration: contributedCollection(configId, declaration),
+              owner,
+            });
+            return { id: namespaced, owner };
+          },
+        );
+        return {
+          id: configId,
+          owner: hostOwner,
+          binding,
+          adoption:
+            binding.kind === "local"
+              ? { status: "live" as const }
+              : applied
+                ? { status: "adopted" as const, commit: applied.commit }
+                : { status: "not-adopted" as const },
+          contributed: {
+            sources: contributedSources.sort((left, right) => left.id.localeCompare(right.id)),
+            collections: contributedCollections,
           },
         };
-        collectionContributions.push({
-          kind: "declared",
-          id: namespaced,
-          declaration: contributedCollection(configId, reusable.collections![id]!),
-          owner,
-        });
-        contributedCollections.push({ id: namespaced, owner });
-      }
-    }
+      },
+    );
     configs.push({
       level: input.level,
       file,
       direct: {
         sources: directSources,
-        configSources: Object.entries(value.configSources ?? {})
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([id, binding]) => {
-            const applied =
+        configSources: [...configSourceViews]
+          .sort((left, right) => left.id.localeCompare(right.id))
+          .map(({ binding, ...view }) => ({
+            ...view,
+            binding:
               binding.kind === "local"
-                ? undefined
-                : remoteConfigOverride?.id === id
-                  ? { commit: remoteConfigOverride.commit }
-                  : state.configs[id];
-            return {
-              id,
-              owner: { level: input.level, file: input.file, pointer: `/configSources/${id}` },
-              binding:
-                binding.kind === "local"
-                  ? {
-                      kind: "local" as const,
-                      path: canonicalLocalOrigin(binding.path, dirname(input.file)),
-                      root: binding.root,
-                    }
-                  : {
-                      kind: binding.kind,
-                      origin: canonicalRemoteOrigin(
-                        binding.kind === "github"
-                          ? `https://github.com/${binding.owner}/${binding.repository}`
-                          : binding.origin,
-                      ),
-                      root: binding.root,
-                      ref: binding.ref,
-                    },
-              adoption:
-                binding.kind === "local"
-                  ? { status: "live" as const }
-                  : applied
-                    ? { status: "adopted" as const, commit: applied.commit }
-                    : { status: "not-adopted" as const },
-              contributed: {
-                sources: contributedSources
-                  .filter((source) => source.id.startsWith(`${id}/`))
-                  .sort((left, right) => left.id.localeCompare(right.id)),
-                collections: contributedCollections.filter((collection) =>
-                  collection.id.startsWith(`${id}/`),
-                ),
-              },
-            };
-          }),
+                ? {
+                    kind: "local" as const,
+                    path: canonicalLocalOrigin(binding.path, dirname(input.file)),
+                    root: binding.root,
+                  }
+                : {
+                    kind: binding.kind,
+                    origin: canonicalRemoteOrigin(
+                      binding.kind === "github"
+                        ? `https://github.com/${binding.owner}/${binding.repository}`
+                        : binding.origin,
+                    ),
+                    root: binding.root,
+                    ref: binding.ref,
+                  },
+          })),
         collections: Object.keys(value.collections ?? {})
           .sort()
           .map((id) => ({
@@ -430,9 +412,11 @@ export async function readWorkspaceUnlocked(
             : [],
       },
       contributed: {
-        sources: contributedSources.sort((a, b) => a.id.localeCompare(b.id)),
-        collections: contributedCollections
-          .map((collection) => collection.id)
+        sources: configSourceViews
+          .flatMap((config) => config.contributed.sources)
+          .sort((left, right) => left.id.localeCompare(right.id)),
+        collections: configSourceViews
+          .flatMap((config) => config.contributed.collections.map((collection) => collection.id))
           .sort((left, right) => left.localeCompare(right)),
       },
     });
@@ -573,12 +557,6 @@ export async function readWorkspaceUnlocked(
               .map((member) => ({ id: collection.id, entry: member.name, paths: member.paths })),
           )
         : [];
-      const selectors = selected?.complete
-        ? collectionEntries
-            .filter((entry) => managementCollections.has(entry.id))
-            .map((entry) => `${entry.id}:${entry.entry}`)
-            .sort()
-        : [];
       const selectorViews = selected?.complete
         ? {
             status: "complete" as const,
@@ -597,6 +575,10 @@ export async function readWorkspaceUnlocked(
               .sort((left, right) => left.selector.localeCompare(right.selector)),
           }
         : { status: "unavailable" as const };
+      const selectors =
+        selectorViews.status === "complete"
+          ? selectorViews.values.map((entry) => entry.selector).sort()
+          : [];
       const health = owner
         ? owner.bindingDigest === item.bindingDigest
           ? "healthy"

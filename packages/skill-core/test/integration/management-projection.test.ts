@@ -715,6 +715,87 @@ test("PROJ-019 sorts direct and contributed projection groups deterministically"
   }
 });
 
+test("PROJ-019 attributes nested Config Source contributions by exact owner and rejects real collisions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-nested-config-source-"));
+  const state = join(root, "state");
+  const sharedConfig = join(root, "reusable", "shared", "config.jsonc");
+  const nestedConfig = join(root, "reusable", "nested", "config.jsonc");
+  try {
+    process.env.SKILL_CLI_STATE_DIR = state;
+    await mkdir(join(root, "reusable", "shared"), { recursive: true });
+    await mkdir(join(root, "reusable", "nested"), { recursive: true });
+    await writeFile(
+      sharedConfig,
+      JSON.stringify({
+        sources: { alpha: { kind: "local", path: "./alpha", root: "" } },
+        collections: { "team/inner": {} },
+      }),
+    );
+    await writeFile(
+      nestedConfig,
+      JSON.stringify({
+        sources: { beta: { kind: "local", path: "./beta", root: "" } },
+        collections: { other: {} },
+      }),
+    );
+    await writeFile(
+      join(root, "skill-cli.jsonc"),
+      JSON.stringify({
+        configSources: {
+          shared: { kind: "local", path: "./reusable/shared", root: "" },
+          "shared/team": { kind: "local", path: "./reusable/nested", root: "" },
+        },
+      }),
+    );
+
+    const core = createSkillCliCore({ cwd: root });
+    const project = (await core.workspace.get()).value.configs.find(
+      (config) => config.level === "project",
+    )!;
+    expect(
+      project.direct.configSources.map(({ id, contributed }) => [
+        id,
+        contributed.sources.map(({ id: sourceId }) => sourceId),
+        contributed.collections.map(({ id: collectionId }) => collectionId),
+      ]),
+    ).toEqual([
+      ["shared", ["shared/alpha"], ["shared/team/inner"]],
+      ["shared/team", ["shared/team/beta"], ["shared/team/other"]],
+    ]);
+    expect(project.contributed.sources.map(({ id }) => id)).toEqual([
+      "shared/alpha",
+      "shared/team/beta",
+    ]);
+    expect(project.contributed.collections).toEqual(["shared/team/inner", "shared/team/other"]);
+
+    await writeFile(
+      sharedConfig,
+      JSON.stringify({
+        sources: {
+          alpha: { kind: "local", path: "./alpha", root: "" },
+          "team/beta": { kind: "local", path: "./beta", root: "" },
+        },
+        collections: { "team/inner": {} },
+      }),
+    );
+    await expect(core.workspace.get()).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
+    await writeFile(
+      nestedConfig,
+      JSON.stringify({
+        sources: { gamma: { kind: "local", path: "./gamma", root: "" } },
+        collections: { inner: {} },
+      }),
+    );
+    await expect(core.workspace.get()).rejects.toMatchObject({
+      code: "CONFIG_CONFLICT",
+      message: "Collection is declared more than once: shared/team/inner",
+    });
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("PROJ-004/006 separates Local Config Source host and reusable declaration owners", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-contribution-"));
   const global = join(root, "global.jsonc");
