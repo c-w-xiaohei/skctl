@@ -794,6 +794,18 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   const membershipDraft = () => payload("membership-draft");
   const membershipRemovalPlan = () => payload("membership-removal-plan");
   const collectionDraft = () => collectionDraftPayload()?.draft;
+  const collectionImportDraft = () => {
+    const draft = collectionDraft();
+    return draft?.kind === "collection-import" ? draft : undefined;
+  };
+  const collectionReferenceDraft = () => {
+    const draft = collectionDraft();
+    return draft?.kind === "reference" ? draft : undefined;
+  };
+  const collectionLinkDraft = () => {
+    const draft = collectionDraft();
+    return draft?.kind === "link-change" ? draft : undefined;
+  };
   const collectionUseDraft = () => {
     const draft = collectionDraft();
     return draft?.kind === "collection-use" ? draft : undefined;
@@ -1414,20 +1426,11 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       if (!collection) return;
       if (id === "remove-collection") {
         openSession("confirm", { family: "collection-review" });
-        const begun = beginSession(overlaySession().revision, "preview");
-        const next = await effects.previewCollectionRemoval({
+        await previewCollection({
           kind: "collection-removal",
           level: owner.level,
           collection,
         });
-        if (!sessionMatches(begun, "confirm", "collection-review")) return;
-        if (overlaySession().dismissed) return closeSession(begun.revision);
-        if (next?.kind === "collection-removal")
-          settleSession(begun.revision, begun.requestEpoch, "review", {
-            family: "collection-review",
-            review: next,
-          });
-        else closeSession(begun.revision);
         return;
       }
       openSession("form", {
@@ -1682,16 +1685,32 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
         });
     }
   };
-  const previewMembership = async (
-    intent: Extract<import("./effects").CollectionIntent, { readonly kind: "membership-batch" }>,
+  const previewCollection = async (
+    intent: import("./collection-protocol").CollectionPreviewIntent,
+    removedOriginKeys?: readonly string[],
   ) => {
+    const source = sessionPayload();
+    const kind = overlayKind();
+    if (
+      (kind !== "form" && kind !== "confirm") ||
+      (source?.family !== "collection-draft" &&
+        source?.family !== "membership-draft" &&
+        source?.family !== "membership-removal-plan" &&
+        source?.family !== "collection-review")
+    )
+      return;
     const begun = beginSession(overlaySession().revision, "preview");
-    const next = await effects.previewMembershipBatch(intent);
-    if (!sessionMatches(begun, "form", "membership-draft")) return;
+    const review = await effects.previewCollection(intent);
+    if (!sessionMatches(begun, kind, source.family)) return;
     if (overlaySession().dismissed) return closeSession(begun.revision);
-    if (next?.kind !== "membership-batch")
+    if (!review) {
+      if (source.family === "collection-review") return closeSession(begun.revision);
       return settleSession(begun.revision, begun.requestEpoch, "review");
-    openSession("confirm", { family: "collection-review", review: next });
+    }
+    const next: AppOverlayPayload = { family: "collection-review", review, removedOriginKeys };
+    if (source.family === "collection-review")
+      settleSession(begun.revision, begun.requestEpoch, "review", next);
+    else openSession("confirm", next);
   };
   const applyCollectionReview = async () => {
     const current = collectionReviewPayload()?.review;
@@ -1766,8 +1785,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     }
     const removal = plan.removals[0]!;
     openSession("confirm", { family: "collection-review" });
-    const begun = beginSession(overlaySession().revision, "preview");
-    const next = await effects.previewMembershipBatch({
+    await previewCollection({
       kind: "membership-batch",
       level: removal.owner.level,
       collection: intent.collection,
@@ -1775,26 +1793,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       additions: [],
       removals: [{ name: removal.entryName, expectedAddress: removal.address }],
     });
-    if (!sessionMatches(begun, "confirm", "collection-review")) return;
-    if (overlaySession().dismissed || next?.kind !== "membership-batch")
-      return closeSession(begun.revision);
-    else
-      settleSession(begun.revision, begun.requestEpoch, "review", {
-        family: "collection-review",
-        review: next,
-      });
-  };
-  const previewCollectionDraft = async (
-    run: () => Promise<CollectionReview | undefined>,
-    kind: CollectionReview["kind"],
-  ) => {
-    const begun = beginSession(overlaySession().revision, "preview");
-    const review = await run();
-    if (!sessionMatches(begun, "form", "collection-draft")) return;
-    if (overlaySession().dismissed) return closeSession(begun.revision);
-    if (!review || review.kind !== kind)
-      return settleSession(begun.revision, begun.requestEpoch, "review");
-    openSession("confirm", { family: "collection-review", review });
   };
   const confirm = async () => {
     const current = sourceRemovalPayload()?.review;
@@ -4601,7 +4599,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                     onPreview={() => {
                       const current = membershipDraft();
                       if (!current) return;
-                      void previewMembership({
+                      void previewCollection({
                         kind: "membership-batch",
                         level: current.level,
                         collection: current.collection,
@@ -4634,9 +4632,8 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                   const plan = membershipRemovalPlan()!.plan;
                   const owner = plan.ownerGroups[0]?.owner;
                   if (!owner || !plan.executable) return;
-                  const begun = beginSession(overlaySession().revision, "preview");
-                  void effects
-                    .previewMembershipBatch({
+                  void previewCollection(
+                    {
                       kind: "membership-batch",
                       level: owner.level,
                       collection: plan.collection,
@@ -4646,17 +4643,9 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         name: row.entryName,
                         expectedAddress: row.address,
                       })),
-                    })
-                    .then((review) => {
-                      if (!sessionMatches(begun, "form", "membership-removal-plan")) return;
-                      if (review?.kind === "membership-batch")
-                        openSession("confirm", {
-                          family: "collection-review",
-                          review,
-                          removedOriginKeys: plan.removals.map((row) => row.key),
-                        });
-                      else settleSession(begun.revision, begun.requestEpoch, "review");
-                    });
+                    },
+                    plan.removals.map((row) => row.key),
+                  );
                 }}
               />
             )}
@@ -4710,79 +4699,49 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                 }}
               />
             )}
-            {collectionDraft()?.kind === "collection-import" &&
-              (() => {
-                const draft = collectionDraft()! as Extract<
-                  import("./effects").CollectionIntent,
-                  { readonly kind: "collection-import" }
-                >;
-                return (
-                  <CollectionImportOverlay
-                    level={draft.level}
-                    from={draft.from}
-                    into={draft.into}
-                    pending={overlaySession().phase === "preview"}
-                    error={operation.problem()}
-                    onCancel={closeOverlay}
-                    onPreview={(intent) =>
-                      void previewCollectionDraft(
-                        () => effects.previewImport(intent),
-                        "collection-import",
-                      )
-                    }
-                  />
-                );
-              })()}
-            {collectionDraft()?.kind === "reference" &&
-              (() => {
-                const draft = collectionDraft()! as Extract<
-                  import("./effects").CollectionIntent,
-                  { readonly kind: "reference" }
-                >;
-                return (
-                  <ReferenceOverlay
-                    level={draft.level}
-                    collection={draft.collection}
-                    name={draft.name}
-                    target={draft.target}
-                    description={draft.description}
-                    remove={draft.remove ?? false}
-                    pending={overlaySession().phase === "preview"}
-                    error={operation.problem()}
-                    onCancel={closeOverlay}
-                    onPreview={(intent) =>
-                      void previewCollectionDraft(
-                        () => effects.previewReference(intent),
-                        "reference",
-                      )
-                    }
-                  />
-                );
-              })()}
-            {collectionDraft()?.kind === "link-change" &&
-              (() => {
-                const draft = collectionDraft()! as Extract<
-                  import("./effects").CollectionIntent,
-                  { readonly kind: "link-change" }
-                >;
-                return (
-                  <LinkChangeOverlay
-                    level={draft.level}
-                    collection={draft.collection}
-                    target={draft.target}
-                    linked={draft.linked}
-                    pending={overlaySession().phase === "preview"}
-                    error={operation.problem()}
-                    onCancel={closeOverlay}
-                    onPreview={(intent) =>
-                      void previewCollectionDraft(
-                        () => effects.previewLinkChange(intent),
-                        "link-change",
-                      )
-                    }
-                  />
-                );
-              })()}
+            <Show when={collectionImportDraft()}>
+              {(draft) => (
+                <CollectionImportOverlay
+                  level={draft().level}
+                  from={draft().from}
+                  into={draft().into}
+                  pending={overlaySession().phase === "preview"}
+                  error={operation.problem()}
+                  onCancel={closeOverlay}
+                  onPreview={(intent) => void previewCollection(intent)}
+                />
+              )}
+            </Show>
+            <Show when={collectionReferenceDraft()}>
+              {(draft) => (
+                <ReferenceOverlay
+                  level={draft().level}
+                  collection={draft().collection}
+                  name={draft().name}
+                  target={draft().target}
+                  description={draft().description}
+                  remove={draft().remove ?? false}
+                  pending={overlaySession().phase === "preview"}
+                  error={operation.problem()}
+                  onCancel={closeOverlay}
+                  onPreview={(intent) => void previewCollection(intent)}
+                />
+              )}
+            </Show>
+            <Show when={collectionLinkDraft()}>
+              {(draft) => (
+                <LinkChangeOverlay
+                  level={draft().level}
+                  collection={draft().collection}
+                  target={draft().target}
+                  linked={draft().linked}
+                  pending={overlaySession().phase === "preview"}
+                  error={operation.problem()}
+                  onCancel={closeOverlay}
+                  onPreview={(intent) => void previewCollection(intent)}
+                />
+              )}
+            </Show>
             <Show when={collectionUseDraft()}>
               {(draft) => (
                 <CollectionUseOverlay
@@ -4809,12 +4768,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                   }
                   error={operation.problem()}
                   onCancel={closeOverlay}
-                  onPreview={(intent) =>
-                    void previewCollectionDraft(
-                      () => effects.previewCollectionUse(intent),
-                      "collection-use",
-                    )
-                  }
+                  onPreview={(intent) => void previewCollection(intent)}
                 />
               )}
             </Show>

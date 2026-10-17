@@ -1,9 +1,19 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
 import { ButtonRenderable } from "@tuiparts/core/button";
-import { BoxRenderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
+import {
+  BoxRenderable,
+  InputRenderable,
+  SelectRenderable,
+  type BaseRenderable,
+} from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection, SkillAddress } from "@skill-cli/core";
+import {
+  SkillCliError,
+  type ConfigurationCapability,
+  type ManagementProjection,
+  type SkillAddress,
+} from "@skill-cli/core";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
@@ -70,7 +80,12 @@ function projection(): ManagementProjection {
 }
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
-async function mount(width: number, height: number, input: ManagementProjection = projection()) {
+async function mount(
+  width: number,
+  height: number,
+  input: ManagementProjection = projection(),
+  configuration: Partial<ConfigurationCapability> = {},
+) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/collection-actions-");
   const previous = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
@@ -95,6 +110,7 @@ async function mount(width: number, height: number, input: ManagementProjection 
       };
     },
   });
+  Object.assign(core.configuration, configuration);
   const preview = core.configuration.previewMembershipBatch;
   core.configuration.previewMembershipBatch = async (request, options) => {
     previews.push(request);
@@ -105,8 +121,9 @@ async function mount(width: number, height: number, input: ManagementProjection 
     usePreviews.push(request);
     return previewUse(request, options);
   };
-  core.configuration.change = async (request) => {
+  core.configuration.change = async (request, options) => {
     changes.push(request);
+    if (configuration.change) return configuration.change(request, options);
     throw new Error("Unconfirmed row actions must not mutate Config");
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
@@ -452,6 +469,190 @@ test("current-row Actions Read uses that row address and Back restores the Colle
       () =>
         setup.renderer.root.findDescendantById("collection-relationships") instanceof BoxRenderable,
     );
+    expect(setup.captureCharFrame()).toContain("1 origins checked");
+    expect(mounted.changes).toEqual([]);
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("Collection unified preview preserves mounted Reference draft on failure and retries the same review after a write conflict", async () => {
+  const input = projection();
+  if (input.effective.status !== "complete") throw new Error("Expected complete fixture");
+  const owner = input.effective.collectionsView[0]!.declared[0]!;
+  let previews = 0;
+  let writes = 0;
+  const mounted = await mount(144, 40, input, {
+    previewReference: async (request) => {
+      if (++previews === 1) throw new SkillCliError("PROVIDER_UNAVAILABLE", "retry preview");
+      return {
+        value: {
+          kind: "reference",
+          collection: request.collection,
+          name: request.name,
+          referencedCollection: request.target,
+          description: request.description,
+          decision: { kind: "direct", owner },
+          owner,
+          exposure: [],
+          allowed: true,
+        },
+        diagnostics: [],
+      };
+    },
+    change: async () => {
+      if (++writes === 1) throw new SkillCliError("CONFIG_CONFLICT", "changed after preview");
+      return { value: { level: "project", changed: true }, diagnostics: [] };
+    },
+  });
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await enterLive(setup, "collection-action-add-reference");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reference-name"));
+    const name = (await focusLive(setup, "reference-name")) as InputRenderable;
+    await setup.mockInput.typeText("new-docs");
+    await focusLive(setup, "reference-target");
+    await setup.mockInput.typeText("docs");
+    await focusLive(setup, "reference-description");
+    await setup.mockInput.typeText("Read next");
+    await enterLive(setup, "reference-review");
+    await setup.waitForFrame((frame) => frame.includes("retry preview"));
+    expect(setup.renderer.root.findDescendantById("reference-name")).toBe(name);
+    expect(name.value).toBe("new-docs");
+    expect(mounted.changes).toEqual([]);
+    await enterLive(setup, "reference-review");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-review-choice",
+    );
+    expect(previews).toBe(2);
+    await enterLive(setup, "collection-review-confirm");
+    await setup.waitForFrame((frame) => frame.includes("changed after preview"));
+    expect(previews).toBe(2);
+    await enterLive(setup, "collection-review-confirm");
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("collection-review-confirm"));
+    expect(mounted.changes).toEqual([
+      {
+        type: "collection.reference.set",
+        level: "project",
+        collection: "team",
+        name: "new-docs",
+        target: "docs",
+        description: "Read next",
+      },
+      {
+        type: "collection.reference.set",
+        level: "project",
+        collection: "team",
+        name: "new-docs",
+        target: "docs",
+        description: "Read next",
+      },
+    ]);
+    expect(previews).toBe(2);
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("Collection removal close and reopen ignores the previous session's late preview", async () => {
+  const input = projection();
+  if (input.effective.status !== "complete") throw new Error("Expected complete fixture");
+  const owner = input.effective.collectionsView[0]!.declared[0]!;
+  const pending: { readonly signal?: AbortSignal; readonly finish: () => void }[] = [];
+  const mounted = await mount(144, 40, input, {
+    previewCollectionRemoval: (_request, options) =>
+      new Promise((resolve) => {
+        pending.push({
+          signal: options?.signal,
+          finish: () =>
+            resolve({
+              value: {
+                kind: "collection-removal",
+                owner,
+                decision: { kind: "direct", owner },
+                repository: { derived: false, producers: [] },
+                disappearingSelectors: [],
+                retainedSelectors: [],
+                blockers: [],
+                allowed: true,
+              },
+              diagnostics: [],
+            }),
+        });
+      }),
+  });
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await chooseAction(setup, "remove-collection");
+    await setup.waitFor(() => pending.length === 1);
+    await parsedEscape(setup);
+    expect(pending[0]!.signal?.aborted).toBe(true);
+    await chooseAction(setup, "remove-collection");
+    await setup.waitFor(() => pending.length === 2);
+    pending[0]!.finish();
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("collection-review-confirm")).toBeUndefined();
+    expect(pending[1]!.signal?.aborted).toBe(false);
+    pending[1]!.finish();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-review-choice",
+    );
+    await parsedEscape(setup);
+    expect(mounted.changes).toEqual([]);
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("Collection removal-plan dismissal retains checked origins when a cancelled batch preview resolves late", async () => {
+  const input = projection();
+  if (input.effective.status !== "complete") throw new Error("Expected complete fixture");
+  const owner = input.effective.collectionsView[0]!.declared[0]!;
+  let finish!: () => void;
+  let signal: AbortSignal | undefined;
+  const mounted = await mount(144, 40, input, {
+    previewMembershipBatch: (request, options) =>
+      new Promise((resolve) => {
+        signal = options?.signal;
+        finish = () =>
+          resolve({
+            value: {
+              kind: "membership-batch",
+              collection: request.collection,
+              decision: { kind: "direct", owner },
+              additions: request.additions,
+              removals: request.removals,
+              affected: [],
+              blockers: [],
+              effectful: true,
+              allowed: true,
+            },
+            diagnostics: [],
+          });
+      }),
+  });
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await selectRow(setup, 1);
+    await setup.mockInput.typeText(" ");
+    await setup.flush();
+    setup.mockInput.pressArrow("up");
+    await setup.flush();
+    await chooseAction(setup, "membership.remove");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership-removal-plan"));
+    await enterLive(setup, "membership-removal-plan-continue");
+    await setup.waitFor(() => signal !== undefined);
+    await parsedEscape(setup);
+    expect(signal?.aborted).toBe(true);
+    finish();
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("membership-removal-plan"));
+    await setup.waitForFrame(
+      (frame) => frame.includes("Collections") && frame.includes("1 origins checked"),
+    );
+    expect(setup.renderer.root.findDescendantById("collection-review-confirm")).toBeUndefined();
     expect(setup.captureCharFrame()).toContain("1 origins checked");
     expect(mounted.changes).toEqual([]);
   } finally {

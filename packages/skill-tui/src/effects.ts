@@ -6,14 +6,6 @@ import {
   type ConfigurationCapability,
   type ConfigChange,
   type ConfigLevel,
-  type AddToCollectionImpact,
-  type MembershipBatchImpact,
-  type MembershipRemovalImpact,
-  type ImportImpact,
-  type ReferenceImpact,
-  type LinkChangeImpact,
-  type CollectionUseImpact,
-  type CollectionRemovalImpact,
   SkillCliError,
   type ManagementCapability,
   type SourceRemovalImpact,
@@ -21,7 +13,6 @@ import {
   type UninstallImpact,
   type ManagementProjection,
   type WorkspaceCapability,
-  type ConfigDeclarationOwner,
 } from "@skill-cli/core";
 import { createSignal } from "solid-js";
 import type { DirectSourceIntent, SourceOperationIntent } from "./actions";
@@ -40,6 +31,17 @@ import { createUpdateController, type UpdateController } from "./updates/control
 import type { UpdatesState } from "./updates/state";
 import { createUpdateCheckService, type SourceUpdateCheck } from "./updates/check-service";
 import { isFreshUpdateCheck } from "./updates/check-cache";
+import {
+  previewCollection,
+  type CollectionIntent,
+  type CollectionPreviewIntent,
+  type CollectionReview,
+} from "./collection-protocol";
+export type {
+  CollectionIntent,
+  CollectionReview,
+  AddMembershipPreviewRequest,
+} from "./collection-protocol";
 
 interface ForegroundRequest {
   readonly id: string;
@@ -93,141 +95,6 @@ export interface TuiCore {
     | "previewCollectionRemoval"
   >;
 }
-
-type CollectionAddress = { readonly source: string; readonly path: string };
-export type CollectionIntent =
-  | { readonly kind: "collection-create"; readonly level: ConfigLevel; readonly collection: string }
-  | {
-      readonly kind: "add-to-collection";
-      readonly level: ConfigLevel;
-      readonly collection: string;
-      readonly address: CollectionAddress;
-      readonly name?: string;
-    }
-  | {
-      readonly kind: "membership-removal";
-      readonly level: ConfigLevel;
-      readonly collection: string;
-      readonly name: string;
-      readonly expectedAddress: CollectionAddress;
-      readonly expectedOwner?: ConfigDeclarationOwner;
-    }
-  | {
-      readonly kind: "membership-batch";
-      readonly level: ConfigLevel;
-      readonly collection: string;
-      readonly expectedOwner?: ConfigDeclarationOwner;
-      readonly additions: readonly {
-        readonly name: string;
-        readonly address: CollectionAddress;
-      }[];
-      readonly removals: readonly {
-        readonly name: string;
-        readonly expectedAddress: CollectionAddress;
-      }[];
-    }
-  | {
-      readonly kind: "collection-import";
-      readonly level: ConfigLevel;
-      readonly from: string;
-      readonly into: string;
-    }
-  | {
-      readonly kind: "reference";
-      readonly level: ConfigLevel;
-      readonly collection: string;
-      readonly name: string;
-      readonly target: string;
-      readonly description: string;
-      readonly remove?: boolean;
-    }
-  | {
-      readonly kind: "link-change";
-      readonly level: ConfigLevel;
-      readonly collection: string;
-      readonly target: string;
-      readonly linked: boolean;
-    }
-  | {
-      readonly kind: "collection-use";
-      readonly level: ConfigLevel;
-      readonly collections: readonly string[];
-    }
-  | {
-      readonly kind: "collection-removal";
-      readonly level: ConfigLevel;
-      readonly collection: string;
-    };
-
-export interface AuthorizedMembershipIntent {
-  readonly kind: "add-to-collection";
-  readonly level: ConfigLevel;
-  readonly collection: string;
-  readonly name: string;
-  readonly address: CollectionAddress;
-  readonly owner: ConfigDeclarationOwner;
-}
-
-export type AddMembershipPreviewRequest = Extract<
-  CollectionIntent,
-  { readonly kind: "add-to-collection" }
->;
-
-export type CollectionReview =
-  | {
-      readonly kind: "add-to-collection";
-      readonly id: string;
-      readonly intent: Extract<CollectionIntent, { readonly kind: "add-to-collection" }>;
-      readonly impact: AddToCollectionImpact;
-      readonly authorized?: AuthorizedMembershipIntent;
-      readonly nextStep?: {
-        readonly kind: "create-direct-contribution";
-        readonly collection: string;
-        readonly eligibleLevels: readonly ConfigLevel[];
-      };
-    }
-  | {
-      readonly kind: "membership-removal";
-      readonly id: string;
-      readonly intent: Extract<CollectionIntent, { readonly kind: "membership-removal" }>;
-      readonly impact: MembershipRemovalImpact;
-    }
-  | {
-      readonly kind: "membership-batch";
-      readonly id: string;
-      readonly intent: Extract<CollectionIntent, { readonly kind: "membership-batch" }>;
-      readonly impact: MembershipBatchImpact;
-    }
-  | {
-      readonly kind: "collection-import";
-      readonly id: string;
-      readonly intent: Extract<CollectionIntent, { readonly kind: "collection-import" }>;
-      readonly impact: ImportImpact;
-    }
-  | {
-      readonly kind: "reference";
-      readonly id: string;
-      readonly intent: Extract<CollectionIntent, { readonly kind: "reference" }>;
-      readonly impact: ReferenceImpact;
-    }
-  | {
-      readonly kind: "link-change";
-      readonly id: string;
-      readonly intent: Extract<CollectionIntent, { readonly kind: "link-change" }>;
-      readonly impact: LinkChangeImpact;
-    }
-  | {
-      readonly kind: "collection-use";
-      readonly id: string;
-      readonly intent: Extract<CollectionIntent, { readonly kind: "collection-use" }>;
-      readonly impact: CollectionUseImpact;
-    }
-  | {
-      readonly kind: "collection-removal";
-      readonly id: string;
-      readonly intent: Extract<CollectionIntent, { readonly kind: "collection-removal" }>;
-      readonly impact: CollectionRemovalImpact;
-    };
 
 export interface SourceRemovalReview {
   readonly id: string;
@@ -295,7 +162,7 @@ export function createTuiEffects(
   let liveReview: SourceRemovalReview | undefined;
   let liveDiscovery: DiscoveryReview | undefined;
   let liveInstalledReview: InstalledSkillReview | undefined;
-  let liveCollectionReview: CollectionReview | undefined;
+  let liveCollection: Awaited<ReturnType<typeof previewCollection>> | undefined;
   let sequence = 0;
   let closed = false;
   let latestProjection: ManagementProjection | undefined;
@@ -872,355 +739,43 @@ export function createTuiEffects(
     });
   };
 
-  const collectionImpactMatches = (
-    intent: CollectionIntent,
-    impact: CollectionReview["impact"],
-  ) => {
-    switch (intent.kind) {
-      case "add-to-collection":
-        return (
-          impact.kind === intent.kind &&
-          impact.collection === intent.collection &&
-          impact.address.source === intent.address.source &&
-          impact.address.path === intent.address.path &&
-          (impact.decision.kind === "direct"
-            ? impact.intent !== undefined &&
-              impact.intent.owner.level === intent.level &&
-              impact.decision.owner.level === impact.intent.owner.level &&
-              impact.decision.owner.file === impact.intent.owner.file &&
-              impact.decision.owner.pointer === impact.intent.owner.pointer &&
-              impact.intent.address.source === intent.address.source &&
-              impact.intent.address.path === intent.address.path &&
-              impact.intent.stableEntryName === intent.name
-            : impact.decision.kind === "repository-derived"
-              ? impact.createDirectContribution?.collection === intent.collection
-              : false)
-        );
-      case "membership-removal":
-        return (
-          impact.kind === intent.kind &&
-          impact.collection === intent.collection &&
-          impact.name === intent.name &&
-          impact.decision.kind === "direct" &&
-          impact.decision.owner.level === intent.level &&
-          impact.affected.some(
-            (affected) =>
-              affected.address.source === intent.expectedAddress.source &&
-              affected.address.path === intent.expectedAddress.path,
-          )
-        );
-      case "membership-batch":
-        return (
-          impact.kind === intent.kind &&
-          impact.collection === intent.collection &&
-          impact.decision.kind === "direct" &&
-          impact.decision.owner.level === intent.level &&
-          (!intent.expectedOwner ||
-            (impact.decision.owner.level === intent.expectedOwner.level &&
-              impact.decision.owner.file === intent.expectedOwner.file &&
-              impact.decision.owner.pointer === intent.expectedOwner.pointer)) &&
-          JSON.stringify(impact.additions) === JSON.stringify(intent.additions) &&
-          JSON.stringify(impact.removals) === JSON.stringify(intent.removals)
-        );
-      case "collection-import":
-        // ImportImpact does not identify its target collection. Live review identity and Core
-        // revalidation bind `into`; its direct owner still proves the requested config level.
-        return (
-          impact.kind === intent.kind &&
-          impact.source === intent.from &&
-          impact.destination === intent.into &&
-          impact.owner?.level === intent.level
-        );
-      case "reference":
-        // ReferenceImpact does not classify set versus remove. Its exact returned fields plus
-        // live review identity bind the form intent; Core revalidates the mutation semantics.
-        return (
-          impact.kind === intent.kind &&
-          impact.collection === intent.collection &&
-          impact.name === intent.name &&
-          impact.referencedCollection === intent.target &&
-          impact.description === intent.description &&
-          impact.owner?.level === intent.level
-        );
-      case "link-change":
-        // LinkChangeImpact omits collection and target identity. A returned owner can validate
-        // level; live review identity and Core revalidation retain the full structural intent.
-        return (
-          impact.kind === intent.kind &&
-          impact.collection === intent.collection &&
-          impact.target === intent.target &&
-          impact.linked === intent.linked &&
-          impact.owner !== undefined &&
-          impact.owner.level === intent.level
-        );
-      case "collection-use":
-        return (
-          impact.kind === intent.kind &&
-          impact.owner.level === intent.level &&
-          impact.newCollections.length === intent.collections.length &&
-          impact.newCollections.every((value, index) => value === intent.collections[index])
-        );
-      case "collection-removal":
-        return (
-          impact.kind === intent.kind &&
-          impact.owner?.level === intent.level &&
-          impact.decision?.kind === "direct" &&
-          impact.decision.owner.level === intent.level
-        );
-      case "collection-create":
-        return false;
-    }
-  };
-
   const reviewCollection = async (
-    intent: Exclude<CollectionIntent, { readonly kind: "collection-create" }>,
+    intent: CollectionPreviewIntent,
   ): Promise<CollectionReview | undefined> => {
     if (closed || foreground) return undefined;
-    if (
-      intent.kind === "membership-removal" &&
-      (!intent.expectedAddress.source || !intent.expectedAddress.path)
-    ) {
-      report({
-        code: "INVALID_ARGUMENT",
-        severity: "warning",
-        message: "Remove Membership requires the exact expected structural address",
-      });
-      return undefined;
-    }
     return withForeground(
       "preview",
       undefined,
       async ({ id, signal, active }) => {
-        const result = await (intent.kind === "add-to-collection"
-          ? core.configuration.previewAddToCollection(
-              {
-                level: intent.level,
-                collection: intent.collection,
-                address: intent.address,
-                name: intent.name!,
-              },
-              { signal },
-            )
-          : intent.kind === "membership-removal"
-            ? core.configuration.previewMembershipRemoval(
-                {
-                  level: intent.level,
-                  collection: intent.collection,
-                  name: intent.name,
-                  ...(intent.expectedOwner ? { expectedOwner: intent.expectedOwner } : {}),
-                },
-                { signal },
-              )
-            : intent.kind === "membership-batch"
-              ? core.configuration.previewMembershipBatch(
-                  {
-                    level: intent.level,
-                    collection: intent.collection,
-                    ...(intent.expectedOwner && intent.removals.length
-                      ? { expectedOwner: intent.expectedOwner }
-                      : {}),
-                    additions: intent.additions,
-                    removals: intent.removals,
-                  },
-                  { signal },
-                )
-              : intent.kind === "collection-import"
-                ? core.configuration.previewImport(
-                    { level: intent.level, from: intent.from, into: intent.into },
-                    { signal },
-                  )
-                : intent.kind === "reference"
-                  ? core.configuration.previewReference(
-                      {
-                        level: intent.level,
-                        collection: intent.collection,
-                        name: intent.name,
-                        target: intent.target,
-                        description: intent.description,
-                        remove: intent.remove,
-                      },
-                      { signal },
-                    )
-                  : intent.kind === "link-change"
-                    ? core.configuration.previewLinkChange(
-                        {
-                          level: intent.level,
-                          collection: intent.collection,
-                          target: intent.target,
-                          linked: intent.linked,
-                        },
-                        { signal },
-                      )
-                    : intent.kind === "collection-use"
-                      ? core.configuration.previewCollectionUse(
-                          { level: intent.level, collections: intent.collections },
-                          { signal },
-                        )
-                      : core.configuration.previewCollectionRemoval(
-                          { level: intent.level, collection: intent.collection },
-                          { signal },
-                        ));
+        const prepared = await previewCollection(core.configuration, intent, id, signal);
         if (!active()) return undefined;
-        if (!collectionImpactMatches(intent, result.value)) {
-          report({
-            code: "TRANSACTION_CONFLICT",
-            severity: "warning",
-            message: "Collection preview no longer matches the selected structural intent",
-          });
-          return undefined;
-        }
-        const reviewed: CollectionReview = (
-          intent.kind === "add-to-collection" &&
-          result.value.kind === "add-to-collection" &&
-          result.value.decision.kind === "direct" &&
-          result.value.intent?.stableEntryName
-            ? {
-                kind: intent.kind,
-                id,
-                intent,
-                impact: result.value,
-                authorized: {
-                  kind: "add-to-collection",
-                  level: result.value.intent.owner.level,
-                  collection: intent.collection,
-                  name: result.value.intent.stableEntryName,
-                  address: intent.address,
-                  owner: result.value.intent.owner,
-                },
-              }
-            : intent.kind === "add-to-collection" &&
-                result.value.kind === "add-to-collection" &&
-                result.value.decision.kind === "repository-derived" &&
-                result.value.createDirectContribution
-              ? {
-                  kind: intent.kind,
-                  id,
-                  intent,
-                  impact: result.value,
-                  nextStep: {
-                    kind: "create-direct-contribution",
-                    collection: result.value.createDirectContribution.collection,
-                    eligibleLevels: result.value.createDirectContribution.eligibleLevels,
-                  },
-                }
-              : { kind: intent.kind, id, intent, impact: result.value }
-        ) as CollectionReview;
-        if (
-          intent.kind === "add-to-collection" &&
-          !("authorized" in reviewed || "nextStep" in reviewed)
-        ) {
-          report({
-            code: "TRANSACTION_CONFLICT",
-            severity: "warning",
-            message: "Collection preview did not provide an executable membership or next step",
-          });
-          return undefined;
-        }
-        liveCollectionReview = reviewed;
-        return reviewed;
+        liveCollection = prepared;
+        return prepared.review;
       },
       undefined,
       false,
     );
   };
 
-  const collectionChange = (
-    intent:
-      | Exclude<CollectionIntent, { readonly kind: "add-to-collection" }>
-      | AuthorizedMembershipIntent,
-    reviewedLevel?: ConfigLevel,
-    reviewedAffected?: MembershipBatchImpact["affected"],
-  ): ConfigChange => {
-    switch (intent.kind) {
-      case "collection-create":
-        return { type: "collection.create", level: intent.level, collection: intent.collection };
-      case "add-to-collection":
-        return {
-          type: "collection.member.set",
-          level: reviewedLevel ?? intent.level,
-          collection: intent.collection,
-          name: intent.name,
-          address: intent.address,
-        };
-      case "membership-removal":
-        return {
-          type: "collection.member.remove",
-          level: reviewedLevel ?? intent.level,
-          collection: intent.collection,
-          name: intent.name,
-          expectedAddress: intent.expectedAddress,
-        };
-      case "membership-batch":
-        return {
-          type: "collection.members.change",
-          level: reviewedLevel ?? intent.level,
-          collection: intent.collection,
-          additions: intent.additions,
-          removals: intent.removals,
-          reviewedAffected: reviewedAffected!,
-        };
-      case "collection-import":
-        return {
-          type: "collection.import",
-          level: intent.level,
-          from: intent.from,
-          into: intent.into,
-        };
-      case "reference":
-        return intent.remove
-          ? {
-              type: "collection.reference.remove",
-              level: reviewedLevel ?? intent.level,
-              collection: intent.collection,
-              name: intent.name,
-              expected: { collection: intent.target, description: intent.description },
-            }
-          : {
-              type: "collection.reference.set",
-              level: reviewedLevel ?? intent.level,
-              collection: intent.collection,
-              name: intent.name,
-              target: intent.target,
-              description: intent.description,
-            };
-      case "link-change":
-        return {
-          type: "collection.link.set",
-          level: intent.level,
-          collection: intent.collection,
-          target: intent.target,
-          linked: intent.linked,
-        };
-      case "collection-use":
-        return { type: "use.set", level: intent.level, collections: intent.collections };
-      case "collection-removal":
-        return { type: "collection.remove", level: intent.level, collection: intent.collection };
-    }
-  };
-
   const executeCollection = async (
     reviewed: CollectionReview | Extract<CollectionIntent, { readonly kind: "collection-create" }>,
   ) => {
     const creating = reviewed.kind === "collection-create";
-    const intent:
-      | Exclude<CollectionIntent, { readonly kind: "add-to-collection" }>
-      | AuthorizedMembershipIntent
-      | Extract<CollectionIntent, { readonly kind: "collection-create" }>
-      | undefined = creating
-      ? reviewed
-      : reviewed.kind === "add-to-collection"
-        ? reviewed.authorized
-        : reviewed.intent;
+    const intent = creating ? reviewed : reviewed.intent;
+    const change = creating
+      ? {
+          type: "collection.create" as const,
+          level: reviewed.level,
+          collection: reviewed.collection,
+        }
+      : liveCollection?.change;
     if (
       closed ||
       foreground ||
-      (!creating &&
-        (liveCollectionReview !== reviewed ||
-          !reviewed.impact.allowed ||
-          (reviewed.kind === "add-to-collection" && !reviewed.authorized)))
+      (!creating && (liveCollection?.review !== reviewed || !reviewed.impact.allowed)) ||
+      !change
     )
       return false;
-    if (!intent) return false;
     const semanticOwner =
       intent.kind === "collection-use"
         ? { kind: "config" as const, level: intent.level }
@@ -1231,39 +786,12 @@ export function createTuiEffects(
       "execute",
       false,
       async ({ id, signal, active }) => {
-        const reviewedLevel =
-          !creating && reviewed.impact.kind === "add-to-collection"
-            ? reviewed.impact.decision.kind === "direct"
-              ? reviewed.impact.decision.owner.level
-              : undefined
-            : !creating && reviewed.impact.kind === "membership-removal"
-              ? reviewed.impact.decision.kind === "direct"
-                ? reviewed.impact.decision.owner.level
-                : undefined
-              : !creating && reviewed.impact.kind === "membership-batch"
-                ? reviewed.impact.decision.kind === "direct"
-                  ? reviewed.impact.decision.owner.level
-                  : undefined
-                : !creating && reviewed.impact.kind === "reference"
-                  ? reviewed.impact.owner?.level
-                  : undefined;
-        await core.configuration.change(
-          collectionChange(
-            intent,
-            reviewedLevel,
-            !creating && reviewed.impact.kind === "membership-batch"
-              ? reviewed.impact.affected
-              : undefined,
-          ),
-          {
-            signal,
-          },
-        );
+        await core.configuration.change(change, { signal });
         const refreshed = await refresh();
         if (active())
           settle(id, refreshed ? "Collection updated" : "Collection updated; Workspace is stale");
-        if (active() && !creating && liveCollectionReview === reviewed)
-          liveCollectionReview = undefined;
+        if (active() && !creating && liveCollection?.review === reviewed)
+          liveCollection = undefined;
         return true;
       },
       { title: "Updating Collection", semanticOwner },
@@ -1494,7 +1022,10 @@ export function createTuiEffects(
       ),
     createCollection: (intent: Extract<CollectionIntent, { readonly kind: "collection-create" }>) =>
       executeCollection(intent),
-    previewAddToCollection: (intent: AddMembershipPreviewRequest) => reviewCollection(intent),
+    previewCollection: reviewCollection,
+    previewAddToCollection: (
+      intent: Extract<CollectionIntent, { readonly kind: "add-to-collection" }>,
+    ) => reviewCollection(intent),
     previewMembershipRemoval: (
       intent: Extract<CollectionIntent, { readonly kind: "membership-removal" }>,
     ) => reviewCollection(intent),
@@ -1533,7 +1064,7 @@ export function createTuiEffects(
           foreground = undefined;
           liveReview = undefined;
           liveInstalledReview = undefined;
-          liveCollectionReview = undefined;
+          liveCollection = undefined;
         }
       }
     },
@@ -1547,7 +1078,7 @@ export function createTuiEffects(
       if (liveInstalledReview === reviewed) liveInstalledReview = undefined;
     },
     discardCollectionReview: (reviewed: CollectionReview) => {
-      if (liveCollectionReview === reviewed) liveCollectionReview = undefined;
+      if (liveCollection?.review === reviewed) liveCollection = undefined;
     },
     teardown: () => {
       if (!closed) {
@@ -1563,7 +1094,7 @@ export function createTuiEffects(
         liveReview = undefined;
         liveDiscovery = undefined;
         liveInstalledReview = undefined;
-        liveCollectionReview = undefined;
+        liveCollection = undefined;
       }
     },
   };

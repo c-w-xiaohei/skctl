@@ -150,12 +150,16 @@ const configuration = (overrides: Partial<ConfigurationCapability>): Configurati
 
 test("membership batch previews and publishes one atomic same-owner delta", async () => {
   const calls: unknown[] = [];
+  const affected = [
+    { selector: "linked:review", address: { source: "team-main", path: "review" }, paths: [] },
+  ];
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
       configuration: configuration({
         previewMembershipBatch: async (request) => {
           calls.push(["preview", request]);
-          return configuration({}).previewMembershipBatch(request);
+          const result = await configuration({}).previewMembershipBatch(request);
+          return { ...result, value: { ...result.value, affected } };
         },
         change: async (change) => {
           calls.push(["change", change]);
@@ -205,7 +209,7 @@ test("membership batch previews and publishes one atomic same-owner delta", asyn
           { name: "reference", address: { source: "team-main", path: "reference" } },
         ],
         removals: [{ name: "old", expectedAddress: { source: "team-main", path: "old" } }],
-        reviewedAffected: [],
+        reviewedAffected: affected,
       },
     ],
     ["workspace"],
@@ -740,7 +744,8 @@ test("add membership binds the exact Core-authorized stable name", async () => {
     name: "review",
   });
   expect(review?.kind).toBe("add-to-collection");
-  if (review?.kind === "add-to-collection") expect(review.authorized?.name).toBe("review");
+  if (review?.kind === "add-to-collection")
+    expect(review.impact.intent?.stableEntryName).toBe("review");
   expect(changes).toBe(0);
 });
 
@@ -766,8 +771,8 @@ test("add membership executes only the live Core-authorized intent", async () =>
   if (review?.kind !== "add-to-collection") throw new Error("expected add review");
   const substituted = {
     ...review,
-    authorized: {
-      ...review.authorized!,
+    intent: {
+      ...review.intent,
       name: "custom",
       address: { source: "other", path: "other" },
     },
@@ -817,9 +822,8 @@ test("repository-derived add review truthfully exposes a create-direct-contribut
   });
   expect(review?.kind).toBe("add-to-collection");
   if (review?.kind === "add-to-collection") {
-    expect(review.authorized).toBeUndefined();
-    expect(review.nextStep).toEqual({
-      kind: "create-direct-contribution",
+    expect(review.impact.intent).toBeUndefined();
+    expect(review.impact.createDirectContribution).toEqual({
       collection: "team",
       eligibleLevels: ["global", "project", "local"],
     });
@@ -1171,4 +1175,34 @@ test("collection execute retries after failure and a late mutation success refre
   expect(await applying).toBe(true);
   expect({ attempts, refreshes }).toEqual({ attempts: 2, refreshes: 1 });
   expect(effects.operation.notice()).toBe("Collection updated; Workspace is stale");
+});
+
+test("unified Collection preview keeps the latest exact live review across named and unified entry points", async () => {
+  const changes: unknown[] = [];
+  const effects = createTuiEffects(
+    directSourceCore(workspaceProjection(), {
+      configuration: configuration({
+        change: async (change) => {
+          changes.push(change);
+          return { value: { level: "project", changed: true }, diagnostics: [] };
+        },
+      }),
+    }),
+  );
+  const previous = await effects.previewCollectionUse({
+    kind: "collection-use",
+    level: "project",
+    collections: ["old"],
+  });
+  const current = await effects.previewCollection({
+    kind: "collection-use",
+    level: "project",
+    collections: ["team"],
+  });
+  if (!previous || !current) throw new Error("expected both reviews");
+  expect(await effects.confirmCollection(previous)).toBe(false);
+  expect(await effects.confirmCollection({ ...current })).toBe(false);
+  expect(await effects.confirmCollection(current)).toBe(true);
+  expect(await effects.confirmCollection(current)).toBe(false);
+  expect(changes).toEqual([{ type: "use.set", level: "project", collections: ["team"] }]);
 });
