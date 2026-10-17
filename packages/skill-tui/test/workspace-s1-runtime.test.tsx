@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
+import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
+import { focusLive, openAllInstalledSkills } from "./reader-test-controls";
 
 const skillsViews = [
-  ["current-exposure", "current-exposure-unavailable"],
+  ["current-exposure", "agent-access-pane"],
   ["all-installed-skills", "installed-skill-browser"],
   ["unassigned", "installed-skill-browser"],
   ["problems", "problems-browser"],
@@ -39,29 +41,31 @@ test("RENDER mounted Skills local tabs navigate Current Exposure through Problem
   );
   try {
     await setup.flush();
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skills-view-tab-current-exposure"),
-    );
-    let tab = setup.renderer.root.findDescendantById("skills-view-tab-current-exposure")!;
+    let tab = await focusLive(setup, "skills-view-tab-current-exposure");
     for (const [index, [, body]] of skillsViews.entries()) {
-      tab.focus();
-      await setup.waitFor(() => setup.renderer.currentFocusedRenderable === tab);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById(body));
-      expect((tab as unknown as { getState(): { selected: boolean } }).getState().selected).toBe(
-        true,
-      );
-      setup.mockInput.pressEnter();
-      expect(setup.renderer.root.findDescendantById(body)).toBeDefined();
+      expect(tab).toBeInstanceOf(TabsTabRenderable);
+      expect((tab as TabsTabRenderable).getState().selected).toBe(true);
+      if (index === 0) {
+        expect(setup.captureCharFrame()).toContain("Agent access is unavailable");
+        expect(
+          setup.renderer.root.findDescendantById("current-exposure-enable-managed-opencode"),
+        ).toBeDefined();
+      }
       expect(setup.renderer.root.findDescendantById("workspace-scope")).toBeUndefined();
       expect(setup.renderer.root.findDescendantById("work-area")).toBeUndefined();
       expect(setup.captureCharFrame()).not.toContain("Workspace Scope");
       if (index < skillsViews.length - 1) {
-        setup.mockInput.pressKey("ARROW_RIGHT");
-        await setup.flush();
+        setup.mockInput.pressArrow("right");
         const [next] = skillsViews[index + 1]!;
-        await setup.waitFor(
-          () => !!setup.renderer.root.findDescendantById(`skills-view-tab-${next}`),
-        );
+        await setup.waitFor(() => {
+          const candidate = setup.renderer.root.findDescendantById(`skills-view-tab-${next}`);
+          return (
+            candidate instanceof TabsTabRenderable &&
+            candidate.getState().selected &&
+            setup.renderer.currentFocusedRenderable === candidate
+          );
+        });
         tab = setup.renderer.root.findDescendantById(`skills-view-tab-${next}`)!;
       }
     }
@@ -76,33 +80,33 @@ test("RENDER Section Right leaves Current Exposure and mounts the Collections br
     { width: 120, height: 40 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-    const skills = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
-    skills.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === skills);
+    await focusLive(setup, "shell-section-tab-skills");
 
     setup.mockInput.pressArrow("right");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-collections",
     );
-    await setup.waitForFrame((frame) => frame.includes("Workspace / Collections"));
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
 
+    const collections = setup.renderer.root.findDescendantById("shell-section-tab-collections");
+    expect(collections).toBeInstanceOf(TabsTabRenderable);
+    expect((collections as TabsTabRenderable).getState().selected).toBe(true);
     expect(setup.renderer.root.findDescendantById("collection-browser")).toBeDefined();
+    expect(setup.renderer.root.findDescendantById("agent-access-pane")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("current-exposure-browser")).toBeUndefined();
-    expect(setup.captureCharFrame()).toContain("Workspace / Collections");
-    expect(setup.captureCharFrame()).toContain("[Collections]");
   } finally {
     setup.renderer.destroy();
   }
 });
 
-test("RENDER first Space marks the focused Installed Skill without loading its content", async () => {
+test("RENDER first Space marks the focused Installed Skill without an additional content read", async () => {
   let loads = 0;
+  const projection = readerProjection();
+  const firstAddress = JSON.stringify(["team-main", "guide"]);
   const setup = await testRender(
     () => (
       <App
-        core={directSourceCore(readerProjection(), {
+        core={directSourceCore(projection, {
           loadInstalled: async () => {
             loads++;
             throw new Error("Space must not load content");
@@ -114,33 +118,26 @@ test("RENDER first Space marks the focused Installed Skill without loading its c
     { width: 120, height: 40 },
   );
   try {
-    await setup.flush();
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skills-view-tab-current-exposure"),
-    );
-    const current = setup.renderer.root.findDescendantById("skills-view-tab-current-exposure")!;
-    current.focus();
-    setup.mockInput.pressKey("ARROW_RIGHT");
-    await setup.flush();
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-    const browser = setup.renderer.root.findDescendantById(
-      "installed-skill-browser",
-    ) as SelectRenderable;
-    expect(browser.options.every((option) => !option.name.startsWith("[ ]"))).toBe(true);
-    browser.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
+    const browser = (await openAllInstalledSkills(setup)) as SelectRenderable;
+    expect(browser.getSelectedOption()?.value).toBe(firstAddress);
+    expect(browser.options.every((option) => !option.name.startsWith("✓ "))).toBe(true);
+    await setup.waitForFrame((frame) => frame.includes("Could not read guide"));
+    const loadsBeforeSpace = loads;
     setup.mockInput.pressKey(" ");
     await setup.flush();
-    await setup.waitFor(() =>
-      (
-        setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable
-      ).options[0]?.name.startsWith("[x]"),
+    await setup.waitFor(
+      () =>
+        (
+          setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable
+        ).options
+          .find((option) => option.value === firstAddress)
+          ?.name.startsWith("✓ ") ?? false,
     );
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("workspace-batch-add-to-collection"),
     );
     expect(setup.captureCharFrame()).toContain("1 selected");
-    expect(loads).toBe(0);
+    expect(loads).toBe(loadsBeforeSpace);
   } finally {
     setup.renderer.destroy();
   }
