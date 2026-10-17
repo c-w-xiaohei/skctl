@@ -6,57 +6,40 @@ export const readerSecondAddress = { source: "team-main", path: "reference" };
 export const sourceFilteredAddress = { source: "team-main", path: "review" };
 export const otherSourceFilteredAddress = { source: "other", path: "review" };
 
+const installedSkill = (
+  address: ManagementProjection["installedSkills"][number]["address"],
+  name: string,
+  description: string,
+): ManagementProjection["installedSkills"][number] => ({
+  address,
+  name,
+  description,
+  owner: {
+    source: "team-main",
+    health: "healthy",
+    relevantRemoteRevision: "abc123",
+  },
+  source: {
+    id: "team-main",
+    kind: "github",
+    origin: "https://github.com/acme/main",
+    root: "skills",
+    ref: "main",
+    provenance: { level: "project" },
+    selectors: [],
+  },
+  collections: [],
+  selectors: [],
+  selectorViews: { status: "unavailable" },
+  aliases: [],
+  problems: [],
+});
+
 export const readerProjection = (): ManagementProjection => ({
   ...workspaceProjection(),
   installedSkills: [
-    {
-      address: readerAddress,
-      name: "guide",
-      description: "A rich Installed Skill",
-      owner: {
-        source: "team-main",
-        health: "healthy",
-        relevantRemoteRevision: "abc123",
-      },
-      source: {
-        id: "team-main",
-        kind: "github",
-        origin: "https://github.com/acme/main",
-        root: "skills",
-        ref: "main",
-        provenance: { level: "project" },
-        selectors: [],
-      },
-      collections: [],
-      selectors: [],
-      selectorViews: { status: "unavailable" },
-      aliases: [],
-      problems: [],
-    },
-    {
-      address: readerSecondAddress,
-      name: "reference",
-      description: "A distinct Installed Skill",
-      owner: {
-        source: "team-main",
-        health: "healthy",
-        relevantRemoteRevision: "abc123",
-      },
-      source: {
-        id: "team-main",
-        kind: "github",
-        origin: "https://github.com/acme/main",
-        root: "skills",
-        ref: "main",
-        provenance: { level: "project" },
-        selectors: [],
-      },
-      collections: [],
-      selectors: [],
-      selectorViews: { status: "unavailable" },
-      aliases: [],
-      problems: [],
-    },
+    installedSkill(readerAddress, "guide", "A rich Installed Skill"),
+    installedSkill(readerSecondAddress, "reference", "A distinct Installed Skill"),
   ],
   configs: workspaceProjection().configs.map((config) =>
     config.level === "project"
