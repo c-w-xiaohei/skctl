@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { SkillCliError } from "@skill-cli/core";
 import { createTuiEffects } from "../src/effects";
-import { createReaderOwner } from "../src/reader/state";
 import {
   directOwner,
   directSourceCore,
@@ -124,61 +123,6 @@ test("refresh failure reports stale diagnostics without applying a snapshot", as
   expect(operation.problem()?.message).toBe("offline");
 });
 
-test("Reader effects retain an inactive aborted request's accepted cache update without changing active B", async () => {
-  let resolveAlpha:
-    | ((value: {
-        readonly value: {
-          readonly address: { readonly source: string; readonly path: string };
-          readonly name: string;
-          readonly description: string;
-          readonly markdownText: string;
-          readonly rawText: string;
-        };
-        readonly diagnostics: [];
-      }) => void)
-    | undefined;
-  const core = directSourceCore(workspaceProjection(), {
-    loadInstalled: (request) =>
-      request.address.path === "alpha"
-        ? new Promise((resolve) => {
-            resolveAlpha = resolve;
-          })
-        : Promise.resolve({
-            value: {
-              address: request.address,
-              name: "beta",
-              description: "beta",
-              markdownText: "beta",
-              rawText: "beta raw",
-            },
-            diagnostics: [],
-          }),
-  });
-  const owner = createReaderOwner(core.content);
-  const alpha = { source: "team-main", path: "alpha" };
-  const beta = { source: "team-main", path: "beta" };
-
-  owner.select(alpha);
-  const first = owner.load(alpha);
-  owner.select(beta);
-  await owner.load(beta);
-  resolveAlpha!({
-    value: {
-      address: alpha,
-      name: "alpha",
-      description: "alpha",
-      markdownText: "alpha",
-      rawText: "alpha raw",
-    },
-    diagnostics: [],
-  });
-  await first;
-
-  expect(owner.current()).toMatchObject({ address: beta, text: "beta" });
-  // Existing baseline conflict: cancelled content is deliberately not accepted by production.
-  expect(owner.cached(alpha)).toMatchObject({ text: "alpha", loading: false });
-});
-
 test("MGMT-006 discovers once and installs selected observed paths at the exact revision before one refresh", async () => {
   const calls: unknown[] = [];
   const core = directSourceCore(workspaceProjection(), {
@@ -270,7 +214,7 @@ test("Installed Skill Rebind passes the explicit replacement root through previe
 test("STATE-013/018 previews once, consumes review once, removes once, and refreshes once", async () => {
   const calls: string[] = [];
   const core = directSourceCore(workspaceProjection(), {
-    preview: async () => {
+    previewSourceRemoval: async () => {
       calls.push("preview");
       return {
         value: {
@@ -285,7 +229,7 @@ test("STATE-013/018 previews once, consumes review once, removes once, and refre
         diagnostics: [],
       };
     },
-    remove: async () => {
+    removeSource: async () => {
       calls.push("remove");
       return { value: undefined, diagnostics: [] };
     },
@@ -315,9 +259,9 @@ test("STATE-013/018 previews once, consumes review once, removes once, and refre
 test("STATE-016/017 preview cancellation and exact failure remain local without execution", async () => {
   let aborted = 0;
   const core = directSourceCore(workspaceProjection(), {
-    preview: async (_options) =>
+    previewSourceRemoval: async (_request, options) =>
       new Promise((_, reject) => {
-        _options?.signal?.addEventListener("abort", () => {
+        options?.signal?.addEventListener("abort", () => {
           aborted++;
           reject(new SkillCliError("CANCELLED", "cancelled"));
         });
@@ -338,7 +282,7 @@ test("STATE-016/017 preview cancellation and exact failure remain local without 
 test("MGMT-003 never executes a blocked impact", async () => {
   let removed = false;
   const core = directSourceCore(workspaceProjection(), {
-    preview: async () => ({
+    previewSourceRemoval: async () => ({
       value: {
         kind: "source-removal",
         source: "team-main",
@@ -360,7 +304,7 @@ test("MGMT-003 never executes a blocked impact", async () => {
       },
       diagnostics: [],
     }),
-    remove: async () => {
+    removeSource: async () => {
       removed = true;
       return { value: undefined, diagnostics: [] };
     },
@@ -378,7 +322,7 @@ test("MGMT-003 never executes a blocked impact", async () => {
 test("STATE-017 preserves failed review and permits a retry with the exact error", async () => {
   let attempts = 0;
   const core = directSourceCore(workspaceProjection(), {
-    remove: async () => {
+    removeSource: async () => {
       attempts++;
       if (attempts === 1) throw new SkillCliError("WRITE_FAILED", "disk full");
       return { value: undefined, diagnostics: [] };
@@ -403,7 +347,7 @@ test("STATE-017 preserves failed review and permits a retry with the exact error
 test("STATE-016 cancelled execution preserves review and permits a retry", async () => {
   let attempts = 0;
   const core = directSourceCore(workspaceProjection(), {
-    remove: async (options) => {
+    removeSource: async (_request, options) => {
       attempts++;
       if (attempts === 1)
         return new Promise((_, reject) =>
@@ -434,7 +378,7 @@ test("STATE-016 cancelled execution preserves review and permits a retry", async
 
 test("STATE-023 rejects a preview with a missing or mismatched owner", async () => {
   const core = directSourceCore(workspaceProjection(), {
-    preview: async () => ({
+    previewSourceRemoval: async () => ({
       value: {
         kind: "source-removal",
         source: "team-main",

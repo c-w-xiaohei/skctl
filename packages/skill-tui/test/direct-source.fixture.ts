@@ -1,12 +1,4 @@
-import type {
-  DiscoveryObservation,
-  ManagementProjection,
-  OperationResult,
-  RebindImpact,
-  UninstallImpact,
-  UpdateObservation,
-  ResourceDescriptor,
-} from "@skill-cli/core";
+import type { ManagementProjection, OperationResult, ResourceDescriptor } from "@skill-cli/core";
 import type { TuiCore } from "../src/effects";
 import type { testRender } from "@opentui/solid";
 import { CodeRenderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
@@ -162,97 +154,35 @@ const result = <T>(value: T): OperationResult<T> => ({
 
 export function directSourceCore(
   projection: ManagementProjection,
-  hooks: {
-    readonly preview?: (options?: { readonly signal?: AbortSignal }) => Promise<
-      OperationResult<{
-        readonly kind: "source-removal";
-        readonly source: string;
-        readonly owner?: typeof directOwner;
-        readonly installed: readonly {
-          readonly source: string;
-          readonly path: string;
-        }[];
-        readonly repairs: readonly {
-          readonly address: { readonly source: string; readonly path: string };
-          readonly actions: readonly ["rebind", "uninstall"];
-        }[];
-        readonly blockers: readonly {
-          readonly reason: "installed";
-          readonly address: { readonly source: string; readonly path: string };
-        }[];
-        readonly allowed: boolean;
-      }>
-    >;
-    readonly remove?: (options?: {
-      readonly signal?: AbortSignal;
-    }) => Promise<OperationResult<void>>;
-    readonly get?: (options?: {
-      readonly signal?: AbortSignal;
-    }) => Promise<OperationResult<ManagementProjection>>;
-    readonly discover?: (
-      request: { readonly source: string },
-      options?: { readonly signal?: AbortSignal },
-    ) => Promise<OperationResult<DiscoveryObservation>>;
-    readonly install?: (
-      request: {
-        readonly source: string;
-        readonly paths: readonly string[];
-        readonly exactRevision?: string;
-      },
-      options?: { readonly signal?: AbortSignal },
-    ) => Promise<OperationResult<readonly never[]>>;
-    readonly checkUpdate?: (
-      request: { readonly source: string },
-      options?: { readonly signal?: AbortSignal },
-    ) => Promise<OperationResult<UpdateObservation>>;
-    readonly previewUpdate?: TuiCore["management"]["previewUpdate"];
-    readonly update?: (
-      request: {
-        readonly source: string;
-        readonly paths: readonly string[];
-        readonly remove?: readonly string[];
-        readonly exactRevision?: string;
-      },
-      options?: { readonly signal?: AbortSignal },
-    ) => Promise<OperationResult<void>>;
-    readonly previewUninstall?: (
-      request: { readonly source: string; readonly paths: readonly string[] },
-      options?: { readonly signal?: AbortSignal },
-    ) => Promise<OperationResult<UninstallImpact>>;
-    readonly uninstall?: (
-      request: { readonly source: string; readonly paths: readonly string[] },
-      options?: { readonly signal?: AbortSignal },
-    ) => Promise<OperationResult<void>>;
-    readonly previewRebind?: (
-      request: {
-        readonly source: string;
-        readonly path: string;
-        readonly owner: string;
-        readonly ownerPath?: string;
-      },
-      options?: { readonly signal?: AbortSignal },
-    ) => Promise<OperationResult<RebindImpact>>;
-    readonly rebind?: (
-      request: {
-        readonly source: string;
-        readonly path: string;
-        readonly owner: string;
-        readonly ownerPath?: string;
-      },
-      options?: { readonly signal?: AbortSignal },
-    ) => Promise<OperationResult<void>>;
-    readonly observeConfig?: TuiCore["management"]["observeConfig"];
-    readonly previewAdoptConfig?: TuiCore["management"]["previewAdoptConfig"];
-    readonly adoptConfig?: TuiCore["management"]["adoptConfig"];
-    readonly previewForgetConfig?: TuiCore["management"]["previewForgetConfig"];
-    readonly forgetConfig?: TuiCore["management"]["forgetConfig"];
-    readonly previewRemoveConfig?: TuiCore["management"]["previewRemoveConfig"];
-    readonly removeConfig?: TuiCore["management"]["removeConfig"];
-    readonly loadInstalled?: TuiCore["content"]["loadInstalled"];
-    readonly listInstalledResources?: TuiCore["content"]["listInstalledResources"];
-    readonly readInstalled?: TuiCore["content"]["readInstalled"];
-    readonly configuration?: TuiCore["configuration"];
-  } = {},
+  hooks: Partial<Pick<TuiCore["workspace"], "get">> &
+    Partial<
+      Pick<
+        TuiCore["management"],
+        | "previewSourceRemoval"
+        | "removeSource"
+        | "discover"
+        | "install"
+        | "checkUpdate"
+        | "previewUpdate"
+        | "update"
+        | "previewUninstall"
+        | "uninstall"
+        | "previewRebind"
+        | "rebind"
+        | "observeConfig"
+        | "previewAdoptConfig"
+        | "adoptConfig"
+        | "previewForgetConfig"
+        | "forgetConfig"
+        | "previewRemoveConfig"
+        | "removeConfig"
+      >
+    > &
+    Partial<
+      Pick<TuiCore["content"], "loadInstalled" | "listInstalledResources" | "readInstalled">
+    > & {
+      readonly configuration?: TuiCore["configuration"];
+    } = {},
 ): TuiCore {
   return {
     workspace: {
@@ -264,8 +194,8 @@ export function directSourceCore(
         (async () => {
           throw new Error("Unexpected update preview");
         }),
-      previewSourceRemoval: (_request, options) =>
-        hooks.preview?.(options) ??
+      previewSourceRemoval: (request, options) =>
+        hooks.previewSourceRemoval?.(request, options) ??
         Promise.resolve(
           result({
             kind: "source-removal",
@@ -277,8 +207,8 @@ export function directSourceCore(
             allowed: true,
           }),
         ),
-      removeSource: (_request, options) =>
-        hooks.remove?.(options) ?? Promise.resolve(result(undefined)),
+      removeSource: (request, options) =>
+        hooks.removeSource?.(request, options) ?? Promise.resolve(result(undefined)),
       discover: (request, options) =>
         hooks.discover?.(request, options) ??
         Promise.resolve(result({ source: request.source, kind: "github", candidates: [] })),

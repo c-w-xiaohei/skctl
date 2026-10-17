@@ -122,7 +122,7 @@ test("MGMT-007/008 canonical Source submission updates only selected changed roo
       unrelatedMutations++;
       throw new Error("Updates must retain removed roots");
     },
-    remove: async () => {
+    removeSource: async () => {
       unrelatedMutations++;
       throw new Error("Updates must retain the Source");
     },

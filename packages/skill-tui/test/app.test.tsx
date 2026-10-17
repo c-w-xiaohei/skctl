@@ -1799,7 +1799,7 @@ test("RENDER blocked impact repair select opens the exact Rebind repair form", a
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          preview: async () => ({
+          previewSourceRemoval: async () => ({
             value: {
               kind: "source-removal",
               source: "team-main",
@@ -1850,7 +1850,7 @@ test("RENDER source-removal uninstall repair executes then restores the same par
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          preview: async () => ({
+          previewSourceRemoval: async () => ({
             value: blockedSourceRemoval(),
             diagnostics: [],
           }),
@@ -1924,7 +1924,7 @@ test("RENDER dismissed repair preview ignores an abort-ignoring success and clos
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          preview: async () => ({
+          previewSourceRemoval: async () => ({
             value: blockedSourceRemoval(),
             diagnostics: [],
           }),
@@ -1973,7 +1973,7 @@ test("RENDER source-removal rebind repair executes then restores the same parent
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          preview: async () => ({
+          previewSourceRemoval: async () => ({
             value: blockedSourceRemoval(),
             diagnostics: [],
           }),
@@ -2029,7 +2029,7 @@ test("RENDER failed repair preview returns to its source-removal parent and an e
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          preview: async () => {
+          previewSourceRemoval: async () => {
             sourceReviews++;
             return { value: blockedSourceRemoval(), diagnostics: [] };
           },
@@ -2062,7 +2062,7 @@ test("RENDER failed uninstall repair restores its child review and physical Canc
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          preview: async () => ({
+          previewSourceRemoval: async () => ({
             value: blockedSourceRemoval(),
             diagnostics: [],
           }),
@@ -2114,7 +2114,7 @@ test("RENDER empty parent re-review closes after a completed uninstall repair", 
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          preview: async () => {
+          previewSourceRemoval: async () => {
             sourceReviews++;
             if (sourceReviews === 1) return { value: blockedSourceRemoval(), diagnostics: [] };
             throw new SkillCliError("WRITE_FAILED", "parent unavailable");
@@ -2166,7 +2166,7 @@ test("RENDER physical child Cancel prevents a stale parent re-review from replac
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          preview: () => {
+          previewSourceRemoval: () => {
             sourceReviews++;
             if (sourceReviews === 1)
               return Promise.resolve({
@@ -2311,7 +2311,7 @@ test("RENDER Escape cancels a pending preview exactly once and late preview succ
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          preview: (options) =>
+          previewSourceRemoval: (_request, options) =>
             new Promise((resolve) => {
               resolvePreview = resolve;
               options?.signal?.addEventListener("abort", () => aborts++);
@@ -2429,7 +2429,7 @@ test("RENDER allowed removal confirms once, refreshes once, and reselects the ne
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          remove: async () => {
+          removeSource: async () => {
             removes++;
             return { value: undefined, diagnostics: [] };
           },
@@ -2468,7 +2468,7 @@ test("RENDER preview failure closes its pending surface, retains the exact error
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          preview: async () => {
+          previewSourceRemoval: async () => {
             previews++;
             if (previews === 1) throw new SkillCliError("WRITE_FAILED", "preview disk full");
             return {
@@ -2484,7 +2484,7 @@ test("RENDER preview failure closes its pending surface, retains the exact error
               diagnostics: [],
             };
           },
-          remove: async () => {
+          removeSource: async () => {
             removes++;
             return { value: undefined, diagnostics: [] };
           },
@@ -2518,7 +2518,7 @@ test("RENDER preview owner mismatch closes the preview, exposes TRANSACTION_CONF
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          preview: async () => {
+          previewSourceRemoval: async () => {
             previews++;
             return {
               value: {
@@ -2563,7 +2563,7 @@ test("RENDER duplicate confirm while removal is pending is inert until one refre
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          remove: async () =>
+          removeSource: async () =>
             new Promise<{
               readonly value: undefined;
               readonly diagnostics: [];
@@ -2609,7 +2609,7 @@ test("RENDER Source removal execution failure restores its review and dismissal 
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          remove: async () => {
+          removeSource: async () => {
             removals++;
             throw new Error("write denied");
           },
@@ -2641,7 +2641,7 @@ test("RENDER late cancelled preview cannot close a newly opened Palette", async 
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          preview: async () =>
+          previewSourceRemoval: async () =>
             new Promise((resolve) => {
               resolvePreview = () =>
                 resolve({

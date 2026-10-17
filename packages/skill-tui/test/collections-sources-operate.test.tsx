@@ -43,7 +43,7 @@ async function mount(
     discover: unexpected,
     install: unexpected,
     update: unexpected,
-    remove: unexpected,
+    removeSource: unexpected,
     loadInstalled: async ({ address }) => {
       reads.push(address);
       const skill = projection.installedSkills.find(

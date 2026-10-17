@@ -559,7 +559,7 @@ test("STATE-012 RENDER local filtering makes no workspace, provider, or manageme
     checkUpdate: 0,
     install: 0,
     update: 0,
-    remove: 0,
+    removeSource: 0,
   };
   const core: TuiCore = directSourceCore(projection(), {
     get: async () => {
@@ -595,8 +595,8 @@ test("STATE-012 RENDER local filtering makes no workspace, provider, or manageme
       calls.update++;
       return { value: undefined, diagnostics: [] };
     },
-    remove: async () => {
-      calls.remove++;
+    removeSource: async () => {
+      calls.removeSource++;
       return { value: undefined, diagnostics: [] };
     },
   });
@@ -619,7 +619,7 @@ test("STATE-012 RENDER local filtering makes no workspace, provider, or manageme
       checkUpdate: 0,
       install: 0,
       update: 0,
-      remove: 0,
+      removeSource: 0,
     });
   } finally {
     setup.renderer.destroy();
