@@ -14,7 +14,10 @@ function focusSnapshot(setup: Setup) {
 
 async function expectFocus(setup: Setup, id: string, source: string) {
   try {
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
+    await setup.waitFor(() => {
+      const focused = setup.renderer.currentFocusedRenderable;
+      return focused?.id === id && !focused.isDestroyed && !!focused.parent;
+    });
   } catch (error) {
     throw new Error(`${source}: expected focus ${id}; ${focusSnapshot(setup)}`, { cause: error });
   }
@@ -97,7 +100,7 @@ async function press(setup: Setup, key: string) {
 
 // Navigate the production shell from its real mounted startup focus. No focus(),
 // focusLive(), injected route frame, or direct page-state transitions are used.
-async function openProject(setup: Setup, width: number) {
+async function openProject(setup: Setup) {
   try {
     await setup.waitFor(() => !!setup.renderer.currentFocusedRenderable);
   } catch (error) {
@@ -107,42 +110,46 @@ async function openProject(setup: Setup, width: number) {
   }
   for (
     let step = 0;
-    step < 5 && setup.renderer.currentFocusedRenderable?.id !== "top-navigation-tab-workspace";
+    step < 5 && setup.renderer.currentFocusedRenderable?.id !== "shell-scope-select";
     step++
   ) {
-    setup.mockInput.pressTab();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await setup.renderOnce();
+    await press(setup, "TAB");
   }
-  await expectFocus(
-    setup,
-    "top-navigation-tab-workspace",
-    "openProject after Left from navigation",
-  );
-  await press(setup, "ARROW_RIGHT");
-  await expectFocus(setup, "top-navigation-tab-global", "openProject after Right to Global");
-  await press(setup, "ARROW_RIGHT");
-  await expectFocus(setup, "top-navigation-tab-project", "openProject after Right to Project");
+  await expectFocus(setup, "shell-scope-select", "openProject after startup Tabs");
   await press(setup, "ENTER");
+  await expectFocus(setup, "scope-choices", "openProject Scope popup");
+  const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+  expect(choices.getSelectedOption()?.value).toBe("workspace");
+  for (const destination of ["global", "project"]) {
+    await press(setup, "ARROW_DOWN");
+    await expectFocus(setup, "scope-choices", `openProject draft ${destination}`);
+    expect(choices.getSelectedOption()?.value).toBe(destination);
+  }
+  await press(setup, "ENTER");
+  await expectFocus(setup, "shell-scope-select", "openProject committed Project scope");
+  await press(setup, "ARROW_DOWN");
   await expectFocus(
     setup,
-    width >= 100 ? "shell-section-navigation" : "shell-section-tab-sources",
-    "openProject after Enter on Project",
+    "shell-section-project-tab-sources",
+    "openProject after Down to Sections",
   );
   await press(setup, "ENTER");
   await expectFocus(setup, "config-source-browser", "openProject after Enter on Sources");
   expect(setup.renderer.currentFocusedRenderable!.height).toBeGreaterThan(0);
 }
 
-async function openSection(setup: Setup, index: number, width: number) {
+async function openSection(setup: Setup, index: number) {
   await press(setup, "ARROW_LEFT");
-  const wide = width >= 100;
-  await expectFocus(
-    setup,
-    wide ? "shell-section-navigation" : "shell-section-tab-sources",
-    `openSection(${index}) after Left`,
-  );
-  for (let step = 0; step < index; step++) await press(setup, wide ? "ARROW_DOWN" : "ARROW_RIGHT");
+  await expectFocus(setup, "shell-section-project-tab-sources", `openSection(${index}) after Left`);
+  const sections = ["sources", "config-sources", "collections", "integrations"];
+  for (let step = 0; step < index; step++) {
+    await press(setup, "ARROW_RIGHT");
+    await expectFocus(
+      setup,
+      `shell-section-project-tab-${sections[step + 1]}`,
+      `openSection(${index}) after Right ${step + 1}`,
+    );
+  }
   await press(setup, "ENTER");
 }
 
@@ -153,7 +160,7 @@ for (const width of [120, 80, 60]) {
       { width, height: 30 },
     );
     try {
-      await openProject(setup, width);
+      await openProject(setup);
       const sourceBrowser = setup.renderer.currentFocusedRenderable as SelectRenderable;
       const source = sourceBrowser.options[sourceBrowser.getSelectedIndex()]?.value;
       await press(setup, "ENTER");
@@ -173,7 +180,7 @@ for (const width of [120, 80, 60]) {
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("config-command-check-updates");
       await press(setup, "ESCAPE");
       await expectFocus(setup, "config-source-browser", "source inspector Escape");
-      await openSection(setup, 2, width);
+      await openSection(setup, 2);
       await expectFocus(setup, "config-collection-browser", "collections section Enter");
       expect(setup.renderer.currentFocusedRenderable!.height).toBeGreaterThan(0);
       await press(setup, "ENTER");
@@ -191,8 +198,8 @@ test("RENDER reachable integration inspector saves row movement and entry Back r
     { width: 120, height: 40 },
   );
   try {
-    await openProject(setup, 120);
-    await openSection(setup, 3, 120);
+    await openProject(setup);
+    await openSection(setup, 3);
     await expectFocus(setup, "config-integrations-browser", "integrations section Enter");
     await press(setup, "ENTER");
     await expectFocus(setup, "config-integration-catalog", "integration list Enter");
@@ -224,8 +231,8 @@ test("RENDER Config Source inspector exposes one update entrance and a Right pat
     { width: 80, height: 30 },
   );
   try {
-    await openProject(setup, 80);
-    await openSection(setup, 1, 80);
+    await openProject(setup);
+    await openSection(setup, 1);
     await expectFocus(setup, "config-config-source-browser", "config sources section Enter");
     await press(setup, "ENTER");
     await expectFocus(setup, "config-command-config-observe", "config source Enter");

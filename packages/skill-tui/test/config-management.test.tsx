@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { type BaseRenderable } from "@opentui/core";
+import { SelectRenderable, type BaseRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
+import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import type { ManagementProjection } from "@skill-cli/core";
 import { createSignal } from "solid-js";
 import { App } from "../src/app";
@@ -9,20 +10,7 @@ import { configDeclarationOwnerKey, createConfigState } from "../src/config/stat
 import { SourceRegistrationOverlay } from "../src/operations";
 import type { ActionRecord } from "../src/actions";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { focusLive, parsedEnter } from "./reader-test-controls";
-
-async function pressEscape(setup: Awaited<ReturnType<typeof testRender>>) {
-  await new Promise<void>((resolve) => {
-    const listener = (event: { readonly name: string }) => {
-      if (event.name === "escape" || event.name === "esc") {
-        setup.renderer.keyInput.off("keypress", listener);
-        resolve();
-      }
-    };
-    setup.renderer.keyInput.prependListener("keypress", listener);
-    setup.mockInput.pressKey("ESCAPE");
-  });
-}
+import { focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 
 function configProjection(): ManagementProjection {
   const base = workspaceProjection();
@@ -193,47 +181,39 @@ async function openDestination(
   setup: Awaited<ReturnType<typeof testRender>>,
   destination: "global" | "project" | "local",
 ) {
-  const destinations = ["workspace", "global", "project", "local"] as const;
-  await setup.waitFor(
-    () =>
-      !!setup.renderer.root.findDescendantById("top-navigation-tab-workspace") ||
-      !!setup.renderer.root.findDescendantById("top-navigation"),
-  );
-  const frame = setup.captureCharFrame();
-  const current = destinations.find((value) =>
-    value === "workspace"
-      ? frame.includes("Workspace /")
-      : frame.includes(`${value[0]!.toUpperCase()}${value.slice(1)} Config /`),
-  )!;
-  const trigger = setup.renderer.root.findDescendantById(`top-navigation-tab-${current}`)!;
-  trigger.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === trigger.id);
-  while (setup.renderer.currentFocusedRenderable?.id !== `top-navigation-tab-${destination}`) {
-    const active = setup.renderer.currentFocusedRenderable?.id!.replace("top-navigation-tab-", "");
-    setup.mockInput.pressArrow(
-      destinations.indexOf(active as (typeof destinations)[number]) <
-        destinations.indexOf(destination)
-        ? "right"
-        : "left",
-    );
+  await waitForShell(setup);
+  await focusLive(setup, "shell-scope-select");
+  await parsedEnter(setup);
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
+  const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+  expect(choices).toBeInstanceOf(SelectRenderable);
+  const targetIndex = choices.options.findIndex((option) => option.value === destination);
+  expect(targetIndex).toBeGreaterThanOrEqual(0);
+  for (let step = 0; step < choices.options.length; step++) {
+    const currentIndex = choices.getSelectedIndex();
+    if (currentIndex === targetIndex) break;
+    const nextIndex = currentIndex + (currentIndex < targetIndex ? 1 : -1);
+    setup.mockInput.pressArrow(currentIndex < targetIndex ? "down" : "up");
     await setup.renderOnce();
+    await setup.waitFor(() => choices.getSelectedIndex() === nextIndex);
   }
-  await setup.waitForFrame((nextFrame) =>
-    nextFrame.includes(`${destination[0]!.toUpperCase()}${destination.slice(1)} Config / Sources`),
+  expect(choices.getSelectedOption()?.value).toBe(destination);
+  await parsedEnter(setup);
+  await setup.waitFor(
+    () => !!setup.renderer.root.findDescendantById(`shell-section-${destination}-tab-sources`),
   );
-  const sections = setup.renderer.root.findDescendantById("shell-section-tab-sources");
-  if (!sections)
-    throw new Error(`Config section control did not mount\n${setup.captureCharFrame()}`);
-  sections.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === sections.id);
+  const tab = (await focusLive(
+    setup,
+    `shell-section-${destination}-tab-sources`,
+  )) as TabsTabRenderable;
+  expect(tab.getState().selected).toBe(true);
 }
 
 async function waitForShell(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(
-    () =>
-      !!setup.renderer.root.findDescendantById("top-navigation-tab-workspace") ||
-      !!setup.renderer.root.findDescendantById("top-navigation"),
-  );
+  await setup.waitFor(() => {
+    const scope = setup.renderer.root.findDescendantById("shell-scope-select");
+    return !!scope && !scope.isDestroyed && !!scope.parent;
+  });
 }
 
 async function openSection(
@@ -243,12 +223,12 @@ async function openSection(
   const sections = ["sources", "config-sources", "collections", "integrations"] as const;
   const targetIndex = sections.indexOf(section);
   const currentIndex = sections.findIndex((value) => {
-    const tab = setup.renderer.root.findDescendantById(`shell-section-tab-${value}`);
-    return !!tab && (tab as unknown as { getState(): { selected: boolean } }).getState().selected;
+    const tab = setup.renderer.root.findDescendantById(`shell-section-project-tab-${value}`);
+    return tab instanceof TabsTabRenderable && tab.getState().selected;
   });
   if (currentIndex < 0) throw new Error("Shell section selection did not mount");
   const current = setup.renderer.root.findDescendantById(
-    `shell-section-tab-${sections[currentIndex]}`,
+    `shell-section-project-tab-${sections[currentIndex]}`,
   )!;
   current.focus();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === current.id);
@@ -258,8 +238,10 @@ async function openSection(
     const next = sections[index + 1]!;
     const title =
       next === "config-sources" ? "Config Sources" : next[0]!.toUpperCase() + next.slice(1);
-    await setup.waitForFrame((frame) => frame.includes(`Project Config / ${title}`));
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe(`shell-section-tab-${next}`);
+    await setup.waitForFrame((frame) => frame.includes(title));
+    const tab = setup.renderer.currentFocusedRenderable as TabsTabRenderable;
+    expect(tab.id).toBe(`shell-section-project-tab-${next}`);
+    expect(tab.getState().selected).toBe(true);
   }
 }
 
@@ -299,7 +281,9 @@ test("RENDER palette reaches Global, Project, and Local Config through physical 
     for (const destination of ["global", "project", "local"] as const) {
       await openDestination(setup, destination);
       const title = destination[0]!.toUpperCase() + destination.slice(1);
-      expect(setup.captureCharFrame()).toContain(`${title} Config / Sources`);
+      expect(
+        renderableText(setup.renderer.root.findDescendantById("shell-scope-select")),
+      ).toContain(title);
     }
   } finally {
     setup.renderer.destroy();
@@ -340,29 +324,14 @@ test("RENDER Config uses the shared Sections and Content shell without a standal
     await waitForShell(setup);
     await openDestination(setup, "project");
     const frame = setup.captureCharFrame();
-    for (const id of [
-      "top-navigation-tab-workspace",
-      "top-navigation-tab-global",
-      "top-navigation-tab-project",
-      "top-navigation-tab-local",
-    ])
-      expect(setup.renderer.root.findDescendantById(id)).toBeDefined();
-    for (const label of ["Sources", "Config Sources", "Collections", "Integrations"])
-      expect(frame).toContain(label);
+    expect(setup.renderer.root.findDescendantById("shell-scope-select")).toBeDefined();
+    for (const value of ["sources", "config-sources", "collections", "integrations"])
+      expect(
+        setup.renderer.root.findDescendantById(`shell-section-project-tab-${value}`),
+      ).toBeDefined();
+    for (const label of ["Sources", "Configs", "Cols", "Agents"]) expect(frame).toContain(label);
     expect(setup.renderer.root.findDescendantById("config-section-browser")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("config-scope-panel")).toBeUndefined();
-    expect(frame).not.toContain("Destinations");
-    expect(frame).not.toContain("Work Area");
-    expect(frame).not.toContain("Navigation");
-    expect(frame).not.toContain("Browser ·");
-    expect(frame).toContain("Collections");
-    expect(
-      setup.renderer.root.findDescendantById(
-        ["config", "section", "browser", "tab", "agents"].join("-"),
-      ),
-    ).toBeUndefined();
-    expect(setup.renderer.root.findDescendantById("config-navigation-panel")).toBeUndefined();
-    expect(setup.renderer.root.findDescendantById("config-browser-panel")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
   }
@@ -376,11 +345,11 @@ test("RENDER Config keeps the same shell geometry at medium width", async () => 
   try {
     await waitForShell(setup);
     await openDestination(setup, "project");
-    const section = setup.renderer.root.findDescendantById("shell-section-tab-sources")!;
+    const section = setup.renderer.root.findDescendantById("shell-section-project-tab-sources")!;
     const workArea = setup.renderer.root.findDescendantById("config-work-area")!;
     expect(section).toBeDefined();
     expect(workArea).toBeDefined();
-    expect(setup.captureCharFrame()).toContain("Collections");
+    expect(setup.captureCharFrame()).toContain("Cols");
   } finally {
     setup.renderer.destroy();
   }
@@ -641,21 +610,22 @@ test("RENDER Config Source inspector returns to its Config Source row on Escape"
   try {
     await waitForShell(setup);
     await openDestination(setup, "project");
-    setup.renderer.root.findDescendantById("shell-section-tab-sources")!.focus();
+    setup.renderer.root.findDescendantById("shell-section-project-tab-sources")!.focus();
     setup.mockInput.pressArrow("right");
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Project Config / Config Sources");
+    const tab = setup.renderer.currentFocusedRenderable as TabsTabRenderable;
+    expect(tab.id).toBe("shell-section-project-tab-config-sources");
+    expect(tab.getState().selected).toBe(true);
     await focusLive(setup, "config-config-source-browser");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-source-inspector"));
     expect(setup.renderer.root.findDescendantById("config-source-inspector")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("config-source-contributions")).toBeDefined();
-    await pressEscape(setup);
-    await setup.renderOnce();
+    await parsedEscape(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "config-config-source-browser",
     );
-    expect(setup.captureCharFrame()).toContain("Project Config / Config Sources");
+    expect(setup.captureCharFrame()).toContain("Config Sources");
     expect(setup.renderer.root.findDescendantById("config-source-inspector")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
@@ -727,9 +697,9 @@ test("RENDER shell Section navigation owns Config section transitions", async ()
     await openDestination(setup, "project");
     const values = ["sources", "config-sources", "collections", "integrations"] as const;
     for (const value of values)
-      expect(setup.renderer.root.findDescendantById(`shell-section-tab-${value}`)).toBeDefined();
-    expect(setup.renderer.root.findDescendantById("config-section-browser")).toBeUndefined();
-    expect(setup.renderer.root.findDescendantById("config-scope-panel")).toBeUndefined();
+      expect(
+        setup.renderer.root.findDescendantById(`shell-section-project-tab-${value}`),
+      ).toBeDefined();
     await openSection(setup, "integrations");
     const integrationBrowser = setup.renderer.root.findDescendantById(
       "config-integrations-browser",
@@ -791,10 +761,14 @@ test.each([120, 80, 43])(
       await waitForShell(setup);
       await openDestination(setup, "project");
       const frame = setup.captureCharFrame();
-      expect(frame).toContain("Project Config / Sources");
+      expect(
+        renderableText(setup.renderer.root.findDescendantById("shell-scope-select")),
+      ).toContain("Project");
       expect(frame).not.toContain(" Proj ");
       for (const value of ["sources", "config-sources", "collections", "integrations"])
-        expect(setup.renderer.root.findDescendantById(`shell-section-tab-${value}`)).toBeDefined();
+        expect(
+          setup.renderer.root.findDescendantById(`shell-section-project-tab-${value}`),
+        ).toBeDefined();
     } finally {
       setup.renderer.destroy();
     }
@@ -893,19 +867,19 @@ test("RENDER same-value primary Config tab click restores local navigation owner
   try {
     await waitForShell(setup);
     await openDestination(setup, "project");
-    const sources = setup.renderer.root.findDescendantById("shell-section-tab-sources")!;
+    const sources = setup.renderer.root.findDescendantById("shell-section-project-tab-sources")!;
     await setup.mockMouse.click(sources.screenX + 1, sources.screenY);
     sources.focus();
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-sources",
+      () => setup.renderer.currentFocusedRenderable?.id === "shell-section-project-tab-sources",
     );
-    expect(setup.captureCharFrame()).toContain("Project Config / Sources");
+    expect((sources as TabsTabRenderable).getState().selected).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
 });
 
-test("RENDER Tab from the shell Section stays in Config content", async () => {
+test("RENDER Tab traverses Scope and Sections without changing Config content", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
     { width: 120, height: 40 },
@@ -913,16 +887,18 @@ test("RENDER Tab from the shell Section stays in Config content", async () => {
   try {
     await waitForShell(setup);
     await openDestination(setup, "project");
-    const section = setup.renderer.root.findDescendantById("shell-section-tab-sources")!;
-    section.focus();
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-sources",
-    );
-    expect(setup.captureCharFrame()).toContain("Project Config / Sources");
+    const section = setup.renderer.root.findDescendantById("shell-section-project-tab-sources")!;
     setup.mockInput.pressKey("TAB");
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Project Config / Sources");
-    expect(setup.renderer.currentFocusedRenderable?.id).not.toMatch(/^top-navigation-tab-/);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "shell-scope-select");
+    expect(setup.captureCharFrame()).toContain("Sources");
+    const focused = setup.renderer.currentFocusedRenderable;
+    expect(focused?.isDestroyed).toBe(false);
+    expect(focused?.parent).toBeDefined();
+    expect(renderableText(focused ?? undefined)).toContain("Project");
+    setup.mockInput.pressKey("TAB", { shift: true });
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === section);
+    expect((section as TabsTabRenderable).getState().selected).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -936,11 +912,11 @@ test("RENDER secondary Config tab clicks preserve selection and focus", async ()
   try {
     await waitForShell(setup);
     await openDestination(setup, "project");
-    const sources = setup.renderer.root.findDescendantById("shell-section-tab-sources")!;
+    const sources = setup.renderer.root.findDescendantById("shell-section-project-tab-sources")!;
     await setup.mockMouse.click(sources.screenX + 1, sources.screenY);
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-section-tab-sources");
-    expect(setup.captureCharFrame()).toContain("Project Config / Sources");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-section-project-tab-sources");
+    expect((sources as TabsTabRenderable).getState().selected).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -956,7 +932,7 @@ test("RENDER Config frame-focus handoff is removed when the App tears down", asy
     await openDestination(setup, "project");
     const frameListeners = interceptFrameListeners(setup);
     setup.mockInput.pressArrow("right");
-    await setup.waitForFrame((frame) => frame.includes("Project Config / Config Sources"));
+    await setup.waitForFrame((frame) => frame.includes("Config Sources"));
     expect(frameListeners.listeners.size).toBe(1);
     setup.renderer.destroy();
     expect(frameListeners.listeners.size).toBe(0);
@@ -974,9 +950,9 @@ test("RENDER shell section focus survives repeated Config transitions", async ()
     await waitForShell(setup);
     await openDestination(setup, "project");
     for (const [direction, title, id] of [
-      ["right", "Project Config / Config Sources", "shell-section-tab-config-sources"],
-      ["right", "Project Config / Collections", "shell-section-tab-collections"],
-      ["left", "Project Config / Config Sources", "shell-section-tab-config-sources"],
+      ["right", "Config Sources", "shell-section-project-tab-config-sources"],
+      ["right", "Collections", "shell-section-project-tab-collections"],
+      ["left", "Config Sources", "shell-section-project-tab-config-sources"],
     ] as const) {
       setup.mockInput.pressArrow(direction);
       await setup.waitForFrame((frame) => frame.includes(title));
@@ -1024,11 +1000,10 @@ test("RENDER empty Config actions are reachable by Enter and mouse with the brow
         await openDestination(setup, "project");
         await openSection(setup, section);
         await setup.waitFor(
-          () => setup.renderer.currentFocusedRenderable?.id === `shell-section-tab-${section}`,
+          () =>
+            setup.renderer.currentFocusedRenderable?.id === `shell-section-project-tab-${section}`,
         );
-        expect(setup.captureCharFrame()).toContain(
-          `Project Config / ${section[0]!.toUpperCase() + section.slice(1)}`,
-        );
+        expect(setup.captureCharFrame()).toContain(section[0]!.toUpperCase() + section.slice(1));
         const action = setup.renderer.root.findDescendantById(id);
         expect(action).toBeDefined();
         if (input === "keyboard") {
@@ -1307,7 +1282,13 @@ test("RENDER mixed integration owners keep Actions and Palette owner-safe", asyn
     ).toBeUndefined();
     setup.renderer.root.findDescendantById("palette-open-config-integration")!.focus();
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Global > Integrations"));
+    await setup.waitFor(() => {
+      const tab = setup.renderer.root.findDescendantById("shell-section-global-tab-integrations");
+      return tab instanceof TabsTabRenderable && tab.getState().selected;
+    });
+    expect(renderableText(setup.renderer.root.findDescendantById("shell-scope-select"))).toContain(
+      "Global",
+    );
     expect(setup.captureCharFrame()).toContain(globalOwner.pointer);
   } finally {
     setup.renderer.destroy();
@@ -1859,7 +1840,7 @@ test("RENDER Source registration validates and submits a fixed-level local bindi
         binding: { kind: "local", path: "/shared", root: "skills" },
       },
     ]);
-    await pressEscape(setup);
+    await parsedEscape(setup);
     expect(cancelled).toBe(1);
   } finally {
     setup.renderer.destroy();
