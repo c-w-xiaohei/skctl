@@ -1227,51 +1227,13 @@ test("RENDER Config observation Retry repeats observe and preview without checki
           observeConfig: async (request) => {
             calls.push(["observe", request]);
             if (++observes === 1) throw new SkillCliError("PROVIDER_UNAVAILABLE", "offline");
-            return {
-              value: {
-                id: request.id,
-                kind: "github",
-                exactRevision: "retry-commit",
-                contributions: { sources: [], collections: [] },
-              },
-              diagnostics: [],
-            };
+            const observation = configObservation("retry-commit");
+            return { ...observation, value: { ...observation.value, id: request.id } };
           },
           previewAdoptConfig: async (request) => {
             calls.push(["preview", request]);
-            return {
-              value: {
-                kind: "config-source-adopt",
-                id: request.id,
-                owner: {
-                  level: "project",
-                  file: "/workspace/skill-cli/skill-cli.jsonc",
-                  pointer: "/configSources/team-remote",
-                },
-                binding: {
-                  kind: "github",
-                  origin: "https://github.com/acme/config",
-                  root: "",
-                  ref: "main",
-                },
-                exactRevision: request.exactRevision,
-                declarationRetained: true,
-                contributions: { sources: [], collections: [] },
-                delta: {
-                  addedSources: [],
-                  changedSources: [],
-                  removedSources: [],
-                  addedCollections: [],
-                  changedCollections: [],
-                  removedCollections: [],
-                },
-                affectedInstalled: [],
-                disappearingSelectors: [],
-                blockers: [],
-                allowed: true,
-              },
-              diagnostics: [],
-            };
+            const impact = configImpact(request.exactRevision);
+            return { ...impact, value: { ...impact.value, id: request.id } };
           },
           checkUpdate: async (request) => {
             calls.push(["check-update", request]);
@@ -2352,41 +2314,7 @@ test("RENDER Escape cancels a pending preview exactly once and late preview succ
 
 test("RENDER collection removal preview failure closes the session and permits retry", async () => {
   let previews = 0;
-  const base = workspaceProjection();
-  if (base.effective.status !== "complete") throw new Error("expected complete fixture");
-  const owner = {
-    level: "project" as const,
-    file: "/workspace/skill-cli/skill-cli.jsonc",
-    pointer: "/collections/team",
-  };
-  const projection = {
-    ...base,
-    configs: base.configs.map((config) =>
-      config.level === "project"
-        ? {
-            ...config,
-            direct: {
-              ...config.direct,
-              collections: [{ id: "team", owner }],
-            },
-          }
-        : config,
-    ),
-    effective: {
-      ...base.effective,
-      collections: ["team"],
-      collectionsView: [
-        {
-          id: "team",
-          declared: [owner],
-          repository: { derived: false, producers: [] },
-          members: [],
-          references: [],
-          links: [],
-        },
-      ],
-    },
-  };
+  const projection = collectionProjection();
   const baseCore = directSourceCore(projection);
   const setup = await testRender(
     () => (
