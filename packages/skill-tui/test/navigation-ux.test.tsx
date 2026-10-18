@@ -9,7 +9,6 @@ import { DataList } from "../src/ui/data-list";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { enterLive, parsedEscape } from "./reader-test-controls";
-
 test("DataList keeps the selected label column fixed when physical focus changes", async () => {
   const setup = await testRender(
     () => (
@@ -40,7 +39,6 @@ test("DataList keeps the selected label column fixed when physical focus changes
     const focusedFrame = setup.captureCharFrame();
     const focusedLabel = focusedFrame.indexOf("guide");
     expect(focusedLabel).toBeGreaterThanOrEqual(0);
-
     setup.renderer.root.findDescendantById("focus-away")!.focus();
     await setup.renderOnce();
     const blurredFrame = setup.captureCharFrame();
@@ -50,7 +48,6 @@ test("DataList keeps the selected label column fixed when physical focus changes
     setup.renderer.destroy();
   }
 });
-
 test("DataList truncates wide labels on resize without changing native option identity or selection", async () => {
   const address = "team-main/指南/非常长的技能名称";
   let changes = 0;
@@ -84,7 +81,6 @@ test("DataList truncates wide labels on resize without changing native option id
     expect(list.options[0]?.value).toBe(address);
     expect(list.getSelectedIndex()).toBe(0);
     expect(changes).toBe(0);
-
     setup.resize(36, 5);
     await setup.renderOnce();
     expect(list.options[0]?.value).toBe(address);
@@ -94,7 +90,6 @@ test("DataList truncates wide labels on resize without changing native option id
     setup.renderer.destroy();
   }
 });
-
 test("SectionTabs keeps native tab positions stable across focus and selection", async () => {
   const [value, setValue] = createSignal("skills");
   const registry = createFocusRegistry();
@@ -128,7 +123,6 @@ test("SectionTabs keeps native tab positions stable across focus and selection",
     expect(value()).toBe("collections");
     expect(ids.map((id) => setup.renderer.root.findDescendantById(id)!.screenX)).toEqual(initialX);
     expect(setup.captureCharFrame().indexOf("Skills")).toBe(initialLabelX);
-
     setup.renderer.currentFocusedRenderable?.blur();
     await setup.renderOnce();
     expect(ids.map((id) => setup.renderer.root.findDescendantById(id)!.screenX)).toEqual(initialX);
@@ -137,7 +131,6 @@ test("SectionTabs keeps native tab positions stable across focus and selection",
     setup.renderer.destroy();
   }
 });
-
 function wideCollectionProjection() {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -166,7 +159,6 @@ function wideCollectionProjection() {
     },
   };
 }
-
 async function openCollections(setup: Awaited<ReturnType<typeof testRender>>) {
   const sidebar = setup.renderer.root.findDescendantById(
     "shell-section-navigation",
@@ -176,7 +168,6 @@ async function openCollections(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.mockMouse.click(sidebar.screenX + 1, sidebar.screenY + 1);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
 }
-
 test("wide Collections retain the browser beside root details without a Back frame", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(wideCollectionProjection())} exit={() => {}} />,
@@ -189,7 +180,6 @@ test("wide Collections retain the browser beside root details without a Back fra
     ) as SelectRenderable;
     expect(browser.options.length).toBe(2);
     expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeDefined();
-
     browser.focus();
     browser.selectCurrent();
     await setup.waitFor(
@@ -199,7 +189,6 @@ test("wide Collections retain the browser beside root details without a Back fra
     expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("route-back")).toBeUndefined();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-relationships");
-
     const rows = setup.renderer.root.findDescendantById(
       "collection-relationships",
     ) as SelectRenderable;
@@ -212,7 +201,6 @@ test("wide Collections retain the browser beside root details without a Back fra
     expect(setup.renderer.root.findDescendantById("collection-membership-inspector")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("route-back")).toBeUndefined();
-
     const retainedBrowser = setup.renderer.root.findDescendantById(
       "collection-browser",
     ) as SelectRenderable;
@@ -236,7 +224,6 @@ test("wide Collections retain the browser beside root details without a Back fra
     setup.renderer.destroy();
   }
 });
-
 test("Source Inspector exposes Check Updates directly and leaving its workbench prevents mutation", async () => {
   const observationCalls: unknown[] = [];
   const updateCalls: unknown[] = [];
@@ -244,27 +231,25 @@ test("Source Inspector exposes Check Updates directly and leaving its workbench 
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            checkUpdate: async (request) => {
-              observationCalls.push(request);
-              return {
-                value: {
-                  source: request.source,
-                  kind: "github",
-                  exactRevision: "ux-update-review",
-                  changed: [{ path: "guide", name: "guide", description: "Changed guide" }],
-                  added: [],
-                  removed: [],
-                  unchanged: [],
-                  baseline: "baseline:test",
-                },
-                diagnostics: [],
-              };
-            },
-            update: async (request) => {
-              updateCalls.push(request);
-              return { value: undefined, diagnostics: [] };
-            },
+          checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+            observationCalls.push(request);
+            return {
+              value: {
+                source: request.source,
+                kind: "github",
+                exactRevision: "ux-update-review",
+                changed: [{ path: "guide", name: "guide", description: "Changed guide" }],
+                added: [],
+                removed: [],
+                unchanged: [],
+                baseline: "baseline:test",
+              },
+              diagnostics: [],
+            };
+          },
+          updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+            updateCalls.push(request);
+            return { value: undefined, diagnostics: [] };
           },
         })}
         exit={() => {}}
@@ -279,12 +264,18 @@ test("Source Inspector exposes Check Updates directly and leaving its workbench 
     const checkUpdates = setup.renderer.root.findDescendantById("workspace-action-check-updates");
     expect(checkUpdates).toBeDefined();
     expect(setup.renderer.root.findDescendantById("palette-check-updates")).toBeUndefined();
-
     checkUpdates!.focus();
     setup.mockInput.pressEnter();
     await setup.waitFor(() => observationCalls.length > 0);
     expect(
-      observationCalls.every((request) => (request as { source: string }).source === "team-main"),
+      observationCalls.every(
+        (request) =>
+          (
+            request as {
+              source: string;
+            }
+          ).source === "team-main",
+      ),
     ).toBe(true);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
     expect(setup.renderer.root.findDescendantById("source-operation-selection")).toBeUndefined();

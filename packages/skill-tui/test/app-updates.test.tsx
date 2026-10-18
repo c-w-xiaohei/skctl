@@ -6,13 +6,11 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEscape } from "./reader-test-controls";
-
 const revision = "a".repeat(40);
 const addresses = {
   first: { source: "team-main", path: "guide" },
   second: { source: "other-source", path: "other" },
 } as const;
-
 const observation = (source: string, changed: readonly string[]): UpdateObservation => ({
   source,
   kind: "github",
@@ -23,7 +21,6 @@ const observation = (source: string, changed: readonly string[]): UpdateObservat
   removed: [],
   unchanged: [],
 });
-
 function updatesProjection(): WorkspaceView {
   const base = workspaceProjection({ includeContribution: false });
   const secondSource = { ...base.effective.sources[0]!, id: addresses.second.source };
@@ -58,7 +55,6 @@ function updatesProjection(): WorkspaceView {
     ],
   };
 }
-
 function collectionScopeProjection(): WorkspaceView {
   const projection = updatesProjection();
   if (projection.effective.status !== "complete")
@@ -118,13 +114,11 @@ function collectionScopeProjection(): WorkspaceView {
     },
   };
 }
-
 async function openWorkspaceUpdates(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-updates"));
   await enterLive(setup, "shell-section-tab-updates");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
 }
-
 async function enterWithFocusContext(setup: Awaited<ReturnType<typeof testRender>>, id: string) {
   try {
     await enterLive(setup, id);
@@ -140,41 +134,38 @@ async function enterWithFocusContext(setup: Awaited<ReturnType<typeof testRender
     );
   }
 }
-
 test("RED App Updates opens manually without automatic checks, then submits only the visible current group", async () => {
   let current = updatesProjection();
   const checks: string[] = [];
   const updates: unknown[] = [];
   let contentLoads = 0;
   const core = directSourceCore(current, {
-    workspace: { get: async () => ({ value: current, diagnostics: [] }) },
-    installed: {
-      checkUpdate: async ({ source }) => {
-        checks.push(source);
-        return {
-          value: observation(source, source === addresses.first.source ? ["guide"] : ["other"]),
-          diagnostics: [],
-        };
-      },
-      update: async (request) => {
-        updates.push(request);
-        current = {
-          ...current,
-          installedSkills: current.installedSkills.map((skill) =>
-            skill.address.source === request.source && request.paths.includes(skill.address.path)
-              ? {
-                  ...skill,
-                  owner: { ...skill.owner, relevantRemoteRevision: request.exactRevision },
-                }
-              : skill,
-          ),
-        };
-        return { value: undefined, diagnostics: [] };
-      },
-      load: async () => {
-        contentLoads++;
-        throw new Error("Updates must not load installed content");
-      },
+    getWorkspace: async () => ({ value: current, diagnostics: [] }),
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+      checks.push(source);
+      return {
+        value: observation(source, source === addresses.first.source ? ["guide"] : ["other"]),
+        diagnostics: [],
+      };
+    },
+    updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      updates.push(request);
+      current = {
+        ...current,
+        installedSkills: current.installedSkills.map((skill) =>
+          skill.address.source === request.source && request.paths.includes(skill.address.path)
+            ? {
+                ...skill,
+                owner: { ...skill.owner, relevantRemoteRevision: request.exactRevision },
+              }
+            : skill,
+        ),
+      };
+      return { value: undefined, diagnostics: [] };
+    },
+    loadInstalledSkill: async () => {
+      contentLoads++;
+      throw new Error("Updates must not load installed content");
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -185,11 +176,9 @@ test("RED App Updates opens manually without automatic checks, then submits only
     await openWorkspaceUpdates(setup);
     expect(checks).toEqual([]);
     expect(contentLoads).toBe(0);
-
     await enterLive(setup, "updates-check");
     await setup.waitFor(() => checks.length === 2);
     expect(checks).toEqual([addresses.first.source, addresses.second.source]);
-
     await focusLive(setup, "updates-submit");
     setup.mockInput.pressEnter();
     await setup.waitFor(() => updates.length === 1);
@@ -201,7 +190,6 @@ test("RED App Updates opens manually without automatic checks, then submits only
     setup.renderer.destroy();
   }
 });
-
 test("RED App Updates source, Collection, and Skill entries retain structural scope and Esc never aborts active work", async () => {
   const projection = updatesProjection();
   const checks: string[] = [];
@@ -210,19 +198,17 @@ test("RED App Updates source, Collection, and Skill entries retain structural sc
   let destroyed = false;
   let setup!: Awaited<ReturnType<typeof testRender>>;
   const core = directSourceCore(projection, {
-    installed: {
-      checkUpdate: ({ source }, options) => {
-        checks.push(source);
-        return new Promise((_, reject) =>
-          options?.signal?.addEventListener("abort", () => {
-            aborts++;
-            reject(new Error("cancelled"));
-          }),
-        );
-      },
-      load: async () => {
-        throw new Error("Updates entry must not load content");
-      },
+    checkUpdate: (_environment: import("@skill-cli/core").CoreOptions, { source }, options) => {
+      checks.push(source);
+      return new Promise((_, reject) =>
+        options?.signal?.addEventListener("abort", () => {
+          aborts++;
+          reject(new Error("cancelled"));
+        }),
+      );
+    },
+    loadInstalledSkill: async () => {
+      throw new Error("Updates entry must not load content");
     },
   });
   setup = await testRender(
@@ -251,14 +237,12 @@ test("RED App Updates source, Collection, and Skill entries retain structural sc
     await enterLive(setup, "workspace-action-check-updates");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
     expect(checks).toEqual([addresses.first.source]);
-
     // Esc browses Back while the request remains active; only Stop aborts it.
     await parsedEscape(setup);
     expect(aborts).toBe(0);
     await openWorkspaceUpdates(setup);
     await enterLive(setup, "updates-stop");
     await setup.waitFor(() => aborts === 1);
-
     // Ctrl+C must tear down a newly active request, not merely exit after a prior Stop.
     await enterLive(setup, "updates-check");
     await setup.waitFor(() => checks.length === 2);
@@ -268,22 +252,19 @@ test("RED App Updates source, Collection, and Skill entries retain structural sc
     if (!destroyed) setup.renderer.destroy();
   }
 });
-
 test("RED App Updates Collection and Skill actions enter their exact visible structural scopes", async () => {
   const projection = collectionScopeProjection();
   const checks: string[] = [];
   const core = directSourceCore(projection, {
-    installed: {
-      checkUpdate: async ({ source }) => {
-        checks.push(source);
-        return {
-          value: observation(source, source === addresses.first.source ? ["guide"] : ["other"]),
-          diagnostics: [],
-        };
-      },
-      load: async () => {
-        throw new Error("Scope entry must not read SKILL.md");
-      },
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+      checks.push(source);
+      return {
+        value: observation(source, source === addresses.first.source ? ["guide"] : ["other"]),
+        diagnostics: [],
+      };
+    },
+    loadInstalledSkill: async () => {
+      throw new Error("Scope entry must not read SKILL.md");
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -316,7 +297,6 @@ test("RED App Updates Collection and Skill actions enter their exact visible str
     expect(checks).toEqual([addresses.first.source, addresses.second.source]);
     expect(checks).not.toContain("unrelated-source");
     expect(setup.captureCharFrame()).toContain("Collection release");
-
     await parsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
     expect(setup.captureCharFrame()).toContain("release");

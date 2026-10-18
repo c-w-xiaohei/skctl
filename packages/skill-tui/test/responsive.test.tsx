@@ -13,7 +13,6 @@ import {
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
-
 function textIn(renderable: { getChildren(): readonly unknown[] }): string {
   return (
     renderable.getChildren() as {
@@ -25,12 +24,17 @@ function textIn(renderable: { getChildren(): readonly unknown[] }): string {
       child instanceof TextBufferRenderable
         ? [child.plainText]
         : child.getChildren
-          ? [textIn(child as { getChildren(): readonly unknown[] })]
+          ? [
+              textIn(
+                child as {
+                  getChildren(): readonly unknown[];
+                },
+              ),
+            ]
           : [],
     )
     .join("\n");
 }
-
 async function navigateToSources(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
   await focusLive(setup, "shell-section-tab-skills");
@@ -43,14 +47,12 @@ async function navigateToSources(setup: Awaited<ReturnType<typeof testRender>>) 
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
   await focusLive(setup, "source-browser");
 }
-
 async function navigateToAllInstalledSkills(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills"),
   );
   await openAllInstalledSkills(setup);
 }
-
 async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
   await focusLive(setup, "shell-section-tab-skills");
@@ -61,7 +63,6 @@ async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender
   setup.renderer.root.findDescendantById("collection-browser")!.focus();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
 }
-
 test("RENDER Scope ArrowDown/Enter selects Sources and focuses its browser", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -75,7 +76,6 @@ test("RENDER Scope ArrowDown/Enter selects Sources and focuses its browser", asy
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Scope ArrowDown/Enter selects All Installed Skills and focuses its browser", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -89,13 +89,12 @@ test("RENDER Scope ArrowDown/Enter selects All Installed Skills and focuses its 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Sources replaces the Collection browser native target", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -114,13 +113,12 @@ test("RENDER Sources replaces the Collection browser native target", async () =>
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Workspace Sources keeps source identity primary and origin secondary", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -142,13 +140,12 @@ test("RENDER Workspace Sources keeps source identity primary and origin secondar
     setup.renderer.destroy();
   }
 });
-
 test("RENDER wide Workspace owns bounded Sections and Content panels", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -172,7 +169,6 @@ test("RENDER wide Workspace owns bounded Sections and Content panels", async () 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Current Exposure collection detail is a vertical Work Area document", async () => {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -245,7 +241,6 @@ test("RENDER Current Exposure collection detail is a vertical Work Area document
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Current Exposure keeps deep Reference paths bounded while retaining endpoints", async () => {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -303,7 +298,6 @@ test("RENDER Current Exposure keeps deep Reference paths bounded while retaining
     setup.renderer.destroy();
   }
 });
-
 test("RENDER unavailable Current Exposure owns the separated Work Area focus target", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -313,7 +307,6 @@ test("RENDER unavailable Current Exposure owns the separated Work Area focus tar
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("workspace-content"));
     const workArea = setup.renderer.root.findDescendantById("workspace-content") as BoxRenderable;
     expect(workArea.border).toEqual(["left"]);
-
     await focusLive(setup, "current-exposure-unavailable");
     await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("current-exposure-unavailable");
@@ -321,13 +314,12 @@ test("RENDER unavailable Current Exposure owns the separated Work Area focus tar
     setup.renderer.destroy();
   }
 });
-
 test("RENDER medium keeps Sections and Content without a navigation rail", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -345,7 +337,6 @@ test("RENDER medium keeps Sections and Content without a navigation rail", async
     setup.renderer.destroy();
   }
 });
-
 test("RENDER App follows the layout too-small boundaries", async () => {
   for (const [width, height, tooSmall] of [
     [42, 12, true],
@@ -367,7 +358,6 @@ test("RENDER App follows the layout too-small boundaries", async () => {
     }
   }
 });
-
 async function openPaletteAddSkills(setup: Awaited<ReturnType<typeof testRender>>) {
   setup.mockInput.pressKey("P", { ctrl: true });
   await setup.waitFor(
@@ -375,7 +365,6 @@ async function openPaletteAddSkills(setup: Awaited<ReturnType<typeof testRender>
   );
   await enterLive(setup, "palette-add-skills");
 }
-
 test("RENDER narrow Source browser shows one level and preserves selection through resize", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(workspaceProjection())} exit={() => {}} />,
@@ -419,7 +408,6 @@ test("RENDER narrow Source browser shows one level and preserves selection throu
     setup.renderer.destroy();
   }
 });
-
 test("RENDER 43x30 narrow detail returns to the retained Source browser on Escape", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(workspaceProjection())} exit={() => {}} />,
@@ -457,7 +445,6 @@ test("RENDER 43x30 narrow detail returns to the retained Source browser on Escap
     setup.renderer.destroy();
   }
 });
-
 test("RENDER 43x30 keeps human Context and Section controls above a Source Inspector", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(workspaceProjection())} exit={() => {}} />,
@@ -482,7 +469,6 @@ test("RENDER 43x30 keeps human Context and Section controls above a Source Inspe
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Source View Skills opens a Skill Inspector and Escape restores both retained frames", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -508,7 +494,6 @@ test("RENDER Source View Skills opens a Skill Inspector and Escape restores both
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
     );
-
     await parsedEscape(setup);
     await setup.waitForFrame((frame) => frame.includes("Installed Skills from team-main"));
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
@@ -518,21 +503,18 @@ test("RENDER Source View Skills opens a Skill Inspector and Escape restores both
         setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable
       ).getSelectedOption()?.value,
     ).toBe('["team-main","guide"]');
-
     await parsedEscape(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "source-command-skills",
     );
     expect(setup.renderer.root.findDescendantById("source-command-skills")).toBeDefined();
     expect(setup.captureCharFrame()).toContain("team-main");
-
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
   } finally {
     setup.renderer.destroy();
   }
 });
-
 test("RENDER narrow observation progress remains bounded at 79x24 and 43x30", async () => {
   for (const [width, height] of [
     [79, 24],
@@ -543,15 +525,17 @@ test("RENDER narrow observation progress remains bounded at 79x24 and 43x30", as
       () => (
         <App
           core={directSourceCore(workspaceProjection(), {
-            sources: {
-              discover: (_request, options) =>
-                new Promise((_, reject) =>
-                  options?.signal?.addEventListener("abort", () => {
-                    aborts++;
-                    reject(new SkillCliError("CANCELLED", "cancelled"));
-                  }),
-                ),
-            },
+            discoverSkills: (
+              _environment: import("@skill-cli/core").CoreOptions,
+              _request,
+              options,
+            ) =>
+              new Promise((_, reject) =>
+                options?.signal?.addEventListener("abort", () => {
+                  aborts++;
+                  reject(new SkillCliError("CANCELLED", "cancelled"));
+                }),
+              ),
           })}
           exit={() => {}}
         />
@@ -586,7 +570,6 @@ test("RENDER narrow observation progress remains bounded at 79x24 and 43x30", as
     }
   }
 });
-
 test("RENDER narrow selection remains bounded through resize at 79x24 and 43x30", async () => {
   for (const [width, height] of [
     [79, 24],
@@ -613,32 +596,35 @@ test("RENDER narrow selection remains bounded through resize at 79x24 and 43x30"
               ],
             },
             {
-              sources: {
-                discover: async (request) => ({
-                  value: {
-                    source: request.source,
-                    kind: "github",
-                    exactRevision: "narrow",
-                    candidates: [
-                      {
-                        path: "installed",
-                        name: "installed",
-                        description: "Installed",
-                      },
-                      { path: "review", name: "review", description: "Review" },
-                    ],
-                  },
-                  diagnostics: [],
-                }),
-              },
-              installed: {
-                install: (_request, options) =>
-                  new Promise((_, reject) =>
-                    options?.signal?.addEventListener("abort", () =>
-                      reject(new Error("apply stopped")),
-                    ),
+              discoverSkills: async (
+                _environment: import("@skill-cli/core").CoreOptions,
+                request,
+              ) => ({
+                value: {
+                  source: request.source,
+                  kind: "github",
+                  exactRevision: "narrow",
+                  candidates: [
+                    {
+                      path: "installed",
+                      name: "installed",
+                      description: "Installed",
+                    },
+                    { path: "review", name: "review", description: "Review" },
+                  ],
+                },
+                diagnostics: [],
+              }),
+              installSkills: (
+                _environment: import("@skill-cli/core").CoreOptions,
+                _request,
+                options,
+              ) =>
+                new Promise((_, reject) =>
+                  options?.signal?.addEventListener("abort", () =>
+                    reject(new Error("apply stopped")),
                   ),
-              },
+                ),
             },
           )}
           exit={() => {}}

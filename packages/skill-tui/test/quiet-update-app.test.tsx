@@ -26,7 +26,6 @@ import {
   parsedEscape,
   selectedReaderTab,
 } from "./reader-test-controls";
-
 const revision = "d".repeat(40);
 function fixture(count = 3) {
   const base = workspaceProjection({ includeContribution: false });
@@ -68,7 +67,10 @@ async function mount(
   process.env.SKILL_TUI_UPDATE_CACHE_DIR = cache;
   const projection = fixture(count);
   let currentProjection: WorkspaceView = projection;
-  const loaded: { source: string; path: string }[] = [];
+  const loaded: {
+    source: string;
+    path: string;
+  }[] = [];
   const acquisitions: string[] = [];
   const calls: {
     source: string;
@@ -86,87 +88,86 @@ async function mount(
   let updateSignal: AbortSignal | undefined;
   let settle!: () => void;
   const core = directSourceCore(projection, {
-    workspace: { get: async () => ({ value: currentProjection, diagnostics: [] }) },
-    sources: {
-      discover: async ({ source }) => {
-        acquisitions.push(`discover:${source}`);
-        throw new Error("Browsing installed content must not discover a Source");
-      },
+    getWorkspace: async () => ({ value: currentProjection, diagnostics: [] }),
+    discoverSkills: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+      acquisitions.push(`discover:${source}`);
+      throw new Error("Browsing installed content must not discover a Source");
     },
-    installed: {
-      install: async ({ source }) => {
-        acquisitions.push(`install:${source}`);
-        throw new Error("Browsing installed content must not install a Skill");
-      },
-      checkUpdate: async ({ source }) => {
-        checks.push(source);
-        return {
-          value: {
-            source,
-            kind: "github",
-            exactRevision: revision,
-            baseline: "checked-baseline",
-            changed: projection.installedSkills
-              .filter((skill) => skill.address.source === source)
-              .map((skill) => ({
-                path: skill.address.path,
-                name: skill.name,
-                description: skill.description,
-              })),
-            unchanged: [],
-            removed: [],
-            added: [],
-          },
-          diagnostics: [],
-        };
-      },
-      previewUpdate: async (request) => {
-        previews.push(request);
-        return {
-          value: {
-            address: { source: request.source, path: request.path },
-            status: "ready",
-            targetRevision: request.exactRevision!,
-            removed: false,
-            files: [
-              {
-                path: "SKILL.md",
-                status: "modified",
-                content: {
-                  kind: "text",
-                  before: `Installed ${request.path}\n`,
-                  after: `Checked ${request.path}\n`,
-                },
+    installSkills: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+      acquisitions.push(`install:${source}`);
+      throw new Error("Browsing installed content must not install a Skill");
+    },
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+      checks.push(source);
+      return {
+        value: {
+          source,
+          kind: "github",
+          exactRevision: revision,
+          baseline: "checked-baseline",
+          changed: projection.installedSkills
+            .filter((skill) => skill.address.source === source)
+            .map((skill) => ({
+              path: skill.address.path,
+              name: skill.name,
+              description: skill.description,
+            })),
+          unchanged: [],
+          removed: [],
+          added: [],
+        },
+        diagnostics: [],
+      };
+    },
+    previewUpdate: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      previews.push(request);
+      return {
+        value: {
+          address: { source: request.source, path: request.path },
+          status: "ready",
+          targetRevision: request.exactRevision!,
+          removed: false,
+          files: [
+            {
+              path: "SKILL.md",
+              status: "modified",
+              content: {
+                kind: "text",
+                before: `Installed ${request.path}\n`,
+                after: `Checked ${request.path}\n`,
               },
-            ],
-          },
-          diagnostics: [],
-        };
-      },
-      update: async (request, options) => {
-        updateSignal = options?.signal;
-        calls.push(request);
-        if (updateFailure) throw updateFailure;
-        if (pending && request.source === (pending === "other" ? "other" : "team-main"))
-          await new Promise<void>((resolve) => {
-            settle = resolve;
-          });
-        return { value: undefined, diagnostics: [] };
-      },
-      load: async ({ address }) => {
-        loaded.push(address);
-        const skill = projection.installedSkills.find(
-          (skill) => skill.address.source === address.source && skill.address.path === address.path,
-        )!;
-        const text = `# ${skill.name}\n\nInstalled body for ${address.source}/${address.path}\n\n${Array.from({ length: 50 }, (_, index) => `Content line ${index}`).join("\n\n")}`;
-        return {
-          address,
-          name: skill.name,
-          description: skill.description,
-          rawText: text,
-          markdownText: text,
-        };
-      },
+            },
+          ],
+        },
+        diagnostics: [],
+      };
+    },
+    updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request, options) => {
+      updateSignal = options?.signal;
+      calls.push(request);
+      if (updateFailure) throw updateFailure;
+      if (pending && request.source === (pending === "other" ? "other" : "team-main"))
+        await new Promise<void>((resolve) => {
+          settle = resolve;
+        });
+      return { value: undefined, diagnostics: [] };
+    },
+    loadInstalledSkill: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { address },
+    ) => {
+      loaded.push(address);
+      const skill = projection.installedSkills.find(
+        (skill) => skill.address.source === address.source && skill.address.path === address.path,
+      )!;
+      const text = `# ${skill.name}\n\nInstalled body for ${address.source}/${address.path}\n\n${Array.from({ length: 50 }, (_, index) => `Content line ${index}`).join("\n\n")}`;
+      return {
+        address,
+        name: skill.name,
+        description: skill.description,
+        rawText: text,
+        markdownText: text,
+      };
     },
   });
   let setup: Setup | undefined;
@@ -243,14 +244,12 @@ async function capture(setup: Setup, name: string) {
   await writeFile(join(root, `${name}.txt`), setup.captureCharFrame());
   await writeFile(join(root, `${name}.json`), JSON.stringify(setup.captureSpans(), null, 2));
 }
-
 function expectHeaderActivitySpacing(setup: Setup, width: number) {
   const status = setup.renderer.root.findDescendantById("process-status")!;
   const adjacent = setup.renderer.root.findDescendantById("shell-more-actions")!;
   expect(status.screenX - (adjacent.screenX + adjacent.width)).toBeGreaterThanOrEqual(1);
   expect(status.screenX + status.width).toBeLessThanOrEqual(width - 1);
 }
-
 test.each([
   [144, 40],
   [100, 24],
@@ -267,18 +266,19 @@ test.each([
     let checks = 0;
     const projection = fixture();
     const core = directSourceCore(projection, {
-      installed: {
-        checkUpdate: async (_request, options) => {
-          checks += 1;
-          signal = options?.signal;
-          await new Promise<void>((_resolve, reject) => {
-            const abort = () =>
-              reject(Object.assign(new Error("cancelled"), { code: "CANCELLED" }));
-            if (signal?.aborted) abort();
-            else signal?.addEventListener("abort", abort, { once: true });
-          });
-          throw new Error("This fixture only settles on cancellation");
-        },
+      checkUpdate: async (
+        _environment: import("@skill-cli/core").CoreOptions,
+        _request,
+        options,
+      ) => {
+        checks += 1;
+        signal = options?.signal;
+        await new Promise<void>((_resolve, reject) => {
+          const abort = () => reject(Object.assign(new Error("cancelled"), { code: "CANCELLED" }));
+          if (signal?.aborted) abort();
+          else signal?.addEventListener("abort", abort, { once: true });
+        });
+        throw new Error("This fixture only settles on cancellation");
       },
     });
     let setup: Setup | undefined;
@@ -334,7 +334,6 @@ test.each([
     }
   },
 );
-
 test.each([
   [120, 40],
   [80, 24],
@@ -392,7 +391,6 @@ test.each([
     }
   },
 );
-
 test("Source cursor update targets that Source without opening Skills or selecting rows", async () => {
   const mounted = await mount();
   try {
@@ -414,7 +412,6 @@ test("Source cursor update targets that Source without opening Skills or selecti
     await mounted.dispose();
   }
 });
-
 test("Source drill-down updates one Skill without selecting or marking other Skills updated", async () => {
   const mounted = await mount();
   try {
@@ -441,7 +438,6 @@ test("Source drill-down updates one Skill without selecting or marking other Ski
     await mounted.dispose();
   }
 });
-
 test.each([
   [80, 24],
   [43, 13],
@@ -495,7 +491,6 @@ test.each([
     }
   },
 );
-
 test.each([
   [120, 40],
   [80, 24],
@@ -532,7 +527,6 @@ test.each([
     }
   },
 );
-
 test.each([
   [80, 24],
   [43, 13],
@@ -568,7 +562,6 @@ test.each([
     }
   },
 );
-
 test.each([
   [80, 24],
   [43, 13],
@@ -605,7 +598,6 @@ test.each([
     }
   },
 );
-
 test.each([
   [144, 40],
   [100, 24],
@@ -716,7 +708,6 @@ test.each([
     }
   },
 );
-
 test("current-item Button follows the Skill cursor and pointer activation submits once", async () => {
   const mounted = await mount();
   try {
@@ -733,7 +724,6 @@ test("current-item Button follows the Skill cursor and pointer activation submit
     await mounted.dispose();
   }
 });
-
 test("quiet App preserves hidden selection, isolates text entry and keeps arrows in the table", async () => {
   const mounted = await mount();
   try {
@@ -766,7 +756,6 @@ test("quiet App preserves hidden selection, isolates text entry and keeps arrows
     await mounted.dispose();
   }
 });
-
 test("quiet App Tab reaches actions without walking to list boundaries; Esc only clears selection", async () => {
   const mounted = await mount();
   try {
@@ -791,7 +780,6 @@ test("quiet App Tab reaches actions without walking to list boundaries; Esc only
     await mounted.dispose();
   }
 });
-
 test.each([
   [80, 24],
   [43, 13],
@@ -829,7 +817,6 @@ test.each([
     }
   },
 );
-
 test("Source drill-down cannot widen a Skill-scoped update to other installed Skills", async () => {
   const mounted = await mount(80, 24, false, true);
   try {
@@ -859,7 +846,6 @@ test("Source drill-down cannot widen a Skill-scoped update to other installed Sk
     await mounted.dispose();
   }
 });
-
 test("Recheck in Source drill-down checks only that Source", async () => {
   const mounted = await mount();
   try {
@@ -874,7 +860,6 @@ test("Recheck in Source drill-down checks only that Source", async () => {
     await mounted.dispose();
   }
 });
-
 async function chooseAction(setup: Setup, id: string) {
   setup.mockInput.pressKey("p", { ctrl: true });
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
@@ -884,7 +869,6 @@ async function chooseAction(setup: Setup, id: string) {
   for (let row = 0; row < index; row++) setup.mockInput.pressArrow("down");
   await parsedEnter(setup);
 }
-
 async function openSection(setup: Setup, section: "skills" | "sources" | "updates") {
   const tab = `shell-section-tab-${section}`;
   if (setup.renderer.root.findDescendantById(tab)) return enterLive(setup, tab);
@@ -897,7 +881,6 @@ async function openSection(setup: Setup, section: "skills" | "sources" | "update
   }
   await parsedEnter(setup);
 }
-
 test.each([
   [144, 40],
   [100, 24],
@@ -962,7 +945,6 @@ test.each([
     }
   },
 );
-
 test("shared filter lists apply an exact Source from a pointer row and preserve the browser on close", async () => {
   const mounted = await mount(120, 30);
   try {
@@ -1008,7 +990,6 @@ test("shared filter lists apply an exact Source from a pointer row and preserve 
     await mounted.dispose();
   }
 });
-
 test.each([
   [80, 24],
   [43, 13],
@@ -1067,7 +1048,6 @@ test.each([
     }
   },
 );
-
 test.each([
   [80, 24],
   [43, 13],
@@ -1094,7 +1074,6 @@ test.each([
     }
   },
 );
-
 test("Actions lists live update targets and disabled reasons; unavailable selection cannot mutate", async () => {
   const mounted = await mount();
   try {
@@ -1127,7 +1106,6 @@ test("Actions lists live update targets and disabled reasons; unavailable select
     await mounted.dispose();
   }
 });
-
 test.each([
   [80, 24],
   [43, 13],
@@ -1166,7 +1144,6 @@ test.each([
     }
   },
 );
-
 test("Actions can start filtering without a remembered slash binding, then return to the same Source", async () => {
   const mounted = await mount();
   try {
@@ -1184,7 +1161,6 @@ test("Actions can start filtering without a remembered slash binding, then retur
     await mounted.dispose();
   }
 });
-
 test.each([
   [80, 24],
   [43, 13],
@@ -1222,7 +1198,6 @@ test.each([
     }
   },
 );
-
 test("Source scan orders updates before current and unchecked results without confusing unknown with zero", async () => {
   const base = workspaceProjection({ includeContribution: false });
   const ids = ["unchecked", "already-current", "has-updates"];
@@ -1320,7 +1295,6 @@ test("Source scan orders updates before current and unchecked results without co
     setup.renderer.destroy();
   }
 });
-
 test("Source selection survives drill-down and Back; all-update remains bounded to the selected Source", async () => {
   const mounted = await mount();
   try {
@@ -1346,7 +1320,6 @@ test("Source selection survives drill-down and Back; all-update remains bounded 
     await mounted.dispose();
   }
 });
-
 test("Ctrl+U submits the selected Source directly from its table without toolbar travel", async () => {
   const mounted = await mount();
   try {
@@ -1364,7 +1337,6 @@ test("Ctrl+U submits the selected Source directly from its table without toolbar
     await mounted.dispose();
   }
 });
-
 test("slash opens filtering in the command area; typing owns Ctrl+U and Esc restores the Source cursor", async () => {
   const mounted = await mount();
   try {
@@ -1400,7 +1372,6 @@ test("slash opens filtering in the command area; typing owns Ctrl+U and Esc rest
     await mounted.dispose();
   }
 });
-
 test("Source Skill Enter previews its checked diff and one Esc restores filter, selection, cursor and scroll", async () => {
   const mounted = await mount(80, 24, false, false, 120);
   try {

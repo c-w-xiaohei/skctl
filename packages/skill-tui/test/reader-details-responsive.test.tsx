@@ -28,9 +28,7 @@ import {
   parsedEscape,
   selectedReaderTab,
 } from "./reader-test-controls";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 async function arrowFocus(setup: Setup, key: string, id: string) {
   setup.mockInput.pressKey(key);
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
@@ -38,7 +36,6 @@ async function arrowFocus(setup: Setup, key: string, id: string) {
   expect(setup.renderer.currentFocusedRenderable === live(setup, id)).toBe(true);
   expect(live(setup, id).focused).toBe(true);
 }
-
 function expectInBounds(target: Renderable, width: number, height: number) {
   expect(target.screenX).toBeGreaterThanOrEqual(0);
   expect(target.screenY).toBeGreaterThanOrEqual(0);
@@ -47,7 +44,6 @@ function expectInBounds(target: Renderable, width: number, height: number) {
   expect(target.screenX + target.width).toBeLessThanOrEqual(width);
   expect(target.screenY + target.height).toBeLessThanOrEqual(height);
 }
-
 test("Details arrows traverse live controls both ways and Escape from each physical origin returns to the selected browser", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -83,7 +79,6 @@ test("Details arrows traverse live controls both ways and Escape from each physi
     await arrowFocus(setup, "ARROW_RIGHT", controls[0]!);
     await arrowFocus(setup, "ARROW_RIGHT", controls[1]!);
     await arrowFocus(setup, "ARROW_LEFT", "reader-details");
-
     for (const origin of [controls[5]!, controls[0]!, controls[2]!]) {
       for (const [index, id] of controls.slice(0, controls.indexOf(origin) + 1).entries())
         await arrowFocus(setup, index === 0 ? "ARROW_RIGHT" : "ARROW_DOWN", id);
@@ -108,7 +103,6 @@ test("Details arrows traverse live controls both ways and Escape from each physi
     setup.renderer.destroy();
   }
 });
-
 test("Details skips absent and disabled controls and metadata Enter/Space really toggles across resize", async () => {
   const base = readerProjection();
   const setup = await testRender(
@@ -188,7 +182,6 @@ test("Details skips absent and disabled controls and metadata Enter/Space really
     setup.renderer.destroy();
   }
 });
-
 test("Details restores exact native scroll per address through A/B/A/B, view remount and responsive geometry", async () => {
   const base = readerProjection();
   const loads: string[] = [];
@@ -207,13 +200,14 @@ test("Details restores exact native scroll per address through A/B/A/B, view rem
             })),
           },
           {
-            installed: {
-              load: async (request) => {
-                loads.push(request.address.path);
-                return request.address.path === readerSecondAddress.path
-                  ? readerSecondContent
-                  : readerContent;
-              },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              loads.push(request.address.path);
+              return request.address.path === readerSecondAddress.path
+                ? readerSecondContent
+                : readerContent;
             },
           },
         )}

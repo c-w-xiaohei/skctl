@@ -15,13 +15,11 @@ import {
   openAllInstalledSkills,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 function readerState() {
-  const owner = createReaderOwner(directSourceCore(readerProjection()).installed);
+  const owner = createReaderOwner(directSourceCore(readerProjection()));
   owner.select({ source: "team-main", path: "guide" });
   return owner.current()!;
 }
-
 test("RENDER Reader registers exact Enter records and describes only mounted resource controls", async () => {
   const [state] = createSignal(readerState());
   const commands = new Map<string, CommandRecord>();
@@ -77,18 +75,18 @@ test("RENDER Reader registers exact Enter records and describes only mounted res
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Reader executes one command once through Enter and pointer without leaving Reader", async () => {
   const reads: unknown[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async (request) => {
-              reads.push(request);
-              return readerContent;
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            reads.push(request);
+            return readerContent;
           },
         })}
         exit={() => {}}

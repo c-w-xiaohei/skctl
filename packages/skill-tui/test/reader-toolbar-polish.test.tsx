@@ -32,7 +32,7 @@ async function mountReader(width = 90, height = 13) {
   };
   const setup = await testRender(
     () => {
-      const owner = createReaderOwner(directSourceCore(projection).installed);
+      const owner = createReaderOwner(directSourceCore(projection));
       for (const content of [readerSecondContent, readerContent]) {
         owner.select(content.address);
         owner.patch({ text: content.markdownText, rawText: content.rawText });

@@ -15,7 +15,6 @@ import {
   selectedReaderTab,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 test.each([
   [120, 40],
   [80, 24],
@@ -71,13 +70,12 @@ test.each([
     }
   },
 );
-
 test("Reader pointer tabs retain monochrome cues and Find/Raw tools own reversible arrows, not editing input", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -125,7 +123,6 @@ test("Reader pointer tabs retain monochrome cues and Find/Raw tools own reversib
     setup.renderer.destroy();
   }
 });
-
 test("slash from the installed list focuses search without changing its view", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,

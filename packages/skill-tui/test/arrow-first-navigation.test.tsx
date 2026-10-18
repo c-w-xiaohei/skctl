@@ -25,7 +25,6 @@ import {
   readerSecondContent,
 } from "./installed-reader.fixture";
 import { focusLive, parsedEscape, parsedEnter as rawParsedEnter } from "./reader-test-controls";
-
 async function parsedArrow(
   setup: Awaited<ReturnType<typeof testRender>>,
   direction: "up" | "down" | "left" | "right",
@@ -42,28 +41,27 @@ async function parsedArrow(
   await new Promise<void>((resolve) => setImmediate(resolve));
   await setup.renderOnce();
 }
-
 async function parsedEnter(setup: Awaited<ReturnType<typeof testRender>>) {
   await rawParsedEnter(setup);
   await new Promise<void>((resolve) => setImmediate(resolve));
   await setup.renderOnce();
 }
-
 test("arrow-first browser selection enters Details, reads, cycles panes, and returns to its skill", async () => {
   const loads: string[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async (request) => {
-              loads.push(request.address.path);
-              return request.address.path === readerSecondAddress.path
-                ? readerSecondContent
-                : readerContent;
-            },
-            listResources: async () => readerResources,
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            loads.push(request.address.path);
+            return request.address.path === readerSecondAddress.path
+              ? readerSecondContent
+              : readerContent;
           },
+          listInstalledResources: async () => readerResources,
         })}
         exit={() => {}}
       />
@@ -92,12 +90,10 @@ test("arrow-first browser selection enters Details, reads, cycles panes, and ret
     await checkpoint(setup, "workspace-action-skill-check-updates", "Skill action Down");
     await parsedArrow(setup, "up");
     await checkpoint(setup, "skill-inspector-open-reader", "Skill action Up");
-
     await parsedEnter(setup);
     await checkpoint(setup, "reader-scrollbox", "Read Enter");
     expect(JSON.parse(selectedAddress!)).toEqual(["team-main", "reference"]);
     await setup.waitForFrame((frame) => frame.includes("Reader · reference"));
-
     // Reader body Up reaches tabs; horizontal arrows switch Reader sections.
     await parsedArrow(setup, "up");
     await setup.waitFor(
@@ -130,7 +126,6 @@ test("arrow-first browser selection enters Details, reads, cycles panes, and ret
       () => setup.renderer.currentFocusedRenderable?.id === "reader-details-action-skill-rebind",
     );
     expect(loads).toHaveLength(1);
-
     await parsedEscape(setup);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
@@ -150,7 +145,6 @@ test("arrow-first browser selection enters Details, reads, cycles panes, and ret
     setup.renderer.destroy();
   }
 });
-
 test("update workbench arrows preserve selection and Escape leaves without applying", async () => {
   const observations: unknown[] = [];
   const updates: unknown[] = [];
@@ -158,27 +152,25 @@ test("update workbench arrows preserve selection and Escape leaves without apply
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            checkUpdate: async (request) => {
-              observations.push(request);
-              return {
-                value: {
-                  source: request.source,
-                  kind: "github",
-                  exactRevision: "arrow-review",
-                  changed: [{ path: "guide", name: "guide", description: "Changed guide" }],
-                  added: [],
-                  removed: [],
-                  unchanged: [],
-                  baseline: "baseline:test",
-                },
-                diagnostics: [],
-              };
-            },
-            update: async (request) => {
-              updates.push(request);
-              return { value: undefined, diagnostics: [] };
-            },
+          checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+            observations.push(request);
+            return {
+              value: {
+                source: request.source,
+                kind: "github",
+                exactRevision: "arrow-review",
+                changed: [{ path: "guide", name: "guide", description: "Changed guide" }],
+                added: [],
+                removed: [],
+                unchanged: [],
+                baseline: "baseline:test",
+              },
+              diagnostics: [],
+            };
+          },
+          updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+            updates.push(request);
+            return { value: undefined, diagnostics: [] };
           },
         })}
         exit={() => {}}
@@ -217,7 +209,14 @@ test("update workbench arrows preserve selection and Escape leaves without apply
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
     expect(observations.length).toBeGreaterThan(0);
     expect(
-      observations.every((request) => (request as { source: string }).source === "team-main"),
+      observations.every(
+        (request) =>
+          (
+            request as {
+              source: string;
+            }
+          ).source === "team-main",
+      ),
     ).toBe(true);
     expect(updates).toEqual([]);
   } finally {

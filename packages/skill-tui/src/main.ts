@@ -1,5 +1,4 @@
-import { createSkillCliCore } from "@skill-cli/core";
-
+import {} from "@skill-cli/core";
 export function parseTuiArgs(argv: readonly string[]) {
   let project: string | undefined;
   let help = false;
@@ -15,7 +14,6 @@ export function parseTuiArgs(argv: readonly string[]) {
   }
   return { project, help };
 }
-
 if (import.meta.main) {
   try {
     const options = parseTuiArgs(process.argv.slice(2));
@@ -37,7 +35,7 @@ if (import.meta.main) {
       });
       try {
         const { runTui } = await import("./app");
-        await runTui(createSkillCliCore({ cwd: process.cwd(), project: options.project }));
+        await runTui({ cwd: process.cwd(), project: options.project });
       } finally {
         for (const { signal, handler } of handlers) process.removeListener(signal, handler);
       }

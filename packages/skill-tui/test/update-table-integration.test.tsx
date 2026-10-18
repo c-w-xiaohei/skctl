@@ -12,10 +12,8 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEscape } from "./reader-test-controls";
-
 const revision = "e".repeat(40);
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 function projection(sourceCount: number, skillCount = 1) {
   const base = workspaceProjection({ includeContribution: false });
   const sources = Array.from({ length: sourceCount }, (_, index) => ({
@@ -41,12 +39,10 @@ function projection(sourceCount: number, skillCount = 1) {
     ),
   };
 }
-
 function text(setup: Setup, id: string) {
   const cell = setup.renderer.root.findDescendantById(id);
   return cell instanceof TextRenderable ? cell.plainText : undefined;
 }
-
 async function renderApp(core: ReturnType<typeof directSourceCore>, width: number, height: number) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/update-table-app-");
@@ -70,7 +66,6 @@ async function renderApp(core: ReturnType<typeof directSourceCore>, width: numbe
     },
   };
 }
-
 test.each([
   [80, 16],
   [80, 24],
@@ -84,28 +79,29 @@ test.each([
     const fixture = projection(12);
     const mounted = await renderApp(
       directSourceCore(fixture, {
-        installed: {
-          checkUpdate: async ({ source }) => {
-            calls.push(source);
-            if (source === "source-12") throw new Error(failure);
-            return {
-              value: {
-                source,
-                kind: "github",
-                baseline: "baseline:test",
-                exactRevision: revision,
-                changed: [],
-                removed: [],
-                added: [],
-                unchanged: [{ path: "skill-0", name: "Skill 0", description: "Installed Skill 0" }],
-              },
-              diagnostics: [],
-            };
-          },
-          load: async (request) => {
-            reads.push(request);
-            throw new Error("The update table must not read Skill content");
-          },
+        checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+          calls.push(source);
+          if (source === "source-12") throw new Error(failure);
+          return {
+            value: {
+              source,
+              kind: "github",
+              baseline: "baseline:test",
+              exactRevision: revision,
+              changed: [],
+              removed: [],
+              added: [],
+              unchanged: [{ path: "skill-0", name: "Skill 0", description: "Installed Skill 0" }],
+            },
+            diagnostics: [],
+          };
+        },
+        loadInstalledSkill: async (
+          _environment: import("@skill-cli/core").CoreOptions,
+          request,
+        ) => {
+          reads.push(request);
+          throw new Error("The update table must not read Skill content");
         },
       }),
       width,
@@ -177,7 +173,6 @@ test.each([
     }
   },
 );
-
 test("RENDER App Source table submits one selected Skill once at the checked exact revision", async () => {
   const requests: unknown[] = [];
   const checks: string[] = [];
@@ -185,35 +180,33 @@ test("RENDER App Source table submits one selected Skill once at the checked exa
   const fixture = projection(1, 120);
   const mounted = await renderApp(
     directSourceCore(fixture, {
-      installed: {
-        checkUpdate: async ({ source }) => {
-          checks.push(source);
-          return {
-            value: {
-              source,
-              kind: "github",
-              baseline: "baseline:test",
-              exactRevision: revision,
-              changed: fixture.installedSkills.map((skill) => ({
-                path: skill.address.path,
-                name: skill.name,
-                description: skill.description,
-              })),
-              removed: [],
-              added: [],
-              unchanged: [],
-            },
-            diagnostics: [],
-          };
-        },
-        update: async (request) => {
-          requests.push(request);
-          return { value: undefined, diagnostics: [] };
-        },
-        load: async (request) => {
-          reads.push(request);
-          throw new Error("Table navigation and submit must not read Skill content");
-        },
+      checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+        checks.push(source);
+        return {
+          value: {
+            source,
+            kind: "github",
+            baseline: "baseline:test",
+            exactRevision: revision,
+            changed: fixture.installedSkills.map((skill) => ({
+              path: skill.address.path,
+              name: skill.name,
+              description: skill.description,
+            })),
+            removed: [],
+            added: [],
+            unchanged: [],
+          },
+          diagnostics: [],
+        };
+      },
+      updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+        requests.push(request);
+        return { value: undefined, diagnostics: [] };
+      },
+      loadInstalledSkill: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+        reads.push(request);
+        throw new Error("Table navigation and submit must not read Skill content");
       },
     }),
     80,

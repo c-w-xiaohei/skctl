@@ -1,5 +1,5 @@
 import { SkillCliError, type OperationOptions } from "../shared";
-import { type CoreFactoryOptions } from "../shared";
+import { type CoreOptions } from "../shared";
 import type {
   AddMemberRequest,
   AddReferenceRequest,
@@ -36,7 +36,7 @@ function collection(edit: ConfigEdit, request: CollectionRequest, memberName?: s
   return declaration;
 }
 export function createCollection(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: Pick<CollectionRequest, "level" | "collection">,
   operation?: OperationOptions,
 ) {
@@ -54,7 +54,7 @@ export function createCollection(
   );
 }
 export function removeCollection(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: CollectionRequest,
   operation?: OperationOptions,
 ) {
@@ -91,7 +91,7 @@ export function removeCollection(
   );
 }
 export function addMember(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: AddMemberRequest,
   operation?: OperationOptions,
 ) {
@@ -110,7 +110,7 @@ export function addMember(
   );
 }
 export function removeMember(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: RemoveMemberRequest,
   operation?: OperationOptions,
 ) {
@@ -134,7 +134,7 @@ export function removeMember(
   );
 }
 export async function editMembers(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: ReviewedMemberEditRequest,
   operation?: OperationOptions,
 ) {
@@ -164,7 +164,7 @@ export async function editMembers(
   );
 }
 export function importMembers(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: ImportMembersRequest,
   operation?: OperationOptions,
 ) {
@@ -202,7 +202,7 @@ export function importMembers(
   );
 }
 export function addReference(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: AddReferenceRequest,
   operation?: OperationOptions,
 ) {
@@ -224,7 +224,7 @@ export function addReference(
   );
 }
 export function removeReference(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: RemoveReferenceRequest,
   operation?: OperationOptions,
 ) {
@@ -248,7 +248,7 @@ export function removeReference(
   );
 }
 export function setLink(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: SetLinkRequest,
   operation?: OperationOptions,
 ) {

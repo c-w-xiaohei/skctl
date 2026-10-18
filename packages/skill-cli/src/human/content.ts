@@ -1,8 +1,7 @@
 import type { Command } from "commander";
 import { SkillCliError } from "@skill-cli/core";
 import type { CommandContext } from "../command-context";
-
-export function contentCommand(parent: Command, { core, stdout }: CommandContext) {
+export function contentCommand(parent: Command, { api, environment, stdout }: CommandContext) {
   const content = parent
     .command("content")
     .description("Inspect or run installed Skills without changing catalog declarations.");
@@ -10,7 +9,7 @@ export function contentCommand(parent: Command, { core, stdout }: CommandContext
     .command("load <selector>")
     .description("Load an installed Skill's SKILL.md and provenance.")
     .action(async (selector, _flags, action) => {
-      const value = await core(action).content.load({ selector });
+      const value = await api.loadSkill(environment(action), { selector });
       stdout.write(
         [
           `selector ${value.selector}`,
@@ -30,7 +29,7 @@ export function contentCommand(parent: Command, { core, stdout }: CommandContext
     .action(async (selector, argv, _flags, action) => {
       if (!argv.length)
         throw new SkillCliError("INVALID_ARGUMENT", "Run command requires child argv after --");
-      const value = await core(action).content.run({ selector, argv });
+      const value = await api.runSkill(environment(action), { selector, argv });
       let outcome: string;
       if (value.cancelled) outcome = "was cancelled";
       else if (value.signal) outcome = `was terminated by signal ${value.signal}`;

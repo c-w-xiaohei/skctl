@@ -13,13 +13,11 @@ import { exposureTreePathKey } from "../src/collections/agent-access-tree";
 import { directOwner, directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { focusLive, parsedEnter, waitForReaderBody } from "./reader-test-controls";
-
 let setup: Awaited<ReturnType<typeof testRender>> | undefined;
 afterEach(() => {
   setup?.renderer.destroy();
   setup = undefined;
 });
-
 const description =
   "Domain discovery, bounded contexts, subdomains, aggregates, interactions, context maps, and model review. ".repeat(
     6,
@@ -30,7 +28,6 @@ const nodes = (node: BaseRenderable): BaseRenderable[] => [
   node,
   ...node.getChildren().flatMap(nodes),
 ];
-
 function fixture() {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("Complete fixture required");
@@ -72,21 +69,21 @@ function fixture() {
     },
   };
 }
-
 async function mount(width: number, height: number) {
   setup = await testRender(
     () => (
       <App
         core={directSourceCore(fixture(), {
-          installed: {
-            load: async ({ address }) => ({
-              address,
-              name: address.path,
-              description: "Guide",
-              rawText: "# Guide\n\nUsage instructions.",
-              markdownText: "# Guide\n\nUsage instructions.",
-            }),
-          },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => ({
+            address,
+            name: address.path,
+            description: "Guide",
+            rawText: "# Guide\n\nUsage instructions.",
+            markdownText: "# Guide\n\nUsage instructions.",
+          }),
         })}
         exit={() => {}}
       />
@@ -98,7 +95,6 @@ async function mount(width: number, height: number) {
   );
   await setup.flush();
 }
-
 async function capture(name: string) {
   const directory = process.env.QUIET_UPDATE_CAPTURE_DIR;
   if (!directory) return;
@@ -109,7 +105,6 @@ async function capture(name: string) {
   await writeFile(join(directory, `${name}.txt`), setup!.captureCharFrame());
   await writeFile(join(directory, `${name}.json`), JSON.stringify(setup!.captureSpans(), null, 2));
 }
-
 test.each([
   [144, 40],
   [100, 24],
@@ -149,7 +144,6 @@ test.each([
   await waitForReaderBody(setup!, "Usage instructions.");
   await capture(`reader-readable-${width}x${height}`);
 });
-
 test.each([
   [144, 40],
   [100, 24],

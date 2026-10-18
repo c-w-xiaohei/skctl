@@ -11,7 +11,6 @@ import { SourceRegistrationOverlay } from "../src/operations";
 import type { ActionRecord } from "../src/actions";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
-
 function configProjection(): WorkspaceView {
   const base = workspaceProjection();
   const global = base.configs[0]!;
@@ -152,13 +151,15 @@ function configProjection(): WorkspaceView {
     ],
   };
 }
-
 function renderableText(renderable: BaseRenderable | undefined): string {
   if (!renderable) return "";
-  const text = (renderable as BaseRenderable & { readonly plainText?: string }).plainText;
+  const text = (
+    renderable as BaseRenderable & {
+      readonly plainText?: string;
+    }
+  ).plainText;
   return [text ?? "", ...renderable.getChildren().map((child) => renderableText(child))].join("\n");
 }
-
 function configAction(
   id: ActionRecord["id"],
   verb: string,
@@ -176,7 +177,6 @@ function configAction(
     danger,
   };
 }
-
 async function openDestination(
   setup: Awaited<ReturnType<typeof testRender>>,
   destination: "global" | "project" | "local",
@@ -208,14 +208,12 @@ async function openDestination(
   )) as TabsTabRenderable;
   expect(tab.getState().selected).toBe(true);
 }
-
 async function waitForShell(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => {
     const scope = setup.renderer.root.findDescendantById("shell-scope-select");
     return !!scope && !scope.isDestroyed && !!scope.parent;
   });
 }
-
 async function openSection(
   setup: Awaited<ReturnType<typeof testRender>>,
   section: "sources" | "config-sources" | "collections" | "integrations",
@@ -244,7 +242,6 @@ async function openSection(
     expect(tab.getState().selected).toBe(true);
   }
 }
-
 function interceptFrameListeners(setup: Awaited<ReturnType<typeof testRender>>) {
   const renderer = setup.renderer as typeof setup.renderer & {
     once: (event: string, listener: () => void) => unknown;
@@ -267,7 +264,6 @@ function interceptFrameListeners(setup: Awaited<ReturnType<typeof testRender>>) 
   };
   return { listeners, observed };
 }
-
 test("RENDER palette reaches Global, Project, and Local Config through physical keyboard input", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -289,7 +285,6 @@ test("RENDER palette reaches Global, Project, and Local Config through physical 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER wide Config owns bounded Sections and Content panels with a growing primary list", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -314,7 +309,6 @@ test("RENDER wide Config owns bounded Sections and Content panels with a growing
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config uses the shared Sections and Content shell without a standalone agent route", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -336,7 +330,6 @@ test("RENDER Config uses the shared Sections and Content shell without a standal
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config keeps the same shell geometry at medium width", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -354,7 +347,6 @@ test("RENDER Config keeps the same shell geometry at medium width", async () => 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER selected Config Source exposes its contributed source and collection", async () => {
   const projection = configProjection();
   const state = createConfigState();
@@ -388,7 +380,6 @@ test("RENDER selected Config Source exposes its contributed source and collectio
     setup.renderer.destroy();
   }
 });
-
 test("RENDER selected Config declarations expose binding and owner facts", async () => {
   const projection = configProjection();
   const state = createConfigState();
@@ -448,7 +439,6 @@ test("RENDER selected Config declarations expose binding and owner facts", async
     collections.renderer.destroy();
   }
 });
-
 test("RENDER Config ignores an invalid selected Collection without an action surface", async () => {
   const projection = configProjection();
   const state = createConfigState();
@@ -481,7 +471,6 @@ test("RENDER Config ignores an invalid selected Collection without an action sur
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config keeps an empty selected Collection from creating an orphan text node", async () => {
   const projection = configProjection();
   const state = createConfigState();
@@ -514,7 +503,6 @@ test("RENDER Config keeps an empty selected Collection from creating an orphan t
     setup.renderer.destroy();
   }
 });
-
 test("RENDER direct Source tracked refs distinguish local bindings from declaration ownership at 120 80 and 43", async () => {
   const projection = configProjection();
   for (const [width, height] of [
@@ -550,7 +538,6 @@ test("RENDER direct Source tracked refs distinguish local bindings from declarat
     }
   }
 });
-
 test("RENDER projection removal clears the Config Source browser into its empty command", async () => {
   const before = configProjection();
   const project = before.configs.find((item) => item.level === "project")!;
@@ -601,7 +588,6 @@ test("RENDER projection removal clears the Config Source browser into its empty 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config Source inspector returns to its Config Source row on Escape", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -631,7 +617,6 @@ test("RENDER Config Source inspector returns to its Config Source row on Escape"
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config Source Inspector exposes exact commands without a local action menu or Back", async () => {
   const projection = configProjection();
   const state = createConfigState();
@@ -683,7 +668,6 @@ test("RENDER Config Source Inspector exposes exact commands without a local acti
     setup.renderer.destroy();
   }
 });
-
 test("RENDER shell Section navigation owns Config section transitions", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -712,7 +696,6 @@ test("RENDER shell Section navigation owns Config section transitions", async ()
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config browsers keep declaration identities primary and owner evidence secondary", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -749,7 +732,6 @@ test("RENDER Config browsers keep declaration identities primary and owner evide
     setup.renderer.destroy();
   }
 });
-
 test.each([120, 80, 43])(
   "RENDER Config section label remains visible with stable structural tabs at width %i",
   async (width) => {
@@ -774,7 +756,6 @@ test.each([120, 80, 43])(
     }
   },
 );
-
 test.each(["invalid", "unreadable"] as const)(
   "RED Config pages show the concrete %s file problem without declarations or mutations at 120, 80, and 43",
   async (status) => {
@@ -858,7 +839,6 @@ test.each(["invalid", "unreadable"] as const)(
     }
   },
 );
-
 test("RENDER same-value primary Config tab click restores local navigation ownership", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -878,7 +858,6 @@ test("RENDER same-value primary Config tab click restores local navigation owner
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Tab traverses Scope and Sections without changing Config content", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -903,7 +882,6 @@ test("RENDER Tab traverses Scope and Sections without changing Config content", 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER secondary Config tab clicks preserve selection and focus", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -921,7 +899,6 @@ test("RENDER secondary Config tab clicks preserve selection and focus", async ()
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config frame-focus handoff is removed when the App tears down", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -940,7 +917,6 @@ test("RENDER Config frame-focus handoff is removed when the App tears down", asy
     if (!setup.renderer.isDestroyed) setup.renderer.destroy();
   }
 });
-
 test("RENDER shell section focus survives repeated Config transitions", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -963,7 +939,6 @@ test("RENDER shell section focus survives repeated Config transitions", async ()
     setup.renderer.destroy();
   }
 });
-
 test("RENDER empty Config actions are reachable by Enter and mouse with the browser owner", async () => {
   const cases = [
     ["collections", "config-command-new-collection", "New Collection", "collection-create-id"],
@@ -1022,7 +997,6 @@ test("RENDER empty Config actions are reachable by Enter and mouse with the brow
     }
   }
 });
-
 test("RENDER Project direct Source rows select data without a generic action menu", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -1044,7 +1018,6 @@ test("RENDER Project direct Source rows select data without a generic action men
     setup.renderer.destroy();
   }
 });
-
 test("RENDER empty Collection Use state does not advertise an unavailable action without collections", async () => {
   const projection = configProjection();
   const project = projection.configs.find((item) => item.level === "project")!;
@@ -1094,7 +1067,6 @@ test("RENDER empty Collection Use state does not advertise an unavailable action
     setup.renderer.destroy();
   }
 });
-
 test("RENDER integrations use native rows and an inspect-only catalog surface", async () => {
   const projection = configProjection();
   const project = projection.configs.find((item) => item.level === "project")!;
@@ -1221,7 +1193,6 @@ test("RENDER integrations use native rows and an inspect-only catalog surface", 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER mixed integration owners keep Actions and Palette owner-safe", async () => {
   const projection = configProjection();
   const project = projection.configs.find((item) => item.level === "project")!;
@@ -1294,7 +1265,6 @@ test("RENDER mixed integration owners keep Actions and Palette owner-safe", asyn
     setup.renderer.destroy();
   }
 });
-
 test("RENDER stale catalog entry keeps an explicit Back to Integration action", async () => {
   const initial = configProjection();
   if (initial.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -1381,7 +1351,6 @@ test("RENDER stale catalog entry keeps an explicit Back to Integration action", 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER unavailable integrations distinguish reasons from an available empty catalog and expose one enable action", async () => {
   const projection = configProjection();
   const adjustedProjection: WorkspaceView = {
@@ -1445,7 +1414,6 @@ test("RENDER unavailable integrations distinguish reasons from an available empt
     setup.renderer.destroy();
   }
 });
-
 test("RENDER empty Config Integrations enables Managed OpenCode without an existing owner", async () => {
   const projection = workspaceProjection();
   const project = projection.configs.find((config) => config.level === "project")!;
@@ -1462,18 +1430,19 @@ test("RENDER empty Config Integrations enables Managed OpenCode without an exist
     () => (
       <App
         core={directSourceCore(adjusted, {
-          collections: {
-            create: async (request) => {
-              changes.push(request);
-              return {
-                value: {
-                  level: project.level,
-                  file: project.file.file,
-                  changed: true,
-                },
-                diagnostics: [],
-              };
-            },
+          createCollection: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            changes.push(request);
+            return {
+              value: {
+                level: project.level,
+                file: project.file.file,
+                changed: true,
+              },
+              diagnostics: [],
+            };
           },
         })}
         exit={() => {}}
@@ -1499,7 +1468,6 @@ test("RENDER empty Config Integrations enables Managed OpenCode without an exist
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config Collections expose Set or Edit Collection Use only for a direct collection owner", async () => {
   const projection = configProjection();
   const state = createConfigState();
@@ -1530,7 +1498,6 @@ test("RENDER Config Collections expose Set or Edit Collection Use only for a dir
     setup.renderer.destroy();
   }
 });
-
 test("RENDER contributed integrations expose only their read-only owning Config action", async () => {
   const projection = configProjection();
   const project = projection.configs.find((item) => item.level === "project")!;
@@ -1604,7 +1571,6 @@ test("RENDER contributed integrations expose only their read-only owning Config 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config keeps duplicate integration pointers distinct by owner", async () => {
   const projection = configProjection();
   const project = projection.configs.find((item) => item.level === "project")!;
@@ -1672,7 +1638,6 @@ test("RENDER Config keeps duplicate integration pointers distinct by owner", asy
     setup.renderer.destroy();
   }
 });
-
 test("RENDER contributed Collection Use remains editable when its Collection declaration is contributed", async () => {
   const projection = configProjection();
   const project = projection.configs.find((item) => item.level === "project")!;
@@ -1726,7 +1691,6 @@ test("RENDER contributed Collection Use remains editable when its Collection dec
     setup.renderer.destroy();
   }
 });
-
 test("RENDER contributed Collection without Collection Use has no false owning-Use action", async () => {
   const projection = configProjection();
   const adjusted: WorkspaceView = {
@@ -1769,7 +1733,6 @@ test("RENDER contributed Collection without Collection Use has no false owning-U
     setup.renderer.destroy();
   }
 });
-
 test("RENDER unresolved Config projection shows Loading instead of Managed OpenCode Unavailable", async () => {
   const state = createConfigState();
   state.selectSection("project", "integrations");
@@ -1795,7 +1758,6 @@ test("RENDER unresolved Config projection shows Loading instead of Managed OpenC
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Source registration validates and submits a fixed-level local binding through physical keyboard input", async () => {
   const submitted: unknown[] = [];
   let cancelled = 0;
@@ -1845,7 +1807,6 @@ test("RENDER Source registration validates and submits a fixed-level local bindi
     setup.renderer.destroy();
   }
 });
-
 test("RENDER workspace Config Source registration selects its owner and submits a credential-free remote binding", async () => {
   const submitted: unknown[] = [];
   const setup = await testRender(
@@ -1929,7 +1890,6 @@ test("RENDER workspace Config Source registration selects its owner and submits 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER GitHub registration traverses owner and repository in both directions and submits structured fields", async () => {
   const submitted: unknown[] = [];
   const setup = await testRender(
@@ -1993,7 +1953,6 @@ test("RENDER GitHub registration traverses owner and repository in both directio
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Source registration repeatedly replaces dynamic controls without retaining destroyed inputs", async () => {
   const submitted: unknown[] = [];
   const setup = await testRender(
@@ -2025,7 +1984,6 @@ test("RENDER Source registration repeatedly replaces dynamic controls without re
     await setup.mockInput.pressKeys(["v", "1"]);
     setup.mockInput.pressKey("TAB");
     await setup.mockInput.pressKeys(["a", "g", "e", "n", "t", "s"]);
-
     for (let index = 0; index < 5; index++) setup.mockInput.pressKey("TAB", { shift: true });
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "source-register-kind",
@@ -2038,7 +1996,6 @@ test("RENDER Source registration repeatedly replaces dynamic controls without re
       () => setup.renderer.currentFocusedRenderable?.id === "source-register-origin",
     );
     await setup.mockInput.pressKeys(["h", "t", "t", "p", "s", ":", "/", "/", "g", "i", "t"]);
-
     setup.mockInput.pressKey("TAB", { shift: true });
     setup.mockInput.pressKey("TAB", { shift: true });
     await setup.waitFor(
@@ -2052,7 +2009,6 @@ test("RENDER Source registration repeatedly replaces dynamic controls without re
       () => setup.renderer.currentFocusedRenderable?.id === "source-register-origin",
     );
     await setup.mockInput.pressKeys(["/", "l", "o", "c", "a", "l"]);
-
     setup.mockInput.pressKey("TAB", { shift: true });
     setup.mockInput.pressKey("TAB", { shift: true });
     await setup.waitFor(
@@ -2075,7 +2031,6 @@ test("RENDER Source registration repeatedly replaces dynamic controls without re
     );
     setup.mockInput.pressKey("TAB");
     await parsedEnter(setup);
-
     expect(submitted).toEqual([
       {
         level: "project",

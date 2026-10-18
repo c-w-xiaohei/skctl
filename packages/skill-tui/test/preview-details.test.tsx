@@ -12,14 +12,12 @@ import {
   parsedEscape,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 async function openSources(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-sources"));
   await focusLive(setup, "shell-section-tab-sources");
   await parsedEnter(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
 }
-
 async function openSourceDetails(setup: Awaited<ReturnType<typeof testRender>>) {
   await openSources(setup);
   const browser = (await focusLive(setup, "source-browser")) as SelectRenderable;
@@ -51,7 +49,6 @@ async function openSourceDetails(setup: Awaited<ReturnType<typeof testRender>>) 
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
   await setup.flush();
 }
-
 test("All Skills selection keeps a persistent Reader, loads its exact address, and has no Inspector step", async () => {
   for (const viewport of [
     { width: 120, height: 40 },
@@ -63,17 +60,18 @@ test("All Skills selection keeps a persistent Reader, loads its exact address, a
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async ({ address }) => {
-                reads.push(`${address.source}/${address.path}`);
-                return {
-                  address,
-                  name: address.path,
-                  description: "Loaded from the selected address",
-                  rawText: `Body ${address.path}`,
-                  markdownText: `# ${address.path}\n\nBody ${address.path}`,
-                };
-              },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              { address },
+            ) => {
+              reads.push(`${address.source}/${address.path}`);
+              return {
+                address,
+                name: address.path,
+                description: "Loaded from the selected address",
+                rawText: `Body ${address.path}`,
+                markdownText: `# ${address.path}\n\nBody ${address.path}`,
+              };
             },
           })}
           exit={() => {}}
@@ -87,13 +85,11 @@ test("All Skills selection keeps a persistent Reader, loads its exact address, a
       expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeUndefined();
       expect(setup.renderer.root.findDescendantById("reader-scrollbox")).toBeDefined();
       expect(reads).toEqual(["team-main/guide"]);
-
       await parsedEnter(setup);
       await waitForReaderBody(setup, "Body guide");
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-scrollbox");
       await parsedEscape(setup);
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
-
       await focusLive(setup, "installed-skill-browser");
       setup.mockInput.pressArrow("down");
       await setup.waitFor(
@@ -107,7 +103,6 @@ test("All Skills selection keeps a persistent Reader, loads its exact address, a
     }
   }
 });
-
 test("Reader Details keeps its action surface reachable and discloses the full address only there", async () => {
   const base = readerProjection();
   const projection = {
@@ -142,7 +137,6 @@ test("Reader Details keeps its action surface reachable and discloses the full a
     setup.renderer.destroy();
   }
 });
-
 test("compact Skills defaults to Agent access without mounting an installed browser until All Skills is chosen", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -160,7 +154,6 @@ test("compact Skills defaults to Agent access without mounting an installed brow
     setup.renderer.destroy();
   }
 });
-
 test("Source details disclose management actions and provenance only on request", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -183,7 +176,6 @@ test("Source details disclose management actions and provenance only on request"
     setup.renderer.destroy();
   }
 });
-
 test("Source action/detail disclosures close without losing the selected source", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -212,7 +204,6 @@ test("Source action/detail disclosures close without losing the selected source"
     setup.renderer.destroy();
   }
 });
-
 test("Source installed-Skills handoff keeps its source filter and Back returns to that source", async () => {
   const projection = sourceFilteredReaderProjection();
   const setup = await testRender(

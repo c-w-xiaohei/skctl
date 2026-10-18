@@ -7,7 +7,6 @@ import { selectScrollOffset } from "../src/select-scroll";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { focusLive, openAllInstalledSkills, parsedEnter } from "./reader-test-controls";
-
 function projectionWithSkills(count: number): WorkspaceView {
   const projection = readerProjection();
   const template = projection.installedSkills[0]!;
@@ -24,33 +23,39 @@ function projectionWithSkills(count: number): WorkspaceView {
     }),
   };
 }
-
 function textBuffers(node: { getChildren(): readonly unknown[] }): TextBufferRenderable[] {
   return node.getChildren().flatMap((child) => {
     if (child instanceof TextBufferRenderable) return [child];
     if (child && typeof child === "object" && "getChildren" in child)
-      return textBuffers(child as { getChildren(): readonly unknown[] });
+      return textBuffers(
+        child as {
+          getChildren(): readonly unknown[];
+        },
+      );
     return [];
   });
 }
-
 test("All Installed Skills inspector follows the browser's native arrow selection", async () => {
-  const loads: { source: string; path: string }[] = [];
+  const loads: {
+    source: string;
+    path: string;
+  }[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(projectionWithSkills(2), {
-          installed: {
-            load: async ({ address }) => {
-              loads.push(address);
-              return {
-                address,
-                name: address.path,
-                description: `Description for ${address.path}`,
-                rawText: `# ${address.path}\n`,
-                markdownText: `# ${address.path}\n`,
-              };
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => {
+            loads.push(address);
+            return {
+              address,
+              name: address.path,
+              description: `Description for ${address.path}`,
+              rawText: `# ${address.path}\n`,
+              markdownText: `# ${address.path}\n`,
+            };
           },
         })}
         exit={() => {}}
@@ -62,7 +67,6 @@ test("All Installed Skills inspector follows the browser's native arrow selectio
     await openAllInstalledSkills(setup);
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skill-inspector-address"));
-
     await focusLive(setup, "installed-skill-browser");
     setup.mockInput.pressArrow("down");
     await setup.waitFor(() => {
@@ -77,7 +81,6 @@ test("All Installed Skills inspector follows the browser's native arrow selectio
     await setup.waitFor(() =>
       (address as TextBufferRenderable).plainText.includes("team-main/skill-001"),
     );
-
     const inspector = setup.renderer.root.findDescendantById("skill-inspector");
     expect(inspector).toBeDefined();
     await setup.waitFor(() =>
@@ -91,7 +94,6 @@ test("All Installed Skills inspector follows the browser's native arrow selectio
     setup.renderer.destroy();
   }
 });
-
 test("clicking a visible installed skill after native scrolling opens that row", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projectionWithSkills(120))} exit={() => {}} />,
@@ -112,7 +114,6 @@ test("clicking a visible installed skill after native scrolling opens that row",
       const current = setup.renderer.root.findDescendantById("installed-skill-browser");
       return current instanceof SelectRenderable && selectScrollOffset(current) > 0;
     });
-
     const currentBrowser = setup.renderer.root.findDescendantById("installed-skill-browser");
     expect(currentBrowser).toBeInstanceOf(SelectRenderable);
     const activeBrowser = currentBrowser as SelectRenderable;
@@ -121,7 +122,6 @@ test("clicking a visible installed skill after native scrolling opens that row",
     const target = activeBrowser.options[offset + visibleRow]!;
     expect(target).toBeDefined();
     await setup.mockMouse.click(activeBrowser.screenX + 2, activeBrowser.screenY + visibleRow);
-
     const [, selectedPath] = JSON.parse(target.value) as [string, string];
     const address = setup.renderer.root.findDescendantById("skill-inspector-address");
     expect(address).toBeInstanceOf(TextBufferRenderable);

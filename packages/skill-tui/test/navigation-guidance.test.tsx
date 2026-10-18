@@ -12,7 +12,6 @@ import {
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
-
 async function mount(width = 100, height = 30) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/navigation-guidance-");
@@ -22,17 +21,18 @@ async function mount(width = 100, height = 30) {
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async ({ address }) => ({
-              address,
-              name: address.path,
-              description: "",
-              rawText: Array.from({ length: 100 }, (_, index) => `Content ${index}`).join("\n"),
-              markdownText: Array.from({ length: 100 }, (_, index) => `Content ${index}`).join(
-                "\n\n",
-              ),
-            }),
-          },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => ({
+            address,
+            name: address.path,
+            description: "",
+            rawText: Array.from({ length: 100 }, (_, index) => `Content ${index}`).join("\n"),
+            markdownText: Array.from({ length: 100 }, (_, index) => `Content ${index}`).join(
+              "\n\n",
+            ),
+          }),
         })}
         exit={() => {}}
       />
@@ -56,7 +56,6 @@ async function mount(width = 100, height = 30) {
 type Setup = Awaited<ReturnType<typeof testRender>>;
 const hint = (setup: Setup, id: "interaction-guidance" | "navigation-guidance") =>
   (setup.renderer.root.findDescendantById(id) as TextRenderable).plainText;
-
 test("Skills, Sources and Updates keep one global keyboard grammar; Actions closes to the initiating panel", async () => {
   const mounted = await mount();
   const { setup } = mounted;
@@ -81,7 +80,6 @@ test("Skills, Sources and Updates keep one global keyboard grammar; Actions clos
     await mounted.dispose();
   }
 });
-
 test("Scope opens native choices and Escape restores the Scope trigger", async () => {
   const mounted = await mount(100, 30);
   const { setup } = mounted;
@@ -99,7 +97,6 @@ test("Scope opens native choices and Escape restores the Scope trigger", async (
     await mounted.dispose();
   }
 });
-
 test("reading changes only the control mode; scroll works and Esc restores Skill details", async () => {
   const mounted = await mount(120, 40);
   const { setup } = mounted;

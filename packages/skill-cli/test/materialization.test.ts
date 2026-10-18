@@ -1,10 +1,10 @@
+import * as api from "@skill-cli/core";
 import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMain } from "../src/main";
-import { createSkillCliCore } from "@skill-cli/core";
-
+import {} from "@skill-cli/core";
 test("CLI-001 public setup discovers and installs a Local Skill into a managed catalog", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-cli-"));
   const state = join(root, "state");
@@ -38,9 +38,12 @@ test("CLI-001 public setup discovers and installs a Local Skill into a managed c
       ["--project", root, "use", "set", "engineering"],
     ] as const)
       expect(await runMain(argv, { cwd: root })).toBe(0);
-    const catalog = await createSkillCliCore({ cwd: root, userConfigPath: global }).catalog.browse({
-      collection: "engineering",
-    });
+    const catalog = await api.browseCatalog(
+      { cwd: root, userConfigPath: global },
+      {
+        collection: "engineering",
+      },
+    );
     expect(catalog.value).toMatchObject({
       status: "available",
       scope: { kind: "collection", id: "engineering" },
@@ -51,7 +54,7 @@ test("CLI-001 public setup discovers and installs a Local Skill into a managed c
       expect(
         await runMain(["agent", ...argv], {
           cwd: root,
-          createCore: (options) => createSkillCliCore({ ...options, userConfigPath: global }),
+          environment: { userConfigPath: global },
           stdout: { write: (chunk) => (output += String(chunk)) },
           stderr: { write() {} },
         }),

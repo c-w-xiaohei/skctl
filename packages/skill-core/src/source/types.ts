@@ -4,9 +4,8 @@ import type {
   DeclarationProvenance,
   ConfigSourceContributionRef,
   ConfigDeclarationOwner,
-  ConfigWriteResult,
 } from "../config/types";
-import type { Operation } from "../shared";
+
 import type { SkillAddress, SourceBinding } from "./schema";
 import type { SkillMetadata } from "../content/text";
 
@@ -68,11 +67,4 @@ export interface SourceRemovalImpact {
   }[];
   readonly blockers: readonly ImpactBlocker[];
   readonly allowed: boolean;
-}
-
-export interface SourcesCapability {
-  register: Operation<RegisterSourceRequest, ConfigWriteResult>;
-  discover: Operation<{ readonly source: string }, DiscoveryObservation>;
-  previewRemoval: Operation<SourceRemovalRequest, SourceRemovalImpact>;
-  remove: Operation<SourceRemovalRequest>;
 }

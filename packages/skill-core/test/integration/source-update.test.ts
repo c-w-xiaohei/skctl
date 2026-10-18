@@ -1,24 +1,21 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSkillCliCore } from "../../src/create-core";
 import { setManagementPublicationHookForTest } from "../../src/installed/update";
 import { setCoordinatorHookForTest } from "../../src/storage/state";
-
 async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
   const output = await new Response(child.stdout).text();
   if (await child.exited) throw new Error(await new Response(child.stderr).text());
   return output.trim();
 }
-
 async function initBare(cwd: string, path: string) {
   await git(cwd, "init", "--bare", path);
   await git(cwd, `--git-dir=${path}`, "config", "uploadpack.allowFilter", "true");
   await git(cwd, `--git-dir=${path}`, "config", "uploadpack.allowReachableSHA1InWant", "true");
 }
-
 test("remote update and installed reading accept quoted ampersands; invalid metadata identifies its Root and rejects before publication", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-update-frontmatter-"));
   const work = join(root, "work"),
@@ -41,8 +38,8 @@ test("remote update and installed reading accept quoted ampersands; invalid meta
     await initBare(root, bare);
     await git(work, "remote", "add", "origin", bare);
     await git(work, "push", "origin", "HEAD:main");
-    const core = createSkillCliCore({ cwd: root, sourceTransport: () => bare });
-    await core.sources.register({
+    const core = { cwd: root, sourceTransport: () => bare };
+    await api.registerSource(core, {
       level: "project",
       id: "remote",
       binding: {
@@ -52,8 +49,8 @@ test("remote update and installed reading accept quoted ampersands; invalid meta
         ref: "main",
       },
     });
-    const initial = await core.sources.discover({ source: "remote" });
-    await core.installed.install({
+    const initial = await api.discoverSkills(core, { source: "remote" });
+    await api.installSkills(core, {
       source: "remote",
       paths: ["one", "placement"],
       exactRevision: initial.value.exactRevision,
@@ -67,14 +64,14 @@ test("remote update and installed reading accept quoted ampersands; invalid meta
     await git(work, "add", ".");
     await git(work, "commit", "-m", "ordinary punctuation");
     await git(work, "push", "origin", "HEAD:main");
-    const valid = await core.installed.checkUpdate({ source: "remote" });
-    await core.installed.update({
+    const valid = await api.checkUpdate(core, { source: "remote" });
+    await api.updateSkills(core, {
       source: "remote",
       paths: ["one", "placement"],
       exactRevision: valid.value.exactRevision,
       expectedBaseline: valid.value.baseline,
     });
-    const content = await core.installed.load({
+    const content = await api.loadInstalledSkill(core, {
       address: { source: "remote", path: "placement" },
     });
     expect(content.description).toBe(description);
@@ -91,13 +88,13 @@ test("remote update and installed reading accept quoted ampersands; invalid meta
     await git(work, "add", ".");
     await git(work, "commit", "-m", "invalid required field");
     await git(work, "push", "origin", "HEAD:main");
-    const invalid = await core.installed.checkUpdate({ source: "remote" });
+    const invalid = await api.checkUpdate(core, { source: "remote" });
     let publicationCalls = 0;
     setManagementPublicationHookForTest(() => {
       publicationCalls++;
     });
     await expect(
-      core.installed.update({
+      api.updateSkills(core, {
         source: "remote",
         paths: ["one", "placement"],
         exactRevision: invalid.value.exactRevision,
@@ -117,7 +114,8 @@ test("remote update and installed reading accept quoted ampersands; invalid meta
     expect(publicationCalls).toBe(0);
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
     expect(
-      (await core.installed.load({ address: { source: "remote", path: "one" } })).description,
+      (await api.loadInstalledSkill(core, { address: { source: "remote", path: "one" } }))
+        .description,
     ).toBe(description);
   } finally {
     setManagementPublicationHookForTest();
@@ -125,7 +123,6 @@ test("remote update and installed reading accept quoted ampersands; invalid meta
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-007 classifies Changed New Removed and unchanged while selecting only Changed for update", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-update-"));
   process.env.SKILL_CLI_STATE_DIR = join(root, "state");
@@ -141,13 +138,13 @@ test("MGMT-007 classifies Changed New Removed and unchanged while selecting only
       join(root, "skills", "removed", "SKILL.md"),
       "---\nname: removed\ndescription: Removed\n---\n",
     );
-    const core = createSkillCliCore({ cwd: root });
-    await core.sources.register({
+    const core = { cwd: root };
+    await api.registerSource(core, {
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await core.installed.install({ source: "local", paths: ["review", "removed"] });
+    await api.installSkills(core, { source: "local", paths: ["review", "removed"] });
     await writeFile(
       join(root, "skills", "review", "SKILL.md"),
       "---\nname: renamed\ndescription: Second\n---\n",
@@ -158,7 +155,7 @@ test("MGMT-007 classifies Changed New Removed and unchanged while selecting only
       join(root, "skills", "new", "SKILL.md"),
       "---\nname: new\ndescription: New\n---\n",
     );
-    expect((await core.installed.checkUpdate({ source: "local" })).value).toMatchObject({
+    expect((await api.checkUpdate(core, { source: "local" })).value).toMatchObject({
       source: "local",
       kind: "local",
       changed: [{ path: "review", name: "renamed", description: "Second" }],
@@ -166,17 +163,19 @@ test("MGMT-007 classifies Changed New Removed and unchanged while selecting only
       removed: [{ path: "removed", name: "removed", description: "Removed" }],
       unchanged: [],
     });
-    await expect(core.installed.update({ source: "local", paths: ["new"] })).rejects.toMatchObject({
-      code: "INVALID_ARGUMENT",
-    });
+    await expect(api.updateSkills(core, { source: "local", paths: ["new"] })).rejects.toMatchObject(
+      {
+        code: "INVALID_ARGUMENT",
+      },
+    );
     await expect(
-      core.installed.update({ source: "local", paths: ["removed"] }),
+      api.updateSkills(core, { source: "local", paths: ["removed"] }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
-    await core.installed.update({ source: "local", paths: ["review"], remove: ["removed"] });
+    await api.updateSkills(core, { source: "local", paths: ["review"], remove: ["removed"] });
     expect(
-      (await core.workspace.get()).value.installedSkills.map((item) => item.address.path),
+      (await api.getWorkspace(core)).value.installedSkills.map((item) => item.address.path),
     ).toEqual(["review"]);
-    expect((await core.workspace.get()).value.installedSkills).toEqual([
+    expect((await api.getWorkspace(core)).value.installedSkills).toEqual([
       expect.objectContaining({
         address: { source: "local", path: "review" },
         name: "renamed",
@@ -188,7 +187,6 @@ test("MGMT-007 classifies Changed New Removed and unchanged while selecting only
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-029 update rejects a Source removed after observation without publishing state", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-update-binding-barrier-"));
   process.env.SKILL_CLI_STATE_DIR = join(root, "state");
@@ -199,13 +197,13 @@ test("MGMT-029 update rejects a Source removed after observation without publish
       join(root, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: First\n---\n",
     );
-    const core = createSkillCliCore({ cwd: root });
-    await core.sources.register({
+    const core = { cwd: root };
+    await api.registerSource(core, {
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await core.installed.install({ source: "local", paths: ["review"] });
+    await api.installSkills(core, { source: "local", paths: ["review"] });
     const before = await Bun.file(join(root, "state", "state.json")).text();
     await writeFile(
       join(root, "skills", "review", "SKILL.md"),
@@ -213,7 +211,7 @@ test("MGMT-029 update rejects a Source removed after observation without publish
     );
     setManagementPublicationHookForTest(() => writeFile(join(root, "skill-cli.jsonc"), "{}\n"));
     await expect(
-      core.installed.update({ source: "local", paths: ["review"] }),
+      api.updateSkills(core, { source: "local", paths: ["review"] }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
@@ -224,7 +222,6 @@ test("MGMT-029 update rejects a Source removed after observation without publish
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-008 selected update is atomic when one root fails validation", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-update-atomic-"));
   process.env.SKILL_CLI_STATE_DIR = join(root, "state");
@@ -237,13 +234,13 @@ test("MGMT-008 selected update is atomic when one root fails validation", async 
       );
     }
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    const core = createSkillCliCore({ cwd: root });
-    await core.sources.register({
+    const core = { cwd: root };
+    await api.registerSource(core, {
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await core.installed.install({ source: "local", paths: ["one", "two"] });
+    await api.installSkills(core, { source: "local", paths: ["one", "two"] });
     const before = await Bun.file(join(root, "state", "state.json")).text();
     await writeFile(
       join(root, "skills", "one", "SKILL.md"),
@@ -251,7 +248,7 @@ test("MGMT-008 selected update is atomic when one root fails validation", async 
     );
     await writeFile(join(root, "skills", "two", "SKILL.md"), "not frontmatter\n");
     await expect(
-      core.installed.update({ source: "local", paths: ["one", "two"] }),
+      api.updateSkills(core, { source: "local", paths: ["one", "two"] }),
     ).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
     });
@@ -261,7 +258,6 @@ test("MGMT-008 selected update is atomic when one root fails validation", async 
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-008 reports installed metadata, applies the reviewed revision after ref movement, and preserves bytes on publication failure", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-remote-update-"));
   const work = join(root, "work");
@@ -284,11 +280,12 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
     await initBare(root, bare);
     await git(work, "remote", "add", "origin", bare);
     await git(work, "push", "origin", "HEAD:main");
-    const core = createSkillCliCore({
+    const core = {
       cwd: root,
-      sourceTransport: (url) => (url === "https://example.test/skills.git" ? bare : undefined),
-    });
-    await core.sources.register({
+      sourceTransport: (url: string) =>
+        url === "https://example.test/skills.git" ? bare : undefined,
+    };
+    await api.registerSource(core, {
       level: "project",
       id: "remote",
       binding: {
@@ -298,8 +295,8 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
         ref: "main",
       },
     });
-    const initial = await core.sources.discover({ source: "remote" });
-    await core.installed.install({
+    const initial = await api.discoverSkills(core, { source: "remote" });
+    await api.installSkills(core, {
       source: "remote",
       paths: ["alpha", "beta", "removed"],
       exactRevision: initial.value.exactRevision,
@@ -322,7 +319,7 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
     await git(work, "commit", "-m", "two");
     const second = await git(work, "rev-parse", "HEAD");
     await git(work, "push", "origin", "HEAD:main");
-    const update = await core.installed.checkUpdate({ source: "remote" });
+    const update = await api.checkUpdate(core, { source: "remote" });
     expect(update.value).toMatchObject({
       source: "remote",
       kind: "git",
@@ -342,7 +339,7 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
     await git(work, "add", ".");
     await git(work, "commit", "-m", "move after observation");
     await git(work, "push", "origin", "HEAD:main");
-    await core.installed.update({
+    await api.updateSkills(core, {
       source: "remote",
       paths: ["alpha", "beta"],
       exactRevision: update.value.exactRevision,
@@ -382,16 +379,16 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
         throw new Error("second Snapshot publication failed");
     });
     await expect(
-      core.installed.update({
+      api.updateSkills(core, {
         source: "remote",
         paths: ["alpha", "beta"],
-        exactRevision: (await core.installed.checkUpdate({ source: "remote" })).value.exactRevision,
+        exactRevision: (await api.checkUpdate(core, { source: "remote" })).value.exactRevision,
       }),
     ).rejects.toThrow("second Snapshot publication failed");
     setCoordinatorHookForTest();
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
     expect(await readdir(join(root, "state", "snapshots"))).toEqual(snapshots);
-    await core.gc();
+    await api.gc();
     const remaining = await readdir(join(root, "state", "snapshots"));
     const referenced = JSON.parse(await Bun.file(join(root, "state", "state.json")).text())
       .installed.map((item: { digest: string }) => item.digest)
@@ -403,7 +400,6 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-007 checks exact Git and GitHub revisions using installed metadata only", async () => {
   for (const kind of ["git", "github"] as const) {
     const root = await mkdtemp(join(tmpdir(), `skill-cli-${kind}-update-categories-`));
@@ -426,14 +422,14 @@ test("MGMT-007 checks exact Git and GitHub revisions using installed metadata on
       await git(work, "remote", "add", "origin", bare);
       await git(work, "push", "origin", "HEAD:main");
       const origin = `https://example.test/${kind}.git`;
-      const core = createSkillCliCore({ cwd: root, sourceTransport: () => bare });
-      await core.sources.register({
+      const core = { cwd: root, sourceTransport: () => bare };
+      await api.registerSource(core, {
         level: "project",
         id: kind,
         binding: { kind, origin, root: "skills", ref: "main" },
       });
-      const initial = await core.sources.discover({ source: kind });
-      await core.installed.install({
+      const initial = await api.discoverSkills(core, { source: kind });
+      await api.installSkills(core, {
         source: kind,
         paths: ["review"],
         exactRevision: initial.value.exactRevision,
@@ -446,7 +442,7 @@ test("MGMT-007 checks exact Git and GitHub revisions using installed metadata on
       await git(work, "commit", "-m", "two");
       const revision = await git(work, "rev-parse", "HEAD");
       await git(work, "push", "origin", "HEAD:main");
-      expect((await core.installed.checkUpdate({ source: kind })).value).toMatchObject({
+      expect((await api.checkUpdate(core, { source: kind })).value).toMatchObject({
         source: kind,
         kind,
         exactRevision: revision,
@@ -461,7 +457,6 @@ test("MGMT-007 checks exact Git and GitHub revisions using installed metadata on
     }
   }
 });
-
 test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, and binding drift without publication", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-update-integrity-"));
   const work = join(root, "work");
@@ -482,8 +477,8 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
     await initBare(root, bare);
     await git(work, "remote", "add", "origin", bare);
     await git(work, "push", "origin", "HEAD:main");
-    const core = createSkillCliCore({ cwd: root, sourceTransport: () => bare });
-    await core.sources.register({
+    const core = { cwd: root, sourceTransport: () => bare };
+    await api.registerSource(core, {
       level: "project",
       id: "remote",
       binding: {
@@ -493,8 +488,8 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
         ref: "main",
       },
     });
-    const initial = await core.sources.discover({ source: "remote" });
-    await core.installed.install({
+    const initial = await api.discoverSkills(core, { source: "remote" });
+    await api.installSkills(core, {
       source: "remote",
       paths: ["review"],
       exactRevision: initial.value.exactRevision,
@@ -506,11 +501,11 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
     await git(work, "add", ".");
     await git(work, "commit", "-m", "two");
     await git(work, "push", "origin", "HEAD:main");
-    const observed = await core.installed.checkUpdate({ source: "remote" });
+    const observed = await api.checkUpdate(core, { source: "remote" });
     const before = await Bun.file(join(root, "state", "state.json")).text();
     for (const paths of [["foreign"], ["review", "review"]] as readonly (readonly string[])[]) {
       await expect(
-        core.installed.update({
+        api.updateSkills(core, {
           source: "remote",
           paths,
           exactRevision: observed.value.exactRevision,
@@ -519,7 +514,7 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
       expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
     }
     await expect(
-      core.installed.update({
+      api.updateSkills(core, {
         source: "remote",
         paths: ["review"],
         exactRevision: "f".repeat(40),
@@ -533,7 +528,7 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
       ),
     );
     await expect(
-      core.installed.update({
+      api.updateSkills(core, {
         source: "remote",
         paths: ["review"],
         exactRevision: observed.value.exactRevision,

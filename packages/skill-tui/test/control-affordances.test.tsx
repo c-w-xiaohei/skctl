@@ -28,7 +28,6 @@ import {
   parsedEnter,
   type ReaderSetup,
 } from "./reader-test-controls";
-
 afterEach(() => {
   theme.override(undefined);
   theme.setMode("system");
@@ -70,7 +69,6 @@ async function capture(setup: ReaderSetup, name: string) {
   await writeFile(join(directory, `${name}.txt`), setup.captureCharFrame());
   await writeFile(join(directory, `${name}.json`), JSON.stringify(setup.captureSpans(), null, 2));
 }
-
 test.each(["dark", "light"] as const)(
   "unfocused command faces stay recognizable on canvas and popup in %s mode",
   async (mode) => {
@@ -112,7 +110,6 @@ test.each(["dark", "light"] as const)(
     }
   },
 );
-
 test("button focus, press and disabled semantics keep the same compact hit target", async () => {
   palette("dark");
   let presses = 0;
@@ -163,7 +160,6 @@ test("button focus, press and disabled semantics keep the same compact hit targe
     setup.renderer.destroy();
   }
 });
-
 test.each(["dark", "light"] as const)(
   "editable fields and operation covers follow the %s theme",
   async (mode) => {
@@ -199,7 +195,6 @@ test.each(["dark", "light"] as const)(
     }
   },
 );
-
 test.each(["dark", "light"] as const)(
   "native text entry has visible idle and focused surfaces in %s mode",
   async (mode) => {
@@ -228,7 +223,6 @@ test.each(["dark", "light"] as const)(
     }
   },
 );
-
 test.each([
   [144, 40],
   [100, 24],
@@ -246,7 +240,7 @@ test.each([
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: { load: async () => readerContent },
+            loadInstalledSkill: async () => readerContent,
           })}
           exit={() => {}}
         />

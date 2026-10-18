@@ -29,7 +29,6 @@ import {
   parsedEnter,
   type ReaderSetup,
 } from "./reader-test-controls";
-
 const descendants = (node: BaseRenderable): BaseRenderable[] => [
   node,
   ...node.getChildren().flatMap(descendants),
@@ -110,15 +109,16 @@ async function mount(width: number, height = 24, adoptedConfig = false) {
     () => (
       <App
         core={directSourceCore(projection, {
-          installed: {
-            load: async ({ address }) => ({
-              address,
-              name: address.path,
-              description: "Installed instructions",
-              rawText: "Installed instructions",
-              markdownText: "Installed instructions",
-            }),
-          },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => ({
+            address,
+            name: address.path,
+            description: "Installed instructions",
+            rawText: "Installed instructions",
+            markdownText: "Installed instructions",
+          }),
         })}
         exit={() => {}}
       />
@@ -136,7 +136,6 @@ async function mount(width: number, height = 24, adoptedConfig = false) {
     },
   };
 }
-
 test.each([144, 80, 43])(
   "Source command groups separate adjacent and wrapped buttons at %i columns",
   async (width) => {
@@ -164,7 +163,6 @@ test.each([144, 80, 43])(
     }
   },
 );
-
 test.each([144, 80, 43])(
   "Reader management buttons remain distinct after wrapping at %i columns",
   async (width) => {
@@ -187,7 +185,6 @@ test.each([144, 80, 43])(
     }
   },
 );
-
 test.each([100, 43])(
   "Config destructive command group has separate button surfaces at %i columns",
   async (width) => {
@@ -209,7 +206,6 @@ test.each([100, 43])(
     }
   },
 );
-
 test("short Agent access recovery separates commands and reveals each focused button", async () => {
   const mounted = await mount(43, 13);
   const { setup } = mounted;
@@ -228,7 +224,6 @@ test("short Agent access recovery separates commands and reveals each focused bu
     await mounted.dispose();
   }
 });
-
 test.each([80, 43])(
   "modal Cancel and Retry are separated without changing native traversal at %i columns",
   async (width) => {
@@ -263,7 +258,6 @@ test.each([80, 43])(
     }
   },
 );
-
 test("review-plan button spacing leaves a non-activating gap and keeps Cancel-first traversal", async () => {
   let continued = 0;
   const setup = await testRender(
@@ -299,7 +293,6 @@ test("review-plan button spacing leaves a non-activating gap and keeps Cancel-fi
     setup.renderer.destroy();
   }
 });
-
 test("resizing a spaced form keeps its focused command visible without losing the draft", async () => {
   const setup = await testRender(
     () => (

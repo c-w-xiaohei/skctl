@@ -14,13 +14,11 @@ import {
   parsedEscape,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 let setup: Awaited<ReturnType<typeof testRender>> | undefined;
 afterEach(() => {
   setup?.renderer.destroy();
   setup = undefined;
 });
-
 const path = "references/topics/05-ai-products.md";
 const unicodePath = "references/用户研究/界面布局/终端阅读体验/操作指南.md";
 const resources = [
@@ -36,7 +34,6 @@ const resources = [
   })),
   { path: unicodePath, kind: "file" as const, size: 1058, executable: false },
 ];
-
 async function mount(width: number, height: number) {
   const reads: string[] = [];
   const acquisitions: string[] = [];
@@ -44,34 +41,39 @@ async function mount(width: number, height: number) {
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async ({ address }) => ({
-              address,
-              name: address.path,
-              description: "Guide",
-              rawText: "# Guide",
-              markdownText: "# Guide",
-            }),
-            listResources: async () => resources,
-            read: async (request) => {
-              reads.push(request.path);
-              return {
-                kind: "text",
-                path: request.path,
-                text: `# Resource heading\n\n${"Resource prose.\n\n".repeat(30)}`,
-                format: "markdown",
-              };
-            },
-            update: async ({ source }) => {
-              acquisitions.push(source);
-              throw new Error("Resource browsing must not update Skills");
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => ({
+            address,
+            name: address.path,
+            description: "Guide",
+            rawText: "# Guide",
+            markdownText: "# Guide",
+          }),
+          listInstalledResources: async () => resources,
+          readInstalledResource: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            reads.push(request.path);
+            return {
+              kind: "text",
+              path: request.path,
+              text: `# Resource heading\n\n${"Resource prose.\n\n".repeat(30)}`,
+              format: "markdown",
+            };
           },
-          sources: {
-            discover: async ({ source }) => {
-              acquisitions.push(source);
-              throw new Error("Resource browsing must not acquire content");
-            },
+          updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+            acquisitions.push(source);
+            throw new Error("Resource browsing must not update Skills");
+          },
+          discoverSkills: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { source },
+          ) => {
+            acquisitions.push(source);
+            throw new Error("Resource browsing must not acquire content");
           },
         })}
         exit={() => {}}
@@ -87,7 +89,6 @@ async function mount(width: number, height: number) {
   await focusLive(setup, "resource-browser");
   return { reads, acquisitions };
 }
-
 async function capture(name: string) {
   const directory = process.env.QUIET_UPDATE_CAPTURE_DIR;
   if (!directory) return;
@@ -96,7 +97,6 @@ async function capture(name: string) {
   await writeFile(join(directory, `${name}.txt`), setup!.captureCharFrame());
   await writeFile(join(directory, `${name}.json`), JSON.stringify(setup!.captureSpans(), null, 2));
 }
-
 test.each([
   [144, 40],
   [100, 24],
@@ -155,7 +155,6 @@ test.each([
   expect(reads).toEqual([path]);
   expect(acquisitions).toEqual([]);
 });
-
 test("compact return restores a deeply scrolled resource, and a positive executable flag is contextual only", async () => {
   const { reads, acquisitions } = await mount(43, 13);
   const browser = setup!.renderer.root.findDescendantById("resource-browser") as SelectRenderable;
@@ -197,7 +196,6 @@ test("compact return restores a deeply scrolled resource, and a positive executa
   expect(reads).toEqual([selected, unicodePath]);
   expect(acquisitions).toEqual([]);
 });
-
 test("wide context selection does not relabel the opened document or read another file", async () => {
   const { reads } = await mount(144, 40);
   const browser = setup!.renderer.root.findDescendantById("resource-browser") as SelectRenderable;

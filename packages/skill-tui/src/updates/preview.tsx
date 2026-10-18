@@ -6,7 +6,7 @@ import {
   type Renderable,
 } from "@opentui/core";
 import { extend, useRenderer, useTerminalDimensions } from "@opentui/solid";
-import type { InstalledCapability, UpdateFileChange, UpdatePreview } from "@skill-cli/core";
+import type { UpdateFileChange, UpdatePreview } from "@skill-cli/core";
 import { createTwoFilesPatch } from "diff";
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { FocusRegistry } from "../focus";
@@ -17,7 +17,6 @@ import { Button } from "../ui/button";
 import { DataList } from "../ui/data-list";
 import { useTheme } from "../ui/use-theme";
 import { tint } from "../ui/theme";
-
 // Native Diff is built in, but 0.5.14 omits its Solid prop declaration.
 // Use Solid's public extension API rather than casting the component props.
 extend({ skill_update_diff: DiffRenderable });
@@ -26,18 +25,17 @@ declare module "@opentui/solid" {
     skill_update_diff: typeof DiffRenderable;
   }
 }
-
-export type UpdatePreviewRequest = Parameters<InstalledCapability["previewUpdate"]>[0];
+export type UpdatePreviewRequest = Parameters<typeof import("@skill-cli/core").previewUpdate>[1];
 export interface SkillUpdatePreviewProps {
+  readonly environment?: import("@skill-cli/core").CoreOptions;
   readonly request: UpdatePreviewRequest;
-  readonly previewUpdate?: InstalledCapability["previewUpdate"];
+  readonly previewUpdate?: typeof import("@skill-cli/core").previewUpdate;
   readonly unavailableReason?: string;
   readonly prefix: string;
   readonly focusRegistry?: FocusRegistry;
   readonly registerCommand?: CommandRegistration;
   readonly onBack: () => void;
 }
-
 /** One user-opened comparison owns its request, file cursor and cancellable read. */
 export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
   const terminal = useTerminalDimensions(),
@@ -106,7 +104,11 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
     if (props.unavailableReason) return;
     try {
       if (!props.previewUpdate) throw new Error("Update preview is unavailable");
-      const result = await props.previewUpdate(props.request, { signal: controller.signal });
+      const result = await props.previewUpdate(
+        props.environment ?? { cwd: process.cwd() },
+        props.request,
+        { signal: controller.signal },
+      );
       if (
         result.value.address.source !== props.request.source ||
         result.value.address.path !== props.request.path ||
@@ -143,7 +145,7 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
       file.content.after,
       undefined,
       undefined,
-      { context: 3, maxEditLength: 20_000, timeout: 150 },
+      { context: 3, maxEditLength: 20000, timeout: 150 },
     );
   });
   const fileNote = (file: UpdateFileChange) => {

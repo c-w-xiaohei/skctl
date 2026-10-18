@@ -18,7 +18,6 @@ import {
   parsedEnter,
 } from "./reader-test-controls";
 import type { ResourceDescriptor } from "@skill-cli/core";
-
 test("Reader arrows navigate loading and empty Resources without phantom selections", async () => {
   let complete!: (value: readonly ResourceDescriptor[]) => void;
   const resources = new Promise<readonly ResourceDescriptor[]>((resolve) => (complete = resolve));
@@ -26,7 +25,8 @@ test("Reader arrows navigate loading and empty Resources without phantom selecti
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent, listResources: async () => resources },
+          loadInstalledSkill: async () => readerContent,
+          listInstalledResources: async () => resources,
         })}
         exit={() => {}}
       />
@@ -80,26 +80,26 @@ test("Reader arrows navigate loading and empty Resources without phantom selecti
     setup.renderer.destroy();
   }
 });
-
 test("late resource completion cannot steal focus after returning to the list", async () => {
-  let finishRead!: (value: Awaited<ReturnType<TuiCore["installed"]["read"]>>) => void;
+  let finishRead!: (value: Awaited<ReturnType<TuiCore["readInstalledResource"]>>) => void;
   const requests: unknown[] = [];
   let delivered = 0;
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async () => readerContent,
-            listResources: async () => readerResources,
-            read: async (request) => {
-              requests.push(request);
-              const result = await new Promise<Awaited<ReturnType<TuiCore["installed"]["read"]>>>(
-                (resolve) => (finishRead = resolve),
-              );
-              delivered++;
-              return result;
-            },
+          loadInstalledSkill: async () => readerContent,
+          listInstalledResources: async () => readerResources,
+          readInstalledResource: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            requests.push(request);
+            const result = await new Promise<Awaited<ReturnType<TuiCore["readInstalledResource"]>>>(
+              (resolve) => (finishRead = resolve),
+            );
+            delivered++;
+            return result;
           },
         })}
         exit={() => {}}

@@ -21,7 +21,6 @@ import {
   parsedEscape,
   selectedReaderTab,
 } from "./reader-test-controls";
-
 test("Reader action and selector relationship return from the exposure Tree to their exact physical commands", async () => {
   const base = readerProjection();
   const effective = base.effective;
@@ -88,11 +87,9 @@ test("Reader action and selector relationship return from the exposure Tree to t
     () => (
       <App
         core={directSourceCore(projection, {
-          installed: {
-            load: async () => {
-              contentReads++;
-              return readerContent;
-            },
+          loadInstalledSkill: async () => {
+            contentReads++;
+            return readerContent;
           },
         })}
         exit={() => {}}
@@ -169,9 +166,7 @@ test("Reader action and selector relationship return from the exposure Tree to t
         () => setup.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
       );
       expect(live(setup, "current-exposure-browser")).toBeInstanceOf(ScrollBoxRenderable);
-      const rowId = `current-exposure-browser-row-${encodeURIComponent(
-        exposureTreePathKey({ segments: [{ collection: "engineering" }] }),
-      )}`;
+      const rowId = `current-exposure-browser-row-${encodeURIComponent(exposureTreePathKey({ segments: [{ collection: "engineering" }] }))}`;
       await setup.waitFor(() => (live(setup, rowId) as BoxRenderable).backgroundColor.a > 0);
       expect((live(setup, `${rowId}-name`) as TextRenderable).plainText.trim()).toBe("engineering");
       expect(live(setup, "current-exposure-browser").focused).toBe(true);

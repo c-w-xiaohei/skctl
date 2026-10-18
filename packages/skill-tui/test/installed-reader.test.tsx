@@ -28,13 +28,11 @@ import {
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
-
 const paddedReaderContent = {
   ...readerContent,
   rawText: `${readerContent.rawText}${"padding\n".repeat(80)}`,
   markdownText: `${readerContent.markdownText}${"padding\n".repeat(80)}`,
 };
-
 async function loadedReader(setup: Awaited<ReturnType<typeof testRender>>) {
   await openReader(setup);
   await setup.renderOnce();
@@ -46,7 +44,6 @@ async function loadedReader(setup: Awaited<ReturnType<typeof testRender>>) {
         .some((child) => child instanceof MarkdownRenderable),
   );
 }
-
 async function escapeReaderToBrowser(setup: Awaited<ReturnType<typeof testRender>>) {
   await focusLive(setup, "reader-scrollbox");
   await parsedEscape(setup);
@@ -60,16 +57,17 @@ async function escapeReaderToBrowser(setup: Awaited<ReturnType<typeof testRender
   browser.focus();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
 }
-
 async function openReader(setup: Awaited<ReturnType<typeof testRender>>) {
   await openReaderFromInspector(setup);
   await setup.renderOnce();
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
 }
-
 async function enterInstalledSkill(
   setup: Awaited<ReturnType<typeof testRender>>,
-  address: { readonly source: string; readonly path: string },
+  address: {
+    readonly source: string;
+    readonly path: string;
+  },
 ) {
   let browser = mountedSelect(setup, "installed-skill-browser");
   const value = JSON.stringify([address.source, address.path]);
@@ -94,7 +92,6 @@ async function enterInstalledSkill(
     setup.captureCharFrame().includes(`Address  ${address.source}/${address.path}`),
   );
 }
-
 async function openDetails(setup: Awaited<ReturnType<typeof testRender>>) {
   await openReaderTab(setup, 2);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
@@ -104,14 +101,11 @@ async function openDetails(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.renderOnce();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === details);
 }
-
 async function openInstalledSkills(setup: Awaited<ReturnType<typeof testRender>>) {
   await openAllInstalledSkills(setup);
 }
-
 const readerContentFor = (address: { readonly path: string }) =>
   address.path === readerSecondAddress.path ? readerSecondContent : paddedReaderContent;
-
 function mountedSelect(
   setup: Awaited<ReturnType<typeof testRender>>,
   id: string,
@@ -123,7 +117,6 @@ function mountedSelect(
   expect(select.parent).toBeDefined();
   return select;
 }
-
 test("RENDER Installed Skills keeps identity primary and uses available list height", async () => {
   const base = readerProjection();
   const template = base.installedSkills[0]!;
@@ -191,7 +184,6 @@ test("RENDER Installed Skills keeps identity primary and uses available list hei
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Installed Skills keeps the selected Skill's secondary facts visible", async () => {
   const base = readerProjection();
   const template = base.installedSkills[0]!;
@@ -231,7 +223,6 @@ test("RENDER Installed Skills keeps the selected Skill's secondary facts visible
     }
   }
 });
-
 async function enterFind(setup: Awaited<ReturnType<typeof testRender>>, value: string) {
   await setup.waitFor(
     () =>
@@ -247,7 +238,6 @@ async function enterFind(setup: Awaited<ReturnType<typeof testRender>>, value: s
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-find-next"));
   else await setup.renderOnce();
 }
-
 async function selectReaderControl(
   setup: Awaited<ReturnType<typeof testRender>>,
   id: "reader-find-next" | "reader-raw" | "open-match-raw",
@@ -255,14 +245,12 @@ async function selectReaderControl(
   await focusLive(setup, id);
   await parsedEnter(setup);
 }
-
 async function restoreReaderScroll(setup: Awaited<ReturnType<typeof testRender>>) {
   const scrollbox = setup.renderer.root.findDescendantById("reader-scrollbox");
   expect(scrollbox).toBeInstanceOf(ScrollBoxRenderable);
   await focusLive(setup, "reader-scrollbox");
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
 }
-
 function patchScrollTargets() {
   const targets: string[] = [];
   const positions: number[] = [];
@@ -292,7 +280,6 @@ function patchScrollTargets() {
     },
   };
 }
-
 test.serial(
   "RENDER Installed Skill uses structural content and native Reader renderables",
   async () => {
@@ -301,11 +288,12 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async (request) => {
-                loads.push(request);
-                return readerContent;
-              },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              loads.push(request);
+              return readerContent;
             },
           })}
           exit={() => {}}
@@ -356,7 +344,6 @@ test.serial(
     }
   },
 );
-
 test.serial(
   "RENDER Installed Skill Enter focuses Reader and Escape restores the list at standard and narrow widths",
   async () => {
@@ -385,7 +372,6 @@ test.serial(
     }
   },
 );
-
 test.serial(
   "RENDER Reader navigation reveals matches, preserves native scroll, and gives controls an explicit Tab order",
   async () => {
@@ -397,7 +383,7 @@ test.serial(
     const setup = await testRender(
       () => (
         <App
-          core={directSourceCore(readerProjection(), { installed: { load: async () => content } })}
+          core={directSourceCore(readerProjection(), { loadInstalledSkill: async () => content })}
           exit={() => {}}
         />
       ),
@@ -409,13 +395,11 @@ test.serial(
       await setup.mockInput.pressKeys(["n", "e", "e", "d", "l", "e"]);
       await parsedEnter(setup);
       await setup.waitForFrame((frame) => frame.includes("1/3"));
-
       await selectReaderControl(setup, "reader-find-next");
       const scrollbox = setup.renderer.root.findDescendantById(
         "reader-scrollbox",
       ) as ScrollBoxRenderable;
       expect(scrollbox.scrollHeight).toBeGreaterThan(scrollbox.height);
-
       await selectReaderControl(setup, "open-match-raw");
       await Promise.resolve();
       await setup.renderOnce();
@@ -425,7 +409,6 @@ test.serial(
       expect(rawScrollbox.getRenderable("reader-line-13")).toBeDefined();
       expect(setup.renderer.root.findDescendantById("open-match-raw")).toBeUndefined();
       await restoreReaderScroll(setup);
-
       setup.mockInput.pressKey("PAGEDOWN");
       setup.mockInput.pressKey("END");
       await setup.renderOnce();
@@ -435,7 +418,6 @@ test.serial(
     }
   },
 );
-
 test.serial(
   "RENDER Reader ignores unavailable zero native scroll telemetry after opening a raw match",
   async () => {
@@ -444,7 +426,7 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: { load: async () => paddedReaderContent },
+            loadInstalledSkill: async () => paddedReaderContent,
           })}
           exit={() => {}}
         />
@@ -477,13 +459,12 @@ test.serial(
     }
   },
 );
-
 test.serial("RENDER Reader find input owns slash characters", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -522,7 +503,6 @@ test.serial("RENDER Reader find input owns slash characters", async () => {
     setup.renderer.destroy();
   }
 });
-
 test.serial(
   "RENDER Reader restores per-Skill find/raw/match and scroll target across A B A",
   async () => {
@@ -532,11 +512,12 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async (request) => {
-                loads.push(request.address.path);
-                return readerContentFor(request.address);
-              },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              loads.push(request.address.path);
+              return readerContentFor(request.address);
             },
           })}
           exit={() => {}}
@@ -558,7 +539,6 @@ test.serial(
       await selectReaderControl(setup, "open-match-raw");
       expect(setup.captureCharFrame()).toContain("2/3");
       expect(scroll.targets).toContain("reader-line-15");
-
       await escapeReaderToBrowser(setup);
       let activeBrowser = mountedSelect(setup, "installed-skill-browser");
       activeBrowser.focus();
@@ -625,7 +605,6 @@ test.serial(
     }
   },
 );
-
 test.serial(
   "RENDER Reader saves zero after returning SKILL.md and Details to the top",
   async () => {
@@ -634,7 +613,7 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: { load: async () => paddedReaderContent },
+            loadInstalledSkill: async () => paddedReaderContent,
           })}
           exit={() => {}}
         />
@@ -655,7 +634,6 @@ test.serial(
       await selectReaderControl(setup, "open-match-raw");
       await restoreReaderScroll(setup);
       expect(scroll.positions).toContain(15);
-
       await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
@@ -673,7 +651,6 @@ test.serial(
       await setup.mockMouse.scroll(reopenedReader.screenX, reopenedReader.screenY, "up");
       await Promise.resolve();
       await setup.renderOnce();
-
       await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
@@ -686,7 +663,6 @@ test.serial(
         (setup.renderer.root.findDescendantById("reader-scrollbox") as ScrollBoxRenderable)
           .scrollTop,
       ).toBe(0);
-
       await openDetails(setup);
       const details = setup.renderer.root.findDescendantById(
         "reader-details",
@@ -701,7 +677,6 @@ test.serial(
       await Promise.resolve();
       await setup.mockMouse.scroll(details.screenX, details.screenY, "down");
       await setup.renderOnce();
-
       await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
@@ -715,14 +690,12 @@ test.serial(
       await setup.renderOnce();
       expect(scroll.detailsPositions).toContain(7);
       scroll.detailsPositions.length = 0;
-
       reopenedDetails.scrollTop = 0;
       reopenedDetails.focus();
       setup.mockInput.pressKey("HOME");
       await Promise.resolve();
       await setup.mockMouse.scroll(reopenedDetails.screenX, reopenedDetails.screenY, "up");
       await setup.renderOnce();
-
       await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
@@ -741,13 +714,15 @@ test.serial(
     }
   },
 );
-
 test.serial("RENDER Reader state survives destination away and return", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async (request) => readerContentFor(request.address) },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => readerContentFor(request.address),
         })}
         exit={() => {}}
       />
@@ -760,7 +735,6 @@ test.serial("RENDER Reader state survives destination away and return", async ()
     await selectReaderControl(setup, "reader-find-next");
     await selectReaderControl(setup, "open-match-raw");
     expect(setup.renderer.root.findDescendantById("reader-line-15")).toBeDefined();
-
     await escapeReaderToBrowser(setup);
     const liveBrowser = mountedSelect(setup, "installed-skill-browser");
     expect(liveBrowser.getSelectedOption()?.value).toBe(skillAddressKey(readerAddress));
@@ -780,13 +754,15 @@ test.serial("RENDER Reader state survives destination away and return", async ()
     setup.renderer.destroy();
   }
 });
-
 test.serial("RENDER Reader Details Escape restores the initiating Inspector command", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async (request) => readerContentFor(request.address) },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => readerContentFor(request.address),
         })}
         exit={() => {}}
       />
@@ -804,13 +780,15 @@ test.serial("RENDER Reader Details Escape restores the initiating Inspector comm
     setup.renderer.destroy();
   }
 });
-
 test.serial("RENDER Reader state survives 120 79 43 80 120 resize sequence", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async (request) => readerContentFor(request.address) },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => readerContentFor(request.address),
         })}
         exit={() => {}}
       />
@@ -823,7 +801,6 @@ test.serial("RENDER Reader state survives 120 79 43 80 120 resize sequence", asy
     await selectReaderControl(setup, "reader-find-next");
     await selectReaderControl(setup, "open-match-raw");
     await restoreReaderScroll(setup);
-
     for (const width of [120, 79, 43, 80, 120] as const) {
       setup.resize(width, 40);
       await setup.renderOnce();
@@ -874,7 +851,6 @@ test.serial("RENDER Reader state survives 120 79 43 80 120 resize sequence", asy
     setup.renderer.destroy();
   }
 });
-
 test.serial(
   "RENDER source-filtered Installed Skill enters Reader and returns to filtered list",
   async () => {
@@ -887,11 +863,12 @@ test.serial(
       () => (
         <App
           core={directSourceCore(projection, {
-            installed: {
-              load: async (request) => {
-                loads.push(request.address.path);
-                return readerContentFor(request.address);
-              },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              loads.push(request.address.path);
+              return readerContentFor(request.address);
             },
           })}
           exit={() => {}}
@@ -951,7 +928,6 @@ test.serial(
     }
   },
 );
-
 test.serial("RENDER Source Enter replaces its browser at wide and medium widths", async () => {
   for (const width of [120, 80] as const) {
     const setup = await testRender(
@@ -991,7 +967,6 @@ test.serial("RENDER Source Enter replaces its browser at wide and medium widths"
     }
   }
 });
-
 test.serial(
   "RENDER standard Skills Reader remains a single replacement surface at supported widths",
   async () => {
@@ -1000,7 +975,7 @@ test.serial(
         () => (
           <App
             core={directSourceCore(readerProjection(), {
-              installed: { load: async () => readerContent },
+              loadInstalledSkill: async () => readerContent,
             })}
             exit={() => {}}
           />

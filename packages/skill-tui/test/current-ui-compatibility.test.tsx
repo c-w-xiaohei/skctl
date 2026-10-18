@@ -8,12 +8,13 @@ import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 import { problemRowKey, problemRows } from "../src/workspace/state";
-
 const mountedIds = (setup: Awaited<ReturnType<typeof testRender>>, ids: readonly string[]) =>
   ids.map((id) => (setup.renderer.root.findDescendantById(id) ? `${id}=mounted` : `${id}=absent`));
-
 test("Collection Create types in its live input and keeps Cancel first in native arrow traversal", async () => {
-  const submitted: { level: string; collection: string }[] = [];
+  const submitted: {
+    level: string;
+    collection: string;
+  }[] = [];
   let cancelled = 0;
   const setup = await testRender(
     () => (
@@ -38,7 +39,6 @@ test("Collection Create types in its live input and keeps Cancel first in native
     expect(input.value).toBe("compat-team");
     expect(setup.renderer.root.findDescendantById("collection-create-id")).toBe(input);
     expect(submitted).toEqual([]);
-
     setup.mockInput.pressTab();
     await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable).toBe(input);
@@ -52,8 +52,10 @@ test("Collection Create types in its live input and keeps Cancel first in native
   } finally {
     setup.renderer.destroy();
   }
-
-  const created: { level: string; collection: string }[] = [];
+  const created: {
+    level: string;
+    collection: string;
+  }[] = [];
   const submit = await testRender(
     () => (
       <CollectionCreateOverlay
@@ -86,7 +88,6 @@ test("Collection Create types in its live input and keeps Cancel first in native
     submit.renderer.destroy();
   }
 });
-
 test("Problems opens the exact Installed Skill inspector without loading its Reader", async () => {
   const base = readerProjection();
   const address = base.installedSkills[0]!.address;
@@ -117,23 +118,27 @@ test("Problems opens the exact Installed Skill inspector without loading its Rea
     )!,
   );
   let loads = 0;
-  const loadedAddresses: { source: string; path: string }[] = [];
+  const loadedAddresses: {
+    source: string;
+    path: string;
+  }[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(projection, {
-          installed: {
-            load: async ({ address: requested }) => {
-              loads++;
-              loadedAddresses.push(requested);
-              return {
-                address: requested,
-                name: requested.path,
-                description: "compatibility fixture",
-                rawText: "# compatibility fixture",
-                markdownText: "# compatibility fixture",
-              };
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address: requested },
+          ) => {
+            loads++;
+            loadedAddresses.push(requested);
+            return {
+              address: requested,
+              name: requested.path,
+              description: "compatibility fixture",
+              rawText: "# compatibility fixture",
+              markdownText: "# compatibility fixture",
+            };
           },
         })}
         exit={() => {}}

@@ -28,7 +28,6 @@ import type { UpdateAddress } from "./scope";
 import type { UpdateRun, UpdatesState } from "./state";
 import { updateFeedback, type UpdateFeedback } from "./feedback";
 import { SkillUpdatePreview, type UpdatePreviewRequest } from "./preview";
-import type { InstalledCapability } from "@skill-cli/core";
 
 interface UpdateSkill {
   readonly address: UpdateAddress;
@@ -36,6 +35,7 @@ interface UpdateSkill {
   readonly description: string;
 }
 export interface UpdatesPageProps {
+  readonly environment?: import("@skill-cli/core").CoreOptions;
   readonly state: UpdatesState;
   readonly skills?: readonly UpdateSkill[];
   readonly onCheck: (sources?: readonly string[]) => void;
@@ -43,7 +43,7 @@ export interface UpdatesPageProps {
   readonly onStop: () => void;
   readonly onRetry?: () => void;
   readonly onOpenSource?: (source: string) => void;
-  readonly previewUpdate?: InstalledCapability["previewUpdate"];
+  readonly previewUpdate?: typeof import("@skill-cli/core").previewUpdate;
   readonly onInspectSkill?: (address: UpdateAddress) => void;
   readonly onInspectSource?: (source: string) => void;
   readonly active?: () => boolean;
@@ -65,8 +65,10 @@ export interface SourceUpdatesPageProps extends UpdatesPageProps {
   readonly onSourceDetails: () => void;
 }
 const addressKey = (address: UpdateAddress) => `${address.source}\u0000${address.path}`;
-type BrowserPosition = { key?: string; scrollTop: number };
-
+type BrowserPosition = {
+  key?: string;
+  scrollTop: number;
+};
 /** Source overview and Source drill-down share feedback and action primitives. */
 export function UpdatesPage(props: UpdatesPageProps) {
   return <UpdateWorkbench {...props} />;
@@ -74,9 +76,10 @@ export function UpdatesPage(props: UpdatesPageProps) {
 export function SourceUpdatesPage(props: SourceUpdatesPageProps) {
   return <UpdateWorkbench {...props} sourceView={props} />;
 }
-
 function UpdateWorkbench(
-  props: UpdatesPageProps & { readonly sourceView?: SourceUpdatesPageProps },
+  props: UpdatesPageProps & {
+    readonly sourceView?: SourceUpdatesPageProps;
+  },
 ) {
   const terminal = useTerminalDimensions();
   const renderer = useRenderer();
@@ -631,7 +634,12 @@ function UpdateWorkbench(
       id: string,
       verb: string,
       execute: () => void,
-      options: { shortcut?: string; destination?: string; reason?: string; palette?: boolean } = {},
+      options: {
+        shortcut?: string;
+        destination?: string;
+        reason?: string;
+        palette?: boolean;
+      } = {},
     ) => ({
       record: {
         id: `${prefix}.${id}`,
@@ -1105,6 +1113,7 @@ function UpdateWorkbench(
               request={value.request}
               unavailableReason={value.unavailableReason}
               previewUpdate={props.previewUpdate}
+              environment={props.environment}
               prefix={prefix}
               focusRegistry={props.focusRegistry}
               registerCommand={props.registerCommand}
@@ -1122,10 +1131,12 @@ function sourcePriority(status: string): number {
   if (["Needs attention", "Not run"].includes(status)) return 2;
   return 3;
 }
-
 /** App dispatch and physical focus wrap the shared TuiParts Button, not styled text. */
 function UpdateAction(props: {
-  readonly command: { readonly record: CommandRecord; readonly execute: () => void };
+  readonly command: {
+    readonly record: CommandRecord;
+    readonly execute: () => void;
+  };
   readonly primary?: boolean;
   readonly label?: string;
   readonly focusRegistry?: FocusRegistry;

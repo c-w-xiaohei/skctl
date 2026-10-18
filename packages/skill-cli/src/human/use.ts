@@ -2,7 +2,6 @@ import type { Command } from "commander";
 import type { UseWriteResult } from "@skill-cli/core";
 import type { CommandContext } from "../command-context";
 import { scope, scopeOptions } from "./shared";
-
 function formatUse(result: UseWriteResult) {
   const delta = result.use;
   const added = delta.after.filter((id) => !delta.before.includes(id));
@@ -10,8 +9,7 @@ function formatUse(result: UseWriteResult) {
   const retained = delta.after.filter((id) => delta.before.includes(id));
   return `Scope: ${result.level}. Added: ${added.join(", ") || "none"}. Retained: ${retained.join(", ") || "none"}. Removed: ${removed.join(", ") || "none"}.\n`;
 }
-
-export function useCommand(parent: Command, { core, stdout }: CommandContext) {
+export function useCommand(parent: Command, { api, environment, stdout }: CommandContext) {
   const use = parent
     .command("use")
     .description("Manage direct catalog roots declared at one configuration scope.");
@@ -22,7 +20,7 @@ export function useCommand(parent: Command, { core, stdout }: CommandContext) {
     .option("--json")
     .action(async (flags, action) => {
       const selectedLevel = scope(flags);
-      const { value } = await core(action).workspace.get();
+      const { value } = await api.getWorkspace(environment(action));
       const collections =
         value.configs
           ?.find((item) => item.level === selectedLevel)
@@ -38,7 +36,7 @@ export function useCommand(parent: Command, { core, stdout }: CommandContext) {
       "Add one direct catalog root at one scope. Repository-derived Collections need this separately (use add <owner/repository> -g) to appear as global catalog roots.",
     )
     .action(async (collection, flags, action) => {
-      const { value } = await core(action).use.add({
+      const { value } = await api.addUse(environment(action), {
         level: scope(flags)!,
         collection,
       });
@@ -47,7 +45,7 @@ export function useCommand(parent: Command, { core, stdout }: CommandContext) {
   scopeOptions(use.command("remove <id>"))
     .description("Remove one direct catalog root from one scope.")
     .action(async (collection, flags, action) => {
-      const { value } = await core(action).use.remove({
+      const { value } = await api.removeUse(environment(action), {
         level: scope(flags)!,
         collection,
       });
@@ -56,7 +54,7 @@ export function useCommand(parent: Command, { core, stdout }: CommandContext) {
   scopeOptions(use.command("set <collection...>"))
     .description("Replace all direct catalog roots at one scope.")
     .action(async (collections, flags, action) => {
-      const { value } = await core(action).use.set({
+      const { value } = await api.setUse(environment(action), {
         level: scope(flags)!,
         collections,
       });

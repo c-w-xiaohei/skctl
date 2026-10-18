@@ -13,13 +13,12 @@ import {
   selectedReaderTab,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 test("compact Reader Find/Raw/Next have distinct keyboard and pointer targets, then narrow tabs own Left/Right", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -45,7 +44,6 @@ test("compact Reader Find/Raw/Next have distinct keyboard and pointer targets, t
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-find-next");
     await parsedEnter(setup);
     await setup.waitForFrame((frame) => frame.includes("2/3"));
-
     const raw = live(setup, "open-match-raw");
     const next = live(setup, "reader-find-next");
     expect(raw.width > 0 && raw.height > 0 && next.width > 0 && next.height > 0).toBe(true);
@@ -64,7 +62,6 @@ test("compact Reader Find/Raw/Next have distinct keyboard and pointer targets, t
     const currentNext = live(setup, "reader-find-next");
     await setup.mockMouse.click(currentNext.screenX + 1, currentNext.screenY);
     await setup.waitForFrame((frame) => frame.includes("3/3"));
-
     setup.resize(43, 40);
     await setup.flush();
     await setup.waitForFrame((frame) =>

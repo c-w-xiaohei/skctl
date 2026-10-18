@@ -1,8 +1,7 @@
 import type { Command } from "commander";
 import type { CommandContext } from "../command-context";
 import { formatChange, formatObservation, scope, scopeOptions } from "./shared";
-
-export function collectionCommand(parent: Command, { core, stdout }: CommandContext) {
+export function collectionCommand(parent: Command, { api, environment, stdout }: CommandContext) {
   const collection = parent
     .command("collection")
     .description(
@@ -11,7 +10,7 @@ export function collectionCommand(parent: Command, { core, stdout }: CommandCont
   scopeOptions(collection.command("create <id>"))
     .description("Create an empty Collection declaration at one configuration level.")
     .action(async (collection, flags, action) => {
-      const { value } = await core(action).collections.create({
+      const { value } = await api.createCollection(environment(action), {
         level: scope(flags)!,
         collection,
       });
@@ -20,7 +19,7 @@ export function collectionCommand(parent: Command, { core, stdout }: CommandCont
   scopeOptions(collection.command("remove <id>"))
     .description("Remove an unreferenced, directly declared Collection.")
     .action(async (collection, flags, action) => {
-      const { value } = await core(action).collections.remove({
+      const { value } = await api.removeCollection(environment(action), {
         level: scope(flags)!,
         collection,
       });
@@ -31,7 +30,7 @@ export function collectionCommand(parent: Command, { core, stdout }: CommandCont
     .option("--json")
     .action(async (collectionId, flags, action) => {
       const selectedLevel = scope(flags, null);
-      const { value: result } = await core(action).collections.inspect({
+      const { value: result } = await api.inspectCollection(environment(action), {
         collection: collectionId,
         ...(selectedLevel ? { level: selectedLevel } : {}),
       });
@@ -51,7 +50,7 @@ export function collectionCommand(parent: Command, { core, stdout }: CommandCont
   scopeOptions(member.command("add <collection> <name> <source> <path>"))
     .description("Add an installed Skill address under a stable Collection entry name.")
     .action(async (collection, name, source, path, flags, action) => {
-      const { value } = await core(action).collections.addMember({
+      const { value } = await api.addMember(environment(action), {
         level: scope(flags)!,
         collection,
         name,
@@ -62,7 +61,7 @@ export function collectionCommand(parent: Command, { core, stdout }: CommandCont
   scopeOptions(member.command("remove <collection> <name>"))
     .description("Remove a direct Collection membership by its stable entry name.")
     .action(async (collection, name, flags, action) => {
-      const { value } = await core(action).collections.removeMember({
+      const { value } = await api.removeMember(environment(action), {
         level: scope(flags)!,
         collection,
         name,
@@ -72,7 +71,7 @@ export function collectionCommand(parent: Command, { core, stdout }: CommandCont
   scopeOptions(collection.command("import <from> <into>"))
     .description("Copy effective memberships once into an editable Collection declaration.")
     .action(async (from, into, flags, action) => {
-      const { value } = await core(action).collections.importMembers({
+      const { value } = await api.importMembers(environment(action), {
         level: scope(flags)!,
         from,
         into,
@@ -83,7 +82,7 @@ export function collectionCommand(parent: Command, { core, stdout }: CommandCont
   scopeOptions(reference.command("add <collection> <name> <target> <description>"))
     .description("Expose a child Collection for progressive catalog navigation.")
     .action(async (collection, name, target, description, flags, action) => {
-      const { value } = await core(action).collections.addReference({
+      const { value } = await api.addReference(environment(action), {
         level: scope(flags)!,
         collection,
         name,
@@ -95,7 +94,7 @@ export function collectionCommand(parent: Command, { core, stdout }: CommandCont
   scopeOptions(reference.command("remove <collection> <name>"))
     .description("Remove one named child Collection reference.")
     .action(async (collection, name, flags, action) => {
-      const { value } = await core(action).collections.removeReference({
+      const { value } = await api.removeReference(environment(action), {
         level: scope(flags)!,
         collection,
         name,
@@ -108,7 +107,7 @@ export function collectionCommand(parent: Command, { core, stdout }: CommandCont
   scopeOptions(link.command("add <collection> <target>"))
     .description("Live-merge a target Collection's effective members into this Collection.")
     .action(async (collection, target, flags, action) => {
-      const { value } = await core(action).collections.setLink({
+      const { value } = await api.setLink(environment(action), {
         level: scope(flags)!,
         collection,
         target,
@@ -119,7 +118,7 @@ export function collectionCommand(parent: Command, { core, stdout }: CommandCont
   scopeOptions(link.command("remove <collection> <target>"))
     .description("Remove one live Collection membership link.")
     .action(async (collection, target, flags, action) => {
-      const { value } = await core(action).collections.setLink({
+      const { value } = await api.setLink(environment(action), {
         level: scope(flags)!,
         collection,
         target,

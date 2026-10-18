@@ -39,7 +39,6 @@ import {
   readerSecondAddress,
   readerSecondContent,
 } from "./installed-reader.fixture";
-
 async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(
     () =>
@@ -66,7 +65,6 @@ async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender
   await setup.renderOnce();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
 }
-
 async function openSkillView(
   setup: Awaited<ReturnType<typeof testRender>>,
   view: "current-exposure" | "problems",
@@ -86,7 +84,6 @@ async function openSkillView(
   await setup.renderOnce();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
 }
-
 test("FILTER Collections combines semantic facts without Core calls", () => {
   const owner = {
     level: "project" as const,
@@ -128,7 +125,6 @@ test("FILTER Collections combines semantic facts without Core calls", () => {
   ).toEqual(["engineering"]);
   expect(filterCollections(collections, { query: "missing", filters: {} })).toEqual([]);
 });
-
 test("COLLECTION direct Membership intent preserves entry, address, Collection, and owner", () => {
   const owner = {
     level: "project" as const,
@@ -157,7 +153,6 @@ test("COLLECTION direct Membership intent preserves entry, address, Collection, 
     owner,
   });
 });
-
 test("COLLECTION member origins preserve contribution, producer, and outer Link routes", () => {
   const owner = {
     level: "global" as const,
@@ -227,7 +222,6 @@ test("COLLECTION member origins preserve contribution, producer, and outer Link 
     owner,
   });
 });
-
 test("COLLECTION relation rows retain structural identities when their display order changes", () => {
   const owner = {
     level: "project" as const,
@@ -279,13 +273,11 @@ test("COLLECTION relation rows retain structural identities when their display o
       ],
     },
   });
-
   expect(forward.map((row) => [row.target, collectionRelationKey(row)]).sort()).toEqual(
     reverse.map((row) => [row.target, collectionRelationKey(row)]).sort(),
   );
   expect(forward.map(collectionRelationKey)).not.toContain(undefined);
 });
-
 test("COLLECTION removal plan keeps repeated exact origins separate and explains non-direct rows", () => {
   const owner = {
     level: "project" as const,
@@ -363,7 +355,6 @@ test("COLLECTION removal plan keeps repeated exact origins separate and explains
   expect(plan.explanations.join("\n")).toContain("Repository acme/repo");
   expect(plan.explanations.join("\n")).toContain("Link team -> shared");
 });
-
 test("COLLECTION origin keys distinguish repeated paths by structural origin facts", () => {
   const owner = {
     level: "project" as const,
@@ -477,7 +468,6 @@ test("COLLECTION origin keys distinguish repeated paths by structural origin fac
     ),
   );
 });
-
 test("COLLECTION origin reconciliation retains only structural origins still projected", () => {
   const state = createCollectionsState();
   const owner = {
@@ -528,7 +518,6 @@ test("COLLECTION origin reconciliation retains only structural origins still pro
   });
   expect(state.selectedOrigins("team")).toEqual([]);
 });
-
 test("COLLECTION removal plan uses the direct path entry name and requires a direct removal", () => {
   const owner = {
     level: "project" as const,
@@ -557,7 +546,6 @@ test("COLLECTION removal plan uses the direct path entry name and requires a dir
   expect(collectionRemovalPlan(collection, [row]).removals[0]?.entryName).toBe("stable-name");
   expect(collectionRemovalPlan(collection, [{ ...row, path: undefined }]).executable).toBe(false);
 });
-
 test("EXPOSURE hierarchy preserves repeated Reference routes, excludes Links, and counts selectors separately from Skills", () => {
   const owner = {
     level: "project" as const,
@@ -665,7 +653,6 @@ test("EXPOSURE hierarchy preserves repeated Reference routes, excludes Links, an
   expect(rows.map((row) => row.collection)).not.toContain("linked");
   expect(currentExposureRows(complete)).toEqual(rows);
 });
-
 test("EXPOSURE counts only healthy Installed Skills while retaining selector paths", () => {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -712,7 +699,6 @@ test("EXPOSURE counts only healthy Installed Skills while retaining selector pat
     installedSkillCount: 0,
   });
 });
-
 test("PROBLEMS deduplicates identical diagnostics, keeps compact facts searchable, and preserves exact subjects", () => {
   const base = workspaceProjection();
   const installed = {
@@ -787,7 +773,6 @@ test("PROBLEMS deduplicates identical diagnostics, keeps compact facts searchabl
     }),
   ).toHaveLength(1);
 });
-
 test("PROBLEMS canonical identity ignores container fallback and routes semantic Config owners", () => {
   const base = workspaceProjection();
   const sourceOwner = base.configs[1]!.direct.sources[0]!.ref.owner;
@@ -879,7 +864,6 @@ test("PROBLEMS canonical identity ignores container fallback and routes semantic
     ]),
   );
 });
-
 test("RENDER Problems uses native search and filters, routes subjects, and keeps unmatched rows Read-only", async () => {
   const base = readerProjection();
   const actionable = {
@@ -926,7 +910,6 @@ test("RENDER Problems uses native search and filters, routes subjects, and keeps
     expect(
       problemRows(projection).find((row) => row.message === unmatched.message)?.intent,
     ).toBeUndefined();
-
     const problemsBrowser = setup.renderer.root.findDescendantById("problems-browser")!;
     problemsBrowser.focus();
     await setup.renderOnce();
@@ -943,7 +926,6 @@ test("RENDER Problems uses native search and filters, routes subjects, and keeps
     }
     await setup.renderOnce();
     await setup.waitFor(() => count() === 1);
-
     setup.mockInput.pressKey("u", { ctrl: true });
     await setup.waitFor(() => count() === 2);
     for (const [dimension, value] of [
@@ -990,7 +972,6 @@ test("RENDER Problems uses native search and filters, routes subjects, and keeps
     setup.renderer.destroy();
   }
 });
-
 test("RENDER narrow Problems handoff reads the exact installed subject and Escape restores Problems", async () => {
   const loads: string[] = [];
   const base = readerProjection();
@@ -1012,11 +993,9 @@ test("RENDER narrow Problems handoff reads the exact installed subject and Escap
     () => (
       <App
         core={directSourceCore(projection, {
-          installed: {
-            load: (request) => {
-              loads.push(request.address.path);
-              return Promise.resolve(readerContent);
-            },
+          loadInstalledSkill: (_environment: import("@skill-cli/core").CoreOptions, request) => {
+            loads.push(request.address.path);
+            return Promise.resolve(readerContent);
           },
         })}
         exit={() => {}}
@@ -1044,7 +1023,6 @@ test("RENDER narrow Problems handoff reads the exact installed subject and Escap
     setup.renderer.destroy();
   }
 });
-
 test("RENDER invalid Config diagnostic detail preserves exact row selection and native scroll at 120, 80, and 43 columns", async () => {
   const base = workspaceProjection();
   const diagnostics = Array.from({ length: 30 }, (_, index) => ({
@@ -1068,7 +1046,6 @@ test("RENDER invalid Config diagnostic detail preserves exact row selection and 
   expect(problemRows(projection).every((row) => row.intent?.kind === "diagnostic-detail")).toBe(
     true,
   );
-
   for (const width of [120, 80, 43] as const) {
     const setup = await testRender(
       () => <App core={directSourceCore(projection)} exit={() => {}} />,
@@ -1101,7 +1078,6 @@ test("RENDER invalid Config diagnostic detail preserves exact row selection and 
       expect(browser.getSelectedIndex()).toBe(7);
       expect(selectScrollOffset(browser)).toBe(4);
       await setup.waitFor(() => browser.getSelectedOption()?.value === selected);
-
       await parsedEnter(setup);
       const texts = (node: BaseRenderable): string[] => [
         ...(node instanceof TextRenderable ? [node.plainText] : []),
@@ -1127,7 +1103,6 @@ test("RENDER invalid Config diagnostic detail preserves exact row selection and 
       ).toContain("Mutations are disabled until this Config is valid and readable.");
       expect(detailFrame).toContain("Esc");
       expect(setup.renderer.root.findDescendantById("config-operation-review")).toBeUndefined();
-
       await parsedEscape(setup);
       await setup.waitFor(
         () =>
@@ -1156,7 +1131,6 @@ test("RENDER invalid Config diagnostic detail preserves exact row selection and 
     }
   }
 });
-
 test("RENDER unavailable Agent access routes to authoritative Problems without inventing a repair", async () => {
   const base = readerProjection();
   const problem = {
@@ -1217,7 +1191,6 @@ test("RENDER unavailable Agent access routes to authoritative Problems without i
     setup.renderer.destroy();
   }
 });
-
 test("RENDER empty Agent Collection Enter stays in the tree and explicit Details returns to its command", async () => {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -1296,7 +1269,6 @@ test("RENDER empty Agent Collection Enter stays in the tree and explicit Details
     setup.renderer.destroy();
   }
 });
-
 test("EXPOSURE Unassigned ignores via-Link-only paths but keeps direct and repository-derived memberships assigned", () => {
   const base = workspaceProjection();
   const skill = (
@@ -1335,7 +1307,6 @@ test("EXPOSURE Unassigned ignores via-Link-only paths but keeps direct and repos
     viaLink,
   ]);
 });
-
 test("COLLECTION Relations unify Use, Reference, and Link with owners, effects, and provenance", () => {
   const owner = {
     level: "project" as const,
@@ -1437,7 +1408,6 @@ test("COLLECTION Relations unify Use, Reference, and Link with owners, effects, 
     contribution.contribution,
   ]);
 });
-
 test("COLLECTION Relations retain an authoritative empty Collection Use owner", () => {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -1482,7 +1452,6 @@ test("COLLECTION Relations retain an authoritative empty Collection Use owner", 
     }),
   );
 });
-
 test("FILTER Collection values are exact structural and explicit booleans", () => {
   const owner = {
     level: "global" as const,
@@ -1504,7 +1473,6 @@ test("FILTER Collection values are exact structural and explicit booleans", () =
   expect(collectionFilterValues("Problems", [collection])).toEqual(["Has problems", "No problems"]);
   expect(collectionFilterValues("Problems", [collection])).toEqual(["Has problems", "No problems"]);
 });
-
 test("FILTER Collection Use is exposed as the user-visible Exposure dimension", () => {
   const collections = [
     {
@@ -1540,7 +1508,6 @@ test("FILTER Collection Use is exposed as the user-visible Exposure dimension", 
     }).map((collection) => collection.id),
   ).toEqual(["hidden"]);
 });
-
 test("RENDER Collection producer Open Source navigates to its owning Source", async () => {
   const loads: string[] = [];
   const base = readerProjection();
@@ -1579,15 +1546,13 @@ test("RENDER Collection producer Open Source navigates to its owning Source", as
     () => (
       <App
         core={directSourceCore(projection, {
-          installed: {
-            load: (request) => {
-              loads.push(request.address.path);
-              const result =
-                request.address.path === readerSecondAddress.path
-                  ? readerSecondContent
-                  : readerContent;
-              return Promise.resolve(result);
-            },
+          loadInstalledSkill: (_environment: import("@skill-cli/core").CoreOptions, request) => {
+            loads.push(request.address.path);
+            const result =
+              request.address.path === readerSecondAddress.path
+                ? readerSecondContent
+                : readerContent;
+            return Promise.resolve(result);
           },
         })}
         exit={() => {}}

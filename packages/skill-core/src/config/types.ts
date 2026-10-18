@@ -1,7 +1,7 @@
 import type { ImpactBlocker } from "../collection/types";
-import type { Operation } from "../shared";
+
 import type { SkillAddress, SourceBinding } from "../source/schema";
-import type { SourceBindingView, RegisterSourceRequest } from "../source/types";
+import type { SourceBindingView } from "../source/types";
 
 export type ConfigLevel = "global" | "project" | "local";
 
@@ -92,17 +92,6 @@ export interface AdoptConfigRequest {
   readonly id: string;
   readonly exactRevision: string;
   readonly observation?: ConfigSourceObservation;
-}
-
-export interface ConfigSourcesCapability {
-  register: Operation<RegisterSourceRequest, ConfigWriteResult>;
-  previewAdoption: Operation<AdoptConfigRequest, ConfigSourceImpact>;
-  previewForget: Operation<{ readonly id: string }, ConfigSourceImpact>;
-  previewRemoval: Operation<{ readonly id: string }, ConfigSourceImpact>;
-  forget: Operation<{ readonly id: string }>;
-  adopt: Operation<AdoptConfigRequest>;
-  observe: Operation<{ readonly id: string }, ConfigSourceObservation>;
-  remove: Operation<{ readonly id: string; readonly level?: ConfigLevel }>;
 }
 
 export interface ManagedOpenCodeRequest {

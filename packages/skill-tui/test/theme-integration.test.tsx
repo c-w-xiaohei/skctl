@@ -3,7 +3,6 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { terminal, theme } from "../src/ui/theme";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-
 test("RENDER App follows the renderer theme and loads the initial Workspace once", async () => {
   let loads = 0;
   theme.register("theme-integration", {
@@ -16,11 +15,9 @@ test("RENDER App follows the renderer theme and loads the initial Workspace once
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          workspace: {
-            get: async () => {
-              loads += 1;
-              return { value: workspaceProjection(), diagnostics: [] };
-            },
+          getWorkspace: async () => {
+            loads += 1;
+            return { value: workspaceProjection(), diagnostics: [] };
           },
         })}
         exit={() => {}}
@@ -32,10 +29,8 @@ test("RENDER App follows the renderer theme and loads the initial Workspace once
     await setup.renderOnce();
     await setup.waitForFrame((frame) => frame.includes("Skills"));
     expect(loads).toBe(1);
-
     setup.renderer.emit("theme_mode", "light");
     expect(theme.get().colors.foreground).toBe("#f5f5f5");
-
     setup.renderer.destroy();
     expect(theme.get().colors.foreground).toBe("#151515");
     setup.renderer.emit("theme_mode", "light");

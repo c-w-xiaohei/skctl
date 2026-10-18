@@ -7,12 +7,10 @@ import { CollectionsPage } from "../src/collections-page";
 import { createCollectionsState } from "../src/collections/state";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
-
 const result = <T,>(value: T): OperationResult<T> => ({
   value,
   diagnostics: [],
 });
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((next) => {
@@ -20,7 +18,6 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-
 async function openAllInstalledSkills(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("skills-view-tab-current-exposure"),
@@ -32,13 +29,11 @@ async function openAllInstalledSkills(setup: Awaited<ReturnType<typeof testRende
   await setup.renderOnce();
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
 }
-
 const collectionOwner = {
   level: "project" as const,
   file: "/workspace/skill-cli/skill-cli.jsonc",
   pointer: "/collections/team",
 };
-
 function membershipProjection(): WorkspaceView {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -95,14 +90,12 @@ function membershipProjection(): WorkspaceView {
     ],
   };
 }
-
 async function choosePaletteCommand(setup: Awaited<ReturnType<typeof testRender>>, id: string) {
   await setup.waitFor(
     () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
   );
   await enterLive(setup, `palette-${id}`);
 }
-
 test("Space batch Add preserves slash-containing Source IDs and publishes selected Skills once", async () => {
   const previews: unknown[] = [];
   const changes: unknown[] = [];
@@ -112,33 +105,31 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
   const base = directSourceCore(projection);
   const core = {
     ...base,
-    workspace: {
-      get: async () => {
-        refreshes++;
-        return result(projection);
-      },
+    getWorkspace: async () => {
+      refreshes++;
+      return result(projection);
     },
-    installed: {
-      ...base.installed,
-      load: async () => {
-        loads++;
-        return {
-          address: { source: "team/main", path: "guide" },
-          name: "guide",
-          description: "Guide",
-          rawText: "# Guide",
-          markdownText: "# Guide",
-        };
-      },
+    loadInstalledSkill: async () => {
+      loads++;
+      return {
+        address: { source: "team/main", path: "guide" },
+        name: "guide",
+        description: "Guide",
+        rawText: "# Guide",
+        markdownText: "# Guide",
+      };
     },
-    collections: {
-      ...base.collections,
-      previewMemberEdit: async (request: {
+    previewMembershipBatch: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: {
         readonly level: "global" | "project" | "local";
         readonly collection: string;
         readonly additions: readonly {
           readonly name: string;
-          readonly address: { readonly source: string; readonly path: string };
+          readonly address: {
+            readonly source: string;
+            readonly path: string;
+          };
         }[];
         readonly removals: readonly {
           readonly name: string;
@@ -147,25 +138,28 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
             readonly path: string;
           };
         }[];
-      }) => {
-        previews.push(request);
-        const impact: MembershipBatchImpact = {
-          kind: "membership-batch",
-          collection: request.collection,
-          decision: { kind: "direct", owner: collectionOwner },
-          additions: request.additions,
-          removals: request.removals,
-          affected: [],
-          blockers: [],
-          effectful: true,
-          allowed: true,
-        };
-        return result(impact);
       },
-      editMembers: async (request: Parameters<typeof base.collections.editMembers>[0]) => {
-        changes.push(request);
-        return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
-      },
+    ) => {
+      previews.push(request);
+      const impact: MembershipBatchImpact = {
+        kind: "membership-batch",
+        collection: request.collection,
+        decision: { kind: "direct", owner: collectionOwner },
+        additions: request.additions,
+        removals: request.removals,
+        affected: [],
+        blockers: [],
+        effectful: true,
+        allowed: true,
+      };
+      return result(impact);
+    },
+    editMembers: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: Parameters<typeof base.editMembers>[1],
+    ) => {
+      changes.push(request);
+      return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
     },
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -263,7 +257,6 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
     setup.renderer.destroy();
   }
 });
-
 test("repository-derived Add Membership creates its fixed ID then opens an owned batch draft", async () => {
   const initial = membershipProjection();
   if (initial.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -309,15 +302,13 @@ test("repository-derived Add Membership creates its fixed ID then opens an owned
   const base = directSourceCore(repository);
   const core = {
     ...base,
-    workspace: {
-      get: async () => result(++refreshes === 1 ? repository : created),
-    },
-    collections: {
-      ...base.collections,
-      create: async (request: Parameters<typeof base.collections.create>[0]) => {
-        changes.push(request);
-        return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
-      },
+    getWorkspace: async () => result(++refreshes === 1 ? repository : created),
+    createCollection: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: Parameters<typeof base.createCollection>[1],
+    ) => {
+      changes.push(request);
+      return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
     },
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -353,7 +344,6 @@ test("repository-derived Add Membership creates its fixed ID then opens an owned
     setup.renderer.destroy();
   }
 });
-
 test("Workspace Collection create selects a level, blocks duplicate submit, and reselects after refresh", async () => {
   const writing = deferred<
     OperationResult<{
@@ -393,18 +383,16 @@ test("Workspace Collection create selects a level, blocks duplicate submit, and 
   const base = directSourceCore(projection);
   const core = {
     ...base,
-    workspace: {
-      get: async () => {
-        refreshes++;
-        return result(created);
-      },
+    getWorkspace: async () => {
+      refreshes++;
+      return result(created);
     },
-    collections: {
-      ...base.collections,
-      create: (request: Parameters<typeof base.collections.create>[0]) => {
-        changes.push(request);
-        return writing.promise;
-      },
+    createCollection: (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: Parameters<typeof base.createCollection>[1],
+    ) => {
+      changes.push(request);
+      return writing.promise;
     },
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -441,7 +429,6 @@ test("Workspace Collection create selects a level, blocks duplicate submit, and 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Collection detail has no generic Actions or duplicate Back command", async () => {
   const projection = membershipProjection();
   const collections = createCollectionsState();

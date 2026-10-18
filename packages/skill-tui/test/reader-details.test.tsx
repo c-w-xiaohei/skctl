@@ -21,7 +21,6 @@ import {
   focusLive,
   parsedEnter,
 } from "./reader-test-controls";
-
 const address = { source: "team-main", path: "guide" };
 const globalCollectionOwner = {
   level: "global" as const,
@@ -45,7 +44,6 @@ const membershipPaths = [
     path: "guide",
   },
 ];
-
 function detailsProjection() {
   const base = workspaceProjection();
   return {
@@ -139,22 +137,19 @@ function detailsProjection() {
     ],
   };
 }
-
 test("Details renders provenance and routes Collection Use to its owning Config Collection", async () => {
   const projection = detailsProjection();
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(projection, {
-          installed: {
-            load: async () => ({
-              address,
-              name: "guide",
-              description: "A detailed Installed Skill",
-              rawText: "# Guide",
-              markdownText: "# Guide",
-            }),
-          },
+          loadInstalledSkill: async () => ({
+            address,
+            name: "guide",
+            description: "A detailed Installed Skill",
+            rawText: "# Guide",
+            markdownText: "# Guide",
+          }),
         })}
         exit={() => {}}
       />
@@ -215,9 +210,7 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     expect(live(setup, "reader-details-action-skill-add-to-collection").focusable).toBe(true);
     expect(live(setup, "reader-details-relationship-source").focusable).toBe(true);
     await enterLive(setup, "reader-details-relationship-selectors");
-    const exposureRootId = `current-exposure-browser-row-${encodeURIComponent(
-      exposureTreePathKey({ segments: [{ collection: "engineering" }] }),
-    )}`;
+    const exposureRootId = `current-exposure-browser-row-${encodeURIComponent(exposureTreePathKey({ segments: [{ collection: "engineering" }] }))}`;
     await setup.waitFor(() => {
       const row = setup.renderer.root.findDescendantById(exposureRootId);
       return row instanceof BoxRenderable && row.backgroundColor.a > 0;
@@ -285,7 +278,6 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     await setup.waitForFrame(
       (frame) => frame.includes("engineering") && frame.includes("Collection Use"),
     );
-
     // The cross-section detail has one route predecessor: the same Agent Access path/action.
     await expectSharedReturn(setup, "Back to Skills");
     await enterLive(setup, "route-back");
@@ -298,7 +290,6 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     expect(nativeText(live(setup, `${exposureRootId}-name`)).trim()).toBe("engineering");
     expect((live(setup, exposureRootId) as BoxRenderable).backgroundColor.a).toBeGreaterThan(0);
     expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeUndefined();
-
     // Re-enter directly through the restored physical Details command.
     await parsedEnter(setup);
     await setup.waitFor(

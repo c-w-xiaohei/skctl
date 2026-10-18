@@ -1,12 +1,11 @@
+import * as coreApi from "../../src/index";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSkillCliCore } from "../../src/create-core";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-
 async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn(["/usr/bin/git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
   const [output, error, status] = await Promise.all([
@@ -34,7 +33,6 @@ type OldOutcome =
   | "missing-integrity"
   | "unprocessable"
   | "tree-missing";
-
 async function fixture(changed: boolean) {
   const root = await mkdtemp(join(tmpdir(), "github-legacy-"));
   const work = join(root, "work"),
@@ -179,13 +177,14 @@ async function fixture(changed: boolean) {
     json({ message: "Not Found" }, 404);
   });
   await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
-  const core = createSkillCliCore({
+  const core = {
     cwd: root,
     userConfigPath: join(root, "user.jsonc"),
-    sourceTransport: (url) => (url === "https://github.com/acme/skills.git" ? bare : undefined),
+    sourceTransport: (url: string) =>
+      url === "https://github.com/acme/skills.git" ? bare : undefined,
     githubApiBaseUrl: `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
-  });
-  await core.sources.register({
+  };
+  await coreApi.registerSource(core, {
     level: "project",
     id: "github",
     binding: {
@@ -195,8 +194,8 @@ async function fixture(changed: boolean) {
       ref: "main",
     },
   });
-  await core.installed.install({ source: "github", paths: ["chosen"], exactRevision: old });
-  await core.installed.install({ source: "github", paths: ["other"], exactRevision: current });
+  await coreApi.installSkills(core, { source: "github", paths: ["chosen"], exactRevision: old });
+  await coreApi.installSkills(core, { source: "github", paths: ["other"], exactRevision: current });
   const state = JSON.parse(await readFile(stateFile, "utf8"));
   state.version = 2;
   for (const item of state.installed) delete item.treeIdentity;
@@ -236,14 +235,13 @@ async function fixture(changed: boolean) {
     },
   };
 }
-
 test("GitHub unavailable legacy O fails check without content fallback; update can use exact C", async () => {
   for (const changed of [false, true]) {
     const value = await fixture(changed);
     try {
       value.setOld("missing");
       const before = await readFile(value.stateFile);
-      await expect(value.core.installed.checkUpdate({ source: "github" })).rejects.toMatchObject({
+      await expect(coreApi.checkUpdate(value.core, { source: "github" })).rejects.toMatchObject({
         code: "PINNED_COMMIT_UNAVAILABLE",
       });
       expect(await readFile(value.stateFile)).toEqual(before);
@@ -254,7 +252,7 @@ test("GitHub unavailable legacy O fails check without content fallback; update c
       if (changed) {
         value.requests.length = 0;
         const oldState = JSON.parse(before.toString());
-        await value.core.installed.update({
+        await coreApi.updateSkills(value.core, {
           source: "github",
           paths: ["chosen"],
           exactRevision: value.current,
@@ -287,14 +285,13 @@ test("GitHub unavailable legacy O fails check without content fallback; update c
     }
   }
 });
-
 test("old O 404 is not recovery evidence when fresh exact C repository-access proof fails", async () => {
   const value = await fixture(true);
   try {
     value.setOld("missing");
     value.disappearOnOldMissing();
     const before = await readFile(value.stateFile);
-    await expect(value.core.installed.checkUpdate({ source: "github" })).rejects.toMatchObject({
+    await expect(coreApi.checkUpdate(value.core, { source: "github" })).rejects.toMatchObject({
       code: "SOURCE_NOT_FOUND",
     });
     expect(value.requests.some((path) => path.includes("/git/blobs/"))).toBe(false);
@@ -306,7 +303,7 @@ test("old O 404 is not recovery evidence when fresh exact C repository-access pr
     value.setCurrentUnavailable();
     value.requests.length = 0;
     await expect(
-      value.core.installed.update({
+      coreApi.updateSkills(value.core, {
         source: "github",
         paths: ["chosen"],
         exactRevision: value.current,
@@ -321,7 +318,6 @@ test("old O 404 is not recovery evidence when fresh exact C repository-access pr
     await value.close();
   }
 });
-
 test("GitHub legacy O auth/socket/body/integrity and current C missing never authorize digest recovery", async () => {
   for (const [outcome, code] of [
     ["auth", "PROVIDER_AUTH_FAILED"],
@@ -336,7 +332,7 @@ test("GitHub legacy O auth/socket/body/integrity and current C missing never aut
       const before = await readFile(value.stateFile);
       value.setOld(outcome);
       value.requests.length = 0;
-      await expect(value.core.installed.checkUpdate({ source: "github" })).rejects.toMatchObject({
+      await expect(coreApi.checkUpdate(value.core, { source: "github" })).rejects.toMatchObject({
         code,
       });
       expect(value.requests).toContain(`/repos/acme/skills/commits/${value.old}`);
@@ -344,10 +340,9 @@ test("GitHub legacy O auth/socket/body/integrity and current C missing never aut
         value.requests.some((path) => path.includes("/git/blobs/") || path.includes("/raw/")),
       ).toBe(false);
       expect(await readFile(value.stateFile)).toEqual(before);
-
       value.requests.length = 0;
       await expect(
-        value.core.installed.update({
+        coreApi.updateSkills(value.core, {
           source: "github",
           paths: ["chosen"],
           exactRevision: value.current,
@@ -361,18 +356,17 @@ test("GitHub legacy O auth/socket/body/integrity and current C missing never aut
       await value.close();
     }
   }
-
   const value = await fixture(true);
   try {
     const before = await readFile(value.stateFile);
     value.setOld("missing");
     value.setCurrentUnavailable();
     value.requests.length = 0;
-    await expect(value.core.installed.checkUpdate({ source: "github" })).rejects.toMatchObject({
+    await expect(coreApi.checkUpdate(value.core, { source: "github" })).rejects.toMatchObject({
       code: "SOURCE_NOT_FOUND",
     });
     await expect(
-      value.core.installed.update({
+      coreApi.updateSkills(value.core, {
         source: "github",
         paths: ["chosen"],
         exactRevision: value.current,
@@ -385,13 +379,12 @@ test("GitHub legacy O auth/socket/body/integrity and current C missing never aut
     await value.close();
   }
 });
-
 test("I1R1 old O HTTP404 already classified as integrity never enters missing-evidence recovery", async () => {
   const value = await fixture(true);
   try {
     value.setOld("missing-integrity");
     const before = await readFile(value.stateFile);
-    await expect(value.core.installed.checkUpdate({ source: "github" })).rejects.toMatchObject({
+    await expect(coreApi.checkUpdate(value.core, { source: "github" })).rejects.toMatchObject({
       code: "PROVIDER_INTEGRITY_FAILED",
     });
     expect(value.requests).toContain(`/repos/acme/skills/commits/${value.old}`);
@@ -400,9 +393,8 @@ test("I1R1 old O HTTP404 already classified as integrity never enters missing-ev
     ).toHaveLength(1);
     expect(value.requests.some((path) => path.includes("/git/blobs/"))).toBe(false);
     expect(await readFile(value.stateFile)).toEqual(before);
-
     value.requests.length = 0;
-    await value.core.installed.update({
+    await coreApi.updateSkills(value.core, {
       source: "github",
       paths: ["chosen"],
       exactRevision: value.current,

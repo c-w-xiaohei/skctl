@@ -5,11 +5,10 @@ import { type BaseRenderable } from "@opentui/core";
 import { ButtonRenderable } from "@tuiparts/core/button";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createSkillCliCore } from "../../skill-core/src/create-core";
+import * as api from "@skill-cli/core";
 import { App } from "../src/app";
 import { testEffects } from "./direct-source.fixture";
 import { enterLive, focusLive } from "./reader-test-controls";
-
 function findManage(root: BaseRenderable): ButtonRenderable | undefined {
   for (const child of root.getChildren()) {
     if (
@@ -22,7 +21,6 @@ function findManage(root: BaseRenderable): ButtonRenderable | undefined {
     if (nested) return nested;
   }
 }
-
 for (const entry of ["single", "checked", "stale-address"] as const) {
   test(`real Core ${entry} Membership preview resolves member origin to declaration owner without writes`, async () => {
     await mkdir("/tmp/opencode", { recursive: true });
@@ -40,21 +38,22 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
         join(local, "guide", "SKILL.md"),
         "---\nname: guide\ndescription: Isolated membership preview\n---\n# Guide\n",
       );
-      const core = createSkillCliCore({ cwd: root, userConfigPath: join(root, "user.jsonc") });
-      await core.sources.register({
+      const environment = { cwd: root, userConfigPath: join(root, "user.jsonc") };
+      const core = api;
+      await core.registerSource(environment, {
         level: "project",
         id: "local-team",
         binding: { kind: "local", path: local, root: "" },
       });
-      await core.installed.install({ source: "local-team", paths: ["guide"] });
-      await core.collections.create({ level: "project", collection: "team" });
-      await core.collections.addMember({
+      await core.installSkills(environment, { source: "local-team", paths: ["guide"] });
+      await core.createCollection(environment, { level: "project", collection: "team" });
+      await core.addMember(environment, {
         level: "project",
         collection: "team",
         name: "guide",
         address: { source: "local-team", path: "guide" },
       });
-      const workspace = (await core.workspace.get()).value;
+      const workspace = (await core.getWorkspace(environment)).value;
       if (workspace.effective.status !== "complete")
         throw new Error("Expected complete real fixture");
       const collection = workspace.effective.collectionsView.find((item) => item.id === "team")!;
@@ -76,105 +75,89 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
       const workspaceDone = new Promise<void>((resolve) => {
         workspaceFinished = resolve;
       });
-      const traced = {
+      const traced: import("../src/effects").TuiCore = {
         ...core,
-        workspace: {
-          get: async (...args: Parameters<typeof core.workspace.get>) => {
-            try {
-              return await core.workspace.get(...args);
-            } finally {
-              workspaceFinished();
-            }
-          },
+        getWorkspace: async (...args: Parameters<typeof core.getWorkspace>) => {
+          try {
+            return await core.getWorkspace(...args);
+          } finally {
+            workspaceFinished();
+          }
         },
-        use: {
-          ...core.use,
-          set: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
+        setUse: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
         },
         setManagedOpenCode: async () => {
           writes++;
           throw new Error("Preview/cancel must not mutate the real fixture");
         },
-        sources: {
-          ...core.sources,
-          remove: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
+        removeSource: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
         },
-        installed: {
-          ...core.installed,
-          uninstall: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
+        uninstallSkills: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
         },
-        configSources: {
-          ...core.configSources,
-          remove: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
+        removeConfig: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
         },
-        collections: {
-          ...core.collections,
-          create: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
-          remove: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
-          editMembers: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
-          addMember: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
-          removeMember: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
-          importMembers: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
-          addReference: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
-          removeReference: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
-          setLink: async () => {
-            writes++;
-            throw new Error("Preview/cancel must not mutate the real fixture");
-          },
-          previewMemberEdit: async (
-            ...args: Parameters<typeof core.collections.previewMemberEdit>
-          ) => {
-            requests.push(args[0]);
-            try {
-              const receipt = await core.collections.previewMemberEdit(...args);
-              allowed.push(receipt.value.allowed);
-              return receipt;
-            } finally {
-              previewFinished();
-            }
-          },
+        createCollection: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
+        },
+        removeCollection: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
+        },
+        editMembers: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
+        },
+        addMember: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
+        },
+        removeMember: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
+        },
+        importMembers: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
+        },
+        addReference: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
+        },
+        removeReference: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
+        },
+        setLink: async () => {
+          writes++;
+          throw new Error("Preview/cancel must not mutate the real fixture");
+        },
+        previewMembershipBatch: async (...args: Parameters<typeof core.previewMembershipBatch>) => {
+          requests.push(args[1]);
+          try {
+            const receipt = await core.previewMembershipBatch(...args);
+            allowed.push(receipt.value.allowed);
+            return receipt;
+          } finally {
+            previewFinished();
+          }
         },
       };
-      setup = await testRender(() => <App core={traced} exit={() => {}} />, {
-        width: 144,
-        height: 40,
-      });
+      setup = await testRender(
+        () => <App core={traced} environment={environment} exit={() => {}} />,
+        {
+          width: 144,
+          height: 40,
+        },
+      );
       await workspaceDone;
       await setup.flush();
       await setup.waitFor(
@@ -193,13 +176,13 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
         await enterLive(setup, manage!.id);
         if (entry === "stale-address") {
           // An isolated competing edit after display, not a TUI write.
-          await core.collections.removeMember({
+          await core.removeMember(environment, {
             level: "project",
             collection: "team",
             name: "guide",
             expectedAddress: { source: "local-team", path: "guide" },
           });
-          await core.collections.addMember({
+          await core.addMember(environment, {
             level: "project",
             collection: "team",
             name: "guide",
@@ -266,7 +249,6 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
     }
   });
 }
-
 test("real Core batch preview and confirm accept NFC-equivalent names and write the canonical name", async () => {
   await mkdir("/tmp/opencode", { recursive: true });
   const root = await mkdtemp("/tmp/opencode/real-membership-nfc-");
@@ -280,17 +262,18 @@ test("real Core batch preview and confirm accept NFC-equivalent names and write 
       join(local, "guide", "SKILL.md"),
       "---\nname: guide\ndescription: NFC test\n---\n# Guide\n",
     );
-    const core = createSkillCliCore({ cwd: root, userConfigPath: join(root, "user.jsonc") });
-    await core.sources.register({
+    const environment = { cwd: root, userConfigPath: join(root, "user.jsonc") };
+    const core = api;
+    await core.registerSource(environment, {
       level: "project",
       id: "local-team",
       binding: { kind: "local", path: local, root: "" },
     });
-    await core.installed.install({ source: "local-team", paths: ["guide"] });
-    await core.collections.create({ level: "project", collection: "team" });
+    await core.installSkills(environment, { source: "local-team", paths: ["guide"] });
+    await core.createCollection(environment, { level: "project", collection: "team" });
     const decomposed = "cafe\u0301";
     const canonical = decomposed.normalize("NFC");
-    const effects = testEffects(core);
+    const effects = testEffects(core, environment);
     try {
       const review = await effects.previewCollection({
         kind: "membership-batch",
@@ -303,7 +286,7 @@ test("real Core batch preview and confirm accept NFC-equivalent names and write 
       if (review?.kind !== "membership-batch") throw new Error("Expected batch membership review");
       expect(review.impact.allowed).toBe(true);
       expect(await effects.confirmCollection(review)).toBe(true);
-      const workspace = (await core.workspace.get()).value;
+      const workspace = (await core.getWorkspace(environment)).value;
       const collection =
         workspace.effective.status === "complete"
           ? workspace.effective.collectionsView.find((item) => item.id === "team")

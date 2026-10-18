@@ -1,13 +1,11 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
-
 import { resolveCollections, type CollectionContribution } from "../../src/collection/graph";
-import { createSkillCliCore } from "../../src/create-core";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateCoordinator } from "../../src/storage/state";
 import { bindingDigest } from "../../src/source/identity";
-
 test("PROJ-011 references reveal targets without members while Links expose members", () => {
   const resolved = resolveCollections(
     [
@@ -31,7 +29,6 @@ test("PROJ-011 references reveal targets without members while Links expose memb
     docs: { collection: "shared", description: "Shared documentation" },
   });
 });
-
 test("rejects link cycles and conflicting linked names before publication", () => {
   expect(() =>
     resolveCollections(
@@ -52,7 +49,6 @@ test("rejects link cycles and conflicting linked names before publication", () =
     ),
   ).toThrow();
 });
-
 test("Collection resolution treats source and path as a structural Skill address", () => {
   expect(() =>
     resolveCollections(
@@ -76,7 +72,6 @@ test("Collection resolution treats source and path as a structural Skill address
     ),
   ).toThrow(/conflict/i);
 });
-
 test("MGMT-018 previews legal transitive and equal-direct Links while cycles and name conflicts reject", () => {
   const installed = [
     { source: "s", path: "review", name: "review" },
@@ -135,7 +130,6 @@ test("MGMT-018 previews legal transitive and equal-direct Links while cycles and
     ),
   ).toThrow(/conflict/i);
 });
-
 test("PROJ-008 retains duplicate JSONC Collection conflicts", () => {
   const contributions: readonly CollectionContribution[] = [
     {
@@ -157,7 +151,6 @@ test("PROJ-008 retains duplicate JSONC Collection conflicts", () => {
     "Collection is declared more than once: engineering",
   );
 });
-
 test("rejects two Config Source JSONC contributions for one effective Collection", () => {
   expect(() =>
     resolveCollections(
@@ -185,7 +178,6 @@ test("rejects two Config Source JSONC contributions for one effective Collection
     ),
   ).toThrow("Collection is declared more than once: team/shared");
 });
-
 test("PROJ-007/008 composes declared and repository-derived Collection contributions", () => {
   const resolved = resolveCollections(
     [
@@ -211,7 +203,6 @@ test("PROJ-007/008 composes declared and repository-derived Collection contribut
     ),
   ).toBe(false);
 });
-
 test("PROJ-009/010 preserves direct, independent, and multi-hop Link origin paths", () => {
   const address = { source: "local", path: "review" };
   const resolved = resolveCollections(
@@ -238,7 +229,6 @@ test("PROJ-009/010 preserves direct, independent, and multi-hop Link origin path
     { kind: "via-link", links: [{ collection: "engineering", linkedCollection: "shared" }] },
   ]);
 });
-
 test("PROJ-009 retains exact Membership and Link owners through deterministic routes", () => {
   const address = { source: "local", path: "review" };
   const owner = {
@@ -300,7 +290,6 @@ test("PROJ-009 retains exact Membership and Link owners through deterministic ro
     },
   ]);
 });
-
 test("derives repository collections, requires explicit Local memberships, and collapses equal identities", () => {
   const resolved = resolveCollections(
     [
@@ -321,7 +310,6 @@ test("derives repository collections, requires explicit Local memberships, and c
   ]);
   expect(resolved.members.get("local")!.get("review")).toEqual({ source: "local", path: "review" });
 });
-
 test("rejects derived collection entry collisions and validates conflicts through every reverse link", () => {
   expect(() =>
     resolveCollections(
@@ -353,7 +341,6 @@ test("rejects derived collection entry collisions and validates conflicts throug
     ),
   ).toThrow(/conflict/i);
 });
-
 test("MGMT-016 imports effective memberships as ordinary direct entries and rejects conflicts atomically", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-collection-import-"));
   const state = join(root, "state");
@@ -375,8 +362,8 @@ test("MGMT-016 imports effective memberships as ordinary direct entries and reje
       await new StateCoordinator(state).installLocal("s", name, skill);
     }
     process.env.SKILL_CLI_STATE_DIR = state;
-    const core = createSkillCliCore({ cwd: root });
-    await core.collections.importMembers({ level: "project", from: "source", into: "target" });
+    const core = { cwd: root };
+    await api.importMembers(core, { level: "project", from: "source", into: "target" });
     expect(JSON.parse(await readFile(file, "utf8")).collections.target.members).toEqual({
       keep: { source: "s", path: "keep" },
       review: { source: "s", path: "review" },
@@ -392,7 +379,7 @@ test("MGMT-016 imports effective memberships as ordinary direct entries and reje
     );
     const before = await readFile(file, "utf8");
     await expect(
-      core.collections.importMembers({ level: "project", from: "source", into: "target" }),
+      api.importMembers(core, { level: "project", from: "source", into: "target" }),
     ).rejects.toMatchObject({ code: "EXPOSURE_CONFLICT" });
     expect(await readFile(file, "utf8")).toBe(before);
   } finally {
@@ -400,7 +387,6 @@ test("MGMT-016 imports effective memberships as ordinary direct entries and reje
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-016 imports contributed derived and composed effective Collections into one direct owner", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-collection-import-origins-"));
   const state = join(root, "state");
@@ -467,13 +453,13 @@ test("MGMT-016 imports contributed derived and composed effective Collections in
         });
       else await coordinator.installLocal(source, path, skill);
     }
-    const core = createSkillCliCore({ cwd: root });
-    await core.collections.importMembers({
+    const core = { cwd: root };
+    await api.importMembers(core, {
       level: "project",
       from: "shared/contributed",
       into: "target",
     });
-    await core.collections.importMembers({ level: "project", from: "acme/skills", into: "target" });
+    await api.importMembers(core, { level: "project", from: "acme/skills", into: "target" });
     expect(
       JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).collections.target.members,
     ).toEqual({

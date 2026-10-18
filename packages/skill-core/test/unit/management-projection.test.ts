@@ -1,29 +1,24 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSkillCliCore } from "../../src/create-core";
 import { StateCoordinator } from "../../src/storage/state";
-import type { SourcesCapability } from "../../src/source/types";
-import type { InstalledCapability } from "../../src/installed/types";
-import type { ConfigSourcesCapability } from "../../src/config/types";
-import type { CollectionsCapability } from "../../src/collection/types";
 
 test("MGMT-029 execution requests accept no preview token generation or digest authority", () => {
   type Forbidden = "token" | "generation" | "digest";
   type Clean<T> = Extract<keyof T, Forbidden> extends never ? true : false;
   const requests: true[] = [
-    true as Clean<Parameters<SourcesCapability["remove"]>[0]>,
-    true as Clean<Parameters<InstalledCapability["rebind"]>[0]>,
-    true as Clean<Parameters<InstalledCapability["uninstall"]>[0]>,
-    true as Clean<Parameters<ConfigSourcesCapability["adopt"]>[0]>,
-    true as Clean<Parameters<ConfigSourcesCapability["forget"]>[0]>,
-    true as Clean<Parameters<ConfigSourcesCapability["remove"]>[0]>,
-    true as Clean<Parameters<CollectionsCapability["editMembers"]>[0]>,
+    true as Clean<Parameters<typeof import("@skill-cli/core").removeSource>[1]>,
+    true as Clean<Parameters<typeof import("@skill-cli/core").rebindSkill>[1]>,
+    true as Clean<Parameters<typeof import("@skill-cli/core").uninstallSkills>[1]>,
+    true as Clean<Parameters<typeof import("@skill-cli/core").adoptConfigSource>[1]>,
+    true as Clean<Parameters<typeof import("@skill-cli/core").forgetConfig>[1]>,
+    true as Clean<Parameters<typeof import("@skill-cli/core").removeConfig>[1]>,
+    true as Clean<Parameters<typeof import("@skill-cli/core").editMembers>[1]>,
   ];
   expect(requests).toEqual([true, true, true, true, true, true, true]);
 });
-
 test("PROJ-022 contains no private state or generic management fields in a real projection", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-containment-"));
   const global = join(root, "global.jsonc");
@@ -32,9 +27,7 @@ test("PROJ-022 contains no private state or generic management fields in a real 
     process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(global, "{}\n");
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    const projection = (
-      await createSkillCliCore({ cwd: root, userConfigPath: global }).workspace.get()
-    ).value;
+    const projection = (await api.getWorkspace({ cwd: root, userConfigPath: global })).value;
     const serialized = JSON.stringify(projection);
     for (const forbidden of [
       "generation",
@@ -56,7 +49,6 @@ test("PROJ-022 contains no private state or generic management fields in a real 
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("PROJ-023 uses only global project local Config levels in a real workspace", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-levels-"));
   const global = join(root, "global.jsonc");
@@ -67,7 +59,7 @@ test("PROJ-023 uses only global project local Config levels in a real workspace"
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     await writeFile(join(root, "skill-cli.local.jsonc"), "{}\n");
     const levels = (
-      await createSkillCliCore({ cwd: root, userConfigPath: global }).workspace.get()
+      await api.getWorkspace({ cwd: root, userConfigPath: global })
     ).value.configs.map((config) => config.level);
     expect(levels).toEqual(["global", "project", "local"]);
     expect(levels).not.toContain("user");
@@ -76,15 +68,14 @@ test("PROJ-023 uses only global project local Config levels in a real workspace"
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("PROJ-024 exposes one workspace authority and focused mutation results", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-authority-"));
   const state = join(root, "state");
   try {
     process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    const core = createSkillCliCore({ cwd: root });
-    const result = await core.sources.register({
+    const core = { cwd: root };
+    const result = await api.registerSource(core, {
       level: "project",
       id: "reviews",
       binding: { kind: "local", path: "./skills", root: "" },
@@ -100,7 +91,6 @@ test("PROJ-024 exposes one workspace authority and focused mutation results", as
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("PROJ-004/005/006 projects direct and unadopted Remote Config Sources without cache or provider access", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-unit-"));
   const state = join(root, "state");
@@ -116,7 +106,7 @@ test("PROJ-004/005/006 projects direct and unadopted Remote Config Sources witho
         sources: { local: { kind: "local", path: "./skills", root: "" } },
       }),
     );
-    const projection = (await createSkillCliCore({ cwd: root }).workspace.get()).value;
+    const projection = (await api.getWorkspace({ cwd: root })).value;
     const project = projection.configs.find((view) => view.level === "project")!;
     expect(project.direct.configSources).toEqual([
       expect.objectContaining({
@@ -133,7 +123,6 @@ test("PROJ-004/005/006 projects direct and unadopted Remote Config Sources witho
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("PROJ direct Source rows retain binding tracked refs apart from declaration ownership", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-tracked-ref-"));
   const state = join(root, "state");
@@ -150,7 +139,7 @@ test("PROJ direct Source rows retain binding tracked refs apart from declaration
         },
       }),
     );
-    const project = (await createSkillCliCore({ cwd: root }).workspace.get()).value.configs.find(
+    const project = (await api.getWorkspace({ cwd: root })).value.configs.find(
       (view) => view.level === "project",
     )!;
     const source = (id: string) => project.direct.sources.find((item) => item.id === id)!;
@@ -163,7 +152,6 @@ test("PROJ direct Source rows retain binding tracked refs apart from declaration
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("PROJ-017 excludes unresolved owners from selectors without blocking structural reads", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-content-"));
   const global = join(root, "global.jsonc");
@@ -183,13 +171,13 @@ test("PROJ-017 excludes unresolved owners from selectors without blocking struct
       }),
     );
     await new StateCoordinator(state).installLocal("gone", "review", skill);
-    const core = createSkillCliCore({ cwd: root, userConfigPath: global });
-    await expect(core.content.load({ selector: "reviews:review" })).rejects.toMatchObject({
+    const core = { cwd: root, userConfigPath: global };
+    await expect(api.loadSkill(core, { selector: "reviews:review" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
-    expect((await core.installed.load({ address: { source: "gone", path: "review" } })).name).toBe(
-      "review",
-    );
+    expect(
+      (await api.loadInstalledSkill(core, { address: { source: "gone", path: "review" } })).name,
+    ).toBe("review");
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });

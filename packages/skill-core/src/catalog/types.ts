@@ -1,5 +1,5 @@
 import type { ConfigDeclarationOwner } from "../config/types";
-import type { Diagnostic, Operation } from "../shared";
+import type { Diagnostic } from "../shared";
 import type { SkillMetadata } from "../content/text";
 
 export interface CatalogSkill extends SkillMetadata {
@@ -49,9 +49,4 @@ export interface SearchSkillsRequest extends BrowseCatalogRequest {
 export interface SearchSkillsResult {
   readonly truncated: boolean;
   readonly results: readonly CatalogSkill[];
-}
-
-export interface CatalogCapability {
-  browse: Operation<BrowseCatalogRequest, AgentBrowseProjection>;
-  search: Operation<SearchSkillsRequest, SearchSkillsResult>;
 }

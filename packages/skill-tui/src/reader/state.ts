@@ -3,26 +3,10 @@ import { createSignal, untrack } from "solid-js";
 import { skillAddressKey, type ReaderState } from "../types";
 
 export type ReaderAddress = { readonly source: string; readonly path: string };
-type ReaderContent = {
-  load(
-    request: { readonly address: ReaderAddress },
-    options?: { readonly signal?: AbortSignal },
-  ): Promise<{
-    readonly address: ReaderAddress;
-    readonly name: string;
-    readonly description: string;
-    readonly rawText: string;
-    readonly markdownText: string;
-  }>;
-  listResources(
-    request: { readonly address: ReaderAddress },
-    options?: { readonly signal?: AbortSignal },
-  ): Promise<readonly import("@skill-cli/core").ResourceDescriptor[]>;
-  read(
-    request: { readonly address: ReaderAddress; readonly path: string },
-    options?: { readonly signal?: AbortSignal },
-  ): Promise<import("@skill-cli/core").InstalledResourceResult>;
-};
+type ReaderContent = Pick<
+  typeof import("@skill-cli/core"),
+  "loadInstalledSkill" | "listInstalledResources" | "readInstalledResource"
+>;
 type Lane = "content" | "resource";
 interface ReaderCache {
   readonly activeKey?: string;
@@ -50,6 +34,7 @@ const diagnostic = (error: unknown): Diagnostic => ({
 export function createReaderOwner(
   content: ReaderContent,
   onAcceptedFailure: () => void = () => {},
+  environment: import("@skill-cli/core").CoreOptions = { cwd: process.cwd() },
 ) {
   const [snapshot, setSnapshot] = createSignal<ReaderCache>({ cache: {}, epochs: {} });
   const state = () => untrack(snapshot);
@@ -132,7 +117,11 @@ export function createReaderOwner(
     contentRequest = request;
     const active = () => !closed && contentRequest === request && !controller.signal.aborted;
     try {
-      const value = await content.load({ address }, { signal: controller.signal });
+      const value = await content.loadInstalledSkill(
+        environment,
+        { address },
+        { signal: controller.signal },
+      );
       if (!active()) return undefined;
       accept(address, "content", epoch, {
         text: value.markdownText,
@@ -281,14 +270,14 @@ export function createReaderOwner(
       resource(
         address,
         { resourceLevel: "list" },
-        (signal) => content.listResources({ address }, { signal }),
+        (signal) => content.listInstalledResources(environment, { address }, { signal }),
         (resources) => ({ resources, resourcesLoaded: true }),
       ),
     read: (address: ReaderAddress, path: string) =>
       resource(
         address,
         { selectedResource: path, resource: undefined, resourceLevel: "content" },
-        (signal) => content.read({ address, path }, { signal }),
+        (signal) => content.readInstalledResource(environment, { address, path }, { signal }),
         (value) => ({ selectedResource: value.path, resource: value, resourceLevel: "content" }),
       ),
     cancelContent,

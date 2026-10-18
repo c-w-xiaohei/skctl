@@ -1,3 +1,11 @@
+import type { DiscoveredSkillCandidate } from "../source/types";
+import type { InstallRequest } from "./types";
+import type { RebindImpact } from "./types";
+import type { RebindRequest } from "./types";
+import type { UninstallImpact } from "./types";
+import type { InstalledSelection } from "./types";
+import type { OperationResult } from "../shared";
+import type { OperationOptions } from "../shared";
 import { openRemote } from "../source/acquisition";
 import { sourceFor, validPaths, localRoot } from "../source/roots";
 import { assertOwner, installedForMutation, invokePublicationHook } from "./update";
@@ -10,9 +18,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import type { CoreFactoryOptions } from "../shared";
-
-import type { InstalledCapability } from "./types";
+import type { CoreOptions } from "../shared";
 
 import { SkillCliError } from "../shared";
 
@@ -123,338 +129,354 @@ function rebindProof(
   return proven ? "proven" : "distinct";
 }
 
-export function createInstalled(options: CoreFactoryOptions) {
+export async function previewUninstall(
+  options: CoreOptions,
+  request: InstalledSelection,
+  operation?: OperationOptions,
+): Promise<OperationResult<UninstallImpact>> {
+  const workspace = await readWorkspace({ ...options, signal: operation?.signal });
+  const selected = workspace.value.installedSkills.filter(
+    (item) => item.address.source === request.source && request.paths.includes(item.address.path),
+  );
+  if (
+    selected.length !== request.paths.length ||
+    new Set(request.paths).size !== request.paths.length
+  )
+    throw new SkillCliError("SKILL_NOT_FOUND", "Installed Skill was not found");
+  const directMemberships = selected.flatMap((item) =>
+    item.collections.flatMap(({ paths }) =>
+      paths.flatMap((path) => (path.kind === "direct" && path.owner ? [path.owner] : [])),
+    ),
+  );
+  const disappearingSelectors = selected.flatMap((item) =>
+    item.collections
+      .filter((collection) => item.selectors.includes(`${collection.id}:${collection.entry}`))
+      .map((collection) => ({
+        selector: `${collection.id}:${collection.entry}`,
+        address: item.address,
+        paths: collection.paths,
+      })),
+  );
+  return {
+    value: {
+      kind: "uninstall",
+      installed: selected.map((item) => item.address),
+      directMemberships,
+      disappearingSelectors,
+      retainedSelectors: [],
+      blockers: directMemberships.map((owner) => ({ reason: "membership" as const, owner })),
+      allowed: !directMemberships.length,
+    },
+    diagnostics: workspace.diagnostics,
+  };
+}
+
+export async function previewRebind(
+  options: CoreOptions,
+  request: RebindRequest,
+  operation?: OperationOptions,
+): Promise<OperationResult<RebindImpact>> {
+  const workspace = await readWorkspace({ ...options, signal: operation?.signal });
+  const state = capturedWorkspace(workspace.value)?.state;
+  const item = state?.installed.find(
+    (candidate) => candidate.source === request.source && candidate.path === request.path,
+  );
+  if (!item) throw new SkillCliError("SKILL_NOT_FOUND", "Installed Skill was not found");
+  const owner = capturedWorkspace(workspace.value)?.sources.get(request.owner);
+  const previous = capturedWorkspace(workspace.value)?.sources.get(request.source);
+  const ownerPath = request.ownerPath ?? item.path;
+  const root = owner ? [owner.root, ownerPath].filter(Boolean).join("/") : "";
+  const proof = rebindProof(item, previous, owner, root);
+  return {
+    value: {
+      kind: "rebind",
+      address: { source: request.source, path: request.path },
+      owner: request.owner,
+      ownerPath,
+      proof,
+      allowed: proof === "proven",
+    },
+    diagnostics: workspace.diagnostics,
+  };
+}
+
+export async function installSkills(
+  options: CoreOptions,
+  request: InstallRequest,
+  operation?: OperationOptions,
+): Promise<OperationResult<readonly DiscoveredSkillCandidate[]>> {
   const coordinator = new StateCoordinator();
-  const previewUninstall: InstalledCapability["previewUninstall"] = async (request, operation) => {
-    const workspace = await readWorkspace({ ...options, signal: operation?.signal });
-    const selected = workspace.value.installedSkills.filter(
-      (item) => item.address.source === request.source && request.paths.includes(item.address.path),
+
+  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  const { binding, network: policy } = await sourceFor(options, request.source, operation?.signal);
+  if (binding.kind === "local" && request.exactRevision)
+    throw new SkillCliError("INVALID_ARGUMENT", "Local Source does not accept a revision");
+  if (
+    binding.kind !== "local" &&
+    (!request.exactRevision || !/^[a-f0-9]{40}$/u.test(request.exactRevision))
+  )
+    throw new SkillCliError("INVALID_ARGUMENT", "Remote Source requires an exact revision");
+  validPaths(request.paths);
+  if (!request.paths.length) throw new SkillCliError("SKILL_NOT_FOUND", "No selected Skill Roots");
+  let materialized: Candidate[];
+  let remote: Awaited<ReturnType<typeof materializeRemoteRoots>> | undefined;
+  const digestByPath = new Map<string, string>();
+  try {
+    const selected: Candidate[] = [];
+    if (binding.kind === "local") {
+      for (const path of request.paths) {
+        const root = await localRoot(binding, path, coordinator);
+        if (root.status !== "present")
+          throw new SkillCliError("SKILL_NOT_FOUND", "Selected Skill Root is unavailable");
+        selected.push(root.candidate);
+        digestByPath.set(path, root.digest);
+      }
+      materialized = selected;
+    } else {
+      const network = createSourceOperation({
+        ...policy,
+        source: binding.id,
+        signal: operation?.signal,
+      });
+      let snapshot: RemoteSnapshot | undefined;
+      try {
+        snapshot = await openRemote(binding, options, request.exactRevision!, network);
+        for (const result of await snapshot.inspectRoots(request.paths, network.signal)) {
+          const candidate =
+            result.status === "present" && result.tree
+              ? await remoteCandidate(snapshot, result.path, result.tree, network.signal)
+              : undefined;
+          if (!candidate)
+            throw new SkillCliError("SKILL_NOT_FOUND", "Selected Skill Root is unavailable");
+          selected.push(candidate);
+        }
+        remote = await materializeRemoteRoots(snapshot, selected, network.signal);
+        materialized = remote.roots;
+        network.throwIfAborted("install preparation");
+      } finally {
+        try {
+          await snapshot?.close();
+        } finally {
+          network.dispose();
+        }
+      }
+    }
+    for (const candidate of materialized) {
+      const digest = await coordinator.snapshotDigest(candidate.root);
+      if (binding.kind === "local" && digest !== digestByPath.get(candidate.path))
+        throw new SkillCliError(
+          "TRANSACTION_CONFLICT",
+          "Local Root changed during install preparation",
+        );
+      if (binding.kind !== "local") digestByPath.set(candidate.path, digest);
+    }
+    await invokePublicationHook();
+    if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+    await coordinator.withLock(async () => {
+      let currentBinding: InternalSourceBinding;
+      try {
+        ({ binding: currentBinding } = await sourceFor(options, request.source, operation?.signal));
+      } catch (error) {
+        if (error instanceof SkillCliError && error.code === "SOURCE_NOT_FOUND")
+          throw new SkillCliError("CONFIG_CONFLICT", "Source binding disappeared during install");
+        throw error;
+      }
+      if (currentBinding.bindingDigest !== binding.bindingDigest)
+        throw new SkillCliError("CONFIG_CONFLICT", "Source binding changed during install");
+      const state = await coordinator.read();
+      const installed = await installedForMutation(options, coordinator, state);
+      assertOwner(state, currentBinding);
+      const workspace = await readWorkspaceUnlocked(options, coordinator);
+      if (workspace.value.effective.status !== "complete")
+        throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
+      const additionsIdentity = new Set(
+        materialized.map((candidate) => identity(binding, candidate.path)),
+      );
+      for (const item of installed) {
+        const owner = capturedWorkspace(workspace.value)?.sources.get(item.source);
+        if (!owner || !additionsIdentity.has(identity(owner, item.path))) continue;
+        if (item.source !== binding.id)
+          throw new SkillCliError(
+            "CONFIG_CONFLICT",
+            "Installed Skill identity already belongs to another Source",
+          );
+      }
+      const retained = installed.filter(
+        (item) =>
+          !materialized.some(
+            (candidate) => item.source === binding.id && item.path === candidate.path,
+          ),
+      );
+      const additions = materialized.map(
+        (candidate): InstalledMaterialization => ({
+          source: binding.id,
+          path: candidate.path,
+          name: candidate.name,
+          description: candidate.description,
+          digest: digestByPath.get(candidate.path)!,
+          bindingDigest: binding.bindingDigest,
+          identityEvidence: {
+            status: "known",
+            canonicalOrigin: binding.origin,
+            originRelativeSkillRoot: [binding.root, candidate.path].filter(Boolean).join("/"),
+          },
+          ...(binding.kind === "local"
+            ? { kind: "local", root: resolve(candidate.root) }
+            : {
+                kind: "remote",
+                name:
+                  installed.find(
+                    (item) => item.source === binding.id && item.path === candidate.path,
+                  )?.name ?? candidate.name,
+                adoptedRevision: candidate.revision!,
+                treeIdentity: candidate.tree!,
+              }),
+        }),
+      );
+      const next: InstalledMaterialization[] = [...retained, ...additions];
+      await resolveEffectiveCollections(
+        options,
+        workspace.value,
+        { ...state, installed: next },
+        coordinator,
+      );
+      if (binding.kind === "local")
+        for (const candidate of materialized) {
+          const root = await localRoot(currentBinding, candidate.path, coordinator);
+          if (
+            root.status !== "present" ||
+            root.digest !== digestByPath.get(candidate.path) ||
+            root.candidate.name !== candidate.name ||
+            root.candidate.description !== candidate.description
+          )
+            throw new SkillCliError("TRANSACTION_CONFLICT", "Local Root changed during install");
+        }
+      if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+      if (remote)
+        for (const candidate of materialized)
+          await coordinator.publishSnapshot(digestByPath.get(candidate.path)!, candidate.root);
+      await coordinator.write({ installed: next, configs: state.configs }, state.generation);
+    });
+  } finally {
+    if (remote) await rm(remote.stage, { recursive: true, force: true });
+  }
+  return {
+    value: materialized.map(({ tree: _tree, ...candidate }) => candidate),
+    diagnostics: [],
+  };
+}
+
+export async function uninstallSkills(
+  options: CoreOptions,
+  request: InstalledSelection,
+  operation?: OperationOptions,
+): Promise<OperationResult<void>> {
+  const coordinator = new StateCoordinator();
+
+  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  await coordinator.withLock(async () => {
+    const state = await coordinator.read();
+    const installed = await installedForMutation(options, coordinator, state);
+    const selected = installed.filter(
+      (item) => item.source === request.source && request.paths.includes(item.path),
     );
     if (
       selected.length !== request.paths.length ||
       new Set(request.paths).size !== request.paths.length
     )
       throw new SkillCliError("SKILL_NOT_FOUND", "Installed Skill was not found");
-    const directMemberships = selected.flatMap((item) =>
-      item.collections.flatMap(({ paths }) =>
-        paths.flatMap((path) => (path.kind === "direct" && path.owner ? [path.owner] : [])),
-      ),
+    const workspace = await readWorkspaceUnlocked(options, coordinator);
+    const selectedAddresses = new Set(selected.map((item) => skillAddressKey(item)));
+    const blockers = workspace.value.installedSkills.flatMap((item) =>
+      selectedAddresses.has(skillAddressKey(item.address))
+        ? item.collections.flatMap(({ paths }) =>
+            paths.flatMap((path) => (path.kind === "direct" && path.owner ? [path.owner] : [])),
+          )
+        : [],
     );
-    const disappearingSelectors = selected.flatMap((item) =>
-      item.collections
-        .filter((collection) => item.selectors.includes(`${collection.id}:${collection.entry}`))
-        .map((collection) => ({
-          selector: `${collection.id}:${collection.entry}`,
-          address: item.address,
-          paths: collection.paths,
-        })),
-    );
-    return {
-      value: {
-        kind: "uninstall",
-        installed: selected.map((item) => item.address),
-        directMemberships,
-        disappearingSelectors,
-        retainedSelectors: [],
-        blockers: directMemberships.map((owner) => ({ reason: "membership" as const, owner })),
-        allowed: !directMemberships.length,
+    if (blockers.length)
+      throw new SkillCliError(
+        "CONFIG_CONFLICT",
+        "Installed Skill has direct Membership dependencies",
+      );
+    await coordinator.write(
+      {
+        installed: installed.filter((item) => !selected.includes(item)),
+        configs: state.configs,
       },
-      diagnostics: workspace.diagnostics,
-    };
-  };
-  const previewRebind: InstalledCapability["previewRebind"] = async (request, operation) => {
-    const workspace = await readWorkspace({ ...options, signal: operation?.signal });
-    const state = capturedWorkspace(workspace.value)?.state;
-    const item = state?.installed.find(
+      state.generation,
+    );
+  });
+  return { value: undefined, diagnostics: [] };
+}
+
+export async function rebindSkill(
+  options: CoreOptions,
+  request: RebindRequest,
+  operation?: OperationOptions,
+): Promise<OperationResult<void>> {
+  const coordinator = new StateCoordinator();
+
+  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  const { binding: owner } = await sourceFor(options, request.owner);
+  await invokePublicationHook();
+  await coordinator.withLock(async () => {
+    const { binding: currentOwner } = await sourceFor(options, request.owner).catch((error) => {
+      if (error instanceof SkillCliError && error.code === "SOURCE_NOT_FOUND")
+        throw new SkillCliError("CONFIG_CONFLICT", "Source binding disappeared during rebind");
+      throw error;
+    });
+    if (currentOwner.bindingDigest !== owner.bindingDigest)
+      throw new SkillCliError("CONFIG_CONFLICT", "Source binding changed during rebind");
+    const state = await coordinator.read();
+    const installed = await installedForMutation(options, coordinator, state);
+    const item = installed.find(
       (candidate) => candidate.source === request.source && candidate.path === request.path,
     );
     if (!item) throw new SkillCliError("SKILL_NOT_FOUND", "Installed Skill was not found");
-    const owner = capturedWorkspace(workspace.value)?.sources.get(request.owner);
-    const previous = capturedWorkspace(workspace.value)?.sources.get(request.source);
     const ownerPath = request.ownerPath ?? item.path;
-    const root = owner ? [owner.root, ownerPath].filter(Boolean).join("/") : "";
-    const proof = rebindProof(item, previous, owner, root);
-    return {
-      value: {
-        kind: "rebind",
-        address: { source: request.source, path: request.path },
-        owner: request.owner,
-        ownerPath,
-        proof,
-        allowed: proof === "proven",
-      },
-      diagnostics: workspace.diagnostics,
-    };
-  };
-
-  const install: InstalledCapability["install"] = async (request, operation) => {
-    if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
-    const { binding, network: policy } = await sourceFor(
-      options,
-      request.source,
-      operation?.signal,
-    );
-    if (binding.kind === "local" && request.exactRevision)
-      throw new SkillCliError("INVALID_ARGUMENT", "Local Source does not accept a revision");
-    if (
-      binding.kind !== "local" &&
-      (!request.exactRevision || !/^[a-f0-9]{40}$/u.test(request.exactRevision))
-    )
-      throw new SkillCliError("INVALID_ARGUMENT", "Remote Source requires an exact revision");
-    validPaths(request.paths);
-    if (!request.paths.length)
-      throw new SkillCliError("SKILL_NOT_FOUND", "No selected Skill Roots");
-    let materialized: Candidate[];
-    let remote: Awaited<ReturnType<typeof materializeRemoteRoots>> | undefined;
-    const digestByPath = new Map<string, string>();
-    try {
-      const selected: Candidate[] = [];
-      if (binding.kind === "local") {
-        for (const path of request.paths) {
-          const root = await localRoot(binding, path, coordinator);
-          if (root.status !== "present")
-            throw new SkillCliError("SKILL_NOT_FOUND", "Selected Skill Root is unavailable");
-          selected.push(root.candidate);
-          digestByPath.set(path, root.digest);
-        }
-        materialized = selected;
-      } else {
-        const network = createSourceOperation({
-          ...policy,
-          source: binding.id,
-          signal: operation?.signal,
-        });
-        let snapshot: RemoteSnapshot | undefined;
-        try {
-          snapshot = await openRemote(binding, options, request.exactRevision!, network);
-          for (const result of await snapshot.inspectRoots(request.paths, network.signal)) {
-            const candidate =
-              result.status === "present" && result.tree
-                ? await remoteCandidate(snapshot, result.path, result.tree, network.signal)
-                : undefined;
-            if (!candidate)
-              throw new SkillCliError("SKILL_NOT_FOUND", "Selected Skill Root is unavailable");
-            selected.push(candidate);
-          }
-          remote = await materializeRemoteRoots(snapshot, selected, network.signal);
-          materialized = remote.roots;
-          network.throwIfAborted("install preparation");
-        } finally {
-          try {
-            await snapshot?.close();
-          } finally {
-            network.dispose();
-          }
-        }
-      }
-      for (const candidate of materialized) {
-        const digest = await coordinator.snapshotDigest(candidate.root);
-        if (binding.kind === "local" && digest !== digestByPath.get(candidate.path))
-          throw new SkillCliError(
-            "TRANSACTION_CONFLICT",
-            "Local Root changed during install preparation",
-          );
-        if (binding.kind !== "local") digestByPath.set(candidate.path, digest);
-      }
-      await invokePublicationHook();
-      if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
-      await coordinator.withLock(async () => {
-        let currentBinding: InternalSourceBinding;
-        try {
-          ({ binding: currentBinding } = await sourceFor(
-            options,
-            request.source,
-            operation?.signal,
-          ));
-        } catch (error) {
-          if (error instanceof SkillCliError && error.code === "SOURCE_NOT_FOUND")
-            throw new SkillCliError("CONFIG_CONFLICT", "Source binding disappeared during install");
-          throw error;
-        }
-        if (currentBinding.bindingDigest !== binding.bindingDigest)
-          throw new SkillCliError("CONFIG_CONFLICT", "Source binding changed during install");
-        const state = await coordinator.read();
-        const installed = await installedForMutation(options, coordinator, state);
-        assertOwner(state, currentBinding);
-        const workspace = await readWorkspaceUnlocked(options, coordinator);
-        if (workspace.value.effective.status !== "complete")
-          throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
-        const additionsIdentity = new Set(
-          materialized.map((candidate) => identity(binding, candidate.path)),
-        );
-        for (const item of installed) {
-          const owner = capturedWorkspace(workspace.value)?.sources.get(item.source);
-          if (!owner || !additionsIdentity.has(identity(owner, item.path))) continue;
-          if (item.source !== binding.id)
-            throw new SkillCliError(
-              "CONFIG_CONFLICT",
-              "Installed Skill identity already belongs to another Source",
-            );
-        }
-        const retained = installed.filter(
-          (item) =>
-            !materialized.some(
-              (candidate) => item.source === binding.id && item.path === candidate.path,
-            ),
-        );
-        const additions = materialized.map(
-          (candidate): InstalledMaterialization => ({
-            source: binding.id,
-            path: candidate.path,
-            name: candidate.name,
-            description: candidate.description,
-            digest: digestByPath.get(candidate.path)!,
-            bindingDigest: binding.bindingDigest,
-            identityEvidence: {
-              status: "known",
-              canonicalOrigin: binding.origin,
-              originRelativeSkillRoot: [binding.root, candidate.path].filter(Boolean).join("/"),
-            },
-            ...(binding.kind === "local"
-              ? { kind: "local", root: resolve(candidate.root) }
-              : {
-                  kind: "remote",
-                  name:
-                    installed.find(
-                      (item) => item.source === binding.id && item.path === candidate.path,
-                    )?.name ?? candidate.name,
-                  adoptedRevision: candidate.revision!,
-                  treeIdentity: candidate.tree!,
-                }),
-          }),
-        );
-        const next: InstalledMaterialization[] = [...retained, ...additions];
-        await resolveEffectiveCollections(
-          options,
-          workspace.value,
-          { ...state, installed: next },
-          coordinator,
-        );
-        if (binding.kind === "local")
-          for (const candidate of materialized) {
-            const root = await localRoot(currentBinding, candidate.path, coordinator);
-            if (
-              root.status !== "present" ||
-              root.digest !== digestByPath.get(candidate.path) ||
-              root.candidate.name !== candidate.name ||
-              root.candidate.description !== candidate.description
-            )
-              throw new SkillCliError("TRANSACTION_CONFLICT", "Local Root changed during install");
-          }
-        if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
-        if (remote)
-          for (const candidate of materialized)
-            await coordinator.publishSnapshot(digestByPath.get(candidate.path)!, candidate.root);
-        await coordinator.write({ installed: next, configs: state.configs }, state.generation);
-      });
-    } finally {
-      if (remote) await rm(remote.stage, { recursive: true, force: true });
-    }
-    return {
-      value: materialized.map(({ tree: _tree, ...candidate }) => candidate),
-      diagnostics: [],
-    };
-  };
-  const uninstall: InstalledCapability["uninstall"] = async (request, operation) => {
-    if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
-    await coordinator.withLock(async () => {
-      const state = await coordinator.read();
-      const installed = await installedForMutation(options, coordinator, state);
-      const selected = installed.filter(
-        (item) => item.source === request.source && request.paths.includes(item.path),
-      );
+    const previousInput = await sourceFor(options, request.source).catch((error) => {
       if (
-        selected.length !== request.paths.length ||
-        new Set(request.paths).size !== request.paths.length
+        error instanceof SkillCliError &&
+        (error.code === "SOURCE_NOT_FOUND" || error.code === "CONFIG_CONFLICT")
       )
-        throw new SkillCliError("SKILL_NOT_FOUND", "Installed Skill was not found");
-      const workspace = await readWorkspaceUnlocked(options, coordinator);
-      const selectedAddresses = new Set(selected.map((item) => skillAddressKey(item)));
-      const blockers = workspace.value.installedSkills.flatMap((item) =>
-        selectedAddresses.has(skillAddressKey(item.address))
-          ? item.collections.flatMap(({ paths }) =>
-              paths.flatMap((path) => (path.kind === "direct" && path.owner ? [path.owner] : [])),
-            )
-          : [],
-      );
-      if (blockers.length)
-        throw new SkillCliError(
-          "CONFIG_CONFLICT",
-          "Installed Skill has direct Membership dependencies",
-        );
-      await coordinator.write(
-        {
-          installed: installed.filter((item) => !selected.includes(item)),
-          configs: state.configs,
-        },
-        state.generation,
-      );
+        return undefined;
+      throw error;
     });
-    return { value: undefined, diagnostics: [] };
-  };
-  const rebind: InstalledCapability["rebind"] = async (request, operation) => {
-    if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
-    const { binding: owner } = await sourceFor(options, request.owner);
-    await invokePublicationHook();
-    await coordinator.withLock(async () => {
-      const { binding: currentOwner } = await sourceFor(options, request.owner).catch((error) => {
-        if (error instanceof SkillCliError && error.code === "SOURCE_NOT_FOUND")
-          throw new SkillCliError("CONFIG_CONFLICT", "Source binding disappeared during rebind");
-        throw error;
-      });
-      if (currentOwner.bindingDigest !== owner.bindingDigest)
-        throw new SkillCliError("CONFIG_CONFLICT", "Source binding changed during rebind");
-      const state = await coordinator.read();
-      const installed = await installedForMutation(options, coordinator, state);
-      const item = installed.find(
-        (candidate) => candidate.source === request.source && candidate.path === request.path,
+    const currentPrevious = previousInput?.binding;
+    const newRoot = [currentOwner.root, ownerPath].filter(Boolean).join("/");
+    const proof = rebindProof(item, currentPrevious, currentOwner, newRoot);
+    if (proof === "unprovable")
+      throw new SkillCliError(
+        "REBIND_UNPROVABLE",
+        "Rebind cannot prove an Installed Skill identity",
       );
-      if (!item) throw new SkillCliError("SKILL_NOT_FOUND", "Installed Skill was not found");
-      const ownerPath = request.ownerPath ?? item.path;
-      const previousInput = await sourceFor(options, request.source).catch((error) => {
-        if (
-          error instanceof SkillCliError &&
-          (error.code === "SOURCE_NOT_FOUND" || error.code === "CONFIG_CONFLICT")
-        )
-          return undefined;
-        throw error;
-      });
-      const currentPrevious = previousInput?.binding;
-      const newRoot = [currentOwner.root, ownerPath].filter(Boolean).join("/");
-      const proof = rebindProof(item, currentPrevious, currentOwner, newRoot);
-      if (proof === "unprovable")
-        throw new SkillCliError(
-          "REBIND_UNPROVABLE",
-          "Rebind cannot prove an Installed Skill identity",
-        );
-      if (proof !== "proven")
-        throw new SkillCliError(
-          "CONFIG_CONFLICT",
-          "Rebind does not preserve Installed Skill identity",
-        );
-      await coordinator.write(
-        {
-          installed: installed.map((candidate) =>
-            candidate === item
-              ? {
-                  ...candidate,
-                  source: currentOwner.id,
-                  path: ownerPath,
-                  bindingDigest: currentOwner.bindingDigest,
-                  identityEvidence: {
-                    status: "known",
-                    canonicalOrigin: currentOwner.origin,
-                    originRelativeSkillRoot: newRoot,
-                  },
-                }
-              : candidate,
-          ),
-          configs: state.configs,
-        },
-        state.generation,
+    if (proof !== "proven")
+      throw new SkillCliError(
+        "CONFIG_CONFLICT",
+        "Rebind does not preserve Installed Skill identity",
       );
-    });
-    return { value: undefined, diagnostics: [] };
-  };
-  return { install, uninstall, previewUninstall, rebind, previewRebind };
+    await coordinator.write(
+      {
+        installed: installed.map((candidate) =>
+          candidate === item
+            ? {
+                ...candidate,
+                source: currentOwner.id,
+                path: ownerPath,
+                bindingDigest: currentOwner.bindingDigest,
+                identityEvidence: {
+                  status: "known",
+                  canonicalOrigin: currentOwner.origin,
+                  originRelativeSkillRoot: newRoot,
+                },
+              }
+            : candidate,
+        ),
+        configs: state.configs,
+      },
+      state.generation,
+    );
+  });
+  return { value: undefined, diagnostics: [] };
 }

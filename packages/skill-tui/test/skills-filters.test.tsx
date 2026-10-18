@@ -12,13 +12,12 @@ import {
   readerTab,
   selectedReaderTab,
 } from "./reader-test-controls";
-
 test("RENDER Skills browser owns slash query and updates its local result count", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -47,7 +46,6 @@ test("RENDER Skills browser owns slash query and updates its local result count"
     setup.renderer.destroy();
   }
 });
-
 test("RENDER filtering selected A reconciles Reader and Details Actions to visible B", async () => {
   const loads: string[] = [];
   const checks: string[] = [];
@@ -55,26 +53,27 @@ test("RENDER filtering selected A reconciles Reader and Details Actions to visib
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async ({ address }) => {
-              loads.push(address.path);
-              return { ...readerContent, address, name: address.path };
-            },
-            checkUpdate: async ({ source }) => {
-              checks.push(source);
-              return {
-                value: {
-                  source,
-                  kind: "github",
-                  exactRevision: "a".repeat(40),
-                  changed: [{ path: "reference", name: "reference", description: "reference" }],
-                  added: [],
-                  removed: [],
-                  unchanged: [],
-                },
-                diagnostics: [],
-              };
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => {
+            loads.push(address.path);
+            return { ...readerContent, address, name: address.path };
+          },
+          checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+            checks.push(source);
+            return {
+              value: {
+                source,
+                kind: "github",
+                exactRevision: "a".repeat(40),
+                changed: [{ path: "reference", name: "reference", description: "reference" }],
+                added: [],
+                removed: [],
+                unchanged: [],
+              },
+              diagnostics: [],
+            };
           },
         })}
         exit={() => {}}

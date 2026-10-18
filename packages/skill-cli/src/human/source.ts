@@ -2,8 +2,7 @@ import type { Command } from "commander";
 import { SkillCliError } from "@skill-cli/core";
 import type { CommandContext } from "../command-context";
 import { formatChange, formatObservation, scope, scopeOptions, sourceBinding } from "./shared";
-
-export function sourceCommand(parent: Command, { core, stdout }: CommandContext) {
+export function sourceCommand(parent: Command, { api, environment, stdout }: CommandContext) {
   const source = parent
     .command("source")
     .description("Register discovery boundaries and inspect their candidate Skill Roots.");
@@ -22,7 +21,7 @@ export function sourceCommand(parent: Command, { core, stdout }: CommandContext)
         throw new SkillCliError("INVALID_ARGUMENT", "Source kind must be local, git, or github");
       if (kind !== "local" && flags.ref === undefined)
         throw new SkillCliError("INVALID_ARGUMENT", "Remote Source requires --ref");
-      const { value } = await core(action).sources.register({
+      const { value } = await api.registerSource(environment(action), {
         level: scope(flags)!,
         id,
         binding: sourceBinding(kind, origin, flags),
@@ -33,7 +32,7 @@ export function sourceCommand(parent: Command, { core, stdout }: CommandContext)
     .description("Remove a directly declared Source at one scope when it owns no installed Skills.")
     .action(async (id, flags, action) => {
       const selectedScope = scope(flags, null);
-      await core(action).sources.remove({ source: id, level: selectedScope });
+      await api.removeSource(environment(action), { source: id, level: selectedScope });
       stdout.write(
         `Removed source "${id}"${selectedScope ? ` from ${selectedScope} scope` : ""}.\n`,
       );
@@ -43,7 +42,7 @@ export function sourceCommand(parent: Command, { core, stdout }: CommandContext)
     .description("Observe candidate Skill Roots at the tracked revision without installing them.")
     .option("--json")
     .action(async (id, flags, action) => {
-      const { value } = await core(action).sources.discover({ source: id });
+      const { value } = await api.discoverSkills(environment(action), { source: id });
       stdout.write(
         formatObservation(value, !!flags.json, [
           ...(value.exactRevision ? [`revision ${value.exactRevision}`] : []),

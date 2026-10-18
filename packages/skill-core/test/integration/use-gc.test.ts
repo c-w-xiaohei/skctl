@@ -1,11 +1,10 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateCoordinator } from "../../src/storage/state";
-import { createSkillCliCore } from "../../src/create-core";
 import { bindingDigest, canonicalRemoteOrigin } from "../../src/source/identity";
-
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-use-"));
   const source = join(root, "source");
@@ -16,7 +15,6 @@ async function fixture() {
   await state.publishSnapshot(digest, source);
   return { root, state, digest };
 }
-
 test("USE-001/USE-002 creates a synced use only for a validated immutable snapshot and removes it", async () => {
   const value = await fixture();
   try {
@@ -33,7 +31,6 @@ test("USE-001/USE-002 creates a synced use only for a validated immutable snapsh
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("USE-001 public Snapshot publication requires the canonical digest and rejects collisions without changing state", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-digest-"));
   const state = join(root, "state");
@@ -68,7 +65,6 @@ test("USE-001 public Snapshot publication requires the canonical digest and reje
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("USE-001/GC-001 public content read holds a use barrier against public GC", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-use-process-"));
   const state = join(root, "state");
@@ -112,9 +108,9 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
       adoptedRevision: "a".repeat(40),
     });
     delete process.env.SKILL_CLI_STATE_DIR;
-    const entry = join(import.meta.dir, "../../src/create-core.ts");
-    const readScript = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(global)}}).content.read({selector:"c:s",path:"SKILL.md"});`;
-    const gcScript = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(global)}}).gc();`;
+    const entry = join(import.meta.dir, "../../src/index.ts");
+    const readScript = `import { readResource } from ${JSON.stringify(entry)}; await readResource({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(global)}}, {selector:"c:s",path:"SKILL.md"});`;
+    const gcScript = `import { gc } from ${JSON.stringify(entry)}; await gc();`;
     const reader = Bun.spawn({
       cmd: [process.execPath, "--eval", readScript],
       env: {
@@ -142,7 +138,7 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
     expect(
       await Promise.race([
         reader.exited,
-        Bun.sleep(5_000).then(() => {
+        Bun.sleep(5000).then(() => {
           reader.kill();
           return -1;
         }),
@@ -151,7 +147,7 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
     expect(
       await Promise.race([
         gc.exited,
-        Bun.sleep(5_000).then(() => {
+        Bun.sleep(5000).then(() => {
           gc.kill();
           return -1;
         }),
@@ -161,16 +157,22 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
       true,
     );
     process.env.SKILL_CLI_STATE_DIR = state;
-    await createSkillCliCore({ cwd: root, userConfigPath: global }).collections.removeMember({
-      level: "project",
-      collection: "c",
-      name: "s",
-    });
-    await createSkillCliCore({ cwd: root, userConfigPath: global }).installed.uninstall({
-      source: "remote",
-      paths: ["skill"],
-    });
-    await createSkillCliCore({ cwd: root, userConfigPath: global }).gc();
+    await api.removeMember(
+      { cwd: root, userConfigPath: global },
+      {
+        level: "project",
+        collection: "c",
+        name: "s",
+      },
+    );
+    await api.uninstallSkills(
+      { cwd: root, userConfigPath: global },
+      {
+        source: "remote",
+        paths: ["skill"],
+      },
+    );
+    await api.gc();
     expect(await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).exists()).toBe(
       false,
     );
@@ -179,7 +181,6 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("GC-003 retains unknown tombstones and a later same-digest public publication is independent", async () => {
   const value = await fixture();
   try {
@@ -198,7 +199,6 @@ test("GC-003 retains unknown tombstones and a later same-digest public publicati
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("GC-003 public collection crash retains a recorded tombstone until a later collector proves ownership dead", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-trash-crash-"));
   const state = join(root, "state");
@@ -208,12 +208,11 @@ test("GC-003 public collection crash retains a recorded tombstone until a later 
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     process.env.SKILL_CLI_STATE_DIR = state;
-    const core = createSkillCliCore({ cwd: root });
     const digest = await new StateCoordinator(state).snapshotDigest(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
     delete process.env.SKILL_CLI_STATE_DIR;
-    const entry = join(import.meta.dir, "../../src/create-core.ts");
-    const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)}}).gc();`;
+    const entry = join(import.meta.dir, "../../src/index.ts");
+    const script = `import { gc } from ${JSON.stringify(entry)}; await gc();`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
       env: { ...process.env, SKILL_CLI_STATE_DIR: state, SKILL_CLI_TEST_CRASH_AT: "trash-moved" },
@@ -223,7 +222,7 @@ test("GC-003 public collection crash retains a recorded tombstone until a later 
     expect(
       await Promise.race([
         child.exited,
-        Bun.sleep(5_000).then(() => {
+        Bun.sleep(5000).then(() => {
           child.kill();
           return -1;
         }),
@@ -231,14 +230,13 @@ test("GC-003 public collection crash retains a recorded tombstone until a later 
     ).toBe(97);
     expect((await readdir(join(state, "trash"))).length).toBe(1);
     process.env.SKILL_CLI_STATE_DIR = state;
-    await core.gc();
+    await api.gc();
     expect((await readdir(join(state, "trash")).catch(() => [])).length).toBe(0);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("GC-001..003 retains malformed uses conservatively and collects only after ownership is knowable", async () => {
   const value = await fixture();
   const deadSource = join(value.root, "dead");

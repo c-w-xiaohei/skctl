@@ -1,3 +1,4 @@
+import * as api from "../../src/index";
 import { expect, test as bunTest } from "bun:test";
 import {
   chmod,
@@ -12,8 +13,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { createSkillCliCore } from "../../src/create-core";
 import {
   StateCoordinator,
   setCoordinatorHookForTest,
@@ -23,9 +22,7 @@ import { getWorkspace } from "../../src/workspace/query";
 import { forgetConfigSource, removeConfigSource } from "../../src/config/adoption";
 import { readWorkspaceUnlocked } from "../../src/workspace/capture";
 import { validateConfigBytes } from "../../src/config/document";
-
 const test = bunTest.serial;
-
 test("reviewed global Source removal works outside a project", async () => {
   const { root, cleanup } = await configResources("skill-cli-global-source-owner-");
   const file = join(root, "config.jsonc");
@@ -34,10 +31,10 @@ test("reviewed global Source removal works outside a project", async () => {
       file,
       JSON.stringify({ sources: { local: { kind: "local", path: "./skills", root: "" } } }),
     );
-    const core = createSkillCliCore({ cwd: root, userConfigPath: file });
-    const preview = await core.sources.previewRemoval({ source: "local" });
+    const core = { cwd: root, userConfigPath: file };
+    const preview = await api.previewSourceRemoval(core, { source: "local" });
     expect(preview.value.allowed).toBe(true);
-    await core.sources.remove({
+    await api.removeSource(core, {
       source: "local",
       level: "global",
       expectedOwner: preview.value.owner,
@@ -47,7 +44,6 @@ test("reviewed global Source removal works outside a project", async () => {
     await cleanup();
   }
 });
-
 test("relation edits enforce the selected collection declaration at preview and publication", async () => {
   const { root, cleanup } = await configResources("skill-cli-relation-owner-");
   const file = join(root, "skill-cli.jsonc");
@@ -64,7 +60,7 @@ test("relation edits enforce the selected collection declaration at preview and 
         },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const expectedOwner = {
       level: "project" as const,
       file: join(root, "other.jsonc"),
@@ -85,20 +81,20 @@ test("relation edits enforce the selected collection declaration at preview and 
       expectedOwner,
     };
     const before = await readFile(file, "utf8");
-    await expect(core.collections.previewRemoveReference(reference)).rejects.toMatchObject({
+    await expect(api.previewRemoveReference(core, reference)).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
-    await expect(core.collections.removeReference(reference)).rejects.toMatchObject({
+    await expect(api.removeReference(core, reference)).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
-    await expect(core.collections.previewSetLink(link)).rejects.toMatchObject({
+    await expect(api.previewLinkChange(core, link)).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
-    await expect(core.collections.setLink(link)).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
+    await expect(api.setLink(core, link)).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(file, "utf8")).toBe(before);
     const owner = { ...expectedOwner, file };
-    await core.collections.removeReference({ ...reference, expectedOwner: owner });
-    await core.collections.setLink({ ...link, expectedOwner: owner });
+    await api.removeReference(core, { ...reference, expectedOwner: owner });
+    await api.setLink(core, { ...link, expectedOwner: owner });
     expect(JSON.parse(await readFile(file, "utf8")).collections.team).toEqual({
       references: {},
       links: [],
@@ -107,27 +103,25 @@ test("relation edits enforce the selected collection declaration at preview and 
     await cleanup();
   }
 });
-
 test("global Link preview and publication work outside a project", async () => {
   const { root, cleanup } = await configResources("skill-cli-global-link-");
   const file = join(root, "config.jsonc");
   try {
     await writeFile(file, JSON.stringify({ collections: { source: {}, target: {} } }));
-    const core = createSkillCliCore({ cwd: root, userConfigPath: file });
+    const core = { cwd: root, userConfigPath: file };
     const request = {
       level: "global" as const,
       collection: "source",
       target: "target",
       linked: true,
     };
-    expect((await core.collections.previewSetLink(request)).value.allowed).toBe(true);
-    await core.collections.setLink(request);
+    expect((await api.previewLinkChange(core, request)).value.allowed).toBe(true);
+    await api.setLink(core, request);
     expect(JSON.parse(await readFile(file, "utf8")).collections.source.links).toEqual(["target"]);
   } finally {
     await cleanup();
   }
 });
-
 test("cancellation during configuration validation prevents publication", async () => {
   const { root, cleanup } = await configResources("skill-cli-cancel-edit-");
   const file = join(root, "skill-cli.jsonc");
@@ -136,7 +130,8 @@ test("cancellation during configuration validation prevents publication", async 
     await writeFile(file, "{}\n");
     setSemanticStateReadHookForTest(() => controller.abort());
     await expect(
-      createSkillCliCore({ cwd: root }).collections.create(
+      api.createCollection(
+        { cwd: root },
         { level: "project", collection: "team" },
         { signal: controller.signal },
       ),
@@ -147,23 +142,22 @@ test("cancellation during configuration validation prevents publication", async 
     await cleanup();
   }
 });
-
 test("single member preview uses the same strict name input as execution", async () => {
   const { root, cleanup } = await configResources("skill-cli-member-name-");
   try {
     const file = join(root, "skill-cli.jsonc");
     await writeFile(file, JSON.stringify({ collections: { team: {} } }));
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const request = {
       level: "project" as const,
       collection: "team",
       name: " review ",
       address: { source: "local", path: "review" },
     };
-    await expect(core.collections.previewAddMember(request)).rejects.toMatchObject({
+    await expect(api.previewAddToCollection(core, request)).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
     });
-    await expect(core.collections.addMember(request)).rejects.toMatchObject({
+    await expect(api.addMember(core, request)).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
     });
     expect(JSON.parse(await readFile(file, "utf8")).collections.team).toEqual({});
@@ -171,27 +165,26 @@ test("single member preview uses the same strict name input as execution", async
     await cleanup();
   }
 });
-
 test("qualified Collection IDs do not change declaration owner interpretation", async () => {
   const { root, cleanup } = await configResources("skill-cli-qualified-owner-");
   const file = join(root, "skill-cli.jsonc");
   const collection = "team/members/docs";
   try {
     await writeFile(file, JSON.stringify({ collections: { [collection]: {}, target: {} } }));
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const expectedOwner = {
       level: "project" as const,
       file,
       pointer: `/collections/${collection}`,
     };
-    await core.collections.addMember({
+    await api.addMember(core, {
       level: "project",
       collection,
       name: "review",
       address: { source: "local", path: "review" },
       expectedOwner,
     });
-    await core.collections.addReference({
+    await api.addReference(core, {
       level: "project",
       collection,
       name: "docs",
@@ -206,7 +199,6 @@ test("qualified Collection IDs do not change declaration owner interpretation", 
     await cleanup();
   }
 });
-
 test("successful configuration publication does not depend on a later projection read", async () => {
   const { root, cleanup } = await configResources("skill-cli-committed-result-");
   const file = join(root, "skill-cli.jsonc");
@@ -219,10 +211,13 @@ test("successful configuration publication does not depend on a later projection
     setSemanticStateReadHookForTest(() => {
       if (published) throw new Error("post-commit projection unavailable");
     });
-    const result = await createSkillCliCore({ cwd: root }).collections.create({
-      level: "project",
-      collection: "team",
-    });
+    const result = await api.createCollection(
+      { cwd: root },
+      {
+        level: "project",
+        collection: "team",
+      },
+    );
     expect(published).toBe(true);
     expect(result.value).toEqual({ level: "project", file, changed: true });
     expect(result.diagnostics).toMatchObject([
@@ -235,7 +230,6 @@ test("successful configuration publication does not depend on a later projection
     await cleanup();
   }
 });
-
 test("empty Use preview distinguishes a valid edit from an unavailable catalog", async () => {
   const { root, cleanup } = await configResources("skill-cli-empty-use-");
   try {
@@ -243,13 +237,15 @@ test("empty Use preview distinguishes a valid edit from an unavailable catalog",
       join(root, "skill-cli.jsonc"),
       JSON.stringify({ collections: { team: {} }, use: ["team"] }),
     );
-    const core = createSkillCliCore({ cwd: root });
-    expect((await core.use.previewSet({ level: "project", collections: [] })).value).toMatchObject({
+    const core = { cwd: root };
+    expect(
+      (await api.previewCollectionUse(core, { level: "project", collections: [] })).value,
+    ).toMatchObject({
       allowed: true,
       proposedComplete: false,
       blockers: [],
     });
-    expect((await core.use.set({ level: "project", collections: [] })).value.use).toEqual({
+    expect((await api.setUse(core, { level: "project", collections: [] })).value.use).toEqual({
       before: ["team"],
       after: [],
     });
@@ -257,7 +253,6 @@ test("empty Use preview distinguishes a valid edit from an unavailable catalog",
     await cleanup();
   }
 });
-
 test("import preview reports adding direct members even when an equal Link already exposes them", async () => {
   const { root, cleanup } = await configResources("skill-cli-direct-import-");
   const file = join(root, "skill-cli.jsonc");
@@ -269,14 +264,14 @@ test("import preview reports adding direct members even when an equal Link alrea
         collections: { source: { members: { review: address } }, target: { links: ["source"] } },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const request = { level: "project" as const, from: "source", into: "target" };
-    expect((await core.collections.previewImportMembers(request)).value).toMatchObject({
+    expect((await api.previewImport(core, request)).value).toMatchObject({
       allowed: true,
       additions: [{ name: "review", address }],
       skipped: [],
     });
-    await core.collections.importMembers(request);
+    await api.importMembers(core, request);
     expect(JSON.parse(await readFile(file, "utf8")).collections.target).toEqual({
       links: ["source"],
       members: { review: address },
@@ -285,7 +280,6 @@ test("import preview reports adding direct members even when an equal Link alrea
     await cleanup();
   }
 });
-
 test("reviewed declaration locations are checked at publication without changing bytes", async () => {
   const { root, cleanup } = await configResources("skill-cli-reviewed-owner-");
   const file = join(root, "skill-cli.jsonc");
@@ -297,12 +291,12 @@ test("reviewed declaration locations are checked at publication without changing
         collections: { team: { members: { review: { source: "local", path: "review" } } } },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const before = await readFile(file, "utf8");
     const expectedOwner = { level: "project" as const, file, pointer: "/collections/team" };
     expect(
       (
-        await core.collections.previewRemoveMember({
+        await api.previewMembershipRemoval(core, {
           level: "project",
           collection: "team",
           name: "review",
@@ -311,7 +305,7 @@ test("reviewed declaration locations are checked at publication without changing
       ).value.allowed,
     ).toBe(true);
     await expect(
-      core.collections.removeMember({
+      api.removeMember(core, {
         level: "project",
         collection: "team",
         name: "review",
@@ -323,14 +317,14 @@ test("reviewed declaration locations are checked at publication without changing
       }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     await expect(
-      core.sources.remove({
+      api.removeSource(core, {
         source: "local",
         level: "project",
         expectedOwner: { level: "project", file, pointer: "/sources/other" },
       }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(file, "utf8")).toBe(before);
-    await core.collections.removeMember({
+    await api.removeMember(core, {
       level: "project",
       collection: "team",
       name: "review",
@@ -341,7 +335,6 @@ test("reviewed declaration locations are checked at publication without changing
     await cleanup();
   }
 });
-
 async function configResources(prefix: string) {
   const root = await mkdtemp(join(tmpdir(), prefix));
   const previous = process.env.SKILL_CLI_STATE_DIR;
@@ -366,7 +359,6 @@ async function configResources(prefix: string) {
     throw error;
   }
 }
-
 test("config resources restore state and remove their root after a thrown operation", async () => {
   const previous = process.env.SKILL_CLI_STATE_DIR;
   process.env.SKILL_CLI_STATE_DIR = "outer-state";
@@ -392,7 +384,6 @@ test("config resources restore state and remove their root after a thrown operat
     }
   }
 });
-
 test("network is rejected by actual Project Local and reusable readers", async () => {
   const { root, cleanup } = await configResources("skill-cli-network-scopes-");
   const text = '{"network":{"proxy":"http://proxy.test:7890"}}';
@@ -435,7 +426,6 @@ test("network is rejected by actual Project Local and reusable readers", async (
     await cleanup();
   }
 });
-
 test("both manual Config state writers emit v3 and retain unrelated Remote tree evidence", async () => {
   const { root, cleanup } = await configResources("skill-cli-config-state-v3-");
   try {
@@ -493,7 +483,6 @@ test("both manual Config state writers emit v3 and retain unrelated Remote tree 
     await cleanup();
   }
 });
-
 test("missing user document inherits but inaccessible user parent fails closed", async () => {
   const { root, cleanup } = await configResources("skill-cli-network-permissions-");
   const parent = join(root, "private");
@@ -517,7 +506,6 @@ test("missing user document inherits but inaccessible user parent fails closed",
     }
   }
 });
-
 test("user proxy survives JSONC declaration edits and never enters Workspace or binding facts", async () => {
   const { root, cleanup } = await configResources("skill-cli-user-network-");
   const global = join(root, "user", "config.jsonc");
@@ -529,8 +517,8 @@ test("user proxy survives JSONC declaration edits and never enters Workspace or 
       global,
       `{\n // keep network comment\n "network": { "proxy": "${proxy}" }\n}\n`,
     );
-    const core = createSkillCliCore({ cwd: root, userConfigPath: global });
-    await core.sources.register({
+    const core = { cwd: root, userConfigPath: global };
+    await api.registerSource(core, {
       level: "global",
       id: "team",
       binding: {
@@ -540,30 +528,31 @@ test("user proxy survives JSONC declaration edits and never enters Workspace or 
         ref: "main",
       },
     });
-    const before = (await core.workspace.get()).value;
+    const before = (await api.getWorkspace(core)).value;
     expect(before.effective.status).toBe("complete");
-    const baseline = await core.installed.updateBaseline({ source: "team" });
+    const baseline = await api.getUpdateBaseline(core, { source: "team" });
     expect(JSON.stringify(before)).not.toContain("secret");
     expect(await readFile(global, "utf8")).toContain("// keep network comment");
-    await core.collections.create({ level: "global", collection: "team" });
+    await api.createCollection(core, { level: "global", collection: "team" });
     expect(await readFile(global, "utf8")).toContain(proxy);
     await writeFile(
       global,
       (await readFile(global, "utf8")).replace(proxy, "https://other.test:8443"),
     );
-    expect((await core.workspace.get()).value.effective.sources).toEqual(before.effective.sources);
-    expect(await core.installed.updateBaseline({ source: "team" })).toEqual(baseline);
+    expect((await api.getWorkspace(core)).value.effective.sources).toEqual(
+      before.effective.sources,
+    );
+    expect(await api.getUpdateBaseline(core, { source: "team" })).toEqual(baseline);
   } finally {
     await cleanup();
   }
 });
-
 test("MGMT-001 creates only the selected Global Project or Local Source target with exact bindings", async () => {
   const { root, cleanup } = await configResources("skill-cli-source-targets-");
   const global = join(root, "global", "config.jsonc");
   try {
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    const core = createSkillCliCore({ cwd: root, userConfigPath: global });
+    const core = { cwd: root, userConfigPath: global };
     const cases = [
       {
         level: "global" as const,
@@ -602,7 +591,7 @@ test("MGMT-001 creates only the selected Global Project or Local Source target w
             .catch(() => undefined),
         ),
       );
-      await core.sources.register({ level: item.level, id: item.id, binding: item.binding });
+      await api.registerSource(core, { level: item.level, id: item.id, binding: item.binding });
       expect(JSON.parse(await readFile(item.file, "utf8")).sources[item.id]).toEqual(item.binding);
       for (const [index, candidate] of cases.entries())
         if (candidate.file !== item.file && before[index] !== undefined)
@@ -613,20 +602,17 @@ test("MGMT-001 creates only the selected Global Project or Local Source target w
     await cleanup();
   }
 });
-
 test("GitHub Source shorthand remains readable after registration", async () => {
   const { root, cleanup } = await configResources("skill-cli-github-source-");
   try {
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    const core = createSkillCliCore({ cwd: root });
-
-    await core.sources.register({
+    const core = { cwd: root };
+    await api.registerSource(core, {
       level: "project",
       id: "example",
       binding: { kind: "github", origin: "acme/example", root: "skills", ref: "main" },
     });
-
-    expect((await core.workspace.get()).value.effective.sources).toContainEqual(
+    expect((await api.getWorkspace(core)).value.effective.sources).toContainEqual(
       expect.objectContaining({
         id: "example",
         kind: "github",
@@ -639,7 +625,6 @@ test("GitHub Source shorthand remains readable after registration", async () => 
     await cleanup();
   }
 });
-
 test("Use changes are atomic, report their locked delta, and reject duplicate set entries", async () => {
   const { root, cleanup } = await configResources("skill-cli-use-changes-");
   try {
@@ -647,10 +632,10 @@ test("Use changes are atomic, report their locked delta, and reject duplicate se
       join(root, "skill-cli.jsonc"),
       JSON.stringify({ collections: { alpha: {}, beta: {} }, use: [] }),
     );
-    const core = createSkillCliCore({ cwd: root, userConfigPath: join(root, "global.jsonc") });
+    const core = { cwd: root, userConfigPath: join(root, "global.jsonc") };
     const [alpha, beta] = await Promise.all([
-      core.use.add({ level: "project", collection: "alpha" }),
-      core.use.add({ level: "project", collection: "beta" }),
+      api.addUse(core, { level: "project", collection: "alpha" }),
+      api.addUse(core, { level: "project", collection: "beta" }),
     ]);
     expect(JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).use.sort()).toEqual([
       "alpha",
@@ -658,51 +643,56 @@ test("Use changes are atomic, report their locked delta, and reject duplicate se
     ]);
     expect(alpha.value.use).toMatchObject({ after: expect.any(Array) });
     expect(beta.value.use).toMatchObject({ after: expect.any(Array) });
-    const removedAlpha = await core.use.remove({ level: "project", collection: "alpha" });
-    const removedBeta = await core.use.remove({ level: "project", collection: "beta" });
+    const removedAlpha = await api.removeUse(core, { level: "project", collection: "alpha" });
+    const removedBeta = await api.removeUse(core, { level: "project", collection: "beta" });
     expect([...(removedAlpha.value.use?.before ?? [])].sort()).toEqual(["alpha", "beta"]);
     expect(removedAlpha.value.use?.after).toEqual(["beta"]);
     expect(removedBeta.value.use).toEqual({ before: ["beta"], after: [] });
     expect(JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).use).toEqual([]);
     await expect(
-      core.use.set({ level: "project", collections: ["alpha", "alpha"] }),
+      api.setUse(core, { level: "project", collections: ["alpha", "alpha"] }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   } finally {
     await cleanup();
   }
 });
-
 test("global mutations work without a project but project targets remain strict", async () => {
   const { root, cleanup } = await configResources("skill-cli-global-only-edit-");
   const cwd = join(root, "outside-project");
   const global = join(root, "global", "config.jsonc");
   try {
     await mkdir(cwd);
-
-    await createSkillCliCore({ cwd, userConfigPath: global }).collections.create({
-      level: "global",
-      collection: "team",
-    });
+    await api.createCollection(
+      { cwd, userConfigPath: global },
+      {
+        level: "global",
+        collection: "team",
+      },
+    );
     expect(JSON.parse(await readFile(global, "utf8")).collections.team).toEqual({});
-
     await expect(
-      createSkillCliCore({ cwd, userConfigPath: global }).collections.create({
-        level: "project",
-        collection: "project-team",
-      }),
+      api.createCollection(
+        { cwd, userConfigPath: global },
+        {
+          level: "project",
+          collection: "project-team",
+        },
+      ),
     ).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
     await expect(
-      createSkillCliCore({
-        cwd,
-        project: join(root, "missing"),
-        userConfigPath: global,
-      }).collections.create({ level: "global", collection: "other-team" }),
+      api.createCollection(
+        {
+          cwd,
+          project: join(root, "missing"),
+          userConfigPath: global,
+        },
+        { level: "global", collection: "other-team" },
+      ),
     ).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
   } finally {
     await cleanup();
   }
 });
-
 test("global mutations without an explicit project do not start Git", async () => {
   const { root, cleanup } = await configResources("skill-cli-global-no-git-");
   const cwd = join(root, "outside-project");
@@ -717,12 +707,13 @@ test("global mutations without an explicit project do not start Git", async () =
       mode: 0o755,
     });
     process.env.PATH = `${bin}:${previousPath}`;
-
-    await createSkillCliCore({ cwd, userConfigPath: global }).collections.create({
-      level: "global",
-      collection: "team",
-    });
-
+    await api.createCollection(
+      { cwd, userConfigPath: global },
+      {
+        level: "global",
+        collection: "team",
+      },
+    );
     expect(await lstat(gitCalled).catch(() => undefined)).toBeUndefined();
     expect(JSON.parse(await readFile(global, "utf8")).collections.team).toEqual({});
   } finally {
@@ -734,41 +725,42 @@ test("global mutations without an explicit project do not start Git", async () =
     }
   }
 });
-
 test("global mutations ignore an invalid project config", async () => {
   const { root, cleanup } = await configResources("skill-cli-global-only-project-config-");
   const global = join(root, "global", "config.jsonc");
   try {
     await writeFile(join(root, "skill-cli.jsonc"), '{ "unknown": true }\n');
-
-    await createSkillCliCore({ cwd: root, userConfigPath: global }).collections.create({
-      level: "global",
-      collection: "team",
-    });
-
+    await api.createCollection(
+      { cwd: root, userConfigPath: global },
+      {
+        level: "global",
+        collection: "team",
+      },
+    );
     expect(JSON.parse(await readFile(global, "utf8")).collections.team).toEqual({});
   } finally {
     await cleanup();
   }
 });
-
 test("collection declaration errors identify the collection, scope, and target config", async () => {
   const { root, cleanup } = await configResources("skill-cli-collection-declaration-error-");
   const global = join(root, "global", "config.jsonc");
   try {
     await expect(
-      createSkillCliCore({ cwd: root, userConfigPath: global }).collections.addMember({
-        level: "global",
-        collection: "team",
-        name: "review",
-        address: { source: "source", path: "review" },
-      }),
+      api.addMember(
+        { cwd: root, userConfigPath: global },
+        {
+          level: "global",
+          collection: "team",
+          name: "review",
+          address: { source: "source", path: "review" },
+        },
+      ),
     ).rejects.toThrow(`Collection "team" is not directly declared at global scope in ${global}`);
   } finally {
     await cleanup();
   }
 });
-
 test("member removal distinguishes a missing Collection from a missing membership", async () => {
   const { root, cleanup } = await configResources("skill-cli-member-removal-error-");
   const global = join(root, "global", "config.jsonc");
@@ -776,18 +768,24 @@ test("member removal distinguishes a missing Collection from a missing membershi
     await mkdir(join(root, "global"));
     await writeFile(global, '{ "collections": { "team": {} } }\n');
     await expect(
-      createSkillCliCore({ cwd: root, userConfigPath: global }).collections.removeMember({
-        level: "global",
-        collection: "missing",
-        name: "review",
-      }),
+      api.removeMember(
+        { cwd: root, userConfigPath: global },
+        {
+          level: "global",
+          collection: "missing",
+          name: "review",
+        },
+      ),
     ).rejects.toThrow(`Collection "missing" is not directly declared at global scope in ${global}`);
     await expect(
-      createSkillCliCore({ cwd: root, userConfigPath: global }).collections.removeMember({
-        level: "global",
-        collection: "team",
-        name: "review",
-      }),
+      api.removeMember(
+        { cwd: root, userConfigPath: global },
+        {
+          level: "global",
+          collection: "team",
+          name: "review",
+        },
+      ),
     ).rejects.toThrow(
       `Membership "review" is not directly declared in Collection "team" at global scope in ${global}`,
     );
@@ -795,20 +793,18 @@ test("member removal distinguishes a missing Collection from a missing membershi
     await cleanup();
   }
 });
-
 test("local mutations remain strict without a project", async () => {
   const { root, cleanup } = await configResources("skill-cli-local-no-project-");
   const cwd = join(root, "outside-project");
   try {
     await mkdir(cwd);
     await expect(
-      createSkillCliCore({ cwd }).collections.create({ level: "local", collection: "team" }),
+      api.createCollection({ cwd }, { level: "local", collection: "team" }),
     ).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
   } finally {
     await cleanup();
   }
 });
-
 test("global mutations respect global Config Source contributions", async () => {
   const { root, cleanup } = await configResources("skill-cli-global-contribution-owner-");
   const cwd = join(root, "outside-project");
@@ -827,17 +823,19 @@ test("global mutations respect global Config Source contributions", async () => 
       '{ "configSources": { "team": { "kind": "local", "path": "../module", "root": "" } } }\n',
     );
     await expect(
-      createSkillCliCore({ cwd, userConfigPath: global }).sources.register({
-        level: "global",
-        id: "team/core",
-        binding: { kind: "local", path: "./other", root: "" },
-      }),
+      api.registerSource(
+        { cwd, userConfigPath: global },
+        {
+          level: "global",
+          id: "team/core",
+          binding: { kind: "local", path: "./other", root: "" },
+        },
+      ),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   } finally {
     await cleanup();
   }
 });
-
 test("global mutations respect adopted Remote Config Source contributions", async () => {
   const { root, state, cleanup } = await configResources(
     "skill-cli-global-remote-contribution-owner-",
@@ -858,19 +856,20 @@ test("global mutations respect adopted Remote Config Source contributions", asyn
         '{ "sources": { "core": { "kind": "local", "path": "./skills", "root": "" } } }\n',
       ),
     );
-
     await expect(
-      createSkillCliCore({ cwd, userConfigPath: global }).sources.register({
-        level: "global",
-        id: "remote/core",
-        binding: { kind: "local", path: "./other", root: "" },
-      }),
+      api.registerSource(
+        { cwd, userConfigPath: global },
+        {
+          level: "global",
+          id: "remote/core",
+          binding: { kind: "local", path: "./other", root: "" },
+        },
+      ),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   } finally {
     await cleanup();
   }
 });
-
 async function privateTree(root: string) {
   const output: Record<string, string> = {};
   async function collect(path: string, prefix = "") {
@@ -888,18 +887,20 @@ async function privateTree(root: string) {
   await collect(root);
   return output;
 }
-
 test("selected-target declaration edits preserve unrelated JSONC comments", async () => {
   const { root, cleanup } = await configResources("skill-cli-edit-");
   const config = join(root, "skill-cli.jsonc");
   try {
     const initial = '{\n  // retain me\n  "collections": {}\n}\n';
     await writeFile(config, initial);
-    await createSkillCliCore({ cwd: root }).sources.register({
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await api.registerSource(
+      { cwd: root },
+      {
+        level: "project",
+        id: "local",
+        binding: { kind: "local", path: "./skills", root: "" },
+      },
+    );
     const changed = await readFile(config, "utf8");
     expect(changed).toContain("// retain me");
     expect(changed.slice(0, changed.indexOf('"collections"'))).toBe(
@@ -909,19 +910,20 @@ test("selected-target declaration edits preserve unrelated JSONC comments", asyn
     await cleanup();
   }
 });
-
 test("direct qualified Source IDs remain editable while actual Config Source contributions are immutable", async () => {
   const { root, cleanup } = await configResources("skill-cli-config-owner-");
   const config = join(root, "skill-cli.jsonc");
   try {
     await writeFile(config, "{}\n");
-    await createSkillCliCore({ cwd: root }).sources.register({
-      level: "project",
-      id: "team/core",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await api.registerSource(
+      { cwd: root },
+      {
+        level: "project",
+        id: "team/core",
+        binding: { kind: "local", path: "./skills", root: "" },
+      },
+    );
     expect(await readFile(config, "utf8")).toContain('"team/core"');
-
     const reusable = join(root, "reusable");
     await mkdir(reusable);
     await writeFile(
@@ -932,29 +934,34 @@ test("direct qualified Source IDs remain editable while actual Config Source con
       '{ "configSources": { "team": { "kind": "local", "path": "./reusable", "root": "" } } }\n';
     await writeFile(config, host);
     await expect(
-      createSkillCliCore({ cwd: root }).sources.register({
-        level: "project",
-        id: "team/core",
-        binding: { kind: "local", path: "./other", root: "" },
-      }),
+      api.registerSource(
+        { cwd: root },
+        {
+          level: "project",
+          id: "team/core",
+          binding: { kind: "local", path: "./other", root: "" },
+        },
+      ),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     expect(await readFile(config, "utf8")).toBe(host);
   } finally {
     await cleanup();
   }
 });
-
 test("Source Roots reject absolute, empty-interior, and escaping paths before publication", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-root-validation-"));
   try {
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     for (const sourceRoot of ["/outside", "../outside", "one//two", "one/./two", ".", "one\\two"]) {
       await expect(
-        createSkillCliCore({ cwd: root }).sources.register({
-          level: "project",
-          id: "local",
-          binding: { kind: "local", path: "./skills", root: sourceRoot },
-        }),
+        api.registerSource(
+          { cwd: root },
+          {
+            level: "project",
+            id: "local",
+            binding: { kind: "local", path: "./skills", root: sourceRoot },
+          },
+        ),
       ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
       expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe("{}\n");
     }
@@ -962,7 +969,6 @@ test("Source Roots reject absolute, empty-interior, and escaping paths before pu
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("Config Source Roots reject invalid paths before publication", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-config-source-root-validation-"));
   const config = join(root, "skill-cli.jsonc");
@@ -970,16 +976,19 @@ test("Config Source Roots reject invalid paths before publication", async () => 
     await writeFile(config, "{}\n");
     for (const sourceRoot of ["/outside", "../outside", "one//two", "one/./two", ".", "one\\two"]) {
       await expect(
-        createSkillCliCore({ cwd: root }).configSources.register({
-          level: "project",
-          id: "shared",
-          binding: {
-            kind: "git",
-            origin: "https://example.test/config.git",
-            root: sourceRoot,
-            ref: "main",
+        api.registerConfigSource(
+          { cwd: root },
+          {
+            level: "project",
+            id: "shared",
+            binding: {
+              kind: "git",
+              origin: "https://example.test/config.git",
+              root: sourceRoot,
+              ref: "main",
+            },
           },
-        }),
+        ),
       ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
       expect(await readFile(config, "utf8")).toBe("{}\n");
     }
@@ -987,7 +996,6 @@ test("Config Source Roots reject invalid paths before publication", async () => 
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("invalid pre-existing host Config Source Roots block unrelated mutations", async () => {
   const { root, cleanup } = await configResources("skill-cli-existing-config-source-root-");
   const config = join(root, "skill-cli.jsonc");
@@ -1004,10 +1012,13 @@ test("invalid pre-existing host Config Source Roots block unrelated mutations", 
       const initial = JSON.stringify({ configSources: { shared: binding } });
       await writeFile(config, `${initial}\n`);
       await expect(
-        createSkillCliCore({ cwd: root }).collections.create({
-          level: "project",
-          collection: "team",
-        }),
+        api.createCollection(
+          { cwd: root },
+          {
+            level: "project",
+            collection: "team",
+          },
+        ),
       ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
       expect(await readFile(config, "utf8")).toBe(`${initial}\n`);
     }
@@ -1015,7 +1026,6 @@ test("invalid pre-existing host Config Source Roots block unrelated mutations", 
     await cleanup();
   }
 });
-
 test("rejected configuration reads and edits leave declaration bytes untouched", async () => {
   const { root, state, cleanup } = await configResources("skill-cli-edit-reject-");
   const config = join(root, "skill-cli.jsonc");
@@ -1028,19 +1038,21 @@ test("rejected configuration reads and edits leave declaration bytes untouched",
     await writeFile(config, initial);
     const before = await privateTree(state);
     await expect(
-      createSkillCliCore({ cwd: root }).use.set({ level: "project", collections: ["team"] }),
+      api.setUse({ cwd: root }, { level: "project", collections: ["team"] }),
     ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
     expect(await readFile(config, "utf8")).toBe(initial);
     expect(await privateTree(state)).toEqual(before);
-
     const linked = join(root, "linked.jsonc");
     await symlink(config, linked);
     await expect(
-      createSkillCliCore({ cwd: root, userConfigPath: linked }).sources.register({
-        level: "global",
-        id: "team",
-        binding: { kind: "local", path: "./skills", root: "" },
-      }),
+      api.registerSource(
+        { cwd: root, userConfigPath: linked },
+        {
+          level: "global",
+          id: "team",
+          binding: { kind: "local", path: "./skills", root: "" },
+        },
+      ),
     ).rejects.toMatchObject({ code: "CONFIG_SYMLINK" });
     expect((await lstat(linked)).isSymbolicLink()).toBe(true);
     expect(await privateTree(state)).toEqual(before);
@@ -1048,7 +1060,6 @@ test("rejected configuration reads and edits leave declaration bytes untouched",
     await cleanup();
   }
 });
-
 test("invalid UTF-8 and oversized declarations are rejected without rewriting them", async () => {
   const { root, state, cleanup } = await configResources("skill-cli-config-text-");
   const config = join(root, "skill-cli.jsonc");
@@ -1067,8 +1078,7 @@ test("invalid UTF-8 and oversized declarations are rejected without rewriting th
     expect(invalidProjection.effective.status).toBe("unavailable");
     expect(await readFile(config)).toEqual(invalid);
     expect(await privateTree(state)).toEqual(beforeInvalid);
-
-    const oversized = Buffer.alloc(1_048_577, 0x20);
+    const oversized = Buffer.alloc(1048577, 0x20);
     await writeFile(config, oversized);
     const beforeOversized = await privateTree(state);
     const oversizedProjection = (await getWorkspace({ cwd: root })).value;
@@ -1082,30 +1092,29 @@ test("invalid UTF-8 and oversized declarations are rejected without rewriting th
     await cleanup();
   }
 });
-
 test("MGMT-014 creates a real empty Collection and rejects duplicate creation atomically", async () => {
   const { root, cleanup } = await configResources("skill-cli-collection-edit-");
   try {
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    const core = createSkillCliCore({ cwd: root });
-    await core.collections.create({ level: "project", collection: "source" });
-    await core.collections.create({ level: "project", collection: "target" });
+    const core = { cwd: root };
+    await api.createCollection(core, { level: "project", collection: "source" });
+    await api.createCollection(core, { level: "project", collection: "target" });
     const parsed = JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8"));
     expect(parsed.collections.source).toEqual({});
     expect(parsed.collections.source.members).toBeUndefined();
     const duplicateBytes = await readFile(join(root, "skill-cli.jsonc"), "utf8");
     await expect(
-      core.collections.create({ level: "project", collection: "source" }),
+      api.createCollection(core, { level: "project", collection: "source" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(duplicateBytes);
-    await core.collections.addReference({
+    await api.addReference(core, {
       level: "project",
       collection: "source",
       name: "target",
       target: "target",
       description: "Target",
     });
-    const impact = await core.collections.previewRemoval({
+    const impact = await api.previewCollectionRemoval(core, {
       level: "project",
       collection: "target",
     });
@@ -1116,14 +1125,14 @@ test("MGMT-014 creates a real empty Collection and rejects duplicate creation at
       ],
     });
     await expect(
-      core.collections.remove({ level: "project", collection: "target" }),
+      api.removeCollection(core, { level: "project", collection: "target" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
-    await core.collections.removeReference({
+    await api.removeReference(core, {
       level: "project",
       collection: "source",
       name: "target",
     });
-    await core.collections.remove({ level: "project", collection: "target" });
+    await api.removeCollection(core, { level: "project", collection: "target" });
     expect(
       JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).collections.target,
     ).toBeUndefined();
@@ -1131,26 +1140,24 @@ test("MGMT-014 creates a real empty Collection and rejects duplicate creation at
     await cleanup();
   }
 });
-
 test("MGMT-014 creates empty Collections only at selected Global Project and Local levels", async () => {
   const { root, cleanup } = await configResources("skill-cli-collection-levels-");
   const global = join(root, "global", "config.jsonc");
   try {
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    const core = createSkillCliCore({ cwd: root, userConfigPath: global });
+    const core = { cwd: root, userConfigPath: global };
     for (const [level, collection, file] of [
       ["global", "global", global],
       ["project", "project", join(root, "skill-cli.jsonc")],
       ["local", "local", join(root, "skill-cli.local.jsonc")],
     ] as const) {
-      await core.collections.create({ level, collection });
+      await api.createCollection(core, { level, collection });
       expect(JSON.parse(await readFile(file, "utf8")).collections[collection]).toEqual({});
     }
   } finally {
     await cleanup();
   }
 });
-
 test("MGMT-017 adds and removes a named direct Reference with zero member exposure", async () => {
   const { root, cleanup } = await configResources("skill-cli-reference-edit-");
   try {
@@ -1158,8 +1165,8 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
       join(root, "skill-cli.jsonc"),
       JSON.stringify({ collections: { source: {}, target: {} } }),
     );
-    const core = createSkillCliCore({ cwd: root });
-    const preview = await core.collections.previewAddReference({
+    const core = { cwd: root };
+    const preview = await api.previewAddReference(core, {
       level: "project",
       collection: "source",
       name: "docs",
@@ -1170,14 +1177,14 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
       allowed: true,
       owner: { pointer: "/collections/source" },
     });
-    await core.collections.addReference({
+    await api.addReference(core, {
       level: "project",
       collection: "source",
       name: "docs",
       target: "target",
       description: "Docs",
     });
-    await core.collections.removeReference({
+    await api.removeReference(core, {
       level: "project",
       collection: "source",
       name: "docs",
@@ -1187,7 +1194,6 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
       JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).collections.source
         .references,
     ).toEqual({});
-
     const module = join(root, "module");
     await mkdir(module);
     await writeFile(
@@ -1208,14 +1214,14 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
         collections: { target: {} },
       }),
     );
-    const contributed = await core.collections.previewRemoveReference({
+    const contributed = await api.previewRemoveReference(core, {
       level: "project",
       collection: "shared/contributed",
       name: "docs",
       expected: { collection: "target", description: "Docs" },
     });
     expect(contributed.value).toMatchObject({ decision: { kind: "contributed" }, allowed: false });
-    const contributedTarget = await core.collections.previewAddReference({
+    const contributedTarget = await api.previewAddReference(core, {
       level: "project",
       collection: "target",
       name: "shared",
@@ -1228,7 +1234,7 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
     });
     const hostBytes = await readFile(join(root, "skill-cli.jsonc"), "utf8");
     await expect(
-      core.collections.removeReference({
+      api.removeReference(core, {
         level: "project",
         collection: "shared/contributed",
         name: "docs",
@@ -1239,7 +1245,6 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
     await cleanup();
   }
 });
-
 test("MGMT-027 enables and disables managed OpenCode only at the selected Config level", async () => {
   const { root, cleanup } = await configResources("skill-cli-managed-levels-");
   const global = join(root, "global", "config.jsonc");
@@ -1250,28 +1255,27 @@ test("MGMT-027 enables and disables managed OpenCode only at the selected Config
       join(root, "skill-cli.jsonc"),
       JSON.stringify({ collections: { team: {} }, use: ["team"] }),
     );
-    const core = createSkillCliCore({ cwd: root, userConfigPath: global });
+    const core = { cwd: root, userConfigPath: global };
     for (const [level, file] of [
       ["global", global],
       ["project", join(root, "skill-cli.jsonc")],
       ["local", join(root, "skill-cli.local.jsonc")],
     ] as const) {
-      await core.setManagedOpenCode({ level, managed: true });
+      await api.setManagedOpenCode(core, { level, managed: true });
       expect(JSON.parse(await readFile(file, "utf8")).agents).toEqual({ opencode: "managed" });
-      const projection = (await core.workspace.get()).value;
+      const projection = (await api.getWorkspace(core)).value;
       expect(
         projection.configs.find((config) => config.level === level)!.direct.integrations,
       ).toHaveLength(1);
       expect(projection.effective.agent.status).toBe("available");
       expect(JSON.stringify(projection.effective.agent)).not.toMatch(/native|hybrid/u);
-      await core.setManagedOpenCode({ level, managed: false });
+      await api.setManagedOpenCode(core, { level, managed: false });
       expect(JSON.parse(await readFile(file, "utf8")).agents).toBeUndefined();
     }
   } finally {
     await cleanup();
   }
 });
-
 test("MGMT-028 blocks invalid target and sibling graph edits while preserving unknown bytes and state", async () => {
   const { root, cleanup } = await configResources("skill-cli-invalid-mutation-");
   const project = join(root, "skill-cli.jsonc");
@@ -1282,24 +1286,29 @@ test("MGMT-028 blocks invalid target and sibling graph edits while preserving un
     await writeFile(local, unknown);
     const beforeState = await privateTree(join(root, "state"));
     await expect(
-      createSkillCliCore({ cwd: root }).collections.create({
-        level: "project",
-        collection: "team",
-      }),
+      api.createCollection(
+        { cwd: root },
+        {
+          level: "project",
+          collection: "team",
+        },
+      ),
     ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
     expect(await readFile(project, "utf8")).toBe("{ invalid\n");
     expect(await readFile(local)).toEqual(unknown);
     expect(await privateTree(join(root, "state"))).toEqual(beforeState);
-
     await writeFile(project, "{}\n");
     await rm(local);
     await symlink(project, local);
     const validTarget = await readFile(project, "utf8");
     await expect(
-      createSkillCliCore({ cwd: root }).collections.create({
-        level: "project",
-        collection: "team",
-      }),
+      api.createCollection(
+        { cwd: root },
+        {
+          level: "project",
+          collection: "team",
+        },
+      ),
     ).rejects.toMatchObject({ code: "CONFIG_SYMLINK" });
     expect(await readFile(project, "utf8")).toBe(validTarget);
     expect((await lstat(local)).isSymbolicLink()).toBe(true);
@@ -1307,15 +1316,17 @@ test("MGMT-028 blocks invalid target and sibling graph edits while preserving un
     await cleanup();
   }
 });
-
 test("MGMT-032 configuration mutations return focused facts and never embed Workspace", async () => {
   const { root, cleanup } = await configResources("skill-cli-focused-result-");
   try {
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    const result = await createSkillCliCore({ cwd: root }).collections.create({
-      level: "project",
-      collection: "team",
-    });
+    const result = await api.createCollection(
+      { cwd: root },
+      {
+        level: "project",
+        collection: "team",
+      },
+    );
     expect(result.value).toEqual({
       level: "project",
       file: join(root, "skill-cli.jsonc"),
@@ -1326,7 +1337,6 @@ test("MGMT-032 configuration mutations return focused facts and never embed Work
     await cleanup();
   }
 });
-
 test("MGMT-015/018/020/021 revalidate direct ownership and dependencies under the mutation lock", async () => {
   const { root, cleanup } = await configResources("skill-cli-collection-stale-");
   try {
@@ -1339,14 +1349,13 @@ test("MGMT-015/018/020/021 revalidate direct ownership and dependencies under th
         },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const beforeMember = await readFile(join(root, "skill-cli.jsonc"), "utf8");
     await expect(
-      core.collections.removeMember({ level: "project", collection: "source", name: "review" }),
+      api.removeMember(core, { level: "project", collection: "source", name: "review" }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(beforeMember);
-
-    await core.collections.addReference({
+    await api.addReference(core, {
       level: "project",
       collection: "source",
       name: "target",
@@ -1355,14 +1364,13 @@ test("MGMT-015/018/020/021 revalidate direct ownership and dependencies under th
     });
     const beforeRemoval = await readFile(join(root, "skill-cli.jsonc"), "utf8");
     await expect(
-      core.collections.remove({ level: "project", collection: "target" }),
+      api.removeCollection(core, { level: "project", collection: "target" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(beforeRemoval);
   } finally {
     await cleanup();
   }
 });
-
 test("MGMT-015/016/017 reject stale member, import, and Reference definitions without publishing bytes", async () => {
   const { root, cleanup } = await configResources("skill-cli-operation-stale-");
   const file = join(root, "skill-cli.jsonc");
@@ -1379,7 +1387,7 @@ test("MGMT-015/016/017 reject stale member, import, and Reference definitions wi
         },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     await writeFile(
       file,
       JSON.stringify({
@@ -1394,7 +1402,7 @@ test("MGMT-015/016/017 reject stale member, import, and Reference definitions wi
     );
     const before = await readFile(file, "utf8");
     await expect(
-      core.collections.removeMember({
+      api.removeMember(core, {
         level: "project",
         collection: "target",
         name: "review",
@@ -1402,7 +1410,7 @@ test("MGMT-015/016/017 reject stale member, import, and Reference definitions wi
       }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     await expect(
-      core.collections.removeReference({
+      api.removeReference(core, {
         level: "project",
         collection: "target",
         name: "docs",
@@ -1414,7 +1422,6 @@ test("MGMT-015/016/017 reject stale member, import, and Reference definitions wi
     await cleanup();
   }
 });
-
 test("MGMT-016 import validates all current source members atomically", async () => {
   const { root, cleanup } = await configResources("skill-cli-import-stale-");
   const file = join(root, "skill-cli.jsonc");
@@ -1428,7 +1435,7 @@ test("MGMT-016 import validates all current source members atomically", async ()
         },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     await writeFile(
       file,
       JSON.stringify({
@@ -1445,14 +1452,13 @@ test("MGMT-016 import validates all current source members atomically", async ()
     );
     const before = await readFile(file, "utf8");
     await expect(
-      core.collections.importMembers({ level: "project", from: "source", into: "target" }),
+      api.importMembers(core, { level: "project", from: "source", into: "target" }),
     ).rejects.toMatchObject({ code: "EXPOSURE_CONFLICT" });
     expect(await readFile(file, "utf8")).toBe(before);
   } finally {
     await cleanup();
   }
 });
-
 test("MGMT-019 Link execution revalidates a stale preview without publishing conflicting bytes", async () => {
   const { root, cleanup } = await configResources("skill-cli-link-stale-");
   const config = join(root, "skill-cli.jsonc");
@@ -1466,10 +1472,10 @@ test("MGMT-019 Link execution revalidates a stale preview without publishing con
         },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     expect(
       (
-        await core.collections.previewSetLink({
+        await api.previewLinkChange(core, {
           level: "project",
           collection: "source",
           target: "target",
@@ -1488,7 +1494,7 @@ test("MGMT-019 Link execution revalidates a stale preview without publishing con
     );
     const before = await readFile(config, "utf8");
     await expect(
-      core.collections.setLink({
+      api.setLink(core, {
         level: "project",
         collection: "source",
         target: "target",
@@ -1500,7 +1506,6 @@ test("MGMT-019 Link execution revalidates a stale preview without publishing con
     await cleanup();
   }
 });
-
 test("MGMT-019 Link removal revalidates current alternatives and exact Link ownership", async () => {
   const { root, cleanup } = await configResources("skill-cli-link-remove-stale-");
   const config = join(root, "skill-cli.jsonc");
@@ -1514,10 +1519,10 @@ test("MGMT-019 Link removal revalidates current alternatives and exact Link owne
         },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     expect(
       (
-        await core.collections.previewSetLink({
+        await api.previewLinkChange(core, {
           level: "project",
           collection: "source",
           target: "target",
@@ -1537,7 +1542,7 @@ test("MGMT-019 Link removal revalidates current alternatives and exact Link owne
         },
       }),
     );
-    await core.collections.setLink({
+    await api.setLink(core, {
       level: "project",
       collection: "source",
       target: "target",
@@ -1549,7 +1554,7 @@ test("MGMT-019 Link removal revalidates current alternatives and exact Link owne
     });
     const before = await readFile(config, "utf8");
     await expect(
-      core.collections.setLink({
+      api.setLink(core, {
         level: "project",
         collection: "source",
         target: "target",
@@ -1561,7 +1566,6 @@ test("MGMT-019 Link removal revalidates current alternatives and exact Link owne
     await cleanup();
   }
 });
-
 test("MGMT-019 Link execution uses current graph facts after a preview is blocked or becomes cyclic", async () => {
   const { root, cleanup } = await configResources("skill-cli-link-current-");
   const config = join(root, "skill-cli.jsonc");
@@ -1575,10 +1579,10 @@ test("MGMT-019 Link execution uses current graph facts after a preview is blocke
         },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     expect(
       (
-        await core.collections.previewSetLink({
+        await api.previewLinkChange(core, {
           level: "project",
           collection: "source",
           target: "target",
@@ -1605,13 +1609,12 @@ test("MGMT-019 Link execution uses current graph facts after a preview is blocke
         },
       }),
     );
-    await core.collections.setLink({
+    await api.setLink(core, {
       level: "project",
       collection: "source",
       target: "target",
       linked: true,
     });
-
     await writeFile(
       config,
       JSON.stringify({
@@ -1623,7 +1626,7 @@ test("MGMT-019 Link execution uses current graph facts after a preview is blocke
     );
     expect(
       (
-        await core.collections.previewSetLink({
+        await api.previewLinkChange(core, {
           level: "project",
           collection: "source",
           target: "target",
@@ -1642,7 +1645,7 @@ test("MGMT-019 Link execution uses current graph facts after a preview is blocke
     );
     const before = await readFile(config, "utf8");
     await expect(
-      core.collections.setLink({
+      api.setLink(core, {
         level: "project",
         collection: "source",
         target: "target",
@@ -1654,17 +1657,16 @@ test("MGMT-019 Link execution uses current graph facts after a preview is blocke
     await cleanup();
   }
 });
-
 test("MGMT-029 Collection Use rejects a newly incomplete graph unchanged then succeeds from current repaired facts", async () => {
   const { root, cleanup } = await configResources("skill-cli-use-stale-");
   const file = join(root, "skill-cli.jsonc");
   try {
     const complete = JSON.stringify({ collections: { team: {} } });
     await writeFile(file, complete);
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     expect(
       (
-        await core.use.previewSet({
+        await api.previewCollectionUse(core, {
           level: "project",
           collections: ["team"],
         })
@@ -1672,28 +1674,29 @@ test("MGMT-029 Collection Use rejects a newly incomplete graph unchanged then su
     ).toBe(true);
     const incomplete = JSON.stringify({ collections: {} });
     await writeFile(file, incomplete);
-    await expect(core.use.set({ level: "project", collections: ["team"] })).rejects.toMatchObject({
+    await expect(
+      api.setUse(core, { level: "project", collections: ["team"] }),
+    ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(await readFile(file, "utf8")).toBe(incomplete);
     await writeFile(file, complete);
-    await core.use.set({ level: "project", collections: ["team"] });
+    await api.setUse(core, { level: "project", collections: ["team"] });
     expect(JSON.parse(await readFile(file, "utf8")).use).toEqual(["team"]);
   } finally {
     await cleanup();
   }
 });
-
 test("MGMT-029 Collection removal rejects a newly introduced dependency unchanged then succeeds after removal", async () => {
   const { root, cleanup } = await configResources("skill-cli-collection-remove-stale-");
   const file = join(root, "skill-cli.jsonc");
   try {
     const independent = JSON.stringify({ collections: { source: {}, target: {} } });
     await writeFile(file, independent);
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     expect(
       (
-        await core.collections.previewRemoval({
+        await api.previewCollectionRemoval(core, {
           level: "project",
           collection: "target",
         })
@@ -1707,17 +1710,16 @@ test("MGMT-029 Collection removal rejects a newly introduced dependency unchange
     });
     await writeFile(file, dependent);
     await expect(
-      core.collections.remove({ level: "project", collection: "target" }),
+      api.removeCollection(core, { level: "project", collection: "target" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(file, "utf8")).toBe(dependent);
     await writeFile(file, independent);
-    await core.collections.remove({ level: "project", collection: "target" });
+    await api.removeCollection(core, { level: "project", collection: "target" });
     expect(JSON.parse(await readFile(file, "utf8")).collections.target).toBeUndefined();
   } finally {
     await cleanup();
   }
 });
-
 test("membership batches preview and publish one direct Collection delta atomically", async () => {
   const { root, cleanup } = await configResources("skill-cli-membership-batch-");
   const file = join(root, "skill-cli.jsonc");
@@ -1735,14 +1737,13 @@ test("membership batches preview and publish one direct Collection delta atomica
         },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const additions = [
       { name: "review", address: { source: "local", path: "review" } },
       { name: "docs", address: { source: "local", path: "docs" } },
     ];
     const removals = [{ name: "old", expectedAddress: { source: "local", path: "old" } }];
-
-    const preview = await core.collections.previewMemberEdit({
+    const preview = await api.previewMembershipBatch(core, {
       level: "project",
       collection: "team",
       additions,
@@ -1760,8 +1761,7 @@ test("membership batches preview and publish one direct Collection delta atomica
       blockers: [],
       allowed: true,
     });
-
-    await core.collections.editMembers({
+    await api.editMembers(core, {
       level: "project",
       collection: "team",
       additions,
@@ -1773,7 +1773,7 @@ test("membership batches preview and publish one direct Collection delta atomica
       review: { source: "local", path: "review" },
       docs: { source: "local", path: "docs" },
     });
-    const removalPreview = await core.collections.previewMemberEdit({
+    const removalPreview = await api.previewMembershipBatch(core, {
       level: "project",
       collection: "team",
       additions: [],
@@ -1782,7 +1782,7 @@ test("membership batches preview and publish one direct Collection delta atomica
         { name: "docs", expectedAddress: { source: "local", path: "docs" } },
       ],
     });
-    await core.collections.editMembers({
+    await api.editMembers(core, {
       level: "project",
       collection: "team",
       additions: [],
@@ -1795,7 +1795,6 @@ test("membership batches preview and publish one direct Collection delta atomica
     expect(JSON.parse(await readFile(file, "utf8")).collections.team.members).toEqual({
       keep: { source: "local", path: "keep" },
     });
-
     const before = await readFile(file, "utf8");
     for (const [request, code] of [
       [
@@ -1818,7 +1817,7 @@ test("membership batches preview and publish one direct Collection delta atomica
       ],
     ] as const) {
       await expect(
-        core.collections.editMembers({
+        api.editMembers(core, {
           level: "project",
           collection: "team",
           ...request,
@@ -1831,7 +1830,6 @@ test("membership batches preview and publish one direct Collection delta atomica
     await cleanup();
   }
 });
-
 test("membership batches reject duplicate request names and contributed Collection ownership", async () => {
   const { root, cleanup } = await configResources("skill-cli-membership-batch-blocked-");
   const module = join(root, "module");
@@ -1842,24 +1840,24 @@ test("membership batches reject duplicate request names and contributed Collecti
       join(root, "skill-cli.jsonc"),
       '{ "configSources": { "shared": { "kind": "local", "path": "./module", "root": "" } } }\n',
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const request = {
       level: "project" as const,
       collection: "shared/team",
       additions: [{ name: "review", address: { source: "local", path: "review" } }],
       removals: [],
     };
-    expect((await core.collections.previewMemberEdit(request)).value).toMatchObject({
+    expect((await api.previewMembershipBatch(core, request)).value).toMatchObject({
       decision: { kind: "contributed" },
       allowed: false,
     });
     const before = await readFile(join(root, "skill-cli.jsonc"), "utf8");
-    await expect(
-      core.collections.editMembers({ ...request, reviewedAffected: [] }),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(api.editMembers(core, { ...request, reviewedAffected: [] })).rejects.toMatchObject(
+      { code: "INVALID_ARGUMENT" },
+    );
     expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(before);
     await expect(
-      core.collections.previewMemberEdit({
+      api.previewMembershipBatch(core, {
         ...request,
         collection: "shared/team",
         additions: [
@@ -1872,7 +1870,6 @@ test("membership batches reject duplicate request names and contributed Collecti
     await cleanup();
   }
 });
-
 test("membership batch preview includes direct and incoming Link selector deltas", async () => {
   const { root, cleanup } = await configResources("skill-cli-membership-batch-links-");
   try {
@@ -1886,12 +1883,15 @@ test("membership batch preview includes direct and incoming Link selector deltas
         },
       }),
     );
-    const preview = await createSkillCliCore({ cwd: root }).collections.previewMemberEdit({
-      level: "project",
-      collection: "team",
-      additions: [{ name: "review", address: { source: "local", path: "review" } }],
-      removals: [],
-    });
+    const preview = await api.previewMembershipBatch(
+      { cwd: root },
+      {
+        level: "project",
+        collection: "team",
+        additions: [{ name: "review", address: { source: "local", path: "review" } }],
+        removals: [],
+      },
+    );
     expect(preview.value.affected).toMatchObject([
       { selector: "parent:review", address: { source: "local", path: "review" } },
       { selector: "team:review", address: { source: "local", path: "review" } },
@@ -1906,7 +1906,6 @@ test("membership batch preview includes direct and incoming Link selector deltas
     await cleanup();
   }
 });
-
 test("membership batch rejects a Link introduced after review without publishing bytes or state", async () => {
   const { root, state, cleanup } = await configResources(
     "skill-cli-membership-batch-reviewed-impact-",
@@ -1914,19 +1913,18 @@ test("membership batch rejects a Link introduced after review without publishing
   const file = join(root, "skill-cli.jsonc");
   try {
     await writeFile(file, JSON.stringify({ collections: { parent: {}, team: {} } }));
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const request = {
       level: "project" as const,
       collection: "team",
       additions: [{ name: "review", address: { source: "local", path: "review" } }],
       removals: [],
     };
-    const preview = await core.collections.previewMemberEdit(request);
+    const preview = await api.previewMembershipBatch(core, request);
     expect(preview.value.affected).toMatchObject([
       { selector: "team:review", address: { source: "local", path: "review" } },
     ]);
-
-    await core.collections.setLink({
+    await api.setLink(core, {
       level: "project",
       collection: "parent",
       target: "team",
@@ -1934,9 +1932,8 @@ test("membership batch rejects a Link introduced after review without publishing
     });
     const before = await readFile(file, "utf8");
     const beforeState = await readFile(join(state, "state.json"), "utf8").catch(() => undefined);
-
     await expect(
-      core.collections.editMembers({ ...request, reviewedAffected: preview.value.affected }),
+      api.editMembers(core, { ...request, reviewedAffected: preview.value.affected }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(file, "utf8")).toBe(before);
     expect(await readFile(join(state, "state.json"), "utf8").catch(() => undefined)).toBe(
@@ -1946,46 +1943,46 @@ test("membership batch rejects a Link introduced after review without publishing
     await cleanup();
   }
 });
-
 test("membership batch accepts an unrelated graph change after review", async () => {
   const { root, cleanup } = await configResources("skill-cli-membership-batch-unrelated-impact-");
   const file = join(root, "skill-cli.jsonc");
   try {
     await writeFile(file, JSON.stringify({ collections: { other: {}, parent: {}, team: {} } }));
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const request = {
       level: "project" as const,
       collection: "team",
       additions: [{ name: "review", address: { source: "local", path: "review" } }],
       removals: [],
     };
-    const preview = await core.collections.previewMemberEdit(request);
-    await core.collections.setLink({
+    const preview = await api.previewMembershipBatch(core, request);
+    await api.setLink(core, {
       level: "project",
       collection: "parent",
       target: "other",
       linked: true,
     });
-
     await expect(
-      core.collections.editMembers({ ...request, reviewedAffected: preview.value.affected }),
+      api.editMembers(core, { ...request, reviewedAffected: preview.value.affected }),
     ).resolves.toMatchObject({ value: { changed: true } });
   } finally {
     await cleanup();
   }
 });
-
 test("membership batch preview blocks unavailable effective management despite a direct owner", async () => {
   const { root, cleanup } = await configResources("skill-cli-membership-batch-unavailable-");
   try {
     await writeFile(join(root, "skill-cli.jsonc"), '{ "collections": { "team": {} } }\n');
     await writeFile(join(root, "skill-cli.local.jsonc"), "{ invalid\n");
-    const preview = await createSkillCliCore({ cwd: root }).collections.previewMemberEdit({
-      level: "project",
-      collection: "team",
-      additions: [{ name: "review", address: { source: "local", path: "review" } }],
-      removals: [],
-    });
+    const preview = await api.previewMembershipBatch(
+      { cwd: root },
+      {
+        level: "project",
+        collection: "team",
+        additions: [{ name: "review", address: { source: "local", path: "review" } }],
+        removals: [],
+      },
+    );
     expect(preview.value).toMatchObject({
       decision: { kind: "direct", owner: { pointer: "/collections/team" } },
       blockers: [{ reason: "incomplete" }],
@@ -1995,7 +1992,6 @@ test("membership batch preview blocks unavailable effective management despite a
     await cleanup();
   }
 });
-
 test("membership batches normalize names and leave effectless deltas unpublished", async () => {
   const { root, state, cleanup } = await configResources("skill-cli-membership-batch-noop-");
   const file = join(root, "skill-cli.jsonc");
@@ -2008,8 +2004,8 @@ test("membership batches normalize names and leave effectless deltas unpublished
         collections: { team: { members: { [normalized]: { source: "local", path: "cafe" } } } },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
-    const preview = await core.collections.previewMemberEdit({
+    const core = { cwd: root };
+    const preview = await api.previewMembershipBatch(core, {
       level: "project",
       collection: "team",
       additions: [{ name: decomposed, address: { source: "local", path: "cafe" } }],
@@ -2025,7 +2021,7 @@ test("membership batches normalize names and leave effectless deltas unpublished
     const generation = (await new StateCoordinator(state).read()).generation;
     expect(
       (
-        await core.collections.editMembers({
+        await api.editMembers(core, {
           level: "project",
           collection: "team",
           additions: [{ name: decomposed, address: { source: "local", path: "cafe" } }],
@@ -2040,7 +2036,6 @@ test("membership batches normalize names and leave effectless deltas unpublished
     await cleanup();
   }
 });
-
 test("membership batches preserve all bytes for mixed valid and invalid changes", async () => {
   const { root, cleanup } = await configResources("skill-cli-membership-batch-mixed-failure-");
   const file = join(root, "skill-cli.jsonc");
@@ -2051,10 +2046,10 @@ test("membership batches preserve all bytes for mixed valid and invalid changes"
         collections: { team: { members: { old: { source: "local", path: "old" } } } },
       }),
     );
-    const core = createSkillCliCore({ cwd: root });
+    const core = { cwd: root };
     const before = await readFile(file, "utf8");
     await expect(
-      core.collections.editMembers({
+      api.editMembers(core, {
         level: "project",
         collection: "team",
         additions: [{ name: "new", address: { source: "local", path: "new" } }],

@@ -9,7 +9,6 @@ import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
-
 async function click(
   setup: Awaited<ReturnType<typeof testRender>>,
   target: Renderable,
@@ -23,7 +22,6 @@ async function click(
   } else await setup.mockMouse.click(target.screenX + 1, target.screenY);
   await setup.flush();
 }
-
 for (const activationMode of ["automatic", "manual"] as const) {
   test.each([true, false])(
     `${activationMode} native tab pointer selects once without entering content with batched events=%s`,
@@ -72,13 +70,12 @@ for (const activationMode of ["automatic", "manual"] as const) {
     },
   );
 }
-
 test.each(["global", "project", "local"] as const)(
   "one batched native click enters %s Collections after Scope changes without Enter",
   async (level) => {
     const core = directSourceCore(collectionsSourcesProjection());
     let writes = 0;
-    core.collections.addMember = async () => {
+    core.addMember = async () => {
       writes++;
       throw new Error("Tab selection must not write");
     };

@@ -1,15 +1,14 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createSkillCliCore } from "../../src/create-core";
 import { setAcquisitionTrapForTest } from "../../src/source/snapshot";
 import { setManagementPublicationHookForTest } from "../../src/installed/update";
 import { networkFixture } from "../provider/network-fixture";
 import { command } from "../provider/network-fixture";
-
 test("W3 actual management Git acquisition uses frozen user proxy through install, check and discovery", async () => {
   const fixture = await networkFixture();
   const keys = [
@@ -36,8 +35,8 @@ test("W3 actual management Git acquisition uses frozen user proxy through instal
     const user = join(fixture.root, "user.jsonc");
     await writeFile(user, JSON.stringify({ network: { proxy: fixture.proxyUrl } }));
     await writeFile(join(fixture.root, "skill-cli.jsonc"), "{}\n");
-    const core = createSkillCliCore({ cwd: fixture.root, userConfigPath: user });
-    await core.sources.register({
+    const core = { cwd: fixture.root, userConfigPath: user };
+    await api.registerSource(core, {
       level: "project",
       id: "remote",
       binding: { kind: "git", origin: fixture.targetUrl, root: "", ref: "main" },
@@ -47,7 +46,7 @@ test("W3 actual management Git acquisition uses frozen user proxy through instal
       // Policy edits apply to the next acquisition; publication has no live remote timer.
       await writeFile(user, "{}\n");
     });
-    await core.installed.install({ source: "remote", paths: [""], exactRevision: fixture.commit });
+    await api.installSkills(core, { source: "remote", paths: [""], exactRevision: fixture.commit });
     expect(fixture.routes.length).toBeGreaterThan(0);
     expect(fixture.direct).toBe(0);
     const state = JSON.parse(await readFile(join(fixture.root, "state", "state.json"), "utf8"));
@@ -55,12 +54,10 @@ test("W3 actual management Git acquisition uses frozen user proxy through instal
     setManagementPublicationHookForTest();
     await writeFile(user, JSON.stringify({ network: { proxy: fixture.proxyUrl } }));
     const before = fixture.routes.length;
-    expect((await core.installed.checkUpdate({ source: "remote" })).value.unchanged).toHaveLength(
-      1,
-    );
+    expect((await api.checkUpdate(core, { source: "remote" })).value.unchanged).toHaveLength(1);
     expect(fixture.routes.length).toBeGreaterThan(before);
     await writeFile(user, JSON.stringify({ network: { proxy: fixture.proxyUrl } }));
-    expect((await core.sources.discover({ source: "remote" })).value.exactRevision).toBe(
+    expect((await api.discoverSkills(core, { source: "remote" })).value.exactRevision).toBe(
       fixture.commit,
     );
     const work = join(fixture.root, "work");
@@ -73,7 +70,7 @@ test("W3 actual management Git acquisition uses frozen user proxy through instal
       await command(work, ["/usr/bin/git", ...args]);
     const revision = await command(work, ["/usr/bin/git", "rev-parse", "HEAD"]);
     await writeFile(user, JSON.stringify({ network: { proxy: fixture.proxyUrl } }));
-    await core.installed.update({ source: "remote", paths: [""], exactRevision: revision });
+    await api.updateSkills(core, { source: "remote", paths: [""], exactRevision: revision });
     expect(
       JSON.parse(await readFile(join(fixture.root, "state", "state.json"), "utf8")).installed[0],
     ).toMatchObject({ name: "network", adoptedRevision: revision });
@@ -89,7 +86,6 @@ test("W3 actual management Git acquisition uses frozen user proxy through instal
     await fixture.close();
   }
 });
-
 test("W3 invalid user network and user read errors fail before provider acquisition", async () => {
   const fixture = await networkFixture();
   const saved = process.env.SKILL_CLI_STATE_DIR;
@@ -98,12 +94,12 @@ test("W3 invalid user network and user read errors fail before provider acquisit
   try {
     const user = join(fixture.root, "user.jsonc");
     await writeFile(join(fixture.root, "skill-cli.jsonc"), "{}\n");
-    const core = createSkillCliCore({
+    const core = {
       cwd: fixture.root,
       userConfigPath: user,
       sourceTransport: () => join(fixture.root, "remote.git"),
-    });
-    await core.sources.register({
+    };
+    await api.registerSource(core, {
       level: "project",
       id: "remote",
       binding: { kind: "git", origin: fixture.targetUrl, root: "", ref: "main" },
@@ -113,7 +109,7 @@ test("W3 invalid user network and user read errors fail before provider acquisit
     });
     await writeFile(user, '{"network":{"proxy":"socks://invalid"}}');
     await expect(
-      core.installed.install({ source: "remote", paths: [""], exactRevision: fixture.commit }),
+      api.installSkills(core, { source: "remote", paths: [""], exactRevision: fixture.commit }),
     ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
     expect(opens).toBe(0);
     const blocked = join(fixture.root, "blocked");
@@ -122,11 +118,11 @@ test("W3 invalid user network and user read errors fail before provider acquisit
     const { chmod } = await import("node:fs/promises");
     await chmod(blocked, 0);
     try {
-      const inaccessible = createSkillCliCore({
+      const inaccessible = {
         cwd: fixture.root,
         userConfigPath: join(blocked, "config.jsonc"),
-      });
-      await expect(inaccessible.sources.discover({ source: "remote" })).rejects.toThrow();
+      };
+      await expect(api.discoverSkills(inaccessible, { source: "remote" })).rejects.toThrow();
       expect(opens).toBe(0);
     } finally {
       await chmod(blocked, 0o700);
@@ -138,7 +134,6 @@ test("W3 invalid user network and user read errors fail before provider acquisit
     await fixture.close();
   }
 });
-
 test("W3 Config observe, preview and adoption share actual user-proxy acquisition and close before publication", async () => {
   const fixture = await networkFixture();
   const saved = process.env.SKILL_CLI_STATE_DIR;
@@ -156,8 +151,8 @@ test("W3 Config observe, preview and adoption share actual user-proxy acquisitio
     const revision = await command(work, ["/usr/bin/git", "rev-parse", "HEAD"]);
     await writeFile(user, JSON.stringify({ network: { proxy: fixture.proxyUrl } }));
     await writeFile(join(fixture.root, "skill-cli.jsonc"), "{}\n");
-    const core = createSkillCliCore({ cwd: fixture.root, userConfigPath: user });
-    await core.configSources.register({
+    const core = { cwd: fixture.root, userConfigPath: user };
+    await api.registerConfigSource(core, {
       level: "project",
       id: "shared",
       binding: { kind: "git", origin: fixture.targetUrl, root: "", ref: "main" },
@@ -168,11 +163,11 @@ test("W3 Config observe, preview and adoption share actual user-proxy acquisitio
       // Synchronous boundary edit must not replace the captured operation policy.
       writeFileSync(user, "{}\n");
     });
-    const observation = await core.configSources.observe({ id: "shared" });
+    const observation = await api.observeConfigSource(core, { id: "shared" });
     expect(observation.value.exactRevision).toBe(revision);
     await writeFile(user, JSON.stringify({ network: { proxy: fixture.proxyUrl } }));
     expect(
-      (await core.configSources.previewAdoption({ id: "shared", exactRevision: revision })).value
+      (await api.previewConfigAdoption(core, { id: "shared", exactRevision: revision })).value
         .allowed,
     ).toBe(true);
     await writeFile(user, JSON.stringify({ network: { proxy: fixture.proxyUrl } }));
@@ -180,7 +175,7 @@ test("W3 Config observe, preview and adoption share actual user-proxy acquisitio
     setManagementPublicationHookForTest(() => {
       atPublication = fixture.routes.length;
     });
-    await core.configSources.adopt({ id: "shared", exactRevision: revision });
+    await api.adoptConfigSource(core, { id: "shared", exactRevision: revision });
     expect(acquisitions).toBe(3);
     expect(atPublication).toBe(fixture.routes.length);
     expect(fixture.direct).toBe(0);
@@ -196,7 +191,6 @@ test("W3 Config observe, preview and adoption share actual user-proxy acquisitio
     await fixture.close();
   }
 });
-
 test("W3 check deadline covers delayed ref plus acquisition, drains cancellation, then the next check succeeds", async () => {
   const fixture = await networkFixture();
   const saved = process.env.SKILL_CLI_STATE_DIR;
@@ -215,7 +209,7 @@ test("W3 check deadline covers delayed ref plus acquisition, drains cancellation
     });
     admitted?.();
     if (mode === "hang") return;
-    const delay = mode === "slow" ? (requests === 1 ? 27_000 : 6_000) : 0;
+    const delay = mode === "slow" ? (requests === 1 ? 27000 : 6000) : 0;
     const timer = setTimeout(async () => {
       timers.delete(timer);
       if (response.destroyed) return;
@@ -252,16 +246,16 @@ test("W3 check deadline covers delayed ref plus acquisition, drains cancellation
     const user = join(fixture.root, "user.jsonc");
     await writeFile(join(fixture.root, "skill-cli.jsonc"), "{}\n");
     const options = { cwd: fixture.root, userConfigPath: user };
-    const initial = createSkillCliCore({
+    const initial = {
       ...options,
       sourceTransport: () => join(fixture.root, "remote.git"),
-    });
-    await initial.sources.register({
+    };
+    await api.registerSource(initial, {
       level: "project",
       id: "remote",
       binding: { kind: "git", origin: fixture.targetUrl, root: "", ref: "main" },
     });
-    await initial.installed.install({
+    await api.installSkills(initial, {
       source: "remote",
       paths: [""],
       exactRevision: fixture.commit,
@@ -277,13 +271,13 @@ test("W3 check deadline covers delayed ref plus acquisition, drains cancellation
         network: { proxy: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}` },
       }),
     );
-    const core = createSkillCliCore(options);
+    const core = options;
     const start = Date.now();
-    const timedOut = await core.installed.checkUpdate({ source: "remote" }).catch((error) => error);
+    const timedOut = await api.checkUpdate(core, { source: "remote" }).catch((error) => error);
     expect(timedOut).toMatchObject({ code: "PROVIDER_TIMEOUT" });
     expect(timedOut.message).toContain("Git acquisition");
-    expect(Date.now() - start).toBeGreaterThan(29_000);
-    expect(Date.now() - start).toBeLessThan(35_000);
+    expect(Date.now() - start).toBeGreaterThan(29000);
+    expect(Date.now() - start).toBeLessThan(35000);
     expect(requests).toBeGreaterThanOrEqual(2);
     expect(closed).toBe(requests);
     expect(await readFile(stateFile, "utf8")).toBe(before);
@@ -292,7 +286,7 @@ test("W3 check deadline covers delayed ref plus acquisition, drains cancellation
     const ready = new Promise<void>((resolve) => {
       admitted = resolve;
     });
-    const pending = core.installed.checkUpdate({ source: "remote" }, { signal: abort.signal });
+    const pending = api.checkUpdate(core, { source: "remote" }, { signal: abort.signal });
     await ready;
     admitted = undefined;
     abort.abort();
@@ -301,9 +295,7 @@ test("W3 check deadline covers delayed ref plus acquisition, drains cancellation
     mode = "fast";
     for (const item of state.installed) item.adoptedRevision = fixture.commit;
     await writeFile(stateFile, JSON.stringify(state));
-    expect((await core.installed.checkUpdate({ source: "remote" })).value.unchanged).toHaveLength(
-      1,
-    );
+    expect((await api.checkUpdate(core, { source: "remote" })).value.unchanged).toHaveLength(1);
     expect(fixture.direct).toBe(0);
   } finally {
     for (const timer of timers) clearTimeout(timer);
@@ -317,4 +309,4 @@ test("W3 check deadline covers delayed ref plus acquisition, drains cancellation
     else process.env.SKILL_CLI_STATE_DIR = saved;
     await fixture.close();
   }
-}, 45_000);
+}, 45000);

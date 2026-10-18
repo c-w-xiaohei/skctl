@@ -10,18 +10,18 @@ import {
   openAllInstalledSkills,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 test("RENDER Reader mounts a paintable content surface", async () => {
   const reads: unknown[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async (request) => {
-              reads.push(request);
-              return readerContent;
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            reads.push(request);
+            return readerContent;
           },
         })}
         exit={() => {}}

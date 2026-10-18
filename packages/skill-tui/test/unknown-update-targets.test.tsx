@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
-import { SkillCliError, type InstalledCapability, type WorkspaceView } from "@skill-cli/core";
+import { SkillCliError, type WorkspaceView } from "@skill-cli/core";
 import { SelectRenderable, TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { ButtonRenderable } from "@tuiparts/core/button";
@@ -16,14 +16,12 @@ import type { UpdateAddress } from "../src/updates/scope";
 import type { UpdateRun } from "../src/updates/state";
 import { workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
-
 const source = "team-main";
 const first = { source, path: "guides/alpha" };
 const second = { source, path: "guides/bravo" };
 const other = { source: "other", path: "guides/alpha" };
 const key = (address: UpdateAddress) => `${address.source}\0${address.path}`;
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 function fixture(
   paths = [first.path, second.path],
   failure: "unknown" | "check" | "metadata" | "ownership" = "unknown",
@@ -47,56 +45,52 @@ function fixture(
     };
     const state = createUpdatesState(buildUpdateScope(projection, { kind: "workspace" }));
     const checks: string[] = [];
-    const updates: Parameters<InstalledCapability["update"]>[0][] = [];
+    const updates: Parameters<typeof import("@skill-cli/core").updateSkills>[1][] = [];
     const controller = createUpdateController(
       {
-        workspace: {
-          get: async () => ({
-            value:
-              failure === "ownership"
-                ? {
-                    ...projection,
-                    installedSkills: projection.installedSkills.map((skill, index) =>
-                      index
-                        ? skill
-                        : { ...skill, owner: { ...skill.owner, health: "drifted" as const } },
-                    ),
-                  }
-                : projection,
+        getWorkspace: async () => ({
+          value:
+            failure === "ownership"
+              ? {
+                  ...projection,
+                  installedSkills: projection.installedSkills.map((skill, index) =>
+                    index
+                      ? skill
+                      : { ...skill, owner: { ...skill.owner, health: "drifted" as const } },
+                  ),
+                }
+              : projection,
+          diagnostics: [],
+        }),
+        checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+          checks.push(source);
+          if (failure === "check") throw new Error("Source unavailable");
+          return {
+            value: {
+              source,
+              kind: "github",
+              exactRevision: "a".repeat(40),
+              baseline: "checked-baseline",
+              changed: paths.map((path) => ({ path, name: "Guide", description: "Changed" })),
+              unchanged: [],
+              removed: [],
+              added: [],
+            },
             diagnostics: [],
-          }),
+          };
         },
-        installed: {
-          checkUpdate: async ({ source }) => {
-            checks.push(source);
-            if (failure === "check") throw new Error("Source unavailable");
-            return {
-              value: {
-                source,
-                kind: "github",
-                exactRevision: "a".repeat(40),
-                baseline: "checked-baseline",
-                changed: paths.map((path) => ({ path, name: "Guide", description: "Changed" })),
-                unchanged: [],
-                removed: [],
-                added: [],
+        updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+          updates.push(request);
+          if (failure === "metadata")
+            throw new SkillCliError("INVALID_ARGUMENT", "Invalid SKILL.md", [
+              {
+                code: "UPDATE_NOT_APPLIED",
+                severity: "warning",
+                message: "Rejected before publication",
+                subject: { kind: "installed-skill", address: { source, path: paths[0]! } },
               },
-              diagnostics: [],
-            };
-          },
-          update: async (request) => {
-            updates.push(request);
-            if (failure === "metadata")
-              throw new SkillCliError("INVALID_ARGUMENT", "Invalid SKILL.md", [
-                {
-                  code: "UPDATE_NOT_APPLIED",
-                  severity: "warning",
-                  message: "Rejected before publication",
-                  subject: { kind: "installed-skill", address: { source, path: paths[0]! } },
-                },
-              ]);
-            throw new Error("Publication receipt unavailable");
-          },
+            ]);
+          throw new Error("Publication receipt unavailable");
         },
       },
       state,
@@ -115,7 +109,6 @@ function fixture(
     };
   });
 }
-
 test.each([1, 2])(
   "unknown feedback retains all %i targets from an actual atomic Source call",
   async (count) => {
@@ -149,7 +142,6 @@ test.each([1, 2])(
     }
   },
 );
-
 test("unknown feedback retains missing diagnostics, distinct messages and exact bounded targets without duplicate notices", () => {
   const results: UpdateRun["results"] = [
     { address: first, status: "unknown", message: "alpha diagnostic" },
@@ -183,7 +175,6 @@ test("unknown feedback retains missing diagnostics, distinct messages and exact 
     },
   ]);
 });
-
 async function mountPage(
   data: ReturnType<typeof fixture>,
   options: {
@@ -275,7 +266,6 @@ async function mountPage(
     filter,
   };
 }
-
 async function chooseRecovery(page: Awaited<ReturnType<typeof mountPage>>) {
   page.setPalette(true);
   await page.setup.waitFor(
@@ -291,7 +281,6 @@ async function chooseRecovery(page: Awaited<ReturnType<typeof mountPage>>) {
   await parsedEnter(page.setup);
   await page.setup.flush();
 }
-
 function diagnosticText(setup: Setup, prefix: string) {
   const pane = setup.renderer.root.findDescendantById(`${prefix}-feedback-pane`)!;
   return pane
@@ -300,7 +289,6 @@ function diagnosticText(setup: Setup, prefix: string) {
     .map((node) => node.plainText)
     .join("\n");
 }
-
 test.each([
   [80, 24],
   [43, 13],
@@ -324,7 +312,6 @@ test.each([
       expect(recovery.screenY + recovery.height).toBeLessThanOrEqual(height);
       await enterLive(setup, recovery.id);
       expect(page.inspected).toEqual([first]);
-
       await focusLive(setup, "source-updates-browser");
       setup.mockInput.pressArrow("down");
       await setup.waitFor(() => data.state.sourcePosition(source)?.currentKey === key(second));
@@ -338,7 +325,6 @@ test.each([
       await setup.mockMouse.click(secondRecovery.screenX + 1, secondRecovery.screenY);
       await setup.flush();
       expect(page.inspected).toEqual([first, second]);
-
       // A pointer-selected row retargets the same registered recovery command.
       const firstRow = setup.renderer.root.findDescendantById(
         `source-updates-browser-row-${encodeURIComponent(key(first))}`,
@@ -352,7 +338,6 @@ test.each([
       await setup.waitFor(() => data.state.sourcePosition(source)?.currentKey === key(second));
       await chooseRecovery(page);
       expect(page.inspected).toEqual([first, second, first, second]);
-
       // Filtering changes the visible current item, not the checked batch or receipt.
       page.setQuery(second.path);
       await setup.flush();
@@ -379,7 +364,6 @@ test.each([
     }
   },
 );
-
 test.each([1, 2])(
   "RENDER overview keeps a usable exact unknown target for %i results without rechecking",
   async (count) => {
@@ -405,7 +389,6 @@ test.each([1, 2])(
     }
   },
 );
-
 test.each([true, false])(
   "RENDER missing-message unknown still offers exact Skill inspection with Source diagnostic=%s",
   async (groupDiagnostic) => {
@@ -439,7 +422,6 @@ test.each([true, false])(
     }
   },
 );
-
 test.each([true, false])(
   "RENDER absent Skill inspection names the exact target and Source fallback availability=%s",
   async (inspectSource) => {
@@ -464,7 +446,6 @@ test.each([true, false])(
     }
   },
 );
-
 test("RENDER a current successful sibling does not inherit another Skill's unknown recovery", async () => {
   const data = fixture();
   await data.controller.submit();
@@ -486,7 +467,6 @@ test("RENDER a current successful sibling does not inherit another Skill's unkno
     data.dispose();
   }
 });
-
 test.each(["check", "metadata", "ownership"] as const)(
   "RENDER ordinary %s failures retain their explicit recovery, deduplicated per Source",
   async (failure) => {

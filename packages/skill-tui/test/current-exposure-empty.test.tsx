@@ -4,7 +4,6 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-
 async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
   await new Promise<void>((resolve) => {
     const listener = (event: { readonly name: string }) => {
@@ -18,7 +17,6 @@ async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
   });
   await setup.renderOnce();
 }
-
 async function focusSkillsView(
   setup: Awaited<ReturnType<typeof testRender>>,
   value: "current-exposure" | "all-installed-skills" | "unassigned" | "problems",
@@ -30,7 +28,6 @@ async function focusSkillsView(
   setup.renderer.root.findDescendantById(`skills-view-tab-${value}`)!.focus();
   await setup.renderOnce();
 }
-
 const noUseProjection = (
   options: {
     readonly direct?: boolean;
@@ -114,7 +111,6 @@ const noUseProjection = (
     },
   };
 };
-
 test("RENDER complete managed empty Use exposes deterministic direct-owner repairs only", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(noUseProjection())} exit={() => {}} />,
@@ -145,7 +141,6 @@ test("RENDER complete managed empty Use exposes deterministic direct-owner repai
     setup.renderer.destroy();
   }
 });
-
 test.each([120, 80, 43])(
   "RENDER empty Use owner repairs keep every owner row mouse-visible and preserve keyboard identity at %i columns",
   async (width) => {
@@ -169,7 +164,6 @@ test.each([120, 80, 43])(
         expect(setup.captureCharFrame()).toContain("Current Exposure · Collection Use context");
         expect(setup.captureCharFrame()).toContain("Collection Use context");
       }
-
       for (const [index] of [
         [0, "global"],
         [1, "project"],
@@ -193,7 +187,6 @@ test.each([120, 80, 43])(
           `${["global", "project", "local"][index]}:${["global-owned", "project-owned", "local-owned"][index]}`,
         );
       }
-
       const restored = setup.renderer.root.findDescendantById(
         "current-exposure-repair",
       ) as SelectRenderable;
@@ -222,7 +215,6 @@ test.each([120, 80, 43])(
     }
   },
 );
-
 test("RENDER long empty Use owner repairs keep native scrolling bounded and expose the selected row", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(noUseProjection({ manyDirect: true }))} exit={() => {}} />,
@@ -242,15 +234,18 @@ test("RENDER long empty Use owner repairs keep native scrolling bounded and expo
       await setup.renderOnce();
     }
     expect(repair.getSelectedOption()?.value).toBe("local:local-owned-3");
-    expect((repair as unknown as { readonly scrollOffset: number }).scrollOffset).toBeGreaterThan(
-      0,
-    );
+    expect(
+      (
+        repair as unknown as {
+          readonly scrollOffset: number;
+        }
+      ).scrollOffset,
+    ).toBeGreaterThan(0);
     expect(setup.captureCharFrame()).toContain("local-owned-3");
   } finally {
     setup.renderer.destroy();
   }
 });
-
 test("RENDER empty Use repair activates by keyboard, focuses the owning Config, and Esc returns", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(noUseProjection())} exit={() => {}} />,
@@ -273,7 +268,6 @@ test("RENDER empty Use repair activates by keyboard, focuses the owning Config, 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER empty Use pointer repair records its mounted control before routing and Esc returns to it", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(noUseProjection())} exit={() => {}} />,
@@ -295,7 +289,6 @@ test("RENDER empty Use pointer repair records its mounted control before routing
     setup.renderer.destroy();
   }
 });
-
 test("RENDER narrow empty Use keeps one focused repair control and returns without opening Skills or Reader", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(noUseProjection())} exit={() => {}} />,
@@ -317,7 +310,6 @@ test("RENDER narrow empty Use keeps one focused repair control and returns witho
     setup.renderer.destroy();
   }
 });
-
 test("RENDER empty Use with no direct Collections offers one navigation-only creation route", async () => {
   const setup = await testRender(
     () => (
@@ -341,7 +333,6 @@ test("RENDER empty Use with no direct Collections offers one navigation-only cre
     setup.renderer.destroy();
   }
 });
-
 test("RENDER global-only empty Use still targets the Project Collections creation route", async () => {
   const setup = await testRender(
     () => (
@@ -367,7 +358,6 @@ test("RENDER global-only empty Use still targets the Project Collections creatio
     setup.renderer.destroy();
   }
 });
-
 test("RENDER unmanaged Current Exposure visibly exposes Managed OpenCode recovery at 120 and 80 columns", async () => {
   for (const width of [120, 80] as const) {
     const setup = await testRender(
@@ -387,7 +377,6 @@ test("RENDER unmanaged Current Exposure visibly exposes Managed OpenCode recover
     }
   }
 });
-
 test("RENDER 43-column unmanaged Current Exposure visibly exposes Managed OpenCode recovery", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(workspaceProjection())} exit={() => {}} />,
@@ -404,7 +393,6 @@ test("RENDER 43-column unmanaged Current Exposure visibly exposes Managed OpenCo
     setup.renderer.destroy();
   }
 });
-
 test("RENDER focused unmanaged recovery opens the existing Managed OpenCode review with Enter", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(workspaceProjection())} exit={() => {}} />,
@@ -429,7 +417,6 @@ test("RENDER focused unmanaged recovery opens the existing Managed OpenCode revi
     setup.renderer.destroy();
   }
 });
-
 test("RENDER App context controls traverse Config review from Cancel to Confirm and execute once", async () => {
   let changes = 0;
   const core = directSourceCore(workspaceProjection(), {
@@ -467,7 +454,6 @@ test("RENDER App context controls traverse Config review from Cancel to Confirm 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER successful Managed OpenCode recovery refreshes into the empty Collection Use repair", async () => {
   let current = workspaceProjection();
   const core = directSourceCore(current, {
@@ -478,7 +464,7 @@ test("RENDER successful Managed OpenCode recovery refreshes into the empty Colle
         diagnostics: [],
       };
     },
-    workspace: { get: async () => ({ value: current, diagnostics: [] }) },
+    getWorkspace: async () => ({ value: current, diagnostics: [] }),
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 120,
@@ -494,7 +480,6 @@ test("RENDER successful Managed OpenCode recovery refreshes into the empty Colle
     action.focus();
     setup.mockInput.pressEnter();
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-operation-review"));
-
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("config-operation-review");
     await parsedEscape(setup);
     await setup.waitFor(
@@ -502,13 +487,11 @@ test("RENDER successful Managed OpenCode recovery refreshes into the empty Colle
         !!setup.renderer.root.findDescendantById("current-exposure-enable-managed-opencode") &&
         !setup.renderer.root.findDescendantById("config-operation-review"),
     );
-
     (setup.renderer.root.findDescendantById(
       "current-exposure-enable-managed-opencode",
     ) as SelectRenderable)!.focus();
     setup.mockInput.pressEnter();
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-operation-review"));
-
     setup.mockInput.pressKey("TAB");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "config-operation-confirm",
@@ -534,7 +517,6 @@ test("RENDER successful Managed OpenCode recovery refreshes into the empty Colle
     setup.renderer.destroy();
   }
 });
-
 test.each([120, 80, 43])(
   "Current Exposure uses readable count labels and preserves Reference identity at width %i",
   async (width) => {
@@ -644,7 +626,6 @@ test.each([120, 80, 43])(
       if (width < 100)
         expect(setup.captureCharFrame()).toContain("2 selectors · 2 installed skills");
       expect(browser.screenY + browser.height).toBeLessThanOrEqual(40);
-
       browser.focus();
       setup.mockInput.pressKey("ARROW_LEFT");
       await setup.renderOnce();

@@ -17,18 +17,15 @@ import {
   parsedEscape,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 const revision = "a".repeat(40);
 const sourceRow = (path: string) =>
   `source-updates-browser-row-${encodeURIComponent(`team-main\u0000${path}`)}`;
-
 function cell(setup: Awaited<ReturnType<typeof testRender>>, id: string) {
   const target = setup.renderer.root.findDescendantById(id);
   if (!(target instanceof TextRenderable))
     throw new Error(`Missing table cell ${id}\n${setup.captureCharFrame()}`);
   return target.plainText;
 }
-
 test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped update and Back", async () => {
   const base = workspaceProjection({ includeContribution: false });
   const projection = {
@@ -48,41 +45,46 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
   };
   const checks: string[] = [],
     completed: string[] = [];
-  const updates: { source: string; paths: readonly string[] }[] = [];
+  const updates: {
+    source: string;
+    paths: readonly string[];
+  }[] = [];
   let updateSignal: AbortSignal | undefined;
   const core = directSourceCore(projection, {
-    installed: {
-      checkUpdate: async ({ source }) => {
-        checks.push(source);
-        try {
-          return {
-            value: {
-              source,
-              kind: "github" as const,
-              baseline: "baseline:test",
-              exactRevision: revision,
-              changed: ["one", "two"].map((path) => ({ path, name: path, description: path })),
-              added: [],
-              removed: [],
-              unchanged: [],
-            },
-            diagnostics: [],
-          };
-        } finally {
-          completed.push(source);
-        }
-      },
-      update: async ({ source, paths }, options) => {
-        updates.push({ source, paths });
-        updateSignal = options?.signal;
-        await new Promise<never>((_resolve, reject) => {
-          const abort = () =>
-            reject(new SkillCliError("CANCELLED", "Stopped before fixture publication"));
-          if (updateSignal?.aborted) abort();
-          else updateSignal?.addEventListener("abort", abort, { once: true });
-        });
-        throw new Error("The cancelled fixture must never publish an update");
-      },
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+      checks.push(source);
+      try {
+        return {
+          value: {
+            source,
+            kind: "github" as const,
+            baseline: "baseline:test",
+            exactRevision: revision,
+            changed: ["one", "two"].map((path) => ({ path, name: path, description: path })),
+            added: [],
+            removed: [],
+            unchanged: [],
+          },
+          diagnostics: [],
+        };
+      } finally {
+        completed.push(source);
+      }
+    },
+    updateSkills: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { source, paths },
+      options,
+    ) => {
+      updates.push({ source, paths });
+      updateSignal = options?.signal;
+      await new Promise<never>((_resolve, reject) => {
+        const abort = () =>
+          reject(new SkillCliError("CANCELLED", "Stopped before fixture publication"));
+        if (updateSignal?.aborted) abort();
+        else updateSignal?.addEventListener("abort", abort, { once: true });
+      });
+      throw new Error("The cancelled fixture must never publish an update");
     },
   });
   const cacheKey = await mkdtemp(join(tmpdir(), "source-scope-back-"));
@@ -103,7 +105,6 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
     );
     expect(setup.renderer.root.findDescendantById(`${sourceRow("one")}:check`)).toBeUndefined();
     expect(setup.renderer.root.findDescendantById(`${sourceRow("two")}:check`)).toBeUndefined();
-
     await focusLive(setup, "source-updates-browser");
     setup.mockInput.pressKey(KeyCodes.HOME);
     setup.mockInput.pressKey(" ");
@@ -115,7 +116,6 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
     setup.mockInput.pressKey(" ");
     await setup.waitFor(() => !cell(setup!, `${sourceRow("one")}:check`).includes("✓"));
     expect(cell(setup, `${sourceRow("two")}:check`)).toContain("✓");
-
     await focusLive(setup, "source-updates-browser");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("reader-scrollbox"));
@@ -140,7 +140,6 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
     );
     expect(cell(setup, `${sourceRow("one")}:check`)).not.toContain("✓");
     expect(cell(setup, `${sourceRow("two")}:check`)).toContain("✓");
-
     setup.mockInput.pressKey("p", { ctrl: true });
     await setup.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "palette-choices");
     const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;

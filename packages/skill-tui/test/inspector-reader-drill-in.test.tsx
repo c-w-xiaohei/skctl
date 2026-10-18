@@ -11,9 +11,7 @@ import {
   sourceFilteredAddress,
   sourceFilteredReaderProjection,
 } from "./installed-reader.fixture";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 async function openSkills(setup: Setup) {
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("skills-view-tab-current-exposure"),
@@ -27,7 +25,13 @@ async function openSkills(setup: Setup) {
     const all = setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills");
     return (
       !!all &&
-      (all as unknown as { getState(): { selected: boolean } }).getState().selected &&
+      (
+        all as unknown as {
+          getState(): {
+            selected: boolean;
+          };
+        }
+      ).getState().selected &&
       !!setup.renderer.root.findDescendantById("installed-skill-browser")
     );
   });
@@ -35,7 +39,6 @@ async function openSkills(setup: Setup) {
   browser.focus();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
 }
-
 async function openSource(setup: Setup, index = 0) {
   const skills = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
   skills.focus();
@@ -50,7 +53,13 @@ async function openSource(setup: Setup, index = 0) {
       const tab = setup.renderer.root.findDescendantById(`shell-section-tab-${section}`);
       return (
         !!tab &&
-        (tab as unknown as { getState(): { selected: boolean } }).getState().selected &&
+        (
+          tab as unknown as {
+            getState(): {
+              selected: boolean;
+            };
+          }
+        ).getState().selected &&
         setup.renderer.currentFocusedRenderable === tab
       );
     });
@@ -75,7 +84,6 @@ async function openSource(setup: Setup, index = 0) {
     );
   });
 }
-
 async function awaitParsedEscape(setup: Setup) {
   await new Promise<void>((resolve) => {
     const onKeypress = (event: { readonly name: string }) => {
@@ -88,7 +96,6 @@ async function awaitParsedEscape(setup: Setup) {
   });
   await setup.renderOnce();
 }
-
 async function awaitParsedEnter(setup: Setup) {
   await new Promise<void>((resolve) => {
     const onKeypress = (event: { readonly name: string }) => {
@@ -102,7 +109,6 @@ async function awaitParsedEnter(setup: Setup) {
   await new Promise<void>((resolve) => setImmediate(resolve));
   await setup.renderOnce();
 }
-
 async function awaitFilteredSkillsBrowser(setup: Setup, expectedOptions: number) {
   await setup.waitFor(() => {
     const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
@@ -117,18 +123,18 @@ async function awaitFilteredSkillsBrowser(setup: Setup, expectedOptions: number)
     );
   });
 }
-
 test("RENDER Skill inspector uses named commands, one cue, and defers content loading", async () => {
   const loads: unknown[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async (request) => {
-              loads.push(request);
-              return readerContent;
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            loads.push(request);
+            return readerContent;
           },
         })}
         exit={() => {}}
@@ -168,18 +174,18 @@ test("RENDER Skill inspector uses named commands, one cue, and defers content lo
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Source Installed Skills command retains its exact filtered drill-in and return stack", async () => {
   const loads: unknown[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(sourceFilteredReaderProjection(), {
-          installed: {
-            load: async (request) => {
-              loads.push(request);
-              return readerContent;
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            loads.push(request);
+            return readerContent;
           },
         })}
         exit={() => {}}
@@ -281,7 +287,6 @@ test("RENDER Source Installed Skills command retains its exact filtered drill-in
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Source inspector direct return control restores its exact source", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,

@@ -1,12 +1,12 @@
 import { SkillCliError, type OperationOptions, type OperationResult } from "../shared";
 import { type ConfigLevel } from "../config/types";
 import { type CollectionInspection } from "./types";
-import { type CoreFactoryOptions } from "../shared";
+import { type CoreOptions } from "../shared";
 import { reachableCollections, skillAddressKey } from "./graph";
 import { readWorkspace } from "../workspace/capture";
 
 export async function inspectCollection(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: { readonly collection: string; readonly level?: ConfigLevel },
   operation?: OperationOptions,
 ): Promise<OperationResult<CollectionInspection>> {

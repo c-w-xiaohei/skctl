@@ -16,13 +16,11 @@ import {
   parsedEscape,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 async function openSources(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-sources"));
   await enterLive(setup, "shell-section-tab-sources");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
 }
-
 test("Source updates replace the browser and Back restores its exact selected Source after resize", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -52,7 +50,6 @@ test("Source updates replace the browser and Back restores its exact selected So
     setup.renderer.destroy();
   }
 });
-
 test("Agent access opens the exact structural Skill while preserving an All Skills filter and checked state", async () => {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -81,31 +78,32 @@ test("Agent access opens the exact structural Skill while preserving an All Skil
     () => (
       <App
         core={directSourceCore(projection, {
-          installed: {
-            checkUpdate: async ({ source }) => {
-              checks.push(source);
-              return {
-                value: {
-                  source,
-                  kind: "github" as const,
-                  baseline: "baseline:test",
-                  exactRevision: "a".repeat(40),
-                  changed: [],
-                  added: [],
-                  removed: [],
-                  unchanged: [],
-                },
-                diagnostics: [],
-              };
-            },
-            load: async ({ address }) => ({
-              address,
-              name: address.path,
-              description: "",
-              rawText: `Body ${address.path}`,
-              markdownText: `# ${address.path}\n\nBody ${address.path}`,
-            }),
+          checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+            checks.push(source);
+            return {
+              value: {
+                source,
+                kind: "github" as const,
+                baseline: "baseline:test",
+                exactRevision: "a".repeat(40),
+                changed: [],
+                added: [],
+                removed: [],
+                unchanged: [],
+              },
+              diagnostics: [],
+            };
           },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => ({
+            address,
+            name: address.path,
+            description: "",
+            rawText: `Body ${address.path}`,
+            markdownText: `# ${address.path}\n\nBody ${address.path}`,
+          }),
         })}
         exit={() => {}}
       />
@@ -165,7 +163,6 @@ test("Agent access opens the exact structural Skill while preserving an All Skil
     setup.renderer.destroy();
   }
 });
-
 for (const originKind of ["direct", "via-link"] as const) {
   test(`${originKind} Collection membership keeps the exact colliding member address through Reader Details and Back`, async () => {
     const base = readerProjection();
@@ -205,15 +202,16 @@ for (const originKind of ["direct", "via-link"] as const) {
       () => (
         <App
           core={directSourceCore(projection, {
-            installed: {
-              load: async ({ address }) => ({
-                address,
-                name: address.path,
-                description: "",
-                rawText: `Body ${address.path}`,
-                markdownText: `# ${address.path}\n\nBody ${address.path}`,
-              }),
-            },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              { address },
+            ) => ({
+              address,
+              name: address.path,
+              description: "",
+              rawText: `Body ${address.path}`,
+              markdownText: `# ${address.path}\n\nBody ${address.path}`,
+            }),
           })}
           exit={() => {}}
         />

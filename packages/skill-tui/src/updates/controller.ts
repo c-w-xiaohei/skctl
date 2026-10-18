@@ -1,23 +1,16 @@
-import {
-  SkillCliError,
-  type InstalledCapability,
-  type WorkspaceView,
-  type WorkspaceCapability,
-} from "@skill-cli/core";
+import * as api from "@skill-cli/core";
+import { SkillCliError, type WorkspaceView } from "@skill-cli/core";
 import { buildUpdateScope, updateSubmission } from "./model";
 import { createSignal } from "solid-js";
 import type { UpdatesState, UpdateRun, UpdateIssue } from "./state";
 import type { UpdateAddress } from "./scope";
 import type { CheckedUpdateObservation } from "./check-service";
-
 export interface UpdateForegroundLane {
   request(owner: "updates"): (() => void) | undefined;
 }
-export interface UpdateCore {
-  readonly workspace: Pick<WorkspaceCapability, "get">;
-  readonly installed: Pick<InstalledCapability, "checkUpdate" | "update">;
-}
+export type UpdateCore = Pick<typeof api, "getWorkspace" | "checkUpdate" | "updateSkills">;
 export interface UpdateControllerOptions {
+  readonly environment?: api.CoreOptions;
   readonly foreground?: UpdateForegroundLane;
   readonly onProjection?: (projection: WorkspaceView) => void;
   readonly onSubmissionStarted?: (addresses: readonly UpdateAddress[]) => void;
@@ -31,7 +24,6 @@ const key = (address: UpdateAddress) => `${address.source}\u0000${address.path}`
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const cancelled = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "CANCELLED";
-
 /** One bounded request owns check, exact-revision submission, Stop and its receipts. */
 export function createUpdateController(
   core: UpdateCore,
@@ -39,9 +31,15 @@ export function createUpdateController(
   options: UpdateControllerOptions = {},
 ) {
   // The executing task owns its run. Browsing drafts never own or replace it.
+  const environment = options.environment ?? { cwd: process.cwd() };
   const [run, setRun] = createSignal<UpdateRun>();
   let closed = false;
-  let active: { abort: AbortController; release?: () => void } | undefined;
+  let active:
+    | {
+        abort: AbortController;
+        release?: () => void;
+      }
+    | undefined;
   const begin = () => {
     if (closed || active) return undefined;
     const release = options.foreground?.request("updates");
@@ -105,7 +103,8 @@ export function createUpdateController(
           if (closed || task.abort.signal.aborted) return false;
           state.setStatus(source, "checking");
           try {
-            const result = await core.installed.checkUpdate(
+            const result = await core.checkUpdate(
+              environment,
               { source },
               { signal: task.abort.signal },
             );
@@ -160,7 +159,7 @@ export function createUpdateController(
           let observation: CheckedUpdateObservation;
           let guardIssue: UpdateIssue | undefined;
           try {
-            const projection = (await core.workspace.get({ signal })).value;
+            const projection = (await core.getWorkspace(environment, { signal })).value;
             if (closed || signal.aborted) break;
             const allowed = updateSubmission(scope, targets, projection);
             if ("reason" in allowed) {
@@ -172,11 +171,11 @@ export function createUpdateController(
             if (closed || signal.aborted) break;
             if (!cached) state.setStatus(source, "checking");
             observation =
-              cached ?? (await core.installed.checkUpdate({ source }, { signal })).value;
+              cached ?? (await core.checkUpdate(environment, { source }, { signal })).value;
             if (closed || signal.aborted) break;
             if (observation.source !== source) throw new Error("Check returned a different Source");
             state.observe(observation, Date.now());
-            const fresh = (await core.workspace.get({ signal })).value;
+            const fresh = (await core.getWorkspace(environment, { signal })).value;
             if (closed || signal.aborted) break;
             const checked = updateSubmission(scope, targets, fresh);
             if ("reason" in checked) {
@@ -223,7 +222,8 @@ export function createUpdateController(
           patchRun({ phase: "updating", source });
           state.setStatus(source, "updating");
           try {
-            await core.installed.update(
+            await core.updateSkills(
+              environment,
               {
                 source,
                 paths: paths.map((address) => address.path),
@@ -240,7 +240,7 @@ export function createUpdateController(
             state.setResult(source, "succeeded");
             if (signal.aborted) break;
             try {
-              const projection = (await core.workspace.get({ signal })).value;
+              const projection = (await core.getWorkspace(environment, { signal })).value;
               if (closed) return false;
               state.reconcileCurrentScope(buildUpdateScope(projection, scope.entry));
               options.onProjection?.(projection);

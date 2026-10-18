@@ -11,7 +11,6 @@ import {
   openReaderTab,
   parsedEscape,
 } from "./reader-test-controls";
-
 test("search owns printable keys and Ctrl+C without quitting or changing route", async () => {
   let exits = 0;
   const setup = await testRender(
@@ -36,7 +35,6 @@ test("search owns printable keys and Ctrl+C without quitting or changing route",
     setup.renderer.destroy();
   }
 });
-
 test("palette owns arrows, Tab, q and Escape without delivering them to the page", async () => {
   let exits = 0;
   const setup = await testRender(
@@ -67,22 +65,22 @@ test("palette owns arrows, Tab, q and Escape without delivering them to the page
     setup.renderer.destroy();
   }
 });
-
 test("Escape leaves resource content before returning from Reader", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async () => readerContent,
-            listResources: async () => readerResources,
-            read: async (request) => ({
-              kind: "text",
-              path: request.path,
-              text: "Resource body",
-              format: "text",
-            }),
-          },
+          loadInstalledSkill: async () => readerContent,
+          listInstalledResources: async () => readerResources,
+          readInstalledResource: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => ({
+            kind: "text",
+            path: request.path,
+            text: "Resource body",
+            format: "text",
+          }),
         })}
         exit={() => {}}
       />

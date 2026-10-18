@@ -1,10 +1,10 @@
-import type { CoreFactoryOptions } from "../shared";
+import type { CoreOptions } from "../shared";
 import type { OperationOptions, OperationResult } from "../shared";
 import type { WorkspaceView } from "./types";
 import { readWorkspace } from "./capture";
 import { SkillCliError } from "../shared";
 export async function getWorkspace(
-  factory: CoreFactoryOptions,
+  factory: CoreOptions,
   options?: OperationOptions,
 ): Promise<OperationResult<WorkspaceView>> {
   if (options?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");

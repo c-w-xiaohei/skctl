@@ -6,14 +6,12 @@ import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { focusLive, openAllInstalledSkills } from "./reader-test-controls";
-
 const skillsViews = [
   ["current-exposure", "agent-access-pane"],
   ["all-installed-skills", "installed-skill-browser"],
   ["unassigned", "installed-skill-browser"],
   ["problems", "problems-browser"],
 ] as const;
-
 test("RENDER mounted Skills local tabs navigate Current Exposure through Problems without legacy workspace nodes", async () => {
   const projection = {
     ...readerProjection(),
@@ -73,7 +71,6 @@ test("RENDER mounted Skills local tabs navigate Current Exposure through Problem
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Section Right leaves Current Exposure and mounts the Collections browser once", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -81,13 +78,11 @@ test("RENDER Section Right leaves Current Exposure and mounts the Collections br
   );
   try {
     await focusLive(setup, "shell-section-tab-skills");
-
     setup.mockInput.pressArrow("right");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-collections",
     );
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
-
     const collections = setup.renderer.root.findDescendantById("shell-section-tab-collections");
     expect(collections).toBeInstanceOf(TabsTabRenderable);
     expect((collections as TabsTabRenderable).getState().selected).toBe(true);
@@ -98,7 +93,6 @@ test("RENDER Section Right leaves Current Exposure and mounts the Collections br
     setup.renderer.destroy();
   }
 });
-
 test("RENDER first Space marks the focused Installed Skill without an additional content read", async () => {
   let loads = 0;
   const projection = readerProjection();
@@ -107,11 +101,9 @@ test("RENDER first Space marks the focused Installed Skill without an additional
     () => (
       <App
         core={directSourceCore(projection, {
-          installed: {
-            load: async () => {
-              loads++;
-              throw new Error("Space must not load content");
-            },
+          loadInstalledSkill: async () => {
+            loads++;
+            throw new Error("Space must not load content");
           },
         })}
         exit={() => {}}

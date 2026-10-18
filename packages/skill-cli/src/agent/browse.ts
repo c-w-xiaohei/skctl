@@ -2,8 +2,7 @@ import { Argument, type Command } from "commander";
 import type { CommandContext } from "../command-context";
 import { renderAgentCatalog, unavailableCatalogPrompt } from "../agent-prompt";
 import { collectionId } from "./arguments";
-
-export function browseCommand(parent: Command, { core, stdout }: CommandContext) {
+export function browseCommand(parent: Command, { api, environment, stdout }: CommandContext) {
   return parent
     .command("browse")
     .description(
@@ -15,7 +14,7 @@ export function browseCommand(parent: Command, { core, stdout }: CommandContext)
       ),
     )
     .action(async (collection, _flags, action) => {
-      const { value } = await core(action).catalog.browse({ collection });
+      const { value } = await api.browseCatalog(environment(action), { collection });
       stdout.write(
         value.status === "unavailable"
           ? `${unavailableCatalogPrompt}\n`

@@ -17,7 +17,6 @@ import { theme } from "../src/ui/theme";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { enterLive, focusLive, live, parsedEnter, parsedEscape } from "./reader-test-controls";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
 type UseIntent = Parameters<Parameters<typeof CollectionUseOverlay>[0]["onPreview"]>[0];
 const available = [
@@ -30,12 +29,10 @@ const owner = {
   pointer: "/use",
 };
 const result = <T,>(value: T): OperationResult<T> => ({ value, diagnostics: [] });
-
 afterEach(() => {
   theme.override(undefined);
   theme.setMode("system");
 });
-
 async function capture(setup: Setup, name: string) {
   const directory = process.env.PAGE_INTERACTION_CAPTURE_DIR;
   if (!directory) return;
@@ -43,7 +40,6 @@ async function capture(setup: Setup, name: string) {
   await writeFile(join(directory, `${name}.txt`), setup.captureCharFrame());
   await writeFile(join(directory, `${name}.json`), JSON.stringify(setup.captureSpans(), null, 2));
 }
-
 async function expectFocusedInBody(setup: Setup, id: string, caption: string) {
   const target = live(setup, id);
   let ancestor = target.parent;
@@ -75,7 +71,6 @@ async function expectFocusedInBody(setup: Setup, id: string, caption: string) {
       .join("\n"),
   ).toContain(caption);
 }
-
 async function expectRenderedReview(setup: Setup, oldCollections: string, newCollections: string) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-review-confirm"));
   await setup.waitForFrame(
@@ -90,13 +85,11 @@ async function expectRenderedReview(setup: Setup, oldCollections: string, newCol
   expect(frame).toContain(`Old: ${oldCollections}`);
   expect(frame).toContain(`New: ${newCollections}`);
 }
-
 function choices(setup: Setup) {
   const list = live(setup, "collection-use-values");
   if (!(list instanceof SelectRenderable)) throw new Error("Expected native Collection choices");
   return list;
 }
-
 async function current(setup: Setup, id: string) {
   const list = choices(setup);
   await focusLive(setup, list.id);
@@ -112,13 +105,11 @@ async function current(setup: Setup, id: string) {
   }
   return list;
 }
-
 function checked(setup: Setup) {
   return choices(setup)
     .options.filter((option) => option.name.startsWith("[x]"))
     .map((option) => option.value);
 }
-
 test("Use choices distinguish current from checked, preserve unavailable IDs, and review an explicit empty set", async () => {
   const previews: UseIntent[] = [];
   let cancels = 0;
@@ -169,15 +160,23 @@ test("Use choices distinguish current from checked, preserve unavailable IDs, an
     setup.renderer.destroy();
   }
 });
-
 test("Use pointer row focus is separate from its check gutter and pending/error/resize preserve the same draft", async () => {
   const previews: UseIntent[] = [];
-  let setState!: (state: { pending: boolean; error?: { code: string; message: string } }) => void;
+  let setState!: (state: {
+    pending: boolean;
+    error?: {
+      code: string;
+      message: string;
+    };
+  }) => void;
   const setup = await testRender(
     () => {
       const [state, update] = createSignal<{
         pending: boolean;
-        error?: { code: string; message: string };
+        error?: {
+          code: string;
+          message: string;
+        };
       }>({ pending: false });
       setState = update;
       return (
@@ -233,7 +232,6 @@ test("Use pointer row focus is separate from its check gutter and pending/error/
     setup.renderer.destroy();
   }
 });
-
 for (const mode of ["dark", "light"] as const) {
   for (const [width, height] of [
     [80, 24],
@@ -250,13 +248,19 @@ for (const mode of ["dark", "light"] as const) {
       const previews: UseIntent[] = [];
       let setState!: (state: {
         pending: boolean;
-        error?: { code: string; message: string };
+        error?: {
+          code: string;
+          message: string;
+        };
       }) => void;
       const setup = await testRender(
         () => {
           const [state, update] = createSignal<{
             pending: boolean;
-            error?: { code: string; message: string };
+            error?: {
+              code: string;
+              message: string;
+            };
           }>({ pending: false });
           setState = update;
           return (
@@ -314,7 +318,6 @@ for (const mode of ["dark", "light"] as const) {
     });
   }
 }
-
 test("unavailable inventory keeps every direct ID removable and invents no available choices", async () => {
   const previews: UseIntent[] = [];
   const setup = await testRender(
@@ -345,7 +348,6 @@ test("unavailable inventory keeps every direct ID removable and invents no avail
     setup.renderer.destroy();
   }
 });
-
 test("no available Collections still permits deliberate review of an explicit empty Use", async () => {
   const previews: UseIntent[] = [];
   const setup = await testRender(
@@ -371,7 +373,6 @@ test("no available Collections still permits deliberate review of an explicit em
     setup.renderer.destroy();
   }
 });
-
 test("live effective inventory changes never silently remove checked direct IDs", async () => {
   let update!: (value: typeof available) => void;
   const previews: UseIntent[] = [];
@@ -416,7 +417,6 @@ test("live effective inventory changes never silently remove checked direct IDs"
     setup.renderer.destroy();
   }
 });
-
 test("an unchecked current Collection stays visibly current when inventory disappears and reappears", async () => {
   const [inventory, update] = createSignal(available);
   const [cursor, setCursor] = createSignal<string>();
@@ -458,7 +458,6 @@ test("an unchecked current Collection stays visibly current when inventory disap
     setup.renderer.destroy();
   }
 });
-
 for (const [width, height] of [
   [144, 40],
   [80, 24],
@@ -510,7 +509,6 @@ for (const [width, height] of [
     }
   });
 }
-
 function useProjection(): WorkspaceView {
   const base = collectionsSourcesProjection();
   if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
@@ -544,7 +542,6 @@ function useProjection(): WorkspaceView {
     },
   };
 }
-
 async function chooseAction(setup: Setup, id: string) {
   setup.mockInput.pressKey("p", { ctrl: true });
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
@@ -557,7 +554,6 @@ async function chooseAction(setup: Setup, id: string) {
   }
   await parsedEnter(setup);
 }
-
 async function openConfigUse(setup: Setup) {
   await enterLive(setup, "shell-scope-select");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("scope-choices"));
@@ -576,13 +572,15 @@ async function openConfigUse(setup: Setup) {
   await enterLive(setup, "shell-section-project-tab-collections");
   await chooseAction(setup, "set-collection-use");
 }
-
 for (const entry of ["Config", "relationship Edit Use"] as const) {
   test(`production App ${entry} reviews and commits only the exact host Use, not effective roots or current row`, async () => {
     const previews: unknown[] = [],
       changes: unknown[] = [];
     const core = directSourceCore(useProjection());
-    core.use.previewSet = async (request) => {
+    core.previewCollectionUse = async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request,
+    ) => {
       previews.push(request);
       return result<CollectionUseImpact>({
         kind: "collection-use",
@@ -600,13 +598,13 @@ for (const entry of ["Config", "relationship Edit Use"] as const) {
         allowed: true,
       });
     };
-    core.use.set = async (request) => {
+    core.setUse = async (_environment: import("@skill-cli/core").CoreOptions, request) => {
       changes.push(request);
       return result({
         level: "project",
         file: owner.file,
         changed: true,
-        use: { before: ["team", "retired"], after: request.collections },
+        use: { before: ["team", "retired"], after: [...request.collections] },
       });
     };
     const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -655,22 +653,24 @@ for (const entry of ["Config", "relationship Edit Use"] as const) {
     }
   });
 }
-
 test("production App failed Use review retains the same checked draft across supported and gated resize; cancelling writes nothing", async () => {
   const previews: unknown[] = [],
     changes: unknown[] = [];
   const core = directSourceCore(useProjection());
-  core.use.previewSet = async (request) => {
+  core.previewCollectionUse = async (
+    _environment: import("@skill-cli/core").CoreOptions,
+    request,
+  ) => {
     previews.push(request);
     throw new SkillCliError("TRANSACTION_CONFLICT", "Review the current declaration again");
   };
-  core.use.set = async (request) => {
+  core.setUse = async (_environment: import("@skill-cli/core").CoreOptions, request) => {
     changes.push(request);
     return result({
       level: "project",
       file: owner.file,
       changed: true,
-      use: { before: ["team", "retired"], after: request.collections },
+      use: { before: ["team", "retired"], after: [...request.collections] },
     });
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -718,11 +718,13 @@ test("production App failed Use review retains the same checked draft across sup
     setup.renderer.destroy();
   }
 });
-
 test("production App reviews and commits explicit empty Use without substituting other host roots", async () => {
   const changes: unknown[] = [];
   const core = directSourceCore(useProjection());
-  core.use.previewSet = async (request) =>
+  core.previewCollectionUse = async (
+    _environment: import("@skill-cli/core").CoreOptions,
+    request,
+  ) =>
     result<CollectionUseImpact>({
       kind: "collection-use",
       owner,
@@ -738,13 +740,13 @@ test("production App reviews and commits explicit empty Use without substituting
       blockers: [],
       allowed: true,
     });
-  core.use.set = async (request) => {
+  core.setUse = async (_environment: import("@skill-cli/core").CoreOptions, request) => {
     changes.push(request);
     return result({
       level: "project",
       file: owner.file,
       changed: true,
-      use: { before: ["team", "retired"], after: request.collections },
+      use: { before: ["team", "retired"], after: [...request.collections] },
     });
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -773,7 +775,6 @@ test("production App reviews and commits explicit empty Use without substituting
     setup.renderer.destroy();
   }
 });
-
 test("production App cancels an outstanding Use preview without applying its late result", async () => {
   let settle!: (value: OperationResult<CollectionUseImpact>) => void;
   let signal: AbortSignal | undefined;
@@ -782,17 +783,21 @@ test("production App cancels an outstanding Use preview without applying its lat
   });
   const changes: unknown[] = [];
   const core = directSourceCore(useProjection());
-  core.use.previewSet = async (_request, options) => {
+  core.previewCollectionUse = async (
+    _environment: import("@skill-cli/core").CoreOptions,
+    _request,
+    options,
+  ) => {
     signal = options?.signal;
     return pending;
   };
-  core.use.set = async (request) => {
+  core.setUse = async (_environment: import("@skill-cli/core").CoreOptions, request) => {
     changes.push(request);
     return result({
       level: "project",
       file: owner.file,
       changed: true,
-      use: { before: ["team", "retired"], after: request.collections },
+      use: { before: ["team", "retired"], after: [...request.collections] },
     });
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {

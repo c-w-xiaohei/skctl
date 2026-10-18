@@ -1,8 +1,7 @@
 import { Argument, type Command } from "commander";
 import type { CommandContext } from "../command-context";
 import { skillSelector } from "./arguments";
-
-export function loadCommand(parent: Command, { core, stdout }: CommandContext) {
+export function loadCommand(parent: Command, { api, environment, stdout }: CommandContext) {
   return parent
     .command("load")
     .description("Return the complete SKILL.md as text.")
@@ -10,6 +9,6 @@ export function loadCommand(parent: Command, { core, stdout }: CommandContext) {
       new Argument("<selector>", "Skill selector, not a collection ID").argParser(skillSelector),
     )
     .action(async (selector, _flags, action) => {
-      stdout.write((await core(action).content.load({ selector })).text);
+      stdout.write((await api.loadSkill(environment(action), { selector })).text);
     });
 }

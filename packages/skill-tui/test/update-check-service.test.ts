@@ -2,16 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  createUpdateCheckService,
-  type UpdateBaselineCapability,
-} from "../src/updates/check-service";
-import {
-  SkillCliError,
-  type InstalledCapability,
-  type OperationResult,
-  type UpdateObservation,
-} from "@skill-cli/core";
+import { createUpdateCheckService } from "../src/updates/check-service";
+import { SkillCliError, type OperationResult, type UpdateObservation } from "@skill-cli/core";
 import {
   createUpdateCheckCache,
   isFreshUpdateCheck,
@@ -48,10 +40,10 @@ function management(
     signal?: AbortSignal,
   ) => Promise<OperationResult<UpdateObservation>>,
   baseline = "baseline",
-): Pick<InstalledCapability, "checkUpdate"> & UpdateBaselineCapability {
+): Pick<typeof import("@skill-cli/core"), "checkUpdate" | "getUpdateBaseline"> {
   return {
-    checkUpdate: ({ source }, options) => checkUpdate(source, options?.signal),
-    updateBaseline: async () => result(baseline),
+    checkUpdate: (_environment, { source }, options) => checkUpdate(source, options?.signal),
+    getUpdateBaseline: async () => result(baseline),
   };
 }
 
@@ -107,11 +99,11 @@ test("a persisted entry is reused only when the Core baseline capability validat
 test("a baseline change fails closed and does not publish the check", async () => {
   let baseline = "before";
   const service = createUpdateCheckService({
-    checkUpdate: async ({ source }) => {
+    checkUpdate: async (_environment, { source }) => {
       baseline = "after";
       return result(observation(source, "before"));
     },
-    updateBaseline: async () => result(baseline),
+    getUpdateBaseline: async () => result(baseline),
   });
   await service.refresh(["first"]);
   expect(service.check("first")?.status).toBe("failed");
@@ -451,14 +443,14 @@ test("hydration rechecks after a blocked baseline read before publishing old dis
   let checks = 0;
   const service = createUpdateCheckService(
     {
-      checkUpdate: async ({ source }) => {
+      checkUpdate: async (_environment, { source }) => {
         checks++;
         return result({
           ...observation(source),
           changed: [{ path: "manual", name: "manual", description: "manual" }],
         });
       },
-      updateBaseline: async () => {
+      getUpdateBaseline: async () => {
         if (++baselineReads === 1) {
           markBaselineStarted();
           await baselineBlocked;

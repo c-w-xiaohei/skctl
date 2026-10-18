@@ -1,5 +1,5 @@
 import { SkillCliError, type OperationOptions } from "../shared";
-import { type CoreFactoryOptions } from "../shared";
+import { type CoreOptions } from "../shared";
 
 import type { RegisterSourceRequest } from "../source/types";
 import type { ManagedOpenCodeRequest } from "./types";
@@ -9,7 +9,7 @@ import { validateSourceRoot } from "./document";
 import { writeConfig } from "./write";
 
 function register(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: RegisterSourceRequest,
   key: "sources" | "configSources",
   operation?: OperationOptions,
@@ -34,21 +34,21 @@ function register(
   );
 }
 export function registerSource(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: RegisterSourceRequest,
   operation?: OperationOptions,
 ) {
   return register(options, request, "sources", operation);
 }
 export function registerConfigSource(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: RegisterSourceRequest,
   operation?: OperationOptions,
 ) {
   return register(options, request, "configSources", operation);
 }
 export function setManagedOpenCode(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: ManagedOpenCodeRequest,
   operation?: OperationOptions,
 ) {

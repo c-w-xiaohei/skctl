@@ -2,7 +2,7 @@ import { mkdir, writeFile, chmod } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { SkillCliError } from "../shared";
 import { type SkillProvenance, type SourceBindingView } from "./types";
-import { type CoreFactoryOptions } from "../shared";
+import { type CoreOptions } from "../shared";
 import { openGitSource, openGitRef, resolveGitRef, type RunGit } from "./git";
 import { openGitHubSource, resolveGitHubApi } from "./github";
 import { openLocalSource } from "./local";
@@ -83,7 +83,7 @@ export interface RootComparison extends Pick<RootInspection, "path" | "tree"> {
 
 export async function openUpdateSource(
   binding: SourceBindingView,
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   operation: SourceOperation,
   revision?: string,
   runGit?: RunGit,
@@ -141,7 +141,7 @@ export async function openUpdateSource(
 /** Complete metadata task. No provider lifetime or per-file reads escape to the use case. */
 export async function inspectRemoteRoots(
   binding: SourceBindingView,
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   comparisons: readonly RootComparison[],
   operation: SourceOperation,
   runGit?: RunGit,
@@ -196,7 +196,7 @@ export async function inspectRemoteRoots(
 /** One exact-C task for every selected Root, including metadata-only removal observations. */
 export async function materializeUpdateRoots(
   binding: SourceBindingView,
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   revision: string,
   paths: readonly string[],
   observe: readonly string[],

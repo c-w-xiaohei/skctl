@@ -23,18 +23,15 @@ import {
   parsedEscape,
   selectedReaderTab,
 } from "./reader-test-controls";
-
 let setup: Awaited<ReturnType<typeof testRender>> | undefined;
 afterEach(() => {
   setup?.renderer.destroy();
   setup = undefined;
 });
-
 async function settleHighlighting(node: BaseRenderable): Promise<void> {
   if (node instanceof CodeRenderable) await node.highlightingDone;
   for (const child of node.getChildren()) await settleHighlighting(child);
 }
-
 async function waitForBody(text: string) {
   const contains = (node: BaseRenderable): boolean =>
     (node instanceof CodeRenderable && node.plainText.includes(text)) ||
@@ -45,7 +42,6 @@ async function waitForBody(text: string) {
   await setup!.renderOnce();
   expect(setup!.captureCharFrame()).toContain(text);
 }
-
 async function mount(
   width = 144,
   height = 40,
@@ -57,19 +53,22 @@ async function mount(
     () => (
       <App
         core={directSourceCore(projection, {
-          installed: {
-            load: async (request, options) => {
-              const { address } = request;
-              reads.push(address.path);
-              if (hooks.installed?.load) return hooks.installed.load(request, options);
-              return {
-                address,
-                name: address.path,
-                description: "",
-                markdownText: `# ${address.path}\n\nBody of ${address.path}\n\n${Array.from({ length: 80 }, (_, index) => `Line ${index}`).join("\n\n")}`,
-                rawText: `Body of ${address.path}`,
-              };
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+            options,
+          ) => {
+            const { address } = request;
+            reads.push(address.path);
+            if (hooks.loadInstalledSkill)
+              return hooks.loadInstalledSkill(_environment, request, options);
+            return {
+              address,
+              name: address.path,
+              description: "",
+              markdownText: `# ${address.path}\n\nBody of ${address.path}\n\n${Array.from({ length: 80 }, (_, index) => `Line ${index}`).join("\n\n")}`,
+              rawText: `Body of ${address.path}`,
+            };
           },
         })}
         exit={() => {}}
@@ -83,7 +82,6 @@ async function mount(
   await setup.renderOnce();
   return reads;
 }
-
 async function capture(name: string) {
   const root = process.env.QUIET_UPDATE_CAPTURE_DIR;
   if (!root || !setup) return;
@@ -92,7 +90,6 @@ async function capture(name: string) {
   await writeFile(join(root, `${name}.txt`), setup.captureCharFrame());
   await writeFile(join(root, `${name}.json`), JSON.stringify(setup.captureSpans(), null, 2));
 }
-
 async function executeReaderAction(id: string, search: string) {
   setup!.mockInput.pressKey("p", { ctrl: true });
   await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "palette-choices");
@@ -112,25 +109,20 @@ async function executeReaderAction(id: string, search: string) {
   await setup!.waitFor(() => !setup!.renderer.root.findDescendantById("palette-choices"));
   return record;
 }
-
 test("wide list selection displays installed body without an Inspector or activation", async () => {
   const mutations: string[] = [];
   const reads = await mount(144, 40, readerProjection(), {
-    sources: {
-      discover: async () => {
-        mutations.push("discover");
-        throw new Error("Reader must not acquire provider content");
-      },
+    discoverSkills: async () => {
+      mutations.push("discover");
+      throw new Error("Reader must not acquire provider content");
     },
-    installed: {
-      install: async () => {
-        mutations.push("install");
-        return { value: [], diagnostics: [] };
-      },
-      update: async () => {
-        mutations.push("update");
-        return { value: undefined, diagnostics: [] };
-      },
+    installSkills: async () => {
+      mutations.push("install");
+      return { value: [], diagnostics: [] };
+    },
+    updateSkills: async () => {
+      mutations.push("update");
+      return { value: undefined, diagnostics: [] };
     },
   });
   await setup!.waitForFrame((frame) => frame.includes("Body of guide"));
@@ -144,22 +136,22 @@ test("wide list selection displays installed body without an Inspector or activa
   expect(setup!.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
   await capture("direct-reader-browse-144x40");
 });
-
 test("failed B reads and retries stay B while the list remains usable", async () => {
   let attempts = 0;
   const reads = await mount(144, 40, readerProjection(), {
-    installed: {
-      load: async ({ address }) => {
-        if (address.path === "reference" && ++attempts === 1)
-          throw new SkillCliError("RESOURCE_NOT_FOUND", "B instructions missing");
-        return {
-          address,
-          name: address.path,
-          description: "",
-          markdownText: `Body of ${address.path}`,
-          rawText: `Body of ${address.path}`,
-        };
-      },
+    loadInstalledSkill: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { address },
+    ) => {
+      if (address.path === "reference" && ++attempts === 1)
+        throw new SkillCliError("RESOURCE_NOT_FOUND", "B instructions missing");
+      return {
+        address,
+        name: address.path,
+        description: "",
+        markdownText: `Body of ${address.path}`,
+        rawText: `Body of ${address.path}`,
+      };
     },
   });
   setup!.mockInput.pressArrow("down");
@@ -173,7 +165,6 @@ test("failed B reads and retries stay B while the list remains usable", async ()
   await setup!.waitForFrame((frame) => frame.includes("Body of reference"));
   expect(reads).toEqual(["guide", "reference", "reference"]);
 });
-
 test("an empty filter has no hidden current-object action and Escape returns from query to list area", async () => {
   const reads = await mount();
   await focusLive(setup!, "skills-query");
@@ -194,7 +185,6 @@ test("an empty filter has no hidden current-object action and Escape returns fro
   await parsedEscape(setup!);
   expect(setup!.renderer.currentFocusedRenderable?.id).not.toBe("reader-scrollbox");
 });
-
 test("same-list A-B-A restores body position and default body, resize preserves the active tab and checked set", async () => {
   const reads = await mount();
   await parsedEnter(setup!);
@@ -238,7 +228,6 @@ test("same-list A-B-A restores body position and default body, resize preserves 
   expect(browser.getSelectedOption()?.name).toContain("✓");
   expect(selectedReaderTab(setup!)).toBe(1);
 });
-
 test.each([1, 2] as const)(
   "filter-driven object changes from tab %i show the new object's body",
   async (tab) => {
@@ -254,7 +243,6 @@ test.each([1, 2] as const)(
     );
   },
 );
-
 test("explicit installed Reload refreshes Local instructions and an already-active Resources list without a remote check", async () => {
   let version = 0;
   let workspaceReads = 0;
@@ -269,28 +257,30 @@ test("explicit installed Reload refreshes Local instructions and an already-acti
     })),
   };
   const reads = await mount(144, 40, projection, {
-    workspace: {
-      get: async () => {
-        workspaceReads++;
-        return { value: projection, diagnostics: [] };
-      },
+    getWorkspace: async () => {
+      workspaceReads++;
+      return { value: projection, diagnostics: [] };
     },
-    installed: {
-      checkUpdate: async () => {
-        checks++;
-        throw new Error("Unexpected remote check from Reader");
-      },
-      load: async ({ address }) => ({
-        address,
-        name: address.path,
-        description: "",
-        markdownText: `Installed version ${version}`,
-        rawText: `Installed version ${version}`,
-      }),
-      listResources: async ({ address }) => {
-        resourceReads.push(`${address.path}:v${version}`);
-        return [{ kind: "file", path: `v${version}.md` }];
-      },
+    checkUpdate: async () => {
+      checks++;
+      throw new Error("Unexpected remote check from Reader");
+    },
+    loadInstalledSkill: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { address },
+    ) => ({
+      address,
+      name: address.path,
+      description: "",
+      markdownText: `Installed version ${version}`,
+      rawText: `Installed version ${version}`,
+    }),
+    listInstalledResources: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { address },
+    ) => {
+      resourceReads.push(`${address.path}:v${version}`);
+      return [{ kind: "file", path: `v${version}.md` }];
     },
   });
   await parsedEnter(setup!);
@@ -314,7 +304,6 @@ test("explicit installed Reload refreshes Local instructions and an already-acti
   await openReaderTab(setup!, 0);
   await waitForBody("Installed version 1");
 });
-
 test("Back after a remote update restores Resources with current payloads and a live list focus", async () => {
   let snapshot = readerProjection();
   let version = 0;
@@ -323,51 +312,55 @@ test("Back after a remote update restores Resources with current payloads and a 
   const mutations: unknown[] = [];
   const resources: number[] = [];
   const reads = await mount(144, 40, snapshot, {
-    workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    installed: {
-      checkUpdate: async ({ source }) => ({
-        value: {
-          source,
-          kind: "github",
-          exactRevision: revision,
-          baseline: "reader-baseline",
-          changed: [{ path: address.path, name: "guide", description: "" }],
-          unchanged: [],
-          removed: [],
-          added: [],
-        },
-        diagnostics: [],
-      }),
-      update: async (request) => {
-        mutations.push(request);
-        version = 1;
-        snapshot = {
-          ...snapshot,
-          installedSkills: snapshot.installedSkills.map((skill) => ({
-            ...skill,
-            owner: { ...skill.owner, relevantRemoteRevision: revision },
-          })),
-        };
-        return { value: undefined, diagnostics: [] };
+    getWorkspace: async () => ({ value: snapshot, diagnostics: [] }),
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => ({
+      value: {
+        source,
+        kind: "github",
+        exactRevision: revision,
+        baseline: "reader-baseline",
+        changed: [{ path: address.path, name: "guide", description: "" }],
+        unchanged: [],
+        removed: [],
+        added: [],
       },
-      load: async ({ address }) => ({
-        address,
-        name: address.path,
-        description: "",
-        markdownText: `Installed version ${version}`,
-        rawText: `Installed version ${version}`,
-      }),
-      listResources: async () => {
-        resources.push(version);
-        return [{ kind: "file", path: `v${version}.txt` }];
-      },
-      read: async ({ path }) => ({
-        kind: "text",
-        path,
-        format: "text",
-        text: "Old resource content",
-      }),
+      diagnostics: [],
+    }),
+    updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      mutations.push(request);
+      version = 1;
+      snapshot = {
+        ...snapshot,
+        installedSkills: snapshot.installedSkills.map((skill) => ({
+          ...skill,
+          owner: { ...skill.owner, relevantRemoteRevision: revision },
+        })),
+      };
+      return { value: undefined, diagnostics: [] };
     },
+    loadInstalledSkill: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { address },
+    ) => ({
+      address,
+      name: address.path,
+      description: "",
+      markdownText: `Installed version ${version}`,
+      rawText: `Installed version ${version}`,
+    }),
+    listInstalledResources: async () => {
+      resources.push(version);
+      return [{ kind: "file", path: `v${version}.txt` }];
+    },
+    readInstalledResource: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { path },
+    ) => ({
+      kind: "text",
+      path,
+      format: "text",
+      text: "Old resource content",
+    }),
   });
   await parsedEnter(setup!);
   await openReaderTab(setup!, 1);
@@ -400,7 +393,6 @@ test("Back after a remote update restores Resources with current payloads and a 
   await openReaderTab(setup!, 0);
   await waitForBody("Installed version 1");
 });
-
 test("Collection dispatch uses only current B or explicitly checked A/C, including hidden targets", async () => {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("Expected a complete Reader fixture");
@@ -439,33 +431,35 @@ test("Collection dispatch uses only current B or explicitly checked A/C, includi
   const previews: unknown[] = [];
   const changes: unknown[] = [];
   await mount(144, 40, projection, {
-    collections: {
-      ...defaultCore.collections!,
-      previewMemberEdit: async (request, options) => {
-        previews.push(request.additions.map((item) => item.address));
-        void options;
-        return {
-          value: {
-            kind: "membership-batch",
-            collection: request.collection,
-            decision: { kind: "direct", owner },
-            additions: request.additions,
-            removals: request.removals,
-            affected: [],
-            blockers: [],
-            effectful: true,
-            allowed: true,
-          },
-          diagnostics: [],
-        };
-      },
-      editMembers: async (request) => {
-        changes.push(request);
-        return {
-          value: { level: "project", file: "skill-cli.jsonc", changed: true },
-          diagnostics: [],
-        };
-      },
+    ...defaultCore,
+    previewMembershipBatch: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request,
+      options,
+    ) => {
+      previews.push(request.additions.map((item) => item.address));
+      void options;
+      return {
+        value: {
+          kind: "membership-batch",
+          collection: request.collection,
+          decision: { kind: "direct", owner },
+          additions: request.additions,
+          removals: request.removals,
+          affected: [],
+          blockers: [],
+          effectful: true,
+          allowed: true,
+        },
+        diagnostics: [],
+      };
+    },
+    editMembers: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      changes.push(request);
+      return {
+        value: { level: "project", file: "skill-cli.jsonc", changed: true },
+        diagnostics: [],
+      };
     },
   });
   await setup!.mockInput.typeText(" ");
@@ -512,7 +506,6 @@ test("Collection dispatch uses only current B or explicitly checked A/C, includi
   await setup!.waitFor(() => previews.length === 2);
   expect(previews[1]).toEqual([addresses[0], addresses[2]]);
 });
-
 test("Enter enters the existing body and Escape returns to the same list row", async () => {
   await mount();
   await setup!.waitForFrame((frame) => frame.includes("Body of guide"));
@@ -530,7 +523,6 @@ test("Enter enters the existing body and Escape returns to the same list row", a
   expect(setup!.renderer.root.findDescendantById("reader-scrollbox")).toBe(body);
   await capture("direct-reader-focus-144x40");
 });
-
 test("reader Find owns text input and Escape returns to content before the list", async () => {
   await mount();
   await setup!.waitForFrame((frame) => frame.includes("Body of guide"));
@@ -545,7 +537,6 @@ test("reader Find owns text input and Escape returns to content before the list"
   await parsedEscape(setup!);
   expect(setup!.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
 });
-
 test("43x13 matching Find keeps a body viewport and restores the ordinary toolbar on Escape", async () => {
   await mount(43, 13);
   await parsedEnter(setup!);
@@ -575,7 +566,6 @@ test("43x13 matching Find keeps a body viewport and restores the ordinary toolba
   ).toBeDefined();
   expect(setup!.renderer.root.findDescendantById("reader-find-next")).toBeUndefined();
 });
-
 test.each([
   [100, 24],
   [80, 24],
@@ -593,7 +583,6 @@ test.each([
   await parsedEscape(setup!);
   expect(setup!.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
 });
-
 test.each([
   [144, 40],
   [100, 24],
@@ -614,15 +603,16 @@ test.each([
         })),
       },
       {
-        installed: {
-          load: async ({ address }) => ({
-            address,
-            name: address.path,
-            description: "",
-            markdownText: "",
-            rawText: "",
-          }),
-        },
+        loadInstalledSkill: async (
+          _environment: import("@skill-cli/core").CoreOptions,
+          { address },
+        ) => ({
+          address,
+          name: address.path,
+          description: "",
+          markdownText: "",
+          rawText: "",
+        }),
       },
     );
     await parsedEnter(setup!);

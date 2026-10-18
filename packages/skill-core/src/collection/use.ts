@@ -1,6 +1,6 @@
 import { SkillCliError, type OperationOptions } from "../shared";
 import { type ConfigLevel } from "../config/types";
-import { type CoreFactoryOptions } from "../shared";
+import { type CoreOptions } from "../shared";
 import type { SetUseRequest, UseCollectionRequest } from "./types";
 import { resolveCollectionUse } from "./graph";
 import { writeConfig } from "../config/write";
@@ -8,7 +8,7 @@ import { readWorkspaceUnlocked } from "../workspace/capture";
 import { resolveEffectiveCollections } from "./resolve";
 
 function editUse(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   level: ConfigLevel,
   transform: (before: readonly string[]) => readonly string[],
   operation?: OperationOptions,
@@ -45,15 +45,11 @@ function editUse(
     operation,
   );
 }
-export function setUse(
-  options: CoreFactoryOptions,
-  request: SetUseRequest,
-  operation?: OperationOptions,
-) {
+export function setUse(options: CoreOptions, request: SetUseRequest, operation?: OperationOptions) {
   return editUse(options, request.level, () => request.collections, operation);
 }
 export function addUse(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: UseCollectionRequest,
   operation?: OperationOptions,
 ) {
@@ -65,7 +61,7 @@ export function addUse(
   );
 }
 export function removeUse(
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   request: UseCollectionRequest,
   operation?: OperationOptions,
 ) {

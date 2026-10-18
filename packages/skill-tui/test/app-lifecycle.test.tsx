@@ -19,7 +19,6 @@ import {
   readerSecondAddress,
   readerSecondContent,
 } from "./installed-reader.fixture";
-
 async function openReaderRaw(setup: Awaited<ReturnType<typeof testRender>>) {
   if (!setup.renderer.root.findDescendantById("installed-skill-browser"))
     await openInstalledSkills(setup);
@@ -30,14 +29,12 @@ async function openReaderRaw(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.renderOnce();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === scrollbox);
 }
-
 async function openInstalledSkills(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills"),
   );
   await openAllInstalledSkills(setup);
 }
-
 async function openProblems(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-view-tab-problems"));
   const tab = setup.renderer.root.findDescendantById("skills-view-tab-problems")!;
@@ -45,7 +42,6 @@ async function openProblems(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("problems-browser"));
   await focusLive(setup, "problems-browser");
 }
-
 test("RENDER initial Workspace projection applies once and defers reader focus until its target registers", async () => {
   let loads = 0;
   let initialSignal: AbortSignal | undefined;
@@ -59,15 +55,13 @@ test("RENDER initial Workspace projection applies once and defers reader focus u
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          workspace: {
-            get: (options) =>
-              new Promise((resolve) => {
-                loads += 1;
-                initialSignal = options?.signal;
-                resolveWorkspace = resolve;
-              }),
-          },
-          installed: { load: async () => readerContent },
+          getWorkspace: (_environment: import("@skill-cli/core").CoreOptions, options) =>
+            new Promise((resolve) => {
+              loads += 1;
+              initialSignal = options?.signal;
+              resolveWorkspace = resolve;
+            }),
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -78,12 +72,10 @@ test("RENDER initial Workspace projection applies once and defers reader focus u
     await setup.renderOnce();
     expect(loads).toBe(1);
     expect(setup.captureCharFrame()).toContain("Loading");
-
     setup.resize(100, 30);
     await setup.renderOnce();
     expect(loads).toBe(1);
     expect(initialSignal?.aborted).toBe(false);
-
     resolveWorkspace!({ value: readerProjection(), diagnostics: [] });
     await setup.renderOnce();
     await openInstalledSkills(setup);
@@ -93,7 +85,6 @@ test("RENDER initial Workspace projection applies once and defers reader focus u
     setup.renderer.destroy();
   }
 });
-
 test("RENDER App aborts its unresolved initial Workspace request when unmounted", async () => {
   let loads = 0;
   let initialSignal: AbortSignal | undefined;
@@ -101,28 +92,23 @@ test("RENDER App aborts its unresolved initial Workspace request when unmounted"
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          workspace: {
-            get: (options) =>
-              new Promise(() => {
-                loads += 1;
-                initialSignal = options?.signal;
-              }),
-          },
+          getWorkspace: (_environment: import("@skill-cli/core").CoreOptions, options) =>
+            new Promise(() => {
+              loads += 1;
+              initialSignal = options?.signal;
+            }),
         })}
         exit={() => {}}
       />
     ),
     { width: 120, height: 40 },
   );
-
   await setup.renderOnce();
   expect(loads).toBe(1);
   expect(initialSignal?.aborted).toBe(false);
-
   setup.renderer.destroy();
   expect(initialSignal?.aborted).toBe(true);
 });
-
 test.serial(
   "RENDER App keeps the second native Markdown Reader visible after Details returns to the browser",
   async () => {
@@ -130,12 +116,13 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async (request) =>
-                request.address.path === readerSecondAddress.path
-                  ? readerSecondContent
-                  : readerContent,
-            },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) =>
+              request.address.path === readerSecondAddress.path
+                ? readerSecondContent
+                : readerContent,
           })}
           exit={() => {}}
         />
@@ -145,10 +132,8 @@ test.serial(
     try {
       await openInstalledSkills(setup);
       await openReaderFromInspector(setup);
-
       await openReaderTab(setup, 2);
       expect(selectedReaderTab(setup)).toBe(2);
-
       await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
@@ -203,13 +188,12 @@ test.serial(
     }
   },
 );
-
 test("RENDER App ignores a queued browser owner while Reader remains the narrow surface", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -221,14 +205,16 @@ test("RENDER App ignores a queued browser owner while Reader remains the narrow 
     await openInstalledSkills(setup);
     await openReaderRaw(setup);
     const focused: string[] = [];
-    const observe = (target: { readonly id?: string } | null) => focused.push(target?.id ?? "");
+    const observe = (
+      target: {
+        readonly id?: string;
+      } | null,
+    ) => focused.push(target?.id ?? "");
     setup.renderer.on(CliRenderEvents.FOCUSED_RENDERABLE, observe);
-
     setup.resize(63, 24);
     setup.resize(120, 24);
     await Promise.resolve();
     await setup.renderOnce();
-
     expect(focused).not.toContain("installed-skill-browser");
     expect(!!setup.renderer.root.findDescendantById("installed-skill-browser")).toBe(true);
     expect(focused.filter((id) => id === "reader-scrollbox").length).toBeLessThanOrEqual(1);
@@ -238,13 +224,12 @@ test("RENDER App ignores a queued browser owner while Reader remains the narrow 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER App teardown rejects a queued focus reconciliation", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -253,17 +238,18 @@ test("RENDER App teardown rejects a queued focus reconciliation", async () => {
   );
   await openReaderRaw(setup);
   const focused: string[] = [];
-  const observe = (target: { readonly id?: string } | null) => focused.push(target?.id ?? "");
+  const observe = (
+    target: {
+      readonly id?: string;
+    } | null,
+  ) => focused.push(target?.id ?? "");
   setup.renderer.on(CliRenderEvents.FOCUSED_RENDERABLE, observe);
-
   setup.resize(79, 24);
   setup.renderer.destroy();
   await Promise.resolve();
-
   expect(focused.filter(Boolean)).toEqual([]);
   setup.renderer.off(CliRenderEvents.FOCUSED_RENDERABLE, observe);
 });
-
 test("RENDER closing the palette settles focus back on the originating browser, never the task surface", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -290,7 +276,6 @@ test("RENDER closing the palette settles focus back on the originating browser, 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER an unregistered physical focus event does not request a new desired target", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -299,15 +284,17 @@ test("RENDER an unregistered physical focus event does not request a new desired
   try {
     await openInstalledSkills(setup);
     const observed: string[] = [];
-    const observe = (target: { readonly id?: string } | null) =>
-      observed.push(target?.id ?? "null");
+    const observe = (
+      target: {
+        readonly id?: string;
+      } | null,
+    ) => observed.push(target?.id ?? "null");
     setup.renderer.on(CliRenderEvents.FOCUSED_RENDERABLE, observe);
     setup.renderer.emit(CliRenderEvents.FOCUSED_RENDERABLE, null, undefined);
     await setup.renderOnce();
     expect(observed).toEqual(["null"]);
     expect(setup.renderer.root.findDescendantById("installed-skill-browser")).toBeDefined();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
-
     await openReaderRaw(setup);
     expect(setup.renderer.root.findDescendantById("installed-skill-browser")).toBeDefined();
     const readerTabs = readerTab(setup, 0);
@@ -322,7 +309,6 @@ test("RENDER an unregistered physical focus event does not request a new desired
     setup.renderer.destroy();
   }
 });
-
 test("RENDER nested palette close restores the original browser focus", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -344,7 +330,6 @@ test("RENDER nested palette close restores the original browser focus", async ()
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Problems Installed Skill drill-in replaces its browser with the Inspector and Reader", async () => {
   const base = readerProjection();
   const projection = {
@@ -369,7 +354,7 @@ test("RENDER Problems Installed Skill drill-in replaces its browser with the Ins
   const setup = await testRender(
     () => (
       <App
-        core={directSourceCore(projection, { installed: { load: async () => readerContent } })}
+        core={directSourceCore(projection, { loadInstalledSkill: async () => readerContent })}
         exit={() => {}}
       />
     ),
@@ -406,7 +391,6 @@ test("RENDER Problems Installed Skill drill-in replaces its browser with the Ins
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Problems diagnostic query keeps its structural Inspector Skill and restores the selected row", async () => {
   const base = readerProjection();
   const first = {
@@ -433,7 +417,7 @@ test("RENDER Problems diagnostic query keeps its structural Inspector Skill and 
     const setup = await testRender(
       () => (
         <App
-          core={directSourceCore(projection, { installed: { load: async () => readerContent } })}
+          core={directSourceCore(projection, { loadInstalledSkill: async () => readerContent })}
           exit={() => {}}
         />
       ),
@@ -470,7 +454,6 @@ test("RENDER Problems diagnostic query keeps its structural Inspector Skill and 
     }
   }
 });
-
 test("RENDER Problems exposes distinct native values for structurally distinct diagnostics", async () => {
   const base = readerProjection();
   const projection = {
@@ -507,7 +490,6 @@ test("RENDER Problems exposes distinct native values for structurally distinct d
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Problems Reader return restores a non-first diagnostic row", async () => {
   const base = readerProjection();
   const first = {
@@ -564,7 +546,6 @@ test("RENDER Problems Reader return restores a non-first diagnostic row", async 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Problems drill-in restores native viewport and selected semantic row", async () => {
   const base = readerProjection();
   const diagnostics = Array.from({ length: 20 }, (_, index) => ({

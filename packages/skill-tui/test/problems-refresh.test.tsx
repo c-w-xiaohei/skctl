@@ -7,20 +7,23 @@ import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection, readerSecondContent } from "./installed-reader.fixture";
 import type { WorkspaceView } from "@skill-cli/core";
 import { enterLive, live, waitForReaderBody } from "./reader-test-controls";
-
-const diagnostic = (address: { readonly source: string; readonly path: string }, code: string) => ({
+const diagnostic = (
+  address: {
+    readonly source: string;
+    readonly path: string;
+  },
+  code: string,
+) => ({
   code,
   severity: "warning" as const,
   message: code,
   subject: { kind: "installed-skill" as const, address },
 });
-
 async function openProblems(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-view-tab-problems"));
   await enterLive(setup, "skills-view-tab-problems");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("problems-browser"));
 }
-
 function problemProjection(base: WorkspaceView, refreshed: "reorder" | "fallback" | "empty") {
   const first = diagnostic(base.installedSkills[0]!.address, "FIRST");
   const second = diagnostic(base.installedSkills[1]!.address, "SECOND");
@@ -51,7 +54,6 @@ function problemProjection(base: WorkspaceView, refreshed: "reorder" | "fallback
         : { ...base, installedSkills: [] };
   return { initial, next };
 }
-
 for (const refreshed of ["reorder", "fallback", "empty"] as const) {
   test(`RENDER Problems refresh ${refreshed} returns through route predecessors`, async () => {
     const base = readerProjection();
@@ -65,34 +67,32 @@ for (const refreshed of ["reorder", "fallback", "empty"] as const) {
       () => (
         <App
           core={directSourceCore(current, {
-            workspace: {
-              get: async () => {
-                receipt = current;
-                return { value: current, diagnostics: [] };
-              },
+            getWorkspace: async () => {
+              receipt = current;
+              return { value: current, diagnostics: [] };
             },
-            installed: {
-              checkUpdate: async (request) => ({
-                value: {
-                  source: request.source,
-                  kind: "github" as const,
-                  exactRevision,
-                  baseline,
-                  changed: [{ path: "guide", name: "guide", description: "guide" }],
-                  added: [],
-                  removed: [],
-                  unchanged: [],
-                },
-                diagnostics: [],
-              }),
-              update: async (request) => {
-                updates.push(request);
-                current = projections.next;
-                return { value: undefined, diagnostics: [] };
+            checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, request) => ({
+              value: {
+                source: request.source,
+                kind: "github" as const,
+                exactRevision,
+                baseline,
+                changed: [{ path: "guide", name: "guide", description: "guide" }],
+                added: [],
+                removed: [],
+                unchanged: [],
               },
-              load: async ({ address }) =>
-                address.path === "guide" ? readerContent : readerSecondContent,
+              diagnostics: [],
+            }),
+            updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+              updates.push(request);
+              current = projections.next;
+              return { value: undefined, diagnostics: [] };
             },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              { address },
+            ) => (address.path === "guide" ? readerContent : readerSecondContent),
           })}
           exit={() => {}}
         />
@@ -145,7 +145,6 @@ for (const refreshed of ["reorder", "fallback", "empty"] as const) {
     }
   });
 }
-
 test("RENDER Problems routes integration diagnostics to Config Integrations", async () => {
   const owner = {
     level: "project" as const,
@@ -179,7 +178,7 @@ test("RENDER Problems routes integration diagnostics to Config Integrations", as
     () => (
       <App
         core={directSourceCore(current, {
-          workspace: { get: async () => ({ value: current, diagnostics: [] }) },
+          getWorkspace: async () => ({ value: current, diagnostics: [] }),
         })}
         exit={() => {}}
       />

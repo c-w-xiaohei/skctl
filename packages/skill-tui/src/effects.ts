@@ -1,15 +1,14 @@
+import * as api from "@skill-cli/core";
 import {
   type DiscoveryObservation,
   type ConfigSourceObservation,
   type ConfigLevel,
   SkillCliError,
-  type SkillCliCore,
   type RegisterSourceRequest,
   type SourceRemovalImpact,
   type RebindImpact,
   type UninstallImpact,
   type WorkspaceView,
-  type WorkspaceCapability,
 } from "@skill-cli/core";
 import { createSignal } from "solid-js";
 import type { DirectSourceIntent, SourceOperationIntent } from "./actions";
@@ -38,42 +37,62 @@ export type {
   CollectionReview,
   AddMembershipPreviewRequest,
 } from "./collection-protocol";
-
 interface ForegroundRequest {
   readonly id: string;
   readonly signal: AbortSignal;
   readonly active: () => boolean;
 }
-
-export interface TuiCore {
-  readonly workspace: Pick<WorkspaceCapability, "get">;
-  readonly sources: SkillCliCore["sources"];
-  readonly installed: SkillCliCore["installed"];
-  readonly configSources: SkillCliCore["configSources"];
-  readonly collections: Pick<
-    SkillCliCore["collections"],
-    | "create"
-    | "remove"
-    | "addMember"
-    | "removeMember"
-    | "editMembers"
-    | "importMembers"
-    | "addReference"
-    | "removeReference"
-    | "setLink"
-    | "previewAddMember"
-    | "previewRemoveMember"
-    | "previewMemberEdit"
-    | "previewImportMembers"
-    | "previewAddReference"
-    | "previewRemoveReference"
-    | "previewSetLink"
-    | "previewRemoval"
-  >;
-  readonly use: SkillCliCore["use"];
-  setManagedOpenCode: SkillCliCore["setManagedOpenCode"];
-}
-
+export type TuiCore = Pick<
+  typeof api,
+  | "getWorkspace"
+  | "inspectCollection"
+  | "createCollection"
+  | "removeCollection"
+  | "addMember"
+  | "removeMember"
+  | "editMembers"
+  | "importMembers"
+  | "addReference"
+  | "removeReference"
+  | "setLink"
+  | "previewAddToCollection"
+  | "previewMembershipRemoval"
+  | "previewMembershipBatch"
+  | "previewImport"
+  | "previewAddReference"
+  | "previewRemoveReference"
+  | "previewLinkChange"
+  | "previewCollectionRemoval"
+  | "setUse"
+  | "addUse"
+  | "removeUse"
+  | "previewCollectionUse"
+  | "registerSource"
+  | "discoverSkills"
+  | "previewSourceRemoval"
+  | "removeSource"
+  | "registerConfigSource"
+  | "observeConfigSource"
+  | "adoptConfigSource"
+  | "previewConfigAdoption"
+  | "forgetConfig"
+  | "previewConfigForget"
+  | "removeConfig"
+  | "previewConfigRemoval"
+  | "loadInstalledSkill"
+  | "listInstalledResources"
+  | "readInstalledResource"
+  | "installSkills"
+  | "uninstallSkills"
+  | "rebindSkill"
+  | "previewUninstall"
+  | "previewRebind"
+  | "checkUpdate"
+  | "getUpdateBaseline"
+  | "previewUpdate"
+  | "updateSkills"
+  | "setManagedOpenCode"
+>;
 export interface SourceRemovalReview {
   readonly id: string;
   readonly intent: DirectSourceIntent;
@@ -82,36 +101,46 @@ export interface SourceRemovalReview {
 export interface DiscoveryReview {
   readonly kind: "discovery";
   readonly id: string;
-  readonly intent: Extract<SourceOperationIntent, { readonly kind: "source-discovery" }>;
+  readonly intent: Extract<
+    SourceOperationIntent,
+    {
+      readonly kind: "source-discovery";
+    }
+  >;
   readonly observation: DiscoveryObservation;
 }
 export type InstalledSkillReview =
   | {
       readonly kind: "uninstall";
       readonly id: string;
-      readonly address: { readonly source: string; readonly path: string };
+      readonly address: {
+        readonly source: string;
+        readonly path: string;
+      };
       readonly impact: UninstallImpact;
     }
   | {
       readonly kind: "rebind";
       readonly id: string;
-      readonly address: { readonly source: string; readonly path: string };
+      readonly address: {
+        readonly source: string;
+        readonly path: string;
+      };
       readonly owner: string;
       readonly ownerPath: string;
       readonly impact: RebindImpact;
     };
-
 const diagnostic = (error: unknown) => ({
   code: error instanceof SkillCliError ? error.code : "INTERNAL",
   severity: "warning" as const,
   message: error instanceof Error ? error.message : "Operation failed",
 });
 const cancelled = (error: unknown) => error instanceof SkillCliError && error.code === "CANCELLED";
-
 export function createTuiEffects(
   core: TuiCore,
   operation: OperationState,
   projection: ProjectionOutcomes,
+  environment: api.CoreOptions = { cwd: process.cwd() },
 ) {
   let refreshController: AbortController | undefined;
   let foreground:
@@ -156,7 +185,8 @@ export function createTuiEffects(
         draft.rebaseCheckedScope(buildUpdateScope(snapshot, draft.scope.entry), check.source);
     }
   };
-  const updateChecks = createUpdateCheckService(core.installed, {
+  const updateChecks = createUpdateCheckService(core, {
+    environment,
     onChange: (check) => {
       if (closed) return;
       applyUpdateCheck(check);
@@ -190,7 +220,6 @@ export function createTuiEffects(
   const start = (task: TaskState) => operation.start(task);
   const settle = (id: string, status: string, error?: Diagnostic) =>
     operation.settle(id, status, error);
-
   // This owns only request lifetime. Review identity, authorization, mutations and
   // refresh decisions remain in each body. Aborting execution is not rollback.
   const withForeground = async <T>(
@@ -233,7 +262,6 @@ export function createTuiEffects(
       if (kind === "execute") updateChecks.resume();
     }
   };
-
   const refresh = async () => {
     if (closed) return undefined;
     refreshController?.abort();
@@ -241,7 +269,7 @@ export function createTuiEffects(
     refreshController = controller;
     projection.loading();
     try {
-      const result = await core.workspace.get({ signal: controller.signal });
+      const result = await core.getWorkspace(environment, { signal: controller.signal });
       if (!closed && refreshController === controller) {
         latestProjection = result.value;
         reconcileUpdateDraftScopes(result.value);
@@ -272,6 +300,7 @@ export function createTuiEffects(
     let created!: UpdateController;
     let checked = new Map<string, SourceUpdateCheck>();
     created = createUpdateController(core, state, {
+      environment,
       foreground: {
         request: () => {
           if (closed || foreground) return undefined;
@@ -332,7 +361,7 @@ export function createTuiEffects(
           )
         )
           return undefined;
-        const baseline = (await core.installed.updateBaseline({ source }, { signal })).value;
+        const baseline = (await core.getUpdateBaseline(environment, { source }, { signal })).value;
         if (baseline !== check.observation.baseline) return undefined;
         return check.observation;
       },
@@ -399,10 +428,10 @@ export function createTuiEffects(
     return createTaskController(state).submit(targets);
   };
   const stopUpdates = () => (updatesActive() ? (updateTask()?.controller.stop() ?? false) : false);
-
   const review = async (intent: DirectSourceIntent): Promise<SourceRemovalReview | undefined> => {
     return withForeground("preview", undefined, async ({ id, signal, active }) => {
-      const result = await core.sources.previewRemoval(
+      const result = await core.previewSourceRemoval(
+        environment,
         { source: intent.source, level: intent.owner.level, expectedOwner: intent.owner },
         { signal },
       );
@@ -427,14 +456,14 @@ export function createTuiEffects(
       return reviewed;
     });
   };
-
   const confirm = async (reviewed: SourceRemovalReview) => {
     if (closed || foreground || !reviewed.impact.allowed || liveReview !== reviewed) return false;
     return withForeground(
       "execute",
       false,
       async ({ id, signal, active }) => {
-        await core.sources.remove(
+        await core.removeSource(
+          environment,
           {
             source: reviewed.intent.source,
             level: reviewed.intent.owner.level,
@@ -454,15 +483,23 @@ export function createTuiEffects(
       },
     );
   };
-
   const discover = async (
-    intent: Extract<SourceOperationIntent, { readonly kind: "source-discovery" }>,
+    intent: Extract<
+      SourceOperationIntent,
+      {
+        readonly kind: "source-discovery";
+      }
+    >,
   ): Promise<DiscoveryReview | undefined> => {
     return withForeground(
       "observe",
       undefined,
       async ({ id, signal, active }) => {
-        const result = await core.sources.discover({ source: intent.source }, { signal });
+        const result = await core.discoverSkills(
+          environment,
+          { source: intent.source },
+          { signal },
+        );
         if (!active() || result.value.source !== intent.source) {
           if (active()) {
             const error = {
@@ -490,7 +527,6 @@ export function createTuiEffects(
       },
     );
   };
-
   const install = async (reviewed: DiscoveryReview, paths: readonly string[]) => {
     if (closed || foreground || liveDiscovery !== reviewed || paths.length === 0) return false;
     const candidatePaths = new Set(
@@ -502,7 +538,8 @@ export function createTuiEffects(
       "execute",
       false,
       async ({ id, signal, active }) => {
-        await core.installed.install(
+        await core.installSkills(
+          environment,
           {
             source: reviewed.observation.source,
             paths,
@@ -522,16 +559,21 @@ export function createTuiEffects(
       },
     );
   };
-
   const reviewInstalled = async (
     request:
       | {
           readonly kind: "uninstall";
-          readonly address: { readonly source: string; readonly path: string };
+          readonly address: {
+            readonly source: string;
+            readonly path: string;
+          };
         }
       | {
           readonly kind: "rebind";
-          readonly address: { readonly source: string; readonly path: string };
+          readonly address: {
+            readonly source: string;
+            readonly path: string;
+          };
           readonly owner: string;
           readonly ownerPath: string;
         },
@@ -553,7 +595,8 @@ export function createTuiEffects(
     }
     return withForeground("preview", undefined, async ({ id, signal, active }) => {
       if (request.kind === "uninstall") {
-        const result = await core.installed.previewUninstall(
+        const result = await core.previewUninstall(
+          environment,
           { source: request.address.source, paths: [request.address.path] },
           { signal },
         );
@@ -580,7 +623,8 @@ export function createTuiEffects(
         liveInstalledReview = review;
         return review;
       }
-      const result = await core.installed.previewRebind(
+      const result = await core.previewRebind(
+        environment,
         {
           source: request.address.source,
           path: request.address.path,
@@ -616,7 +660,6 @@ export function createTuiEffects(
       return review;
     });
   };
-
   const reviewCollection = async (
     intent: CollectionPreviewIntent,
   ): Promise<CollectionReview | undefined> => {
@@ -626,7 +669,7 @@ export function createTuiEffects(
       "preview",
       undefined,
       async ({ id, signal, active }) => {
-        const prepared = await previewCollection(core, stableIntent, id, signal);
+        const prepared = await previewCollection(core, stableIntent, id, signal, environment);
         if (!active()) return undefined;
         liveCollection = prepared;
         return prepared;
@@ -635,9 +678,15 @@ export function createTuiEffects(
       false,
     );
   };
-
   const executeCollection = async (
-    reviewed: CollectionReview | Extract<CollectionIntent, { readonly kind: "collection-create" }>,
+    reviewed:
+      | CollectionReview
+      | Extract<
+          CollectionIntent,
+          {
+            readonly kind: "collection-create";
+          }
+        >,
   ) => {
     const creating = reviewed.kind === "collection-create";
     const intent = creating ? reviewed : reviewed.intent;
@@ -658,7 +707,8 @@ export function createTuiEffects(
       false,
       async ({ id, signal, active }) => {
         if (reviewed.kind === "collection-create")
-          await core.collections.create(
+          await core.createCollection(
+            environment,
             { level: reviewed.level, collection: reviewed.collection },
             { signal },
           );
@@ -666,7 +716,7 @@ export function createTuiEffects(
           switch (reviewed.kind) {
             case "add-to-collection": {
               const { kind: _kind, ...request } = reviewed.intent;
-              await core.collections.addMember(request, { signal });
+              await core.addMember(environment, request, { signal });
               break;
             }
             case "membership-removal": {
@@ -687,12 +737,13 @@ export function createTuiEffects(
                 expectedAddress: intent.expectedAddress,
                 ...(intent.expectedOwner ? { expectedOwner: intent.expectedOwner } : {}),
               };
-              await core.collections.removeMember(request, { signal });
+              await core.removeMember(environment, request, { signal });
               break;
             }
             case "membership-batch": {
               const { kind: _kind, ...request } = reviewed.intent;
-              await core.collections.editMembers(
+              await core.editMembers(
+                environment,
                 { ...request, reviewedAffected: reviewed.impact.affected },
                 { signal },
               );
@@ -700,32 +751,32 @@ export function createTuiEffects(
             }
             case "collection-import": {
               const { kind: _kind, ...request } = reviewed.intent;
-              await core.collections.importMembers(request, { signal });
+              await core.importMembers(environment, request, { signal });
               break;
             }
             case "reference-add": {
               const { kind: _kind, ...request } = reviewed.intent;
-              await core.collections.addReference(request, { signal });
+              await core.addReference(environment, request, { signal });
               break;
             }
             case "reference-remove": {
               const { kind: _kind, ...request } = reviewed.intent;
-              await core.collections.removeReference(request, { signal });
+              await core.removeReference(environment, request, { signal });
               break;
             }
             case "link-change": {
               const { kind: _kind, ...request } = reviewed.intent;
-              await core.collections.setLink(request, { signal });
+              await core.setLink(environment, request, { signal });
               break;
             }
             case "collection-use": {
               const { kind: _kind, ...request } = reviewed.intent;
-              await core.use.set(request, { signal });
+              await core.setUse(environment, request, { signal });
               break;
             }
             case "collection-removal": {
               const { kind: _kind, ...request } = reviewed.intent;
-              await core.collections.remove(request, { signal });
+              await core.removeCollection(environment, request, { signal });
               break;
             }
           }
@@ -739,7 +790,6 @@ export function createTuiEffects(
       { title: "Updating Collection", semanticOwner },
     );
   };
-
   const confirmInstalled = async (review: InstalledSkillReview) => {
     if (closed || foreground || liveInstalledReview !== review || !review.impact.allowed)
       return false;
@@ -748,12 +798,14 @@ export function createTuiEffects(
       false,
       async ({ id, signal, active }) => {
         if (review.kind === "uninstall")
-          await core.installed.uninstall(
+          await core.uninstallSkills(
+            environment,
             { source: review.address.source, paths: [review.address.path] },
             { signal },
           );
         else
-          await core.installed.rebind(
+          await core.rebindSkill(
+            environment,
             {
               source: review.address.source,
               path: review.address.path,
@@ -783,7 +835,6 @@ export function createTuiEffects(
       },
     );
   };
-
   const executeConfigLifecycle = async (
     title: string,
     owner: import("./types").ProjectionOwner,
@@ -803,7 +854,6 @@ export function createTuiEffects(
       { title, semanticOwner: owner },
     );
   };
-
   return {
     refresh,
     review,
@@ -861,7 +911,7 @@ export function createTuiEffects(
         "observe",
         undefined,
         async ({ signal, active }) => {
-          const result = await core.configSources.observe({ id }, { signal });
+          const result = await core.observeConfigSource(environment, { id }, { signal });
           return active() ? result.value : undefined;
         },
         undefined,
@@ -875,7 +925,10 @@ export function createTuiEffects(
             readonly id: string;
             readonly observation: ConfigSourceObservation;
           }
-        | { readonly kind: "forget" | "remove"; readonly id: string },
+        | {
+            readonly kind: "forget" | "remove";
+            readonly id: string;
+          },
     ) => {
       return withForeground(
         "preview",
@@ -883,7 +936,8 @@ export function createTuiEffects(
         async ({ signal, active }) => {
           const result =
             request.kind === "adopt"
-              ? await core.configSources.previewAdoption(
+              ? await core.previewConfigAdoption(
+                  environment,
                   {
                     id: request.id,
                     exactRevision:
@@ -899,8 +953,8 @@ export function createTuiEffects(
                   { signal },
                 )
               : request.kind === "forget"
-                ? await core.configSources.previewForget({ id: request.id }, { signal })
-                : await core.configSources.previewRemoval({ id: request.id }, { signal });
+                ? await core.previewConfigForget(environment, { id: request.id }, { signal })
+                : await core.previewConfigRemoval(environment, { id: request.id }, { signal });
           return active() ? result.value : undefined;
         },
         undefined,
@@ -912,13 +966,14 @@ export function createTuiEffects(
         "Adopting Config Source",
         { kind: "config-source", id },
         async (signal) => {
-          const preview = await core.configSources.previewAdoption(
+          const preview = await core.previewConfigAdoption(
+            environment,
             { id, exactRevision, observation },
             { signal },
           );
           if (!preview.value.allowed)
             throw new SkillCliError("CONFIG_CONFLICT", "Config Source adoption is blocked");
-          await core.configSources.adopt({ id, exactRevision, observation }, { signal });
+          await core.adoptConfigSource(environment, { id, exactRevision, observation }, { signal });
         },
       ),
     forgetConfig: (id: string) =>
@@ -926,10 +981,10 @@ export function createTuiEffects(
         "Forgetting Config Source",
         { kind: "config-source", id },
         async (signal) => {
-          const preview = await core.configSources.previewForget({ id }, { signal });
+          const preview = await core.previewConfigForget(environment, { id }, { signal });
           if (!preview.value.allowed)
             throw new SkillCliError("CONFIG_CONFLICT", "Config Source forget is blocked");
-          await core.configSources.forget({ id }, { signal });
+          await core.forgetConfig(environment, { id }, { signal });
         },
       ),
     removeConfig: (id: string) =>
@@ -937,20 +992,22 @@ export function createTuiEffects(
         "Removing Config Source",
         { kind: "config-source", id },
         async (signal) => {
-          const preview = await core.configSources.previewRemoval({ id }, { signal });
+          const preview = await core.previewConfigRemoval(environment, { id }, { signal });
           if (!preview.value.allowed)
             throw new SkillCliError("CONFIG_CONFLICT", "Config Source removal is blocked");
-          await core.configSources.remove({ id }, { signal });
+          await core.removeConfig(environment, { id }, { signal });
         },
       ),
     setManagedOpenCode: (level: ConfigLevel, managed: boolean) =>
       executeConfigLifecycle(
         `${managed ? "Enabling" : "Disabling"} Managed OpenCode`,
         { kind: "config", level },
-        (signal) => core.setManagedOpenCode({ level, managed }, { signal }),
+        (signal) => core.setManagedOpenCode(environment, { level, managed }, { signal }),
       ),
     registerSource: (
-      registration: { readonly kind: "source" | "config-source" } & RegisterSourceRequest,
+      registration: {
+        readonly kind: "source" | "config-source";
+      } & RegisterSourceRequest,
     ) =>
       executeConfigLifecycle(
         registration.kind === "source" ? "Registering Source" : "Registering Config Source",
@@ -958,12 +1015,18 @@ export function createTuiEffects(
         (signal) => {
           const { kind, ...request } = registration;
           return kind === "source"
-            ? core.sources.register(request, { signal })
-            : core.configSources.register(request, { signal });
+            ? core.registerSource(environment, request, { signal })
+            : core.registerConfigSource(environment, request, { signal });
         },
       ),
-    createCollection: (intent: Extract<CollectionIntent, { readonly kind: "collection-create" }>) =>
-      executeCollection(intent),
+    createCollection: (
+      intent: Extract<
+        CollectionIntent,
+        {
+          readonly kind: "collection-create";
+        }
+      >,
+    ) => executeCollection(intent),
     previewCollection: reviewCollection,
     confirmCollection: (reviewed: CollectionReview) => executeCollection(reviewed),
     pending: () => foreground !== undefined,

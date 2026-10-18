@@ -20,26 +20,22 @@ import {
   readerTab,
   selectedReaderTab,
 } from "./reader-test-controls";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 function readerIdentity(setup: Setup) {
   const identity = setup.renderer.root.findDescendantById("reader-identity");
   return identity instanceof TextRenderable ? identity.plainText : undefined;
 }
-
 async function boot() {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async (request) =>
-              request.address.path === readerSecondAddress.path
-                ? readerSecondContent
-                : readerContent,
-            listResources: async () => readerResources,
-          },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) =>
+            request.address.path === readerSecondAddress.path ? readerSecondContent : readerContent,
+          listInstalledResources: async () => readerResources,
         })}
         exit={() => {}}
       />
@@ -53,7 +49,6 @@ async function boot() {
   await setup.waitFor(() => readerIdentity(setup) === "guide");
   return setup;
 }
-
 function expectFocused(setup: Setup, id: string) {
   const target = setup.renderer.root.findDescendantById(id);
   try {
@@ -67,13 +62,11 @@ function expectFocused(setup: Setup, id: string) {
     );
   }
 }
-
 function findInput(setup: Setup) {
   const input = setup.renderer.root.findDescendantById("reader-find");
   expect(input).toBeInstanceOf(InputRenderable);
   return input as InputRenderable;
 }
-
 test("RENDER Reader tabs own Left/Right, forward Tab enters content, Shift+Tab returns to browser", async () => {
   const setup = await boot();
   try {
@@ -96,7 +89,6 @@ test("RENDER Reader tabs own Left/Right, forward Tab enters content, Shift+Tab r
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Reader find input owns printable, slash, and cursor keys", async () => {
   const setup = await boot();
   try {
@@ -113,7 +105,6 @@ test("RENDER Reader find input owns printable, slash, and cursor keys", async ()
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Reader find draft commits on focus exit and survives a Skill switch round trip", async () => {
   const setup = await boot();
   try {
@@ -139,7 +130,6 @@ test("RENDER Reader find draft commits on focus exit and survives a Skill switch
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Reader Escape returns to the list without unmounting the Reader", async () => {
   const setup = await boot();
   try {
@@ -154,7 +144,6 @@ test("RENDER Reader Escape returns to the list without unmounting the Reader", a
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Reader stays mounted across narrow resize and preserves draft and focus", async () => {
   const setup = await boot();
   try {

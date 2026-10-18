@@ -7,7 +7,6 @@ import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { focusLive, live, openReaderTab, parsedEnter, parsedEscape } from "./reader-test-controls";
 import { openAgentAccess, press, rowId, selected, waitForBody } from "./agent-access-test-controls";
-
 const rootPathKey = JSON.stringify([["root", null]]);
 const itemName = (index: number) => `edge-skill-${String(index).padStart(3, "0")}`;
 const itemKey = (index: number) =>
@@ -15,7 +14,6 @@ const itemKey = (index: number) =>
 const longDescription =
   "A deliberately long description available in Reader Details instead of " +
   "causing the Agent access tree to grow or move when a different skill is selected.";
-
 /** Canonical management facts, not pre-rendered tree rows or hand-authored display options. */
 function canonicalManagementProjection() {
   const base = readerProjection();
@@ -60,7 +58,6 @@ function canonicalManagementProjection() {
     },
   };
 }
-
 function scrolledDisclosureProjection() {
   const base = canonicalManagementProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete projection");
@@ -108,7 +105,6 @@ function scrolledDisclosureProjection() {
     },
   };
 }
-
 const rows = (tree: ScrollBoxRenderable) => tree.content.getChildren();
 function treeFailure(
   setup: Awaited<ReturnType<typeof testRender>>,
@@ -127,7 +123,6 @@ function treeFailure(
     ].join("\n"),
   );
 }
-
 async function waitForTreeState(
   setup: Awaited<ReturnType<typeof testRender>>,
   tree: ScrollBoxRenderable,
@@ -140,7 +135,6 @@ async function waitForTreeState(
     throw treeFailure(setup, tree, step);
   }
 }
-
 function expectTreeFrame(
   setup: Awaited<ReturnType<typeof testRender>>,
   tree: ScrollBoxRenderable,
@@ -154,7 +148,6 @@ function expectTreeFrame(
     );
   return frame;
 }
-
 async function selectByNativeArrows(
   setup: Awaited<ReturnType<typeof testRender>>,
   tree: ScrollBoxRenderable,
@@ -177,7 +170,6 @@ async function selectByNativeArrows(
     );
   }
 }
-
 for (const viewport of [
   { width: 43, height: 13, label: "narrow" },
   { width: 80, height: 16, label: "low-height" },
@@ -192,31 +184,30 @@ for (const viewport of [
       () => (
         <App
           core={directSourceCore(canonicalManagementProjection(), {
-            installed: {
-              load: async ({ address }) => {
-                contentLoads.push(address.path);
-                return {
-                  address,
-                  name: address.path,
-                  description: longDescription,
-                  rawText: `Installed body ${address.path}`,
-                  markdownText: `# ${address.path}\n\nInstalled body ${address.path}`,
-                };
-              },
-              install: async () => {
-                installs++;
-                throw new Error("browsing Agent access must not install");
-              },
-              update: async () => {
-                mutations.push("update");
-                throw new Error("direct reading must not update");
-              },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              { address },
+            ) => {
+              contentLoads.push(address.path);
+              return {
+                address,
+                name: address.path,
+                description: longDescription,
+                rawText: `Installed body ${address.path}`,
+                markdownText: `# ${address.path}\n\nInstalled body ${address.path}`,
+              };
             },
-            sources: {
-              discover: async () => {
-                mutations.push("discover");
-                throw new Error("direct reading must not acquire Source content");
-              },
+            installSkills: async () => {
+              installs++;
+              throw new Error("browsing Agent access must not install");
+            },
+            updateSkills: async () => {
+              mutations.push("update");
+              throw new Error("direct reading must not update");
+            },
+            discoverSkills: async () => {
+              mutations.push("discover");
+              throw new Error("direct reading must not acquire Source content");
             },
           })}
           exit={() => {}}
@@ -237,7 +228,6 @@ for (const viewport of [
         "Right to expand Use root",
       );
       const expandedTreeHeight = tree.height;
-
       await selectByNativeArrows(setup, tree, 120);
       await setup.waitFor(() => tree.scrollTop > 0);
       expect(selected(setup, itemKey(119))).toBe(true);
@@ -246,7 +236,6 @@ for (const viewport of [
       expect(contentLoads).toEqual(Array.from({ length: 120 }, (_, index) => `edge/${index}`));
       expect(installs).toBe(0);
       expect(mutations).toEqual([]);
-
       await setup.flush();
       expectTreeFrame(setup, tree, [itemName(119)]);
       expect(live(setup, `${rowId(rootPathKey)}-disclosure`)).toBeInstanceOf(ButtonRenderable);
@@ -260,7 +249,6 @@ for (const viewport of [
       expect(selectedRow.screenY).toBeLessThan(tree.viewport.screenY + tree.viewport.height);
       expect(tree.height).toBe(expandedTreeHeight);
       const selectedScroll = tree.scrollTop;
-
       await focusLive(setup, "current-exposure-browser");
       await parsedEnter(setup);
       await setup.flush();
@@ -285,7 +273,6 @@ for (const viewport of [
       expect(contentLoads).toHaveLength(120);
       expect(installs).toBe(0);
       expect(mutations).toEqual([]);
-
       await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("current-exposure-browser"),
@@ -304,9 +291,8 @@ for (const viewport of [
     } finally {
       setup.renderer.destroy();
     }
-  }, 30_000);
+  }, 30000);
 }
-
 test("RENDER Agent access after scrolling distinguishes a row press from its exact disclosure glyph", async () => {
   let contentLoads = 0;
   let installs = 0;
@@ -314,18 +300,16 @@ test("RENDER Agent access after scrolling distinguishes a row press from its exa
     () => (
       <App
         core={directSourceCore(scrolledDisclosureProjection(), {
-          installed: {
-            load: async () => {
-              contentLoads++;
-              throw new Error("content must remain unloaded");
-            },
-            checkUpdate: async () => {
-              throw new Error("browsing Agent access must not check updates");
-            },
-            install: async () => {
-              installs++;
-              throw new Error("browsing Agent access must not install");
-            },
+          loadInstalledSkill: async () => {
+            contentLoads++;
+            throw new Error("content must remain unloaded");
+          },
+          checkUpdate: async () => {
+            throw new Error("browsing Agent access must not check updates");
+          },
+          installSkills: async () => {
+            installs++;
+            throw new Error("browsing Agent access must not install");
           },
         })}
         exit={() => {}}
@@ -363,7 +347,6 @@ test("RENDER Agent access after scrolling distinguishes a row press from its exa
     expect(rows(tree)).toHaveLength(241);
     expect(contentLoads).toBe(0);
     expect(installs).toBe(0);
-
     const disclosure = live(setup, `${rowId(finalPathKey)}-disclosure`);
     expect(disclosure).toBeInstanceOf(ButtonRenderable);
     expect(disclosure.width).toBe(3);
@@ -378,4 +361,4 @@ test("RENDER Agent access after scrolling distinguishes a row press from its exa
   } finally {
     setup.renderer.destroy();
   }
-}, 30_000);
+}, 30000);

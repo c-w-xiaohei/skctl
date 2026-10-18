@@ -1,11 +1,13 @@
 import { Command, CommanderError } from "commander";
-import { createSkillCliCore, SkillCliError } from "@skill-cli/core";
+import * as api from "@skill-cli/core";
+import { SkillCliError } from "@skill-cli/core";
 import { registerHumanCommands } from "./human";
 import { agentCommand } from "./agent";
 import type { CommandContext } from "./command-context";
 import { launchInstalledTui } from "./tui-launcher";
-
-type Output = { write(chunk: string): unknown };
+type Output = {
+  write(chunk: string): unknown;
+};
 export interface MainOptions {
   readonly cwd?: string;
   readonly stdinIsTTY?: boolean;
@@ -13,9 +15,9 @@ export interface MainOptions {
   readonly stdout?: Output;
   readonly stderr?: Output;
   readonly launchTui?: typeof launchInstalledTui;
-  readonly createCore?: typeof createSkillCliCore;
+  readonly api?: Partial<typeof api>;
+  readonly environment?: Partial<api.CoreOptions>;
 }
-
 export async function runMain(argv: readonly string[], options: MainOptions = {}): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
   const stdinIsTTY = options.stdinIsTTY ?? process.stdin.isTTY === true;
@@ -42,11 +44,12 @@ export async function runMain(argv: readonly string[], options: MainOptions = {}
   const context: CommandContext = {
     cwd,
     stdout,
-    core: (action) =>
-      (options.createCore ?? createSkillCliCore)({
-        cwd,
-        project: action.optsWithGlobals().project,
-      }),
+    api: { ...api, ...options.api },
+    environment: (action) => ({
+      ...options.environment,
+      cwd,
+      project: action.optsWithGlobals().project,
+    }),
   };
   registerHumanCommands(command, context);
   const agent = agentCommand(command, context, (status) => {
@@ -83,7 +86,6 @@ export async function runMain(argv: readonly string[], options: MainOptions = {}
     return failureCode;
   }
 }
-
 if (import.meta.main) {
   const code = await runMain(process.argv.slice(2));
   process.exitCode = code;

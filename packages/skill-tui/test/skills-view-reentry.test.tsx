@@ -28,7 +28,6 @@ import {
   waitForReaderBody,
   type ReaderSetup,
 } from "./reader-test-controls";
-
 type SkillsView = "current-exposure" | "all-installed-skills" | "unassigned" | "problems";
 const viewOrder: readonly SkillsView[] = [
   "current-exposure",
@@ -39,7 +38,6 @@ const viewOrder: readonly SkillsView[] = [
 const addressKey = (address: { readonly source: string; readonly path: string }) =>
   JSON.stringify([address.source, address.path]);
 const interactionTraces = new WeakMap<ReaderSetup, unknown[]>();
-
 function interactionState(setup: ReaderSetup, view?: SkillsView) {
   const tab = view ? setup.renderer.root.findDescendantById(`skills-view-tab-${view}`) : undefined;
   const navigation = setup.renderer.root.findDescendantById("workarea-navigation-pane");
@@ -74,7 +72,6 @@ function interactionState(setup: ReaderSetup, view?: SkillsView) {
         : undefined,
   };
 }
-
 function projection(): WorkspaceView {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("Expected complete Reader fixture");
@@ -130,7 +127,6 @@ function projection(): WorkspaceView {
     ],
   };
 }
-
 async function mount(width = 80) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/skills-view-reentry-");
@@ -176,48 +172,47 @@ async function mount(width = 80) {
       () => (
         <App
           core={directSourceCore(snapshot, {
-            workspace: {
-              get: () => tracked("workspace.get", { value: snapshot, diagnostics: [] }),
+            getWorkspace: () => tracked("workspace.get", { value: snapshot, diagnostics: [] }),
+            loadInstalledSkill: (
+              _environment: import("@skill-cli/core").CoreOptions,
+              { address },
+            ) => {
+              reads.push(addressKey(address));
+              return tracked(`load:${addressKey(address)}`, {
+                address,
+                name: address.path,
+                description: `FI2 ${address.path}`,
+                markdownText: `# Prose ${address.path}\n\nFI2 installed ${address.path}`,
+                rawText: `RAW-FI2-${address.path}\n\nInstalled raw instructions`,
+              });
             },
-            installed: {
-              load: ({ address }) => {
-                reads.push(addressKey(address));
-                return tracked(`load:${addressKey(address)}`, {
-                  address,
-                  name: address.path,
-                  description: `FI2 ${address.path}`,
-                  markdownText: `# Prose ${address.path}\n\nFI2 installed ${address.path}`,
-                  rawText: `RAW-FI2-${address.path}\n\nInstalled raw instructions`,
-                });
-              },
-              listResources: () => tracked("listResources", []),
-              checkUpdate: ({ source }) => {
-                checks.push(source);
-                return tracked(`checkUpdate:${source}`, {
-                  value: {
-                    source,
-                    kind: "github" as const,
-                    baseline: "baseline:test",
-                    changed: [],
-                    added: [],
-                    removed: [],
-                    unchanged: [],
-                  },
-                  diagnostics: [],
-                });
-              },
-              update: () => {
-                writes.push("update");
-                return tracked("update", { value: undefined, diagnostics: [] });
-              },
-              install: () => {
-                writes.push("install");
-                return tracked("install", { value: [], diagnostics: [] });
-              },
-              uninstall: () => {
-                writes.push("uninstall");
-                return tracked("uninstall", { value: undefined, diagnostics: [] });
-              },
+            listInstalledResources: () => tracked("listResources", []),
+            checkUpdate: (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+              checks.push(source);
+              return tracked(`checkUpdate:${source}`, {
+                value: {
+                  source,
+                  kind: "github" as const,
+                  baseline: "baseline:test",
+                  changed: [],
+                  added: [],
+                  removed: [],
+                  unchanged: [],
+                },
+                diagnostics: [],
+              });
+            },
+            updateSkills: () => {
+              writes.push("update");
+              return tracked("update", { value: undefined, diagnostics: [] });
+            },
+            installSkills: () => {
+              writes.push("install");
+              return tracked("install", { value: [], diagnostics: [] });
+            },
+            uninstallSkills: () => {
+              writes.push("uninstall");
+              return tracked("uninstall", { value: undefined, diagnostics: [] });
             },
           })}
           exit={() => {}}
@@ -311,26 +306,22 @@ async function mount(width = 80) {
     throw error;
   }
 }
-
 function selectedView(setup: ReaderSetup): SkillsView | undefined {
   return viewOrder.find((view) => {
     const tab = setup.renderer.root.findDescendantById(`skills-view-tab-${view}`);
     return tab instanceof TabsTabRenderable && tab.getState().selected;
   });
 }
-
 function assertNoCheckRestart(checks: readonly string[]) {
   expect(checks.every((source) => source === "team-main")).toBe(true);
   expect(checks.length).toBeLessThanOrEqual(1);
 }
-
 function visible(node: BaseRenderable | undefined): boolean {
   if (!(node instanceof Renderable) || node.isDestroyed || !node.parent) return false;
   for (let current: BaseRenderable | null = node; current; current = current.parent)
     if (!current.visible || (current instanceof Renderable && current.isDestroyed)) return false;
   return node.width > 0 && node.height > 0;
 }
-
 async function pointerView(setup: ReaderSetup, view: SkillsView) {
   const tab = live(setup, `skills-view-tab-${view}`);
   expect(visible(tab)).toBe(true);
@@ -360,7 +351,6 @@ async function pointerView(setup: ReaderSetup, view: SkillsView) {
       ),
     );
 }
-
 async function keyboardView(setup: ReaderSetup, view: SkillsView) {
   // Reach the view strip by ordinary Tab after the compact-to-wide resize.
   for (
@@ -383,7 +373,6 @@ async function keyboardView(setup: ReaderSetup, view: SkillsView) {
     await setup.flush();
   }
 }
-
 async function routeCommand(setup: ReaderSetup, expected: boolean) {
   const origin = setup.renderer.currentFocusedRenderable;
   setup.mockInput.pressKey("p", { ctrl: true });
@@ -397,7 +386,6 @@ async function routeCommand(setup: ReaderSetup, expected: boolean) {
       setup.renderer.currentFocusedRenderable === origin,
   );
 }
-
 async function assertRawReference(setup: ReaderSetup) {
   await setup.waitFor(() => {
     const line = setup.renderer.root.findDescendantById("reader-line-0");
@@ -407,7 +395,6 @@ async function assertRawReference(setup: ReaderSetup) {
   expect(visible(live(setup, "reader-line-0"))).toBe(true);
   expect(setup.captureCharFrame()).toContain("RAW-FI2-reference");
 }
-
 async function enterCompactInlineReader(setup: ReaderSetup) {
   const browser = live(setup, "installed-skill-browser") as SelectRenderable;
   expect(browser.getSelectedOption()?.value).toBe(addressKey(readerAddress));
@@ -437,7 +424,6 @@ async function enterCompactInlineReader(setup: ReaderSetup) {
   expect(selectedView(setup)).toBe("all-installed-skills");
   // No focus repair or local Back between Reader entry and the tested view input.
 }
-
 async function assertViewContent(
   setup: ReaderSetup,
   view: Exclude<SkillsView, "all-installed-skills">,
@@ -482,7 +468,6 @@ async function assertViewContent(
   expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
   await routeCommand(setup, false);
 }
-
 async function assertRetainedBrowserAndReader(setup: ReaderSetup) {
   await pointerView(setup, "all-installed-skills");
   await setup.waitFor(() => selectedView(setup) === "all-installed-skills");
@@ -515,7 +500,6 @@ async function assertRetainedBrowserAndReader(setup: ReaderSetup) {
   await openReaderTab(setup, 0);
   await assertRawReference(setup);
 }
-
 for (const activation of ["pointer", "keyboard"] as const) {
   for (const view of ["unassigned", "problems", "current-exposure"] as const) {
     test(`FI2 Skills view ${activation} ${view} survives compact inline Reader then wide resize`, async () => {
@@ -537,7 +521,6 @@ for (const activation of ["pointer", "keyboard"] as const) {
     });
   }
 }
-
 test("FI2 Skills same-value reentry preserves checked query exact selection and Reader preferences without history", async () => {
   const mounted = await mount();
   const { setup } = mounted;
@@ -554,7 +537,6 @@ test("FI2 Skills same-value reentry preserves checked query exact selection and 
     await mounted.dispose();
   }
 });
-
 test("FI2 explicit Problems Reader route still restores its Reader after a Skills view change and Back", async () => {
   const mounted = await mount(144);
   const { setup } = mounted;

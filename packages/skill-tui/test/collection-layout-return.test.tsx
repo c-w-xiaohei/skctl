@@ -13,28 +13,28 @@ import {
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 const descendants = (target: BaseRenderable): BaseRenderable[] => [
   target,
   ...target.getChildren().flatMap(descendants),
 ];
-
 // DataTable derives native IDs from the existing semantic row command ID.
 const guideManageId = `collection-relationships-row-guide%3A0:action-${encodeURIComponent("collection.row.team.guide%3A0.manage")}`;
-
 async function mount(width = 144, height = 40, projection = collectionsSourcesProjection()) {
   const previews: unknown[] = [];
   const core = directSourceCore(projection);
-  const preview = core.collections.previewMemberEdit;
-  core.collections.previewMemberEdit = async (request, options) => {
+  const preview = core.previewMembershipBatch;
+  core.previewMembershipBatch = async (
+    _environment: import("@skill-cli/core").CoreOptions,
+    request,
+    options,
+  ) => {
     previews.push(request);
-    return preview(request, options);
+    return preview(_environment, request, options);
   };
-  core.collections.addMember =
-    core.collections.removeMember =
-    core.collections.editMembers =
+  core.addMember =
+    core.removeMember =
+    core.editMembers =
       async () => {
         throw new Error("Unconfirmed collection actions must not write configuration");
       };
@@ -48,7 +48,6 @@ async function mount(width = 144, height = 40, projection = collectionsSourcesPr
     dispose: () => setup.renderer.destroy(),
   };
 }
-
 async function openContents(setup: Setup) {
   await enterLive(setup, "shell-section-tab-collections");
   await enterLive(setup, "collection-browser");
@@ -56,13 +55,11 @@ async function openContents(setup: Setup) {
     () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
   );
 }
-
 async function openActions(setup: Setup) {
   setup.mockInput.pressKey("p", { ctrl: true });
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
   return setup.renderer.currentFocusedRenderable as SelectRenderable;
 }
-
 async function chooseAction(setup: Setup, id: string) {
   const choices = await openActions(setup);
   const index = choices.options.findIndex((option) => option.value.id === id);
@@ -70,7 +67,6 @@ async function chooseAction(setup: Setup, id: string) {
   for (let row = 0; row < index; row++) setup.mockInput.pressArrow("down");
   await parsedEnter(setup);
 }
-
 test("Collection rows stay quiet while the current direct member exposes only its legal semantic actions in Actions", async () => {
   const mounted = await mount();
   const { setup } = mounted;
@@ -85,7 +81,6 @@ test("Collection rows stay quiet while the current direct member exposes only it
         .filter((node) => node instanceof ButtonRenderable)
         .map((node) => node.id),
     ).toEqual([guideManageId]);
-
     const choices = await openActions(setup);
     expect(
       choices.options
@@ -97,7 +92,6 @@ test("Collection rows stay quiet while the current direct member exposes only it
         .map((option) => option.value.id),
     ).toEqual(["membership.open-skill", "membership.open-owner", "membership.remove"]);
     await parsedEscape(setup);
-
     await focusLive(setup, "collection-relationships");
     await setup.mockInput.typeText(" ");
     setup.mockInput.pressArrow("down");
@@ -118,7 +112,6 @@ test("Collection rows stay quiet while the current direct member exposes only it
     mounted.dispose();
   }
 });
-
 test("Collection inspector returns through the single shared header with the tab-derived parent label", async () => {
   const mounted = await mount();
   const { setup } = mounted;
@@ -132,7 +125,6 @@ test("Collection inspector returns through the single shared header with the tab
     expect(contentsBack).toBeInstanceOf(ButtonRenderable);
     await expectSharedReturn(setup, "Back to Contents");
     expect(setup.renderer.root.findDescendantById("collection.inspector-back")).toBeUndefined();
-
     await enterLive(setup, "route-back");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
     await enterLive(setup, "collection-tabs-tab-relations");
@@ -149,7 +141,6 @@ test("Collection inspector returns through the single shared header with the tab
     mounted.dispose();
   }
 });
-
 test("multi-origin current members require Manage before any origin-specific action", async () => {
   const projection = collectionsSourcesProjection();
   if (projection.effective.status !== "complete") throw new Error("Expected complete fixture");
@@ -200,7 +191,6 @@ test("multi-origin current members require Manage before any origin-specific act
     mounted.dispose();
   }
 });
-
 test("Relations current Reference retains direct Open in Actions without changing Enter inspection", async () => {
   const mounted = await mount();
   const { setup } = mounted;
@@ -226,7 +216,6 @@ test("Relations current Reference retains direct Open in Actions without changin
     mounted.dispose();
   }
 });
-
 for (const [width, height] of [
   [144, 40],
   [100, 24],

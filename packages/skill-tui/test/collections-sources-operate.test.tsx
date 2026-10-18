@@ -22,7 +22,6 @@ import {
   parsedEscape,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 async function mount(
   width: number,
   height: number,
@@ -40,52 +39,54 @@ async function mount(
     throw new Error("Browsing must not acquire or mutate Skills");
   };
   const core = directSourceCore(projection, {
-    sources: { discover: unexpected, remove: unexpected },
-    installed: {
-      install: unexpected,
-      update: unexpected,
-      load: async ({ address }) => {
-        reads.push(address);
-        const skill = projection.installedSkills.find(
-          (skill) => skill.address.source === address.source && skill.address.path === address.path,
-        )!;
-        const text = `# ${skill.name}\n\nInstalled ${address.source}/${address.path}`;
-        return {
-          address,
-          name: skill.name,
-          description: skill.description,
-          rawText: text,
-          markdownText: text,
-        };
-      },
-      checkUpdate: async ({ source }) => {
-        checks.push(source);
-        return {
-          value: {
-            source,
-            kind: "github",
-            exactRevision: "a".repeat(40),
-            baseline: "operate-baseline",
-            changed: [],
-            removed: [],
-            added: [],
-            unchanged: projection.installedSkills
-              .filter((skill) => skill.address.source === source)
-              .map((skill) => ({
-                path: skill.address.path,
-                name: skill.name,
-                description: skill.description,
-              })),
-          },
-          diagnostics: [],
-        };
-      },
+    discoverSkills: unexpected,
+    removeSource: unexpected,
+    installSkills: unexpected,
+    updateSkills: unexpected,
+    loadInstalledSkill: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { address },
+    ) => {
+      reads.push(address);
+      const skill = projection.installedSkills.find(
+        (skill) => skill.address.source === address.source && skill.address.path === address.path,
+      )!;
+      const text = `# ${skill.name}\n\nInstalled ${address.source}/${address.path}`;
+      return {
+        address,
+        name: skill.name,
+        description: skill.description,
+        rawText: text,
+        markdownText: text,
+      };
+    },
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+      checks.push(source);
+      return {
+        value: {
+          source,
+          kind: "github",
+          exactRevision: "a".repeat(40),
+          baseline: "operate-baseline",
+          changed: [],
+          removed: [],
+          added: [],
+          unchanged: projection.installedSkills
+            .filter((skill) => skill.address.source === source)
+            .map((skill) => ({
+              path: skill.address.path,
+              name: skill.name,
+              description: skill.description,
+            })),
+        },
+        diagnostics: [],
+      };
     },
   });
-  core.collections.create = unexpected;
-  core.collections.addMember = unexpected;
-  core.collections.removeMember = unexpected;
-  core.collections.editMembers = unexpected;
+  core.createCollection = unexpected;
+  core.addMember = unexpected;
+  core.removeMember = unexpected;
+  core.editMembers = unexpected;
   const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
   const initialSources = new Set(projection.installedSkills.map((skill) => skill.address.source));
   if (projection.effective.status === "complete" && initialSources.size)
@@ -104,7 +105,6 @@ async function mount(
     },
   };
 }
-
 async function selectTeam(setup: Awaited<ReturnType<typeof testRender>>) {
   await enterLive(setup, "shell-section-tab-collections");
   await setup.waitFor(
@@ -122,7 +122,6 @@ async function selectTeam(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.flush();
   return browser;
 }
-
 test.each([
   [144, 40],
   [100, 24],
@@ -163,7 +162,6 @@ test.each([
     await mounted.dispose();
   }
 });
-
 test.each([
   [144, 40],
   [80, 24],
@@ -217,7 +215,6 @@ test.each([
     }
   },
 );
-
 test("Reference opens its actual Collection and Back restores the parent query and reference cursor", async () => {
   const mounted = await mount(100, 24);
   const { setup } = mounted;
@@ -250,7 +247,6 @@ test("Reference opens its actual Collection and Back restores the parent query a
     await mounted.dispose();
   }
 });
-
 test.each([
   [144, 40],
   [80, 24],
@@ -284,7 +280,6 @@ test.each([
     }
   },
 );
-
 test("optional single-origin ownership has live focus and all original exact-target controls", async () => {
   const mounted = await mount(80, 24);
   const { setup } = mounted;
@@ -310,7 +305,6 @@ test("optional single-origin ownership has live focus and all original exact-tar
     await mounted.dispose();
   }
 });
-
 test("Source inline Skill reading restores current row and optional Details across Config Back", async () => {
   const mounted = await mount(144, 40);
   const { setup } = mounted;
@@ -349,7 +343,6 @@ test("Source inline Skill reading restores current row and optional Details acro
     await mounted.dispose();
   }
 });
-
 test("Collection arrows stay in the current control and resize preserves checked targets", async () => {
   const mounted = await mount(144, 40);
   const { setup } = mounted;
@@ -385,7 +378,6 @@ test("Collection arrows stay in the current control and resize preserves checked
     await mounted.dispose();
   }
 });
-
 test("unavailable Collections offer Problems rather than claiming an empty library", async () => {
   const base = collectionsSourcesProjection();
   const diagnostic = {
@@ -416,7 +408,6 @@ test("unavailable Collections offer Problems rather than claiming an empty libra
     await mounted.dispose();
   }
 });
-
 test("empty Source exposes install and Details without silently entering Updates", async () => {
   const projection = collectionsSourcesProjection();
   const mounted = await mount(43, 13, { ...projection, installedSkills: [] });
@@ -439,7 +430,6 @@ test("empty Source exposes install and Details without silently entering Updates
     await mounted.dispose();
   }
 });
-
 test("explicit Source check retains its precise Source while browsing is read-only", async () => {
   const mounted = await mount(144, 40);
   const { setup } = mounted;
@@ -454,7 +444,6 @@ test("explicit Source check retains its precise Source while browsing is read-on
     await mounted.dispose();
   }
 });
-
 test("Collection About retains purpose without gating contents and returns by Escape", async () => {
   const mounted = await mount(43, 13);
   const { setup } = mounted;
@@ -475,7 +464,6 @@ test("Collection About retains purpose without gating contents and returns by Es
     await mounted.dispose();
   }
 });
-
 test("changing Membership origin keeps visible command order instead of landing on Back", async () => {
   const base = collectionsSourcesProjection();
   if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
@@ -529,7 +517,6 @@ test("changing Membership origin keeps visible command order instead of landing 
     await mounted.dispose();
   }
 });
-
 test("Source technical fields are reachable by Tab and restore their scrolled viewport after disclosure", async () => {
   const base = collectionsSourcesProjection();
   const projection = {
@@ -583,7 +570,6 @@ test("Source technical fields are reachable by Tab and restore their scrolled vi
     await mounted.dispose();
   }
 });
-
 test("Collection selective filter clear preserves the other condition, query and checked origins", async () => {
   const mounted = await mount(100, 24);
   const { setup } = mounted;
@@ -626,7 +612,6 @@ test("Collection selective filter clear preserves the other condition, query and
     await mounted.dispose();
   }
 });
-
 test("ordinary member-row click then Reader Back restores table focus and a non-first Collection", async () => {
   const base = collectionsSourcesProjection();
   if (base.effective.status !== "complete") throw new Error("Expected complete fixture");

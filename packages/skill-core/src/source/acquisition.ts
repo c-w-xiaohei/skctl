@@ -1,4 +1,4 @@
-import type { CoreFactoryOptions } from "../shared";
+import type { CoreOptions } from "../shared";
 
 import type { SourceBindingView } from "./types";
 import { SkillCliError } from "../shared";
@@ -26,7 +26,7 @@ export async function snapshotCandidates(
 
 export async function openRemote(
   binding: SourceBindingView,
-  options: CoreFactoryOptions,
+  options: CoreOptions,
   revision: string,
   operation: SourceOperation,
 ): Promise<RemoteSnapshot> {

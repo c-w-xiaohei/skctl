@@ -1,19 +1,15 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSkillCliCore } from "../../src/create-core";
 import { bindingDigest, canonicalRemoteOrigin } from "../../src/source/identity";
 import { StateCoordinator } from "../../src/storage/state";
 import { setAcquisitionTrapForTest } from "../../src/source/snapshot";
-
-const isolatedCore = (root: string) =>
-  createSkillCliCore({ cwd: root, userConfigPath: join(root, "global.jsonc") });
-
+const isolatedCore = (root: string) => ({ cwd: root, userConfigPath: join(root, "global.jsonc") });
 function remoteBindingDigest(origin: string, root = "") {
   return bindingDigest({ kind: "git", origin: canonicalRemoteOrigin(origin), root, ref: "main" });
 }
-
 test("AGT-001/AGT-002/CNT-001 uses only exposed installed Local content across all operations", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-"));
   const state = join(root, "state");
@@ -36,15 +32,15 @@ test("AGT-001/AGT-002/CNT-001 uses only exposed installed Local content across a
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = isolatedCore(root);
     const selector = "engineering:review";
-    expect((await core.content.load({ selector })).text).toContain("body");
+    expect((await api.loadSkill(core, { selector })).text).toContain("body");
     expect(
-      await core.installed.listResources({ address: { source: "source", path: "review" } }),
+      await api.listInstalledResources(core, { address: { source: "source", path: "review" } }),
     ).toContainEqual(expect.objectContaining({ path: "nested/note.txt", size: 4 }));
-    expect((await core.content.read({ selector, path: "nested/note.txt" })).text).toBe("note");
+    expect((await api.readResource(core, { selector, path: "nested/note.txt" })).text).toBe("note");
     const output = join(root, "output.txt");
-    await core.content.download({ selector, path: "nested/note.txt", output, force: false });
+    await api.downloadResource(core, { selector, path: "nested/note.txt", output, force: false });
     expect(await Bun.file(output).text()).toBe("note");
-    await expect(core.content.load({ selector: "source:review" })).rejects.toMatchObject({
+    await expect(api.loadSkill(core, { selector: "source:review" })).rejects.toMatchObject({
       code: "SKILL_NOT_FOUND",
     });
     process.env.SKILL_CLI_STATE_DIR = previous;
@@ -53,7 +49,6 @@ test("AGT-001/AGT-002/CNT-001 uses only exposed installed Local content across a
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-033 browse refresh and Agent projection remain offline for Local and Remote materializations", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-trap-"));
   const state = join(root, "state");
@@ -108,20 +103,20 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
       throw new Error("network acquisition occurred");
     }) as unknown as typeof fetch;
     for (const selector of ["c:local", "c:remote"]) {
-      await core.catalog.browse({ collection: "c" });
-      await core.catalog.search({ query: selector });
-      await core.content.load({ selector });
-      await core.installed.listResources({
+      await api.browseCatalog(core, { collection: "c" });
+      await api.searchSkills(core, { query: selector });
+      await api.loadSkill(core, { selector });
+      await api.listInstalledResources(core, {
         address: { source: selector.slice(2), path: selector.slice(2) },
       });
-      await core.content.read({ selector, path: "note.txt" });
-      await core.content.download({
+      await api.readResource(core, { selector, path: "note.txt" });
+      await api.downloadResource(core, {
         selector,
         path: "note.txt",
         output: join(root, `${selector.replace(":", "-")}.txt`),
         force: false,
       });
-      await core.content.run({ selector, argv: [process.execPath, "--eval", ""] });
+      await api.runSkill(core, { selector, argv: [process.execPath, "--eval", ""] });
     }
   } finally {
     setAcquisitionTrapForTest();
@@ -130,7 +125,6 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("CNT-001 rejects invalid and oversized installed text without side effects", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-text-"));
   const state = join(root, "state");
@@ -150,20 +144,19 @@ test("CNT-001 rejects invalid and oversized installed text without side effects"
     );
     await new StateCoordinator(state).installLocal("source", "review", skill);
     process.env.SKILL_CLI_STATE_DIR = state;
-    await writeFile(join(skill, "large.txt"), Buffer.alloc(1_048_577, "x"));
+    await writeFile(join(skill, "large.txt"), Buffer.alloc(1048577, "x"));
     const core = isolatedCore(root);
     await expect(
-      core.content.read({ selector: "engineering:review", path: "bad.txt" }),
+      api.readResource(core, { selector: "engineering:review", path: "bad.txt" }),
     ).rejects.toMatchObject({ code: "INVALID_UTF8" });
     await expect(
-      core.content.read({ selector: "engineering:review", path: "large.txt" }),
+      api.readResource(core, { selector: "engineering:review", path: "large.txt" }),
     ).rejects.toMatchObject({ code: "TEXT_TOO_LARGE" });
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remote Snapshot only", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-remote-"));
   const state = join(root, "state");
@@ -202,25 +195,26 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
       bindingDigest: remoteBindingDigest("https://example.test/skills"),
       adoptedRevision: "a".repeat(40),
     });
-    const browsed = (await core.catalog.browse({ collection: "engineering" })).value;
+    const browsed = (await api.browseCatalog(core, { collection: "engineering" })).value;
     expect(browsed).toMatchObject({ status: "available" });
     if (browsed.status === "available") expect(browsed.items).toHaveLength(1);
-    expect((await core.catalog.search({ query: "remote" })).value.results).toHaveLength(1);
-    expect((await core.content.load({ selector: "engineering:review" })).name).toBe("remote");
+    expect((await api.searchSkills(core, { query: "remote" })).value.results).toHaveLength(1);
+    expect((await api.loadSkill(core, { selector: "engineering:review" })).name).toBe("remote");
     expect(
-      await core.installed.listResources({ address: { source: "remote", path: "review" } }),
+      await api.listInstalledResources(core, { address: { source: "remote", path: "review" } }),
     ).toContainEqual(expect.objectContaining({ path: "nested/note.txt" }));
     expect(
-      (await core.content.read({ selector: "engineering:review", path: "nested/note.txt" })).text,
+      (await api.readResource(core, { selector: "engineering:review", path: "nested/note.txt" }))
+        .text,
     ).toBe("note");
-    await core.content.download({
+    await api.downloadResource(core, {
       selector: "engineering:review",
       path: "nested/note.txt",
       output,
       force: false,
     });
     expect(await Bun.file(output).text()).toBe("note");
-    const run = await core.content.run({
+    const run = await api.runSkill(core, {
       selector: "engineering:review",
       argv: [
         process.execPath,
@@ -241,7 +235,6 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-remote-missing-"));
   const state = join(root, "state");
@@ -275,7 +268,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
       adoptedRevision: "a".repeat(40),
     });
     await rm(join(state, "snapshots", digest), { recursive: true, force: true });
-    await expect(core.content.load({ selector: "engineering:review" })).rejects.toMatchObject({
+    await expect(api.loadSkill(core, { selector: "engineering:review" })).rejects.toMatchObject({
       code: "PROVIDER_INTEGRITY_FAILED",
     });
     expect(await Bun.file(join(state, "snapshots", digest)).exists()).toBe(false);
@@ -294,7 +287,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
     });
     await symlink("SKILL.md", join(state, "snapshots", corrupt, "root", "corrupt-link"));
     await expect(
-      core.installed.listResources({ address: { source: "remote", path: "review" } }),
+      api.listInstalledResources(core, { address: { source: "remote", path: "review" } }),
     ).rejects.toMatchObject({ code: "PROVIDER_INTEGRITY_FAILED" });
     expect(await Bun.file(join(state, "snapshots", corrupt, "root", "corrupt-link")).exists()).toBe(
       true,
@@ -304,7 +297,6 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("USE-001 rejects a live Remote Snapshot digest change before creating a use record", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-remote-tamper-"));
   const state = join(root, "state");
@@ -344,8 +336,8 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
     const snapshot = join(state, "snapshots", digest, "root", "SKILL.md");
     const stateBefore = await Bun.file(join(state, "state.json")).text();
     const cacheBefore = await Bun.file(join(state, "configs")).exists();
-    const entry = join(import.meta.dir, "../../src/create-core.ts");
-    const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(join(root, "global.jsonc"))}}).content.load({selector:"c:remote"});`;
+    const entry = join(import.meta.dir, "../../src/index.ts");
+    const script = `import { loadSkill } from ${JSON.stringify(entry)}; await loadSkill({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(join(root, "global.jsonc"))}}, {selector:"c:remote"});`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
       env: {
@@ -368,7 +360,7 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
     expect(
       await Promise.race([
         child.exited,
-        Bun.sleep(5_000).then(() => {
+        Bun.sleep(5000).then(() => {
           child.kill();
           return -1;
         }),
@@ -378,10 +370,10 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
     expect(await Bun.file(join(state, "state.json")).text()).toBe(stateBefore);
     expect(await Bun.file(join(state, "configs")).exists()).toBe(cacheBefore);
     await expect(
-      core.content.read({ selector: "c:remote", path: "SKILL.md" }),
+      api.readResource(core, { selector: "c:remote", path: "SKILL.md" }),
     ).rejects.toMatchObject({ code: "PROVIDER_INTEGRITY_FAILED" });
     await expect(
-      core.content.run({ selector: "c:remote", argv: [process.execPath, "--eval", ""] }),
+      api.runSkill(core, { selector: "c:remote", argv: [process.execPath, "--eval", ""] }),
     ).rejects.toMatchObject({ code: "PROVIDER_INTEGRITY_FAILED" });
     expect(await Bun.file(join(state, "uses")).exists()).toBe(false);
   } finally {
@@ -389,7 +381,6 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failure, and cleans run roots", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-safety-"));
   const state = join(root, "state");
@@ -411,27 +402,27 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = isolatedCore(root);
     await expect(
-      core.content.read({ selector: "engineering:review", path: "../SKILL.md" }),
+      api.readResource(core, { selector: "engineering:review", path: "../SKILL.md" }),
     ).rejects.toMatchObject({ code: "INVALID_RESOURCE_PATH" });
     await expect(
-      core.content.read({ selector: "engineering:review", path: "/etc/passwd" }),
+      api.readResource(core, { selector: "engineering:review", path: "/etc/passwd" }),
     ).rejects.toMatchObject({ code: "INVALID_RESOURCE_PATH" });
     await symlink("nested/note.txt", join(skill, "unsafe-link"));
     await expect(
-      core.installed.listResources({ address: { source: "source", path: "review" } }),
+      api.listInstalledResources(core, { address: { source: "source", path: "review" } }),
     ).rejects.toMatchObject({ code: "UNSUPPORTED_ENTRY" });
     await rm(join(skill, "unsafe-link"));
     const output = join(root, "output.txt");
     await writeFile(output, "old");
     await expect(
-      core.content.download({
+      api.downloadResource(core, {
         selector: "engineering:review",
         path: "nested/note.txt",
         output,
         force: false,
       }),
     ).rejects.toMatchObject({ code: "DESTINATION_EXISTS" });
-    await core.content.download({
+    await api.downloadResource(core, {
       selector: "engineering:review",
       path: "nested/note.txt",
       output,
@@ -439,7 +430,7 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
     });
     expect(await Bun.file(output).text()).toBe("note");
     await expect(
-      core.content.download({
+      api.downloadResource(core, {
         selector: "engineering:review",
         path: "nested/note.txt",
         output: join(skill, "nested", "note.txt"),
@@ -447,7 +438,7 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
       }),
     ).rejects.toMatchObject({ code: "WRITE_FAILED" });
     await expect(
-      core.content.run({
+      api.runSkill(core, {
         selector: "engineering:review",
         argv: ["/definitely/missing-executable"],
       }),
@@ -458,7 +449,6 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("CNT-001 cancellation escalates a resistant child and removes its run root", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-run-cancel-"));
   const state = join(root, "state");
@@ -467,7 +457,7 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
   const previous = process.env.SKILL_CLI_STATE_DIR;
   const controller = new AbortController();
   const core = isolatedCore(root);
-  let run: ReturnType<typeof core.content.run> | undefined;
+  let run: ReturnType<typeof api.runSkill> | undefined;
   try {
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
@@ -482,7 +472,8 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
     );
     process.env.SKILL_CLI_STATE_DIR = state;
     await new StateCoordinator(state).installLocal("source", "review", skill);
-    run = core.content.run(
+    run = api.runSkill(
+      core,
       {
         selector: "c:review",
         argv: [
@@ -496,8 +487,13 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
     // Keep an early run rejection observed while polling; finally still awaits it.
     void run.catch(() => undefined);
     // Observe the real child only after its TERM-resistant handler is installed.
-    let child: { pid: number; cwd: string } | undefined;
-    const deadline = Date.now() + 10_000;
+    let child:
+      | {
+          pid: number;
+          cwd: string;
+        }
+      | undefined;
+    const deadline = Date.now() + 10000;
     while (Date.now() < deadline) {
       try {
         child = JSON.parse(await readFile(ready, "utf8"));
@@ -517,7 +513,7 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
     controller.abort();
     const result = await Promise.race([
       run,
-      Bun.sleep(2_000).then(() => {
+      Bun.sleep(2000).then(() => {
         throw new Error("Resistant child cancellation did not complete within 2 seconds");
       }),
     ]);
@@ -536,8 +532,7 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
       await rm(root, { recursive: true, force: true });
     }
   }
-}, 15_000);
-
+}, 15000);
 test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote runs without mutating content", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-run-tree-"));
   const state = join(root, "state");
@@ -592,7 +587,7 @@ test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote run
     await symlink(outside, join(state, "runs"));
     for (const selector of ["c:local", "c:remote"])
       await expect(
-        core.content.run({ selector, argv: [process.execPath, "--eval", ""] }),
+        api.runSkill(core, { selector, argv: [process.execPath, "--eval", ""] }),
       ).rejects.toMatchObject({ code: "CONFIG_SYMLINK" });
     expect(await Bun.file(join(outside, "root", "SKILL.md")).exists()).toBe(false);
     expect(await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).text()).toBe(
@@ -603,7 +598,6 @@ test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote run
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("CNT-001 rejects gitlinks before Snapshot publication and Local run copying without state mutation", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-gitlink-"));
   const state = join(root, "state");
@@ -630,7 +624,7 @@ test("CNT-001 rejects gitlinks before Snapshot publication and Local run copying
       code: "PROVIDER_INTEGRITY_FAILED",
     });
     await expect(
-      core.content.run({ selector: "c:review", argv: [process.execPath, "--eval", ""] }),
+      api.runSkill(core, { selector: "c:review", argv: [process.execPath, "--eval", ""] }),
     ).rejects.toMatchObject({ code: "UNSUPPORTED_ENTRY" });
     expect(
       await Bun.file(join(state, "snapshots", "a".repeat(64), "root", "SKILL.md")).exists(),

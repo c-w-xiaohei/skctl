@@ -4,15 +4,13 @@ import { App } from "../src/app";
 import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
 import { parsedEnter } from "./reader-test-controls";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 async function boot(width = 120) {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />
@@ -23,7 +21,6 @@ async function boot(width = 120) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-scrollbox"));
   return setup;
 }
-
 async function openRawMatch(setup: Setup) {
   setup.renderer.root.findDescendantById("reader-scrollbox")!.focus();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
@@ -51,13 +48,11 @@ async function openRawMatch(setup: Setup) {
   setup.mockInput.pressKey("TAB", { shift: true });
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-raw");
 }
-
 test("RENDER raw match handoff keeps typed Raw order after Open Raw removes its action", async () => {
   const setup = await boot();
   try {
     await openRawMatch(setup);
     expect(setup.captureCharFrame()).toContain("2/3");
-
     const previous = setup.renderer.root.findDescendantById("reader-find-previous")!;
     previous.focus();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === previous);
@@ -68,7 +63,6 @@ test("RENDER raw match handoff keeps typed Raw order after Open Raw removes its 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER raw match handoff keeps the surviving Raw control through 120 79 43 80 120", async () => {
   const setup = await boot();
   try {

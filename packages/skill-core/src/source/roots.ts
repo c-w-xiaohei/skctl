@@ -1,7 +1,7 @@
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { CoreFactoryOptions } from "../shared";
+import type { CoreOptions } from "../shared";
 
 import type { SourceBindingView, DiscoveredSkillCandidate } from "./types";
 import { SkillCliError } from "../shared";
@@ -17,7 +17,7 @@ export interface Candidate extends DiscoveredSkillCandidate {
   readonly tree?: GitTreeIdentity;
 }
 
-export async function sourceFor(options: CoreFactoryOptions, source: string, signal?: AbortSignal) {
+export async function sourceFor(options: CoreOptions, source: string, signal?: AbortSignal) {
   const workspace = await readWorkspace({ ...options, signal });
   if (workspace.value.effective.status !== "complete")
     throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");

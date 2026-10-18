@@ -1,11 +1,9 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { createSkillCliCore } from "../../src/create-core";
 import { StateCoordinator } from "../../src/storage/state";
-
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-transaction-"));
   const state = join(root, "state");
@@ -32,13 +30,13 @@ async function snapshot(root: string) {
   };
 }
 const registerTeamSource =
-  'sources.register({ level: "project", id: "team", binding: { kind: "local", path: "./skills", root: "" } })';
-const installReview = 'installed.install({ source: "team", paths: ["review"] })';
-const uninstallReview = 'installed.uninstall({ source: "team", paths: ["review"] })';
+  'registerSource(environment, { level: "project", id: "team", binding: { kind: "local", path: "./skills", root: "" } })';
+const installReview = 'installSkills(environment, { source: "team", paths: ["review"] })';
+const uninstallReview = 'uninstallSkills(environment, { source: "team", paths: ["review"] })';
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 async function expectTransactionCrash(value: Fixture, operation: string, hook: string) {
-  const entry = join(import.meta.dir, "../../src/create-core.ts");
-  const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; const core = createSkillCliCore({ cwd: ${JSON.stringify(value.project)}, userConfigPath: ${JSON.stringify(value.global)} }); await core.${operation};`;
+  const entry = join(import.meta.dir, "../../src/index.ts");
+  const script = `import * as api from ${JSON.stringify(entry)}; const environment = { cwd: ${JSON.stringify(value.project)}, userConfigPath: ${JSON.stringify(value.global)} }; await api.${operation};`;
   const child = Bun.spawn({
     cmd: [process.execPath, "--eval", script],
     env: { ...process.env, SKILL_CLI_STATE_DIR: value.state, SKILL_CLI_TEST_CRASH_AT: hook },
@@ -49,7 +47,7 @@ async function expectTransactionCrash(value: Fixture, operation: string, hook: s
   const exit = await Promise.race([
     child.exited,
     new Promise<-1>((resolve) => {
-      timer = setTimeout(() => resolve(-1), 15_000);
+      timer = setTimeout(() => resolve(-1), 15000);
     }),
   ]);
   if (timer) clearTimeout(timer);
@@ -57,13 +55,13 @@ async function expectTransactionCrash(value: Fixture, operation: string, hook: s
     child.kill("SIGTERM");
     const stopped = await Promise.race([
       child.exited.then(() => true),
-      Bun.sleep(1_000).then(() => false),
+      Bun.sleep(1000).then(() => false),
     ]);
     if (!stopped) {
       child.kill("SIGKILL");
       const killed = await Promise.race([
         child.exited.then(() => true),
-        Bun.sleep(1_000).then(() => false),
+        Bun.sleep(1000).then(() => false),
       ]);
       if (!killed) throw new Error("Timed-out transaction child did not exit after SIGKILL");
     }
@@ -82,7 +80,7 @@ async function childGuardCrash(state: string, hook = "lock-critical-enter") {
   expect(
     await Promise.race([
       child.exited,
-      Bun.sleep(15_000).then(() => {
+      Bun.sleep(15000).then(() => {
         child.kill();
         return -1;
       }),
@@ -90,8 +88,8 @@ async function childGuardCrash(state: string, hook = "lock-critical-enter") {
   ).toBe(97);
 }
 function childWorkspace(project: string, state: string, global: string, output: string) {
-  const entry = join(import.meta.dir, "../../src/create-core.ts");
-  const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; const result = await createSkillCliCore({ cwd: ${JSON.stringify(project)}, userConfigPath: ${JSON.stringify(global)} }).workspace.get(); await Bun.write(${JSON.stringify(output)}, JSON.stringify(result.value));`;
+  const entry = join(import.meta.dir, "../../src/index.ts");
+  const script = `import { getWorkspace } from ${JSON.stringify(entry)}; const result = await getWorkspace({ cwd: ${JSON.stringify(project)}, userConfigPath: ${JSON.stringify(global)} }); await Bun.write(${JSON.stringify(output)}, JSON.stringify(result.value));`;
   return Bun.spawn({
     cmd: [process.execPath, "--eval", script],
     env: { ...process.env, SKILL_CLI_STATE_DIR: state },
@@ -112,22 +110,20 @@ async function installFixture() {
   );
   return value;
 }
-
 test("TX-003 public committed-marker crash rolls a declaration forward on fresh workspace read", async () => {
   const value = await fixture();
   try {
     await expectTransactionCrash(value, registerTeamSource, "marker-committed-after");
     expect(await readFile(join(value.project, "skill-cli.jsonc"), "utf8")).toBe("{}\n");
     process.env.SKILL_CLI_STATE_DIR = value.state;
-    const core = createSkillCliCore({ cwd: value.project, userConfigPath: value.global });
-    await core.workspace.get();
+    const core = { cwd: value.project, userConfigPath: value.global };
+    await api.getWorkspace(core);
     expect(await readFile(join(value.project, "skill-cli.jsonc"), "utf8")).toContain('"team"');
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("TX-005 a crashed lock owner is reclaimed without retaining a fence", async () => {
   const value = await fixture();
   try {
@@ -139,7 +135,6 @@ test("TX-005 a crashed lock owner is reclaimed without retaining a fence", async
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("TX-005 a crash at atomic lock publication leaves a live owned guard that is reclaimed", async () => {
   const value = await fixture();
   try {
@@ -152,7 +147,6 @@ test("TX-005 a crash at atomic lock publication leaves a live owned guard that i
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("TX-004 fresh public workspace read never overwrites an unknown declaration edit", async () => {
   const value = await fixture();
   try {
@@ -161,7 +155,7 @@ test("TX-004 fresh public workspace read never overwrites an unknown declaration
     await writeFile(config, "{\n  // human edit\n}\n");
     process.env.SKILL_CLI_STATE_DIR = value.state;
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get(),
+      api.getWorkspace({ cwd: value.project, userConfigPath: value.global }),
     ).rejects.toMatchObject({
       code: "TRANSACTION_CONFLICT",
     });
@@ -171,7 +165,6 @@ test("TX-004 fresh public workspace read never overwrites an unknown declaration
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("TX-002/TX-003 stage, immutable, and marker boundaries are recovered only through fresh public workspace reads", async () => {
   for (const hook of [
     "immutable-published",
@@ -184,10 +177,10 @@ test("TX-002/TX-003 stage, immutable, and marker boundaries are recovered only t
     try {
       await expectTransactionCrash(value, registerTeamSource, hook);
       process.env.SKILL_CLI_STATE_DIR = value.state;
-      await createSkillCliCore({
+      await api.getWorkspace({
         cwd: value.project,
         userConfigPath: value.global,
-      }).workspace.get();
+      });
       const text = await readFile(join(value.project, "skill-cli.jsonc"), "utf8");
       expect(text === "{}\n").toBe(hook !== "rename-before");
     } finally {
@@ -195,8 +188,7 @@ test("TX-002/TX-003 stage, immutable, and marker boundaries are recovered only t
       await rm(value.root, { recursive: true, force: true });
     }
   }
-}, 30_000);
-
+}, 30000);
 test("TX-003/ST-003 state replacement crash rolls forward a valid public install and rejects stale generation", async () => {
   const value = await installFixture();
   try {
@@ -208,7 +200,7 @@ test("TX-003/ST-003 state replacement crash rolls forward a valid public install
     );
     process.env.SKILL_CLI_STATE_DIR = value.state;
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get(),
+      api.getWorkspace({ cwd: value.project, userConfigPath: value.global }),
     ).rejects.toMatchObject({
       code: "TRANSACTION_CONFLICT",
     });
@@ -217,13 +209,12 @@ test("TX-003/ST-003 state replacement crash rolls forward a valid public install
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("TX-003 state replacement crash rolls installed state forward through an untouched public workspace read", async () => {
   const value = await installFixture();
   try {
     await expectTransactionCrash(value, installReview, "state-replace-before");
     process.env.SKILL_CLI_STATE_DIR = value.state;
-    await createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get();
+    await api.getWorkspace({ cwd: value.project, userConfigPath: value.global });
     const state = JSON.parse(await readFile(join(value.state, "state.json"), "utf8"));
     expect(state.generation).toBe(1);
     expect(state.installed).toHaveLength(1);
@@ -233,7 +224,6 @@ test("TX-003 state replacement crash rolls installed state forward through an un
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("TX-003 a legacy migration combined with uninstall rolls forward once and preserves an unknown state edit", async () => {
   const value = await installFixture();
   try {
@@ -268,7 +258,7 @@ test("TX-003 a legacy migration combined with uninstall rolls forward once and p
     );
     process.env.SKILL_CLI_STATE_DIR = value.state;
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get(),
+      api.getWorkspace({ cwd: value.project, userConfigPath: value.global }),
     ).rejects.toMatchObject({
       code: "TRANSACTION_CONFLICT",
     });
@@ -281,7 +271,6 @@ test("TX-003 a legacy migration combined with uninstall rolls forward once and p
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("TX-003 a crashed legacy migration and uninstall recovers as one v3 generation advance", async () => {
   const value = await installFixture();
   try {
@@ -311,7 +300,7 @@ test("TX-003 a crashed legacy migration and uninstall recovers as one v3 generat
     );
     await expectTransactionCrash(value, uninstallReview, "state-replace-before");
     process.env.SKILL_CLI_STATE_DIR = value.state;
-    await createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get();
+    await api.getWorkspace({ cwd: value.project, userConfigPath: value.global });
     expect(JSON.parse(await readFile(join(value.state, "state.json"), "utf8"))).toEqual({
       version: 3,
       generation: 5,
@@ -323,7 +312,6 @@ test("TX-003 a crashed legacy migration and uninstall recovers as one v3 generat
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("SCH-001/SCH-002 compose Local and immutable cached Remote Config Sources under public workspace reads", async () => {
   const value = await fixture();
   try {
@@ -353,9 +341,8 @@ test("SCH-001/SCH-002 compose Local and immutable cached Remote Config Sources u
       }),
     );
     process.env.SKILL_CLI_STATE_DIR = value.state;
-    const workspace = (
-      await createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get()
-    ).value;
+    const workspace = (await api.getWorkspace({ cwd: value.project, userConfigPath: value.global }))
+      .value;
     expect(workspace.effective.sources.map((source) => source.id)).toEqual([
       "local-config/local",
       "remote-config/remote",
@@ -375,11 +362,14 @@ test("SCH-001/SCH-002 compose Local and immutable cached Remote Config Sources u
     const cache = join(value.state, "configs", digest, "config.jsonc");
     const before = await readFile(cache, "utf8");
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).sources.register({
-        level: "project",
-        id: "remote-config/remote",
-        binding: { kind: "local", path: "./skills", root: "" },
-      }),
+      api.registerSource(
+        { cwd: value.project, userConfigPath: value.global },
+        {
+          level: "project",
+          id: "remote-config/remote",
+          binding: { kind: "local", path: "./skills", root: "" },
+        },
+      ),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     expect(await readFile(cache, "utf8")).toBe(before);
   } finally {
@@ -387,7 +377,6 @@ test("SCH-001/SCH-002 compose Local and immutable cached Remote Config Sources u
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("SCH-003 rejects duplicate Sources and every duplicate JSONC Collection declaration without mutation", async () => {
   const value = await fixture();
   const user = join(value.root, "user.jsonc");
@@ -402,31 +391,29 @@ test("SCH-003 rejects duplicate Sources and every duplicate JSONC Collection dec
     );
     process.env.SKILL_CLI_STATE_DIR = value.state;
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: user }).workspace.get(),
+      api.getWorkspace({ cwd: value.project, userConfigPath: user }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     const project = '{ "collections": { "one": {} }, "use": ["two"] }\n';
     await writeFile(join(value.project, "skill-cli.jsonc"), project);
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: user }).workspace.get(),
+      api.getWorkspace({ cwd: value.project, userConfigPath: user }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
       message: "Collection is declared more than once: one",
     });
     expect(await readFile(join(value.project, "skill-cli.jsonc"), "utf8")).toBe(project);
-
     await writeFile(user, "{}\n");
     const local = '{ "collections": { "one": {} } }\n';
     await writeFile(join(value.project, "skill-cli.local.jsonc"), local);
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: user }).workspace.get(),
+      api.getWorkspace({ cwd: value.project, userConfigPath: user }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
       message: "Collection is declared more than once: one",
     });
     expect(await readFile(join(value.project, "skill-cli.local.jsonc"), "utf8")).toBe(local);
-
     const reusable = join(value.root, "reusable");
     await mkdir(reusable);
     await writeFile(join(reusable, "config.jsonc"), '{ "collections": { "shared": {} } }\n');
@@ -435,7 +422,7 @@ test("SCH-003 rejects duplicate Sources and every duplicate JSONC Collection dec
     await writeFile(join(value.project, "skill-cli.jsonc"), contributed);
     await rm(join(value.project, "skill-cli.local.jsonc"));
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: user }).workspace.get(),
+      api.getWorkspace({ cwd: value.project, userConfigPath: user }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
       message: "Collection is declared more than once: team/shared",
@@ -446,14 +433,13 @@ test("SCH-003 rejects duplicate Sources and every duplicate JSONC Collection dec
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("TX-005 reader waits behind a publisher barrier and captures one coherent public workspace", async () => {
   const value = await fixture();
   const release = join(value.root, "release");
   const output = join(value.root, "reader.json");
   try {
-    const entry = join(import.meta.dir, "../../src/create-core.ts");
-    const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({ cwd: ${JSON.stringify(value.project)} }).sources.register({ level: "project", id: "team", binding: { kind: "local", path: "./skills", root: "" } });`;
+    const entry = join(import.meta.dir, "../../src/index.ts");
+    const script = `import { registerSource } from ${JSON.stringify(entry)}; await registerSource({ cwd: ${JSON.stringify(value.project)} }, { level: "project", id: "team", binding: { kind: "local", path: "./skills", root: "" } });`;
     const publisher = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
       env: {
@@ -480,7 +466,7 @@ test("TX-005 reader waits behind a publisher barrier and captures one coherent p
     expect(
       await Promise.race([
         publisher.exited,
-        Bun.sleep(15_000).then(() => {
+        Bun.sleep(15000).then(() => {
           publisher.kill();
           return -1;
         }),
@@ -489,7 +475,7 @@ test("TX-005 reader waits behind a publisher barrier and captures one coherent p
     expect(
       await Promise.race([
         reader.exited,
-        Bun.sleep(15_000).then(() => {
+        Bun.sleep(15000).then(() => {
           reader.kill();
           return -1;
         }),
@@ -504,21 +490,19 @@ test("TX-005 reader waits behind a publisher barrier and captures one coherent p
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("TX-001 unmarked orphan staging is removed by a fresh public workspace operation", async () => {
   const value = await fixture();
   try {
     await mkdir(join(value.state, "staging", "orphan"), { recursive: true });
     await writeFile(join(value.state, "staging", "orphan", "0"), "orphan");
     process.env.SKILL_CLI_STATE_DIR = value.state;
-    await createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get();
+    await api.getWorkspace({ cwd: value.project, userConfigPath: value.global });
     await expect(readFile(join(value.state, "staging", "orphan", "0"))).rejects.toThrow();
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("TX-004 tampered marker stage or target conflicts before changing any bytes", async () => {
   const value = await fixture();
   try {
@@ -529,13 +513,16 @@ test("TX-004 tampered marker stage or target conflicts before changing any bytes
     const markerPath = join(value.state, "transactions", transaction);
     const before = await snapshot(value.root);
     const marker = JSON.parse(await readFile(markerPath, "utf8")) as {
-      targets: { target: string; stage: string }[];
+      targets: {
+        target: string;
+        stage: string;
+      }[];
     };
     marker.targets[0]!.stage = join(value.root, "outside");
     await writeFile(markerPath, JSON.stringify(marker));
     process.env.SKILL_CLI_STATE_DIR = value.state;
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get(),
+      api.getWorkspace({ cwd: value.project, userConfigPath: value.global }),
     ).rejects.toMatchObject({
       code: "TRANSACTION_CONFLICT",
     });
@@ -543,7 +530,7 @@ test("TX-004 tampered marker stage or target conflicts before changing any bytes
     marker.targets[0]!.target = join(value.root, "outside-target");
     await writeFile(markerPath, JSON.stringify(marker));
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).workspace.get(),
+      api.getWorkspace({ cwd: value.project, userConfigPath: value.global }),
     ).rejects.toMatchObject({
       code: "TRANSACTION_CONFLICT",
     });
@@ -553,7 +540,6 @@ test("TX-004 tampered marker stage or target conflicts before changing any bytes
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("CFG-001/ST-002 Remote Config adoption publishes cache before pointer and recovers offline after pointer crash", async () => {
   const value = await fixture();
   const bytes = Buffer.from(
@@ -580,7 +566,7 @@ test("CFG-001/ST-002 Remote Config adoption publishes cache before pointer and r
     expect(
       await Promise.race([
         child.exited,
-        Bun.sleep(15_000).then(() => {
+        Bun.sleep(15000).then(() => {
           child.kill();
           return -1;
         }),
@@ -588,17 +574,16 @@ test("CFG-001/ST-002 Remote Config adoption publishes cache before pointer and r
     ).toBe(97);
     expect(await readFile(join(value.state, "configs", digest, "config.jsonc"))).toEqual(bytes);
     process.env.SKILL_CLI_STATE_DIR = value.state;
-    const workspace = await createSkillCliCore({
+    const workspace = await api.getWorkspace({
       cwd: value.project,
       userConfigPath: value.global,
-    }).workspace.get();
+    });
     expect(workspace.value.effective.sources.map((source) => source.id)).toEqual(["remote/shared"]);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("CFG-001 immutable Config cache crash never publishes an adoption pointer", async () => {
   const value = await fixture();
   const bytes = Buffer.from("{}\n");
@@ -619,7 +604,7 @@ test("CFG-001 immutable Config cache crash never publishes an adoption pointer",
     expect(
       await Promise.race([
         child.exited,
-        Bun.sleep(15_000).then(() => {
+        Bun.sleep(15000).then(() => {
           child.kill();
           return -1;
         }),
@@ -634,7 +619,6 @@ test("CFG-001 immutable Config cache crash never publishes an adoption pointer",
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("CFG-001 state-pointer crash rolls an adopted cache forward for an offline fresh Core", async () => {
   const value = await fixture();
   const bytes = Buffer.from('{ "collections": { "shared": {} } }\n');
@@ -659,7 +643,7 @@ test("CFG-001 state-pointer crash rolls an adopted cache forward for an offline 
     expect(
       await Promise.race([
         child.exited,
-        Bun.sleep(15_000).then(() => {
+        Bun.sleep(15000).then(() => {
           child.kill();
           return -1;
         }),
@@ -669,10 +653,10 @@ test("CFG-001 state-pointer crash rolls an adopted cache forward for an offline 
     process.env.SKILL_CLI_STATE_DIR = value.state;
     expect(
       (
-        await createSkillCliCore({
+        await api.getWorkspace({
           cwd: value.project,
           userConfigPath: value.global,
-        }).workspace.get()
+        })
       ).value.effective.collections,
     ).toEqual(["remote/shared"]);
   } finally {

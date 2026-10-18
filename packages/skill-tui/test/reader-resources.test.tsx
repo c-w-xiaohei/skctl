@@ -22,9 +22,7 @@ import {
   selectedReaderTab,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 async function resourceBrowser(setup: Setup) {
   await setup.waitFor(() => {
     const browser = setup.renderer.root.findDescendantById("resource-browser");
@@ -34,7 +32,6 @@ async function resourceBrowser(setup: Setup) {
   if (!(browser instanceof SelectRenderable)) throw new Error("Expected native resource list");
   return browser;
 }
-
 async function chooseResource(setup: Setup, path: string) {
   const browser = await resourceBrowser(setup);
   await focusLive(setup, "resource-browser");
@@ -72,19 +69,16 @@ async function chooseResource(setup: Setup, path: string) {
     `Selected resource is ${path}`,
   ).toBe(path);
 }
-
 async function openSelectedResource(setup: Setup, path: string) {
   await chooseResource(setup, path);
   await parsedEnter(setup);
 }
-
 async function openResources(setup: Setup) {
   await openAllInstalledSkills(setup);
   await enterInstalledAddress(setup, readerAddress);
   if (selectedReaderTab(setup) !== 1) await openReaderTab(setup, 1);
   expect(selectedReaderTab(setup)).toBe(1);
 }
-
 test.serial(
   "RENDER Resources lists paths with selected structural information, pending and empty states",
   async () => {
@@ -95,17 +89,19 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async () => readerContent,
-              listResources: (request, options) => {
-                calls.push(request);
-                listSignal = options?.signal;
-                if (calls.length > 1)
-                  throw new Error("Pending Resources entry started a second list request");
-                return new Promise((resolve) => {
-                  resolveList = resolve;
-                });
-              },
+            loadInstalledSkill: async () => readerContent,
+            listInstalledResources: (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+              options,
+            ) => {
+              calls.push(request);
+              listSignal = options?.signal;
+              if (calls.length > 1)
+                throw new Error("Pending Resources entry started a second list request");
+              return new Promise((resolve) => {
+                resolveList = resolve;
+              });
             },
           })}
           exit={() => {}}
@@ -152,12 +148,12 @@ test.serial(
     } finally {
       setup.renderer.destroy();
     }
-
     const empty = await testRender(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: { load: async () => readerContent, listResources: async () => [] },
+            loadInstalledSkill: async () => readerContent,
+            listInstalledResources: async () => [],
           })}
           exit={() => {}}
         />
@@ -173,7 +169,6 @@ test.serial(
     }
   },
 );
-
 test.serial(
   "RENDER Resources renders Core-returned Markdown, text, and binary results at exact paths",
   async () => {
@@ -182,32 +177,36 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async () => readerContent,
-              listResources: async () => [...readerResources, { path: "guide", kind: "file" }],
-              read: async (request) => {
-                calls.push(request);
-                if (request.path === "docs/guide.md" || request.path === "guide")
-                  return {
-                    kind: "text",
-                    path: request.path,
-                    text: "# Resource heading",
-                    format: "markdown",
-                  };
-                if (request.path === "bin/run")
-                  return {
-                    kind: "text",
-                    path: request.path,
-                    text: "#!/bin/sh\necho hi",
-                    format: "text",
-                  };
+            loadInstalledSkill: async () => readerContent,
+            listInstalledResources: async () => [
+              ...readerResources,
+              { path: "guide", kind: "file" },
+            ],
+            readInstalledResource: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              calls.push(request);
+              if (request.path === "docs/guide.md" || request.path === "guide")
                 return {
-                  kind: "not-text",
+                  kind: "text",
                   path: request.path,
-                  reason: "binary",
-                  metadata: { path: request.path, kind: "file", size: 8 },
+                  text: "# Resource heading",
+                  format: "markdown",
                 };
-              },
+              if (request.path === "bin/run")
+                return {
+                  kind: "text",
+                  path: request.path,
+                  text: "#!/bin/sh\necho hi",
+                  format: "text",
+                };
+              return {
+                kind: "not-text",
+                path: request.path,
+                reason: "binary",
+                metadata: { path: request.path, kind: "file", size: 8 },
+              };
             },
           })}
           exit={() => {}}
@@ -252,7 +251,6 @@ test.serial(
     }
   },
 );
-
 test.serial(
   "RENDER Resources retry the exact failed request and narrow Escape backs from content to list",
   async () => {
@@ -265,17 +263,18 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async () => readerContent,
-              listResources: async () => readerResources,
-              read: async (request) => {
-                calls.push(request);
-                attempts++;
-                if (attempts === 1) throw new SkillCliError("RESOURCE_NOT_FOUND", "resource moved");
-                return new Promise((resolve) => {
-                  resolveRetry = resolve;
-                });
-              },
+            loadInstalledSkill: async () => readerContent,
+            listInstalledResources: async () => readerResources,
+            readInstalledResource: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              calls.push(request);
+              attempts++;
+              if (attempts === 1) throw new SkillCliError("RESOURCE_NOT_FOUND", "resource moved");
+              return new Promise((resolve) => {
+                resolveRetry = resolve;
+              });
             },
           })}
           exit={() => {}}
@@ -317,7 +316,6 @@ test.serial(
     }
   },
 );
-
 test.serial(
   "RENDER Resources retries a failed structural list without reading content",
   async () => {
@@ -328,18 +326,22 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async () => readerContent,
-              listResources: async (request) => {
-                calls.push(request);
-                attempts++;
-                if (attempts === 1) throw new SkillCliError("RESOURCE_NOT_FOUND", "list moved");
-                return readerResources;
-              },
-              read: async (request) => {
-                reads.push(request);
-                throw new Error("list retry must not read content");
-              },
+            loadInstalledSkill: async () => readerContent,
+            listInstalledResources: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              calls.push(request);
+              attempts++;
+              if (attempts === 1) throw new SkillCliError("RESOURCE_NOT_FOUND", "list moved");
+              return readerResources;
+            },
+            readInstalledResource: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              reads.push(request);
+              throw new Error("list retry must not read content");
             },
           })}
           exit={() => {}}
@@ -363,7 +365,6 @@ test.serial(
     }
   },
 );
-
 test.serial(
   "RENDER Resources delegates non-files to Core and presents unsupported results without file content",
   async () => {
@@ -378,26 +379,27 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async () => readerContent,
-              listResources: async () => resources,
-              read: async (request) => {
-                reads.push(request);
-                const descriptor = resources.find((resource) => resource.path === request.path)!;
-                if (descriptor.kind !== "file")
-                  return {
-                    kind: "not-text" as const,
-                    path: request.path,
-                    reason: "unsupported" as const,
-                    metadata: descriptor,
-                  };
+            loadInstalledSkill: async () => readerContent,
+            listInstalledResources: async () => resources,
+            readInstalledResource: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              reads.push(request);
+              const descriptor = resources.find((resource) => resource.path === request.path)!;
+              if (descriptor.kind !== "file")
                 return {
-                  kind: "text" as const,
+                  kind: "not-text" as const,
                   path: request.path,
-                  text: "plain text",
-                  format: "text" as const,
+                  reason: "unsupported" as const,
+                  metadata: descriptor,
                 };
-              },
+              return {
+                kind: "text" as const,
+                path: request.path,
+                text: "plain text",
+                format: "text" as const,
+              };
             },
           })}
           exit={() => {}}
@@ -432,7 +434,6 @@ test.serial(
     }
   },
 );
-
 test.serial(
   "RENDER Resources clears old content on failed new reads and retries through its command",
   async () => {
@@ -441,27 +442,28 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async () => readerContent,
-              listResources: async () => readerResources,
-              read: async (request) => {
-                reads.push(request);
-                if (request.path === "docs/guide.md")
-                  return {
-                    kind: "text" as const,
-                    path: request.path,
-                    text: "old resource",
-                    format: "text" as const,
-                  };
-                if (reads.length === 2)
-                  throw new SkillCliError("RESOURCE_NOT_FOUND", "new resource moved");
+            loadInstalledSkill: async () => readerContent,
+            listInstalledResources: async () => readerResources,
+            readInstalledResource: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              reads.push(request);
+              if (request.path === "docs/guide.md")
                 return {
                   kind: "text" as const,
                   path: request.path,
-                  text: "retried",
+                  text: "old resource",
                   format: "text" as const,
                 };
-              },
+              if (reads.length === 2)
+                throw new SkillCliError("RESOURCE_NOT_FOUND", "new resource moved");
+              return {
+                kind: "text" as const,
+                path: request.path,
+                text: "retried",
+                format: "text" as const,
+              };
             },
           })}
           exit={() => {}}
@@ -493,7 +495,6 @@ test.serial(
     }
   },
 );
-
 test.serial(
   "RENDER Resources retains native tab and content through physical A B A and resize",
   async () => {
@@ -507,29 +508,36 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            installed: {
-              load: async (request) =>
-                request.address.path === "reference"
-                  ? {
-                      ...readerContent,
-                      address: request.address,
-                      name: "reference",
-                      markdownText: "# Reference",
-                    }
-                  : readerContent,
-              listResources: async (request) => {
-                lists.push(request);
-                return [{ path: "guide", kind: "file" }];
-              },
-              read: async (request) => {
-                reads.push(request);
-                return {
-                  kind: "text" as const,
-                  path: request.path,
-                  text: `# ${request.address.path} resource`,
-                  format: "markdown" as const,
-                };
-              },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) =>
+              request.address.path === "reference"
+                ? {
+                    ...readerContent,
+                    address: request.address,
+                    name: "reference",
+                    markdownText: "# Reference",
+                  }
+                : readerContent,
+            listInstalledResources: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              lists.push(request);
+              return [{ path: "guide", kind: "file" }];
+            },
+            readInstalledResource: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              reads.push(request);
+              return {
+                kind: "text" as const,
+                path: request.path,
+                text: `# ${request.address.path} resource`,
+                format: "markdown" as const,
+              };
             },
           })}
           exit={() => {}}
@@ -542,7 +550,6 @@ test.serial(
       await openSelectedResource(setup, "guide");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
       expect(selectedReaderTab(setup)).toBe(1);
-
       await enterLive(setup, "route-back");
       expect(setup.renderer.root.findDescendantById("resource-browser")).toBeDefined();
       await parsedEscape(setup);
@@ -581,7 +588,6 @@ test.serial(
       expect(lists).toEqual(
         [readerAddress, { source: "team-main", path: "reference" }].map((address) => ({ address })),
       );
-
       await focusLive(setup, "resource-content");
       setup.resize(79, 24);
       await setup.flush();

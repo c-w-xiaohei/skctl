@@ -23,7 +23,6 @@ import {
   parsedEscape,
   selectedReaderTab,
 } from "./reader-test-controls";
-
 const address = { source: "team-main", path: "guide" };
 const projectOwner = {
   level: "project" as const,
@@ -35,7 +34,6 @@ const globalOwner = {
   file: "/home/user/.config/skill-cli.jsonc",
   pointer: "/collections/engineering",
 };
-
 function projection(): WorkspaceView {
   const source = {
     id: "team-main",
@@ -125,9 +123,7 @@ function projection(): WorkspaceView {
     diagnostics: [],
   };
 }
-
 const result = <T,>(value: T): OperationResult<T> => ({ value, diagnostics: [] });
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((next) => {
@@ -135,7 +131,6 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-
 function renderableText(node: { getChildren(): readonly unknown[] }): string {
   return node
     .getChildren()
@@ -143,26 +138,77 @@ function renderableText(node: { getChildren(): readonly unknown[] }): string {
       child instanceof TextBufferRenderable
         ? [child.plainText]
         : child && typeof child === "object" && "getChildren" in child
-          ? renderableText(child as { getChildren(): readonly unknown[] })
+          ? renderableText(
+              child as {
+                getChildren(): readonly unknown[];
+              },
+            )
           : [],
     )
     .join("\n");
 }
-
 function membershipConfiguration<L extends ConfigLevel>(
-  base: TuiCore["collections"],
-  owner: { readonly level: L; readonly file: string; readonly pointer: string },
+  base: Pick<
+    TuiCore,
+    | "inspectCollection"
+    | "createCollection"
+    | "removeCollection"
+    | "addMember"
+    | "removeMember"
+    | "editMembers"
+    | "importMembers"
+    | "addReference"
+    | "removeReference"
+    | "setLink"
+    | "previewAddToCollection"
+    | "previewMembershipRemoval"
+    | "previewMembershipBatch"
+    | "previewImport"
+    | "previewAddReference"
+    | "previewRemoveReference"
+    | "previewLinkChange"
+    | "previewCollectionRemoval"
+  >,
+  owner: {
+    readonly level: L;
+    readonly file: string;
+    readonly pointer: string;
+  },
   changes: unknown[],
   previews: unknown[],
   writing: ReturnType<
     typeof deferred<
-      OperationResult<{ readonly level: L; readonly file: string; readonly changed: true }>
+      OperationResult<{
+        readonly level: L;
+        readonly file: string;
+        readonly changed: true;
+      }>
     >
   >,
-): TuiCore["collections"] {
+): Pick<
+  TuiCore,
+  | "inspectCollection"
+  | "createCollection"
+  | "removeCollection"
+  | "addMember"
+  | "removeMember"
+  | "editMembers"
+  | "importMembers"
+  | "addReference"
+  | "removeReference"
+  | "setLink"
+  | "previewAddToCollection"
+  | "previewMembershipRemoval"
+  | "previewMembershipBatch"
+  | "previewImport"
+  | "previewAddReference"
+  | "previewRemoveReference"
+  | "previewLinkChange"
+  | "previewCollectionRemoval"
+> {
   return {
     ...base,
-    previewMemberEdit: async (request) => {
+    previewMembershipBatch: async (_environment, request) => {
       previews.push(request);
       return result({
         kind: "membership-batch" as const,
@@ -176,7 +222,7 @@ function membershipConfiguration<L extends ConfigLevel>(
         allowed: true,
       });
     },
-    previewAddMember: async (request) => {
+    previewAddToCollection: async (_environment, request) => {
       previews.push(request);
       return result({
         kind: "add-to-collection" as const,
@@ -199,7 +245,6 @@ function membershipConfiguration<L extends ConfigLevel>(
     },
   };
 }
-
 function contributedProjection(): WorkspaceView {
   const base = projection();
   if (base.effective.status !== "complete") throw new Error("Missing effective Collections");
@@ -282,7 +327,6 @@ function contributedProjection(): WorkspaceView {
     ],
   };
 }
-
 function contributedAgentProjection(): WorkspaceView {
   const base = contributedProjection();
   if (base.effective.status !== "complete") throw new Error("Missing effective Collections");
@@ -340,7 +384,6 @@ function contributedAgentProjection(): WorkspaceView {
     ],
   };
 }
-
 function localContributedProjection(): WorkspaceView {
   const base = projection();
   const configSourceOwner = {
@@ -402,7 +445,6 @@ function localContributedProjection(): WorkspaceView {
     ],
   };
 }
-
 async function openDetailsActions(
   setup: Awaited<ReturnType<typeof testRender>>,
   focusAction = true,
@@ -417,14 +459,12 @@ async function openDetailsActions(
   );
   if (focusAction) await focusLive(setup, "reader-details-action-skill-add-to-collection");
 }
-
 async function chooseCollection(setup: Awaited<ReturnType<typeof testRender>>, count: number) {
   await focusLive(setup, "collection-handoff-choice");
   await setup.mockInput.pressKeys(Array.from({ length: count }, () => "ARROW_DOWN"));
   setup.mockInput.pressEnter();
   await setup.renderOnce();
 }
-
 async function openRelationships(
   setup: Awaited<ReturnType<typeof testRender>>,
   value: string,
@@ -435,12 +475,10 @@ async function openRelationships(
   await openReaderTab(setup, 2);
   await enterReaderDetailsRelationship(setup, value);
 }
-
 async function confirmReview(setup: Awaited<ReturnType<typeof testRender>>) {
   live(setup, "collection-review-confirm").focus();
   await parsedEnter(setup);
 }
-
 async function returnToReaderDetails(
   setup: Awaited<ReturnType<typeof testRender>>,
   relationship: string,
@@ -457,21 +495,21 @@ async function returnToReaderDetails(
     `Address\n${expectedAddress.source}/${expectedAddress.path}`,
   );
 }
-
 test("Details Add to collection previews Core-authorized membership and commits the first direct owner once", async () => {
   const changes: unknown[] = [];
-  const previews: Parameters<TuiCore["collections"]["previewMemberEdit"]>[0][] = [];
-  const writing =
-    deferred<
-      OperationResult<{ readonly level: "global"; readonly file: string; readonly changed: true }>
-    >();
+  const previews: Parameters<TuiCore["previewMembershipBatch"]>[1][] = [];
+  const writing = deferred<
+    OperationResult<{
+      readonly level: "global";
+      readonly file: string;
+      readonly changed: true;
+    }>
+  >();
   const base = directSourceCore(projection());
   const core = {
     ...base,
-    workspace: {
-      get: async () => result(projection()),
-    },
-    collections: membershipConfiguration(base.collections, globalOwner, changes, previews, writing),
+    getWorkspace: async () => result(projection()),
+    collections: membershipConfiguration(base, globalOwner, changes, previews, writing),
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 120,
@@ -534,27 +572,21 @@ test("Details Add to collection previews Core-authorized membership and commits 
     setup.renderer.destroy();
   }
 });
-
 test("Details Add to collection previews and commits the second same-ID direct owner", async () => {
   const changes: unknown[] = [];
-  const previews: Parameters<TuiCore["collections"]["previewMemberEdit"]>[0][] = [];
-  const writing =
-    deferred<
-      OperationResult<{ readonly level: "project"; readonly file: string; readonly changed: true }>
-    >();
+  const previews: Parameters<TuiCore["previewMembershipBatch"]>[1][] = [];
+  const writing = deferred<
+    OperationResult<{
+      readonly level: "project";
+      readonly file: string;
+      readonly changed: true;
+    }>
+  >();
   const base = directSourceCore(projection());
   const core = {
     ...base,
-    workspace: {
-      get: async () => result(projection()),
-    },
-    collections: membershipConfiguration(
-      base.collections,
-      projectOwner,
-      changes,
-      previews,
-      writing,
-    ),
+    getWorkspace: async () => result(projection()),
+    collections: membershipConfiguration(base, projectOwner, changes, previews, writing),
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 120,
@@ -613,18 +645,20 @@ test("Details Add to collection previews and commits the second same-ID direct o
     setup.renderer.destroy();
   }
 });
-
 test("Details Add to collection owner cancellation leaves membership unchanged and restores its originating action focus", async () => {
   const changes: unknown[] = [];
-  const previews: Parameters<TuiCore["collections"]["previewMemberEdit"]>[0][] = [];
-  const writing =
-    deferred<
-      OperationResult<{ readonly level: "global"; readonly file: string; readonly changed: true }>
-    >();
+  const previews: Parameters<TuiCore["previewMembershipBatch"]>[1][] = [];
+  const writing = deferred<
+    OperationResult<{
+      readonly level: "global";
+      readonly file: string;
+      readonly changed: true;
+    }>
+  >();
   const base = directSourceCore(projection());
   const core = {
     ...base,
-    collections: membershipConfiguration(base.collections, globalOwner, changes, previews, writing),
+    collections: membershipConfiguration(base, globalOwner, changes, previews, writing),
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 120,
@@ -662,7 +696,6 @@ test("Details Add to collection owner cancellation leaves membership unchanged a
     setup.renderer.destroy();
   }
 });
-
 test("Details disables Add to collection when no editable Collection destination exists", async () => {
   const noChoices = projection();
   const setup = await testRender(
@@ -715,7 +748,6 @@ test("Details disables Add to collection when no editable Collection destination
     setup.renderer.destroy();
   }
 });
-
 test("Details direct Config relationship mounts its exact declaration owner", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
@@ -735,7 +767,6 @@ test("Details direct Config relationship mounts its exact declaration owner", as
     setup.renderer.destroy();
   }
 });
-
 test.each([
   [120, 40],
   [80, 24],
@@ -776,7 +807,6 @@ test.each([
     }
   },
 );
-
 test("Details contributed Config Source relationship mounts exact provenance", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(contributedProjection())} exit={() => {}} />,
@@ -813,7 +843,6 @@ test("Details contributed Config Source relationship mounts exact provenance", a
     setup.renderer.destroy();
   }
 });
-
 test("Details discloses the Local Config Source contributed declaration file", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(localContributedProjection())} exit={() => {}} />,
@@ -848,7 +877,6 @@ test("Details discloses the Local Config Source contributed declaration file", a
     setup.renderer.destroy();
   }
 });
-
 test("Details only offers direct Collection owners and restores Details focus after a direct Config handoff", async () => {
   const contributed = contributedProjection();
   const setup = await testRender(
@@ -880,7 +908,6 @@ test("Details only offers direct Collection owners and restores Details focus af
     setup.renderer.destroy();
   }
 });
-
 test("Details Collection relation routes to its owning contributed Config Source and returns", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(contributedAgentProjection())} exit={() => {}} />,
@@ -939,7 +966,6 @@ test("Details Collection relation routes to its owning contributed Config Source
     setup.renderer.destroy();
   }
 });
-
 test("Details contributed Source relationship focuses the mounted Source surface with the exact Source ID", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(contributedProjection())} exit={() => {}} />,

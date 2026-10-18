@@ -10,7 +10,6 @@ import { testEffects } from "./direct-source.fixture";
 import { directOwner, directSourceCore } from "./direct-source.fixture";
 import { buildUpdateScope, createUpdatesState } from "../src/updates/model";
 import { workspaceProjection } from "./direct-source.fixture";
-
 const observation = (source: string, paths: string[], exactRevision = "a".repeat(40)) => ({
   source,
   kind: "github" as const,
@@ -21,7 +20,6 @@ const observation = (source: string, paths: string[], exactRevision = "a".repeat
   removed: [],
   unchanged: [],
 });
-
 for (const kind of ["github", "local"] as const) {
   test(`UPDATES Skill submission forwards each fresh opaque ${kind} baseline with its exact selection`, async () => {
     const snapshot = projection(["team-main"], ["guide", "reference"]);
@@ -35,13 +33,10 @@ for (const kind of ["github", "local"] as const) {
     const requests: unknown[] = [];
     const effects = testEffects({
       ...core,
-      installed: {
-        ...core.installed,
-        checkUpdate: async () => ({ value: captured, diagnostics: [] }),
-        update: async (request) => {
-          requests.push(request);
-          return { value: undefined, diagnostics: [] };
-        },
+      checkUpdate: async () => ({ value: captured, diagnostics: [] }),
+      updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+        requests.push(request);
+        return { value: undefined, diagnostics: [] };
       },
     });
     const address = { source: "team-main", path: "guide" };
@@ -73,20 +68,16 @@ for (const kind of ["github", "local"] as const) {
     effects.teardown();
   });
 }
-
 test("UPDATES submission forwards Core's required installed-comparison baseline", async () => {
   const snapshot = projection();
   const core = directSourceCore(snapshot);
   const requests: unknown[] = [];
   const effects = testEffects({
     ...core,
-    installed: {
-      ...core.installed,
-      checkUpdate: async () => ({ value: observation("team-main", ["guide"]), diagnostics: [] }),
-      update: async (request) => {
-        requests.push(request);
-        return { value: undefined, diagnostics: [] };
-      },
+    checkUpdate: async () => ({ value: observation("team-main", ["guide"]), diagnostics: [] }),
+    updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      requests.push(request);
+      return { value: undefined, diagnostics: [] };
     },
   });
   effects.selectUpdatesScope({ kind: "source", source: "team-main" }, snapshot);
@@ -100,40 +91,35 @@ test("UPDATES submission forwards Core's required installed-comparison baseline"
   expect(requests[0]).toHaveProperty("expectedBaseline", "baseline:team-main");
   effects.teardown();
 });
-
 test("MGMT-007/008 canonical Source submission updates only selected changed roots without install or removal", async () => {
   const snapshot = projection(["team-main"], ["guide", "reference", "old", "same"]);
   const calls: unknown[] = [];
   let unrelatedMutations = 0;
   const core = directSourceCore(snapshot, {
-    installed: {
-      checkUpdate: async () => ({
-        value: {
-          ...observation("team-main", ["guide", "reference"], "observed-commit"),
-          added: [{ path: "new", name: "new", description: "New" }],
-          removed: [{ path: "old", name: "old", description: "Removed" }],
-          unchanged: [{ path: "same", name: "same", description: "Unchanged" }],
-        },
-        diagnostics: [],
-      }),
-      install: async () => {
-        unrelatedMutations++;
-        throw new Error("Updates must not install roots");
+    checkUpdate: async () => ({
+      value: {
+        ...observation("team-main", ["guide", "reference"], "observed-commit"),
+        added: [{ path: "new", name: "new", description: "New" }],
+        removed: [{ path: "old", name: "old", description: "Removed" }],
+        unchanged: [{ path: "same", name: "same", description: "Unchanged" }],
       },
-      uninstall: async () => {
-        unrelatedMutations++;
-        throw new Error("Updates must retain removed roots");
-      },
-      update: async (request) => {
-        calls.push(request);
-        return { value: undefined, diagnostics: [] };
-      },
+      diagnostics: [],
+    }),
+    installSkills: async () => {
+      unrelatedMutations++;
+      throw new Error("Updates must not install roots");
     },
-    sources: {
-      remove: async () => {
-        unrelatedMutations++;
-        throw new Error("Updates must retain the Source");
-      },
+    uninstallSkills: async () => {
+      unrelatedMutations++;
+      throw new Error("Updates must retain removed roots");
+    },
+    updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      calls.push(request);
+      return { value: undefined, diagnostics: [] };
+    },
+    removeSource: async () => {
+      unrelatedMutations++;
+      throw new Error("Updates must retain the Source");
     },
   });
   const effects = testEffects(core);
@@ -170,7 +156,6 @@ test("MGMT-007/008 canonical Source submission updates only selected changed roo
   expect(unrelatedMutations).toBe(0);
   effects.teardown();
 });
-
 function projection(sources = ["team-main"], paths = ["guide"]): WorkspaceView {
   const base = workspaceProjection({ includeContribution: false });
   return {
@@ -194,7 +179,6 @@ function projection(sources = ["team-main"], paths = ["guide"]): WorkspaceView {
     },
   };
 }
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -207,32 +191,31 @@ function deferred<T>() {
     reject,
   };
 }
-
 test("UPDATES controller stops a read-only check without publishing its late result or checking later Sources", async () => {
   const initial = projection(["first", "second"]);
   const state = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
-  const check = deferred<{ value: UpdateObservation; diagnostics: [] }>();
+  const check = deferred<{
+    value: UpdateObservation;
+    diagnostics: [];
+  }>();
   const checks: string[] = [];
   let signal: AbortSignal | undefined;
   let updates = 0;
   const controller = createUpdateController(
     {
-      workspace: { get: async () => ({ value: initial, diagnostics: [] }) },
-      installed: {
-        checkUpdate: ({ source }, options) => {
-          checks.push(source);
-          signal = options?.signal;
-          return check.promise;
-        },
-        update: async () => {
-          updates++;
-          return { value: undefined, diagnostics: [] };
-        },
+      getWorkspace: async () => ({ value: initial, diagnostics: [] }),
+      checkUpdate: (_environment: import("@skill-cli/core").CoreOptions, { source }, options) => {
+        checks.push(source);
+        signal = options?.signal;
+        return check.promise;
+      },
+      updateSkills: async () => {
+        updates++;
+        return { value: undefined, diagnostics: [] };
       },
     },
     state,
   );
-
   const running = controller.check();
   expect(checks).toEqual(["first"]);
   expect(state.group("first")?.status).toBe("checking");
@@ -247,7 +230,6 @@ test("UPDATES controller stops a read-only check without publishing its late res
   expect(updates).toBe(0);
   expect(controller.active()).toBe(false);
 });
-
 test("UPDATES controller blocks stale public scope before update and never submits an unchecked source", async () => {
   const initial = projection(["first"]);
   const state = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
@@ -256,13 +238,11 @@ test("UPDATES controller blocks stale public scope before update and never submi
   let updates = 0;
   const controller = createUpdateController(
     {
-      workspace: { get: async () => ({ value: stale, diagnostics: [] }) },
-      installed: {
-        checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
-        update: async () => {
-          updates++;
-          return { value: undefined, diagnostics: [] };
-        },
+      getWorkspace: async () => ({ value: stale, diagnostics: [] }),
+      checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
+      updateSkills: async () => {
+        updates++;
+        return { value: undefined, diagnostics: [] };
       },
     },
     state,
@@ -270,17 +250,14 @@ test("UPDATES controller blocks stale public scope before update and never submi
   await controller.submit();
   expect(updates).toBe(0);
   expect(state.group("first")?.error).toContain("no longer installed");
-
   const unchecked = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
   const second = createUpdateController(
     {
-      workspace: { get: async () => ({ value: initial, diagnostics: [] }) },
-      installed: {
-        checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
-        update: async () => {
-          updates++;
-          return { value: undefined, diagnostics: [] };
-        },
+      getWorkspace: async () => ({ value: initial, diagnostics: [] }),
+      checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
+      updateSkills: async () => {
+        updates++;
+        return { value: undefined, diagnostics: [] };
       },
     },
     unchecked,
@@ -288,7 +265,6 @@ test("UPDATES controller blocks stale public scope before update and never submi
   await second.submit();
   expect(updates).toBe(0);
 });
-
 test("UPDATES failed rechecks revoke old observations without blocking another Source or a fresh submission", async () => {
   const initial = projection(["first", "second"]);
   const state = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
@@ -296,16 +272,14 @@ test("UPDATES failed rechecks revoke old observations without blocking another S
   const updates: unknown[] = [];
   const controller = createUpdateController(
     {
-      workspace: { get: async () => ({ value: initial, diagnostics: [] }) },
-      installed: {
-        checkUpdate: async ({ source }) => {
-          if (source === "first" && ++firstChecks === 2) throw new Error("upstream unavailable");
-          return { value: observation(source, ["guide"]), diagnostics: [] };
-        },
-        update: async (request) => {
-          updates.push(request);
-          return { value: undefined, diagnostics: [] };
-        },
+      getWorkspace: async () => ({ value: initial, diagnostics: [] }),
+      checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+        if (source === "first" && ++firstChecks === 2) throw new Error("upstream unavailable");
+        return { value: observation(source, ["guide"]), diagnostics: [] };
+      },
+      updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+        updates.push(request);
+        return { value: undefined, diagnostics: [] };
       },
     },
     state,
@@ -333,7 +307,6 @@ test("UPDATES failed rechecks revoke old observations without blocking another S
   ]);
   expect(state.group("first")).toMatchObject({ status: "succeeded", committed: true });
 });
-
 test.each(["before-check", "after-check"] as const)(
   "UPDATES refuses installed revision drift %s without blocking another selected Source",
   async (timing) => {
@@ -354,22 +327,18 @@ test.each(["before-check", "after-check"] as const)(
     let reads = 0;
     const controller = createUpdateController(
       {
-        workspace: {
-          get: async () => ({
-            value: ++reads >= (timing === "before-check" ? 1 : 2) ? revised : initial,
-            diagnostics: [],
-          }),
+        getWorkspace: async () => ({
+          value: ++reads >= (timing === "before-check" ? 1 : 2) ? revised : initial,
+          diagnostics: [],
+        }),
+        checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+          checks.push(source);
+          return { value: observation(source, ["guide"]), diagnostics: [] };
         },
-        installed: {
-          checkUpdate: async ({ source }) => {
-            checks.push(source);
-            return { value: observation(source, ["guide"]), diagnostics: [] };
-          },
-          update: async (request) => {
-            expect(published).toEqual([]);
-            updates.push(request);
-            return { value: undefined, diagnostics: [] };
-          },
+        updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+          expect(published).toEqual([]);
+          updates.push(request);
+          return { value: undefined, diagnostics: [] };
         },
       },
       state,
@@ -400,31 +369,29 @@ test.each(["before-check", "after-check"] as const)(
     expect(published).toEqual([revised]);
   },
 );
-
 test("UPDATES controller teardown never publishes a late fulfilled update", async () => {
   const initial = projection(["first"]);
   const state = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
   state.toggle({ source: "first", path: "guide" });
-  const pending = deferred<{ value: undefined; diagnostics: [] }>();
+  const pending = deferred<{
+    value: undefined;
+    diagnostics: [];
+  }>();
   const started = deferred<void>();
   let signal: AbortSignal | undefined;
   let reads = 0;
   const published: WorkspaceView[] = [];
   const controller = createUpdateController(
     {
-      workspace: {
-        get: async () => {
-          reads++;
-          return { value: initial, diagnostics: [] };
-        },
+      getWorkspace: async () => {
+        reads++;
+        return { value: initial, diagnostics: [] };
       },
-      installed: {
-        checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
-        update: (_request, options) => {
-          signal = options?.signal;
-          started.resolve();
-          return pending.promise;
-        },
+      checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
+      updateSkills: (_environment: import("@skill-cli/core").CoreOptions, _request, options) => {
+        signal = options?.signal;
+        started.resolve();
+        return pending.promise;
       },
     },
     state,
@@ -449,19 +416,15 @@ test("UPDATES controller teardown never publishes a late fulfilled update", asyn
   expect(state.group("first")?.committed).toBeUndefined();
   expect(controller.active()).toBe(false);
 });
-
 test("UPDATES effects own one persistent same-scope draft and do not check automatically", async () => {
   const snapshot = projection(["first"]);
   let checks = 0;
   const core = directSourceCore(snapshot);
   const effects = testEffects({
     ...core,
-    installed: {
-      ...core.installed,
-      checkUpdate: async () => {
-        checks++;
-        return { value: observation("first", ["guide"]), diagnostics: [] };
-      },
+    checkUpdate: async () => {
+      checks++;
+      return { value: observation("first", ["guide"]), diagnostics: [] };
     },
   });
   const first = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
@@ -475,25 +438,24 @@ test("UPDATES effects own one persistent same-scope draft and do not check autom
   expect(checks).toBe(1);
   effects.teardown();
 });
-
 test("UPDATES effects checks stay background and a late cancelled result cannot block foreground work", async () => {
   const snapshot = projection(["team-main"]);
   const core = directSourceCore(snapshot);
-  const check = deferred<{ value: UpdateObservation; diagnostics: [] }>();
-  const discovery = deferred<{ value: DiscoveryObservation; diagnostics: [] }>();
+  const check = deferred<{
+    value: UpdateObservation;
+    diagnostics: [];
+  }>();
+  const discovery = deferred<{
+    value: DiscoveryObservation;
+    diagnostics: [];
+  }>();
   let signal: AbortSignal | undefined;
   const effects = testEffects({
     ...core,
-    installed: {
-      ...core.installed,
-      checkUpdate: () => check.promise,
-    },
-    sources: {
-      ...core.sources,
-      discover: (_request, options) => {
-        signal = options?.signal;
-        return discovery.promise;
-      },
+    checkUpdate: () => check.promise,
+    discoverSkills: (_environment: import("@skill-cli/core").CoreOptions, _request, options) => {
+      signal = options?.signal;
+      return discovery.promise;
     },
   });
   effects.selectUpdatesScope({ kind: "workspace" }, snapshot);
@@ -517,7 +479,6 @@ test("UPDATES effects checks stay background and a late cancelled result cannot 
   expect(effects.pending()).toBe(false);
   effects.teardown();
 });
-
 test("UPDATES effects do not revive cached changed work after an update attempt or public revision drift", async () => {
   const original = projection(["first"]);
   const drifted = {
@@ -531,14 +492,11 @@ test("UPDATES effects do not revive cached changed work after an update attempt 
   let updates = 0;
   const effects = testEffects({
     ...core,
-    workspace: { get: async () => ({ value: original, diagnostics: [] }) },
-    installed: {
-      ...core.installed,
-      checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
-      update: async () => {
-        updates++;
-        return { value: undefined, diagnostics: [] };
-      },
+    getWorkspace: async () => ({ value: original, diagnostics: [] }),
+    checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
+    updateSkills: async () => {
+      updates++;
+      return { value: undefined, diagnostics: [] };
     },
   });
   effects.selectUpdatesScope({ kind: "workspace" }, original);
@@ -547,35 +505,30 @@ test("UPDATES effects do not revive cached changed work after an update attempt 
   expect(updates).toBe(1);
   const afterAttempt = effects.selectUpdatesScope({ kind: "source", source: "first" }, original)!;
   expect(afterAttempt.group("first")?.observation).toBeUndefined();
-
   effects.selectUpdatesScope({ kind: "workspace" }, original);
   await effects.checkUpdates();
   const driftedScope = effects.selectUpdatesScope({ kind: "source", source: "first" }, drifted)!;
   expect(driftedScope.group("first")?.status).toBe("failed");
   expect(effects.updatesSubmittable()).toEqual([]);
 });
-
 test("UPDATES effects submit only an explicit current-group subset and preserve other selected sources", async () => {
   const snapshot = projection(["first", "second"], ["guide", "reference"]);
   const core = directSourceCore(snapshot);
   const updates: unknown[] = [];
   const effects = testEffects({
     ...core,
-    workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    installed: {
-      ...core.installed,
-      checkUpdate: async ({ source }) => ({
-        value: observation(
-          source,
-          ["guide", "reference"],
-          source === "first" ? "a".repeat(40) : "b".repeat(40),
-        ),
-        diagnostics: [],
-      }),
-      update: async (request) => {
-        updates.push(request);
-        return { value: undefined, diagnostics: [] };
-      },
+    getWorkspace: async () => ({ value: snapshot, diagnostics: [] }),
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => ({
+      value: observation(
+        source,
+        ["guide", "reference"],
+        source === "first" ? "a".repeat(40) : "b".repeat(40),
+      ),
+      diagnostics: [],
+    }),
+    updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      updates.push(request);
+      return { value: undefined, diagnostics: [] };
     },
   });
   const state = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
@@ -604,7 +557,6 @@ test("UPDATES effects submit only an explicit current-group subset and preserve 
   expect(state.group("second")?.status).toBe("changed");
   effects.teardown();
 });
-
 test("UPDATES controller rejects requested addresses outside the bounded draft without widening", async () => {
   const snapshot = projection(["first"]);
   const state = createUpdatesState(buildUpdateScope(snapshot, { kind: "workspace" }));
@@ -613,13 +565,11 @@ test("UPDATES controller rejects requested addresses outside the bounded draft w
   let updates = 0;
   const controller = createUpdateController(
     {
-      workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      installed: {
-        checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
-        update: async () => {
-          updates++;
-          return { value: undefined, diagnostics: [] };
-        },
+      getWorkspace: async () => ({ value: snapshot, diagnostics: [] }),
+      checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
+      updateSkills: async () => {
+        updates++;
+        return { value: undefined, diagnostics: [] };
       },
     },
     state,
@@ -628,23 +578,19 @@ test("UPDATES controller rejects requested addresses outside the bounded draft w
   expect(updates).toBe(0);
   expect(state.selected()).toEqual([{ source: "first", path: "guide" }]);
 });
-
 test("UPDATES effects evict only attempted source cache after an ambiguous failed subset submit", async () => {
   const snapshot = projection(["first", "second"]);
   const core = directSourceCore(snapshot);
   const effects = testEffects({
     ...core,
-    workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    installed: {
-      ...core.installed,
-      checkUpdate: async ({ source }) => ({
-        value: observation(source, ["guide"]),
-        diagnostics: [],
-      }),
-      update: async ({ source }) => {
-        if (source === "first") throw new Error("publication outcome unknown");
-        return { value: undefined, diagnostics: [] };
-      },
+    getWorkspace: async () => ({ value: snapshot, diagnostics: [] }),
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => ({
+      value: observation(source, ["guide"]),
+      diagnostics: [],
+    }),
+    updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+      if (source === "first") throw new Error("publication outcome unknown");
+      return { value: undefined, diagnostics: [] };
     },
   });
   const state = effects.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
@@ -658,26 +604,21 @@ test("UPDATES effects evict only attempted source cache after an ambiguous faile
   expect(firstScope.group("first")?.observation).toBeUndefined();
   expect(effects.updatesSubmittable()).toEqual([]);
 });
-
 test("UPDATES effects retain cache when a valid subset is refused before foreground-lane acquisition", async () => {
   const snapshot = projection(["first"]);
   const core = directSourceCore(snapshot);
-  const competing = deferred<{ value: DiscoveryObservation; diagnostics: [] }>();
+  const competing = deferred<{
+    value: DiscoveryObservation;
+    diagnostics: [];
+  }>();
   const effects = testEffects({
     ...core,
-    workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    installed: {
-      ...core.installed,
-      checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
-    },
-    sources: {
-      ...core.sources,
-      discover: () => competing.promise,
-    },
+    getWorkspace: async () => ({ value: snapshot, diagnostics: [] }),
+    checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
+    discoverSkills: () => competing.promise,
   });
   effects.selectUpdatesScope({ kind: "workspace" }, snapshot);
   await effects.checkUpdates();
-
   const foregroundRequest = effects.discover({ kind: "source-discovery", source: "first" });
   expect(effects.pending()).toBe(true);
   expect(await effects.submitUpdates([{ source: "first", path: "guide" }])).toBe(false);
@@ -686,13 +627,11 @@ test("UPDATES effects retain cache when a valid subset is refused before foregro
     diagnostics: [],
   });
   await foregroundRequest;
-
   const reentered = effects.selectUpdatesScope({ kind: "source", source: "first" }, snapshot)!;
   expect(reentered.group("first")?.observation).toBeDefined();
   expect(effects.updatesSubmittable()).toEqual([{ source: "first", path: "guide" }]);
   effects.teardown();
 });
-
 test("UPDATES effects preserve a source exclusion across an intervening Skill scope and restore the exact prior draft", () => {
   const snapshot = projection(["first"], ["guide", "reference"]);
   const core = directSourceCore(snapshot);
@@ -701,7 +640,6 @@ test("UPDATES effects preserve a source exclusion across an intervening Skill sc
   source.observe(observation("first", ["guide", "reference"]));
   source.toggle({ source: "first", path: "guide" });
   expect(source.selected()).toEqual([{ source: "first", path: "guide" }]);
-
   const skill = effects.selectUpdatesScope(
     { kind: "skill", address: { source: "first", path: "guide" } },
     snapshot,
@@ -712,7 +650,6 @@ test("UPDATES effects preserve a source exclusion across an intervening Skill sc
   expect(restored.selected()).toEqual([{ source: "first", path: "guide" }]);
   expect(restored.draftTouched()).toBe(true);
 });
-
 test("UPDATES Effects restore rejects a retained draft whose checked public facts drift", () => {
   const snapshot = projection(["first"]);
   const drifted = {
@@ -732,18 +669,14 @@ test("UPDATES Effects restore rejects a retained draft whose checked public fact
   expect(restored.group("first")?.status).toBe("failed");
   expect(restored.selected()).toEqual([]);
 });
-
 test("UPDATES Effects invalidate another retained scope after an actual source submission", async () => {
   const snapshot = projection(["first"]);
   const core = directSourceCore(snapshot);
   const effects = testEffects({
     ...core,
-    workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    installed: {
-      ...core.installed,
-      checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
-      update: async () => ({ value: undefined, diagnostics: [] }),
-    },
+    getWorkspace: async () => ({ value: snapshot, diagnostics: [] }),
+    checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
+    updateSkills: async () => ({ value: undefined, diagnostics: [] }),
   });
   const source = effects.selectUpdatesScope({ kind: "source", source: "first" }, snapshot)!;
   await effects.checkUpdates();
@@ -759,7 +692,6 @@ test("UPDATES Effects invalidate another retained scope after an actual source s
   expect(restored.group("first")?.status).toBe("failed");
   expect(effects.updatesSubmittable()).toEqual([]);
 });
-
 test("UPDATES submit keeps its initiating workspace targets while baseline revalidation awaits navigation", async () => {
   const snapshot = projection(["first", "second"]);
   let baselineCalls = 0;
@@ -771,27 +703,24 @@ test("UPDATES submit keeps its initiating workspace targets while baseline reval
   const core = directSourceCore(snapshot);
   const effects = testEffects({
     ...core,
-    workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    installed: {
-      ...core.installed,
-      checkUpdate: async ({ source }) => ({
-        value: {
-          ...(source === "first" ? observation(source, ["guide"]) : observation(source, [])),
-          baseline: "baseline",
-        },
-        diagnostics: [],
-      }),
-      updateBaseline: async () => {
-        if (++baselineCalls === 3) {
-          markBaselineStarted();
-          await baselineHeld;
-        }
-        return { value: "baseline", diagnostics: [] };
+    getWorkspace: async () => ({ value: snapshot, diagnostics: [] }),
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => ({
+      value: {
+        ...(source === "first" ? observation(source, ["guide"]) : observation(source, [])),
+        baseline: "baseline",
       },
-      update: async (request) => {
-        updates.push(request);
-        return { value: undefined, diagnostics: [] };
-      },
+      diagnostics: [],
+    }),
+    getUpdateBaseline: async () => {
+      if (++baselineCalls === 3) {
+        markBaselineStarted();
+        await baselineHeld;
+      }
+      return { value: "baseline", diagnostics: [] };
+    },
+    updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      updates.push(request);
+      return { value: undefined, diagnostics: [] };
     },
   });
   effects.selectUpdatesScope({ kind: "workspace" }, snapshot);

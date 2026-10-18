@@ -5,7 +5,6 @@ import { App } from "../src/app";
 import { selectScrollOffset } from "../src/select-scroll";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
-
 test("RENDER empty Source details return restores the selected Source and list viewport", async () => {
   const projection = workspaceProjection();
   const sources = Array.from({ length: 18 }, (_, index) => ({
@@ -23,21 +22,26 @@ test("RENDER empty Source details return restores the selected Source and list v
             effective: { ...projection.effective, sources },
           },
           {
-            sources: {
-              discover: async ({ source }) => {
-                acquisitions.push(source);
-                throw new Error("Source navigation must not discover Skills");
-              },
+            discoverSkills: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              { source },
+            ) => {
+              acquisitions.push(source);
+              throw new Error("Source navigation must not discover Skills");
             },
-            installed: {
-              install: async ({ source }) => {
-                mutations.push(`install:${source}`);
-                throw new Error("Source navigation must not install Skills");
-              },
-              update: async ({ source }) => {
-                mutations.push(`update:${source}`);
-                throw new Error("Source navigation must not update Skills");
-              },
+            installSkills: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              { source },
+            ) => {
+              mutations.push(`install:${source}`);
+              throw new Error("Source navigation must not install Skills");
+            },
+            updateSkills: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              { source },
+            ) => {
+              mutations.push(`update:${source}`);
+              throw new Error("Source navigation must not update Skills");
             },
           },
         )}
@@ -64,7 +68,6 @@ test("RENDER empty Source details return restores the selected Source and list v
     expect(browser.getSelectedOption()?.value).toBe("source-17");
     const savedOffset = selectScrollOffset(browser);
     expect(savedOffset).toBeGreaterThan(0);
-
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-toggle"));
     expect(setup.renderer.root.findDescendantById("source-updates-browser")).toBeUndefined();
@@ -79,7 +82,6 @@ test("RENDER empty Source details return restores the selected Source and list v
         returned instanceof SelectRenderable && returned.getSelectedOption()?.value === "source-17"
       );
     });
-
     const returned = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;
     expect(returned).not.toBe(browser);
     expect(returned.getSelectedOption()?.value).toBe("source-17");

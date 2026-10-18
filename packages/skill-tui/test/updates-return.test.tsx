@@ -9,11 +9,10 @@ import {
 } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import type { InstalledCapability, WorkspaceView, UpdatePreview } from "@skill-cli/core";
+import type { WorkspaceView, UpdatePreview } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
-
 const revision = "a".repeat(40);
 const address = { source: "team-main", path: "guide" };
 const readyPreview: UpdatePreview = {
@@ -29,10 +28,9 @@ const readyPreview: UpdatePreview = {
     },
   ],
 };
-
 async function mount(
-  previewUpdate: InstalledCapability["previewUpdate"],
-  checkUpdate: InstalledCapability["checkUpdate"] = async ({ source }) => ({
+  previewUpdate: typeof import("@skill-cli/core").previewUpdate,
+  checkUpdate: typeof import("@skill-cli/core").checkUpdate = async (_environment, { source }) => ({
     value: {
       source,
       kind: "github",
@@ -50,7 +48,7 @@ async function mount(
     readonly width?: number;
     readonly skillPaths?: readonly string[];
     readonly otherSource?: boolean;
-    readonly update?: InstalledCapability["update"];
+    readonly update?: typeof import("@skill-cli/core").updateSkills;
   } = {},
 ) {
   const prior = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
@@ -81,7 +79,7 @@ async function mount(
   };
   const checks: string[] = [];
   let workspaceReads = 0;
-  const updates: Parameters<InstalledCapability["update"]>[0][] = [];
+  const updates: Parameters<typeof import("@skill-cli/core").updateSkills>[1][] = [];
   const updateSignals: (AbortSignal | undefined)[] = [];
   let setup: Awaited<ReturnType<typeof testRender>> | undefined;
   const dispose = async () => {
@@ -95,26 +93,30 @@ async function mount(
       () => (
         <App
           core={directSourceCore(projection, {
-            workspace: {
-              get: async () => {
-                workspaceReads++;
-                return { value: projection, diagnostics: [] };
-              },
+            getWorkspace: async () => {
+              workspaceReads++;
+              return { value: projection, diagnostics: [] };
             },
-            installed: {
-              checkUpdate: async (request, options) => {
-                checks.push(request.source);
-                return checkUpdate(request, options);
-              },
-              update: async (request, context) => {
-                updates.push(request);
-                updateSignals.push(context?.signal);
-                if (options.update) return options.update(request, context);
-                throw new Error("This return scenario must not submit an update");
-              },
-              load: async () => {
-                throw new Error("Updates preview must not load installed content");
-              },
+            checkUpdate: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+              options,
+            ) => {
+              checks.push(request.source);
+              return checkUpdate(_environment, request, options);
+            },
+            updateSkills: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+              context,
+            ) => {
+              updates.push(request);
+              updateSignals.push(context?.signal);
+              if (options.update) return options.update(_environment, request, context);
+              throw new Error("This return scenario must not submit an update");
+            },
+            loadInstalledSkill: async () => {
+              throw new Error("Updates preview must not load installed content");
             },
           })}
           exit={() => {}}
@@ -161,13 +163,13 @@ async function mount(
     throw error;
   }
 }
-
 test("RED shared Back closes a preview exactly once: aborts its read, ignores its late reply, and restores the source draft", async () => {
   const signals: AbortSignal[] = [];
-  const requests: Parameters<InstalledCapability["previewUpdate"]>[0][] = [];
-  const replies: ((value: Awaited<ReturnType<InstalledCapability["previewUpdate"]>>) => void)[] =
-    [];
-  const mounted = await mount(async (request, options) => {
+  const requests: Parameters<typeof import("@skill-cli/core").previewUpdate>[1][] = [];
+  const replies: ((
+    value: Awaited<ReturnType<typeof import("@skill-cli/core").previewUpdate>>,
+  ) => void)[] = [];
+  const mounted = await mount(async (_environment, request, options) => {
     requests.push(request);
     signals.push(options!.signal!);
     return await new Promise((resolve) => replies.push(resolve));
@@ -241,7 +243,6 @@ test("RED shared Back closes a preview exactly once: aborts its read, ignores it
     ) as ScrollBoxRenderable;
     const selectedBefore = body.scrollTop;
     const checksBefore = mounted.checks.length;
-
     await parsedEnter(setup);
     await setup.waitFor(() => signals.length === 1);
     expect(requests).toEqual([
@@ -260,7 +261,6 @@ test("RED shared Back closes a preview exactly once: aborts its read, ignores it
     ).toMatchObject({ enabled: true, verb: "Back to updates" });
     await parsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("route-back"));
-
     await enterLive(setup, "route-back");
     await setup.waitFor(
       () =>
@@ -276,7 +276,6 @@ test("RED shared Back closes a preview exactly once: aborts its read, ignores it
     expect(setup.renderer.root.findDescendantById("source-updates-clear")).toBeDefined();
     expect(mounted.checks).toHaveLength(checksBefore);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-updates-browser");
-
     await enterLive(setup, "source-updates-browser");
     await setup.waitFor(() => replies.length === 2);
     replies[0]!({ value: readyPreview, diagnostics: [] });
@@ -317,7 +316,6 @@ test("RED shared Back closes a preview exactly once: aborts its read, ignores it
     await mounted.dispose();
   }
 });
-
 test("RED shared Back owns feedback detail, while search Escape only cancels its draft", async () => {
   const mounted = await mount(
     async () => ({ value: readyPreview, diagnostics: [] }),
@@ -343,7 +341,6 @@ test("RED shared Back owns feedback detail, while search Escape only cancels its
     expect(!!setup.renderer.root.findDescendantById("updates-query")).toBe(false);
     expect(setup.renderer.root.findDescendantById("updates-browser")).toBeDefined();
     expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
-
     const checksBefore = mounted.checks.length;
     // Root toolbar uses updates-check, not the Source drilldown/palette ID.
     await enterLive(setup, "updates-check");
@@ -393,7 +390,6 @@ test("RED shared Back owns feedback detail, while search Escape only cancels its
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "updates-feedback-pane",
     );
-
     await enterLive(setup, "route-back");
     await setup.waitFor(
       () =>
@@ -407,15 +403,12 @@ test("RED shared Back owns feedback detail, while search Escape only cancels its
     await mounted.dispose();
   }
 });
-
 type UpdatesSetup = Awaited<ReturnType<typeof testRender>>;
-
 async function openActions(setup: UpdatesSetup) {
   setup.mockInput.pressKey("p", { ctrl: true });
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
   return setup.renderer.currentFocusedRenderable as SelectRenderable;
 }
-
 async function tabToFeedbackToolbar(
   setup: UpdatesSetup,
   prefix: string,
@@ -427,7 +420,6 @@ async function tabToFeedbackToolbar(
   setup.mockInput.pressTab();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === `${prefix}-${action}`);
 }
-
 async function feedbackFixture(source: boolean) {
   const mounted = await mount(
     async () => ({ value: readyPreview, diagnostics: [] }),
@@ -512,7 +504,11 @@ async function feedbackFixture(source: boolean) {
           const focused = setup.renderer.currentFocusedRenderable;
           const browser = setup.renderer.root.findDescendantById(`${prefix}-browser`);
           const ancestry = (target: typeof focused) => {
-            const nodes: { id: string; visible: boolean; destroyed: boolean }[] = [];
+            const nodes: {
+              id: string;
+              visible: boolean;
+              destroyed: boolean;
+            }[] = [];
             for (let node = target; node; node = node.parent as typeof focused)
               nodes.push({ id: node.id, visible: node.visible, destroyed: node.isDestroyed });
             return nodes;
@@ -591,7 +587,6 @@ async function feedbackFixture(source: boolean) {
     throw error;
   }
 }
-
 test("FI-1 root feedback retains local Back after ordinary toolbar Tab and pointer return", async () => {
   const mounted = await feedbackFixture(false);
   const { setup, prefix } = mounted;
@@ -616,7 +611,6 @@ test("FI-1 root feedback retains local Back after ordinary toolbar Tab and point
     await mounted.dispose();
   }
 });
-
 test("FI-1 Source feedback retains local Actions return after ordinary toolbar Tab and preserves outer R", async () => {
   const mounted = await feedbackFixture(true);
   const { setup, prefix } = mounted;
@@ -639,7 +633,6 @@ test("FI-1 Source feedback retains local Actions return after ordinary toolbar T
     await mounted.dispose();
   }
 });
-
 test("FI-1 root feedback d from ordinary toolbar Tab closes only the detail with checks and filter intact", async () => {
   const mounted = await feedbackFixture(false);
   try {
@@ -651,7 +644,6 @@ test("FI-1 root feedback d from ordinary toolbar Tab closes only the detail with
     await mounted.dispose();
   }
 });
-
 test("FI-1 Source feedback Escape from ordinary toolbar Tab closes detail before selection or filter modes", async () => {
   const mounted = await feedbackFixture(true);
   try {
@@ -662,7 +654,6 @@ test("FI-1 Source feedback Escape from ordinary toolbar Tab closes detail before
     await mounted.dispose();
   }
 });
-
 test("FI-1 Source feedback ordinary Tab to toolbar then Tab Enter uses local Back rather than outer R", async () => {
   const mounted = await feedbackFixture(true);
   const { setup } = mounted;
@@ -683,12 +674,11 @@ test("FI-1 Source feedback ordinary Tab to toolbar then Tab Enter uses local Bac
     await mounted.dispose();
   }
 });
-
 test("FI-1 running Stop toolbar keeps local feedback Back without aborting or restarting its task", async () => {
   let settle: (() => void) | undefined;
   const mounted = await mount(
     async () => ({ value: readyPreview, diagnostics: [] }),
-    async ({ source }) => {
+    async (_environment, { source }) => {
       if (source === address.source) throw new Error("FI-1 diagnostic detail");
       return {
         value: {

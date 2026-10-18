@@ -3,7 +3,6 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
-
 async function openReaderFromInspector(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("skills-view-tab-current-exposure"),
@@ -32,13 +31,12 @@ async function openReaderFromInspector(setup: Awaited<ReturnType<typeof testRend
   setup.mockInput.pressEnter();
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
 }
-
 test("RENDER native Raw Reader exposes mouse-dragged selected text through the renderer", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />

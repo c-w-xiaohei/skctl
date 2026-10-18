@@ -6,12 +6,10 @@ import type { WorkspaceView, MembershipBatchImpact, OperationResult } from "@ski
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, parsedEnter, parsedEscape } from "./reader-test-controls";
-
 const result = <T,>(value: T): OperationResult<T> => ({
   value,
   diagnostics: [],
 });
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((next) => {
@@ -19,13 +17,11 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-
 const owner = (file = "/workspace/skill-cli/skill-cli.jsonc", pointer = "/collections/team") => ({
   level: "project" as const,
   file,
   pointer,
 });
-
 type Origin =
   | {
       readonly kind: "direct";
@@ -39,7 +35,6 @@ type Origin =
       readonly target: string;
       readonly slot?: number;
     };
-
 function projection(origins: readonly Origin[]): WorkspaceView {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -86,7 +81,6 @@ function projection(origins: readonly Origin[]): WorkspaceView {
     },
   };
 }
-
 async function openEntries(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
   const section = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
@@ -109,7 +103,6 @@ async function openEntries(setup: Awaited<ReturnType<typeof testRender>>) {
     () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
   );
 }
-
 test("RENDER immediate Collections navigation keeps shell focus when no detail follows", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection([]))} exit={() => {}} />,
@@ -129,7 +122,6 @@ test("RENDER immediate Collections navigation keeps shell focus when no detail f
     setup.renderer.destroy();
   }
 });
-
 test("RENDER rapid Collections detail navigation does not let shell focus steal the detail", async () => {
   const setup = await testRender(
     () => (
@@ -166,7 +158,6 @@ test("RENDER rapid Collections detail navigation does not let shell focus steal 
     setup.renderer.destroy();
   }
 });
-
 async function selectOrigins(setup: Awaited<ReturnType<typeof testRender>>, count: number) {
   for (let index = 0; index < count; index++) {
     const rows = setup.renderer.root.findDescendantById(
@@ -187,16 +178,13 @@ async function selectOrigins(setup: Awaited<ReturnType<typeof testRender>>, coun
     }
   }
 }
-
 async function activateRemove(setup: Awaited<ReturnType<typeof testRender>>) {
   await enterLive(setup, "remove-from-collection");
 }
-
 async function removeSelected(setup: Awaited<ReturnType<typeof testRender>>) {
   await activateRemove(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership-removal-plan"));
 }
-
 function batchImpact(request: {
   readonly collection: string;
   readonly additions: MembershipBatchImpact["additions"];
@@ -214,7 +202,6 @@ function batchImpact(request: {
     allowed: true,
   };
 }
-
 test("RENDER Collection Entry Space selection is isolated from Relations and content loading", async () => {
   let loads = 0;
   const base = directSourceCore(
@@ -225,18 +212,18 @@ test("RENDER Collection Entry Space selection is isolated from Relations and con
   );
   const core = {
     ...base,
-    installed: {
-      ...base.installed,
-      load: async (request: Parameters<typeof base.installed.load>[0]) => {
-        loads++;
-        return {
-          address: request.address,
-          name: request.address.path,
-          description: "",
-          rawText: "",
-          markdownText: "",
-        };
-      },
+    loadInstalledSkill: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: Parameters<typeof base.loadInstalledSkill>[1],
+    ) => {
+      loads++;
+      return {
+        address: request.address,
+        name: request.address.path,
+        description: "",
+        rawText: "",
+        markdownText: "",
+      };
     },
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -273,7 +260,6 @@ test("RENDER Collection Entry Space selection is isolated from Relations and con
     setup.renderer.destroy();
   }
 });
-
 test("RENDER one Membership with multiple origins has one row and exact cardinality", async () => {
   const initial = projection([
     {
@@ -331,7 +317,6 @@ test("RENDER one Membership with multiple origins has one row and exact cardinal
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Membership Enter opens a non-destructive origin inspector", async () => {
   let previews = 0;
   const base = projection([
@@ -344,14 +329,11 @@ test("RENDER Membership Enter opens a non-destructive origin inspector", async (
   const sourceCore = directSourceCore(base);
   const core = {
     ...sourceCore,
-    collections: {
-      ...sourceCore.collections,
-      previewMemberEdit: async (
-        ...args: Parameters<typeof sourceCore.collections.previewMemberEdit>
-      ) => {
-        previews++;
-        return sourceCore.collections.previewMemberEdit(...args);
-      },
+    previewMembershipBatch: async (
+      ...args: Parameters<typeof sourceCore.previewMembershipBatch>
+    ) => {
+      previews++;
+      return sourceCore.previewMembershipBatch(...args);
     },
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -370,7 +352,6 @@ test("RENDER Membership Enter opens a non-destructive origin inspector", async (
     setup.renderer.destroy();
   }
 });
-
 test.each([
   [120, 40],
   [80, 24],
@@ -419,7 +400,6 @@ test.each([
     }
   },
 );
-
 test("RENDER cancelling direct Membership removal retains the inspector origin and does not mutate config", async () => {
   const initial = projection([
     {
@@ -433,24 +413,25 @@ test("RENDER cancelling direct Membership removal retains the inspector origin a
   const base = directSourceCore(initial);
   const core = {
     ...base,
-    collections: {
-      ...base.collections,
-      previewMemberEdit: async (
-        request: Parameters<typeof base.collections.previewMemberEdit>[0],
-      ) => {
-        previews.push(request);
-        return result({
-          ...batchImpact(request),
-          decision: {
-            kind: "direct" as const,
-            owner: owner(),
-          },
-        });
-      },
-      editMembers: async (request: Parameters<typeof base.collections.editMembers>[0]) => {
-        changes.push(request);
-        return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
-      },
+    previewMembershipBatch: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: Parameters<typeof base.previewMembershipBatch>[1],
+    ) => {
+      previews.push(request);
+      return result({
+        ...batchImpact(request),
+        decision: {
+          kind: "direct" as const,
+          owner: owner(),
+        },
+      });
+    },
+    editMembers: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: Parameters<typeof base.editMembers>[1],
+    ) => {
+      changes.push(request);
+      return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
     },
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -482,7 +463,6 @@ test("RENDER cancelling direct Membership removal retains the inspector origin a
     setup.renderer.destroy();
   }
 });
-
 test("App has no Collection inspector Escape branch", async () => {
   const app = await readFile(new URL("../src/app.tsx", import.meta.url), "utf8");
   const priorityHandler = app.slice(
@@ -492,7 +472,6 @@ test("App has no Collection inspector Escape branch", async () => {
   expect(priorityHandler).not.toContain("collectionsState.closeInspector()");
   expect(priorityHandler).not.toContain('requestFocus("collection-relationships")');
 });
-
 test("RENDER same-owner Collection Entry removals preview and change once, then clear removed origins", async () => {
   const initial = projection([
     {
@@ -520,21 +499,20 @@ test("RENDER same-owner Collection Entry removals preview and change once, then 
   const base = directSourceCore(initial);
   const core = {
     ...base,
-    workspace: {
-      get: async () => result(++refreshes === 1 ? initial : refreshed),
+    getWorkspace: async () => result(++refreshes === 1 ? initial : refreshed),
+    previewMembershipBatch: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: Parameters<typeof base.previewMembershipBatch>[1],
+    ) => {
+      previews.push(request);
+      return result(batchImpact(request));
     },
-    collections: {
-      ...base.collections,
-      previewMemberEdit: async (
-        request: Parameters<typeof base.collections.previewMemberEdit>[0],
-      ) => {
-        previews.push(request);
-        return result(batchImpact(request));
-      },
-      editMembers: (request: Parameters<typeof base.collections.editMembers>[0]) => {
-        changes.push(request);
-        return writing.promise;
-      },
+    editMembers: (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: Parameters<typeof base.editMembers>[1],
+    ) => {
+      changes.push(request);
+      return writing.promise;
     },
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -597,7 +575,6 @@ test("RENDER same-owner Collection Entry removals preview and change once, then 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER mixed direct and linked Entry origins removes only the direct origin", async () => {
   const direct = {
     kind: "direct" as const,
@@ -618,21 +595,20 @@ test("RENDER mixed direct and linked Entry origins removes only the direct origi
   const base = directSourceCore(initial);
   const core = {
     ...base,
-    workspace: {
-      get: async () => result(++refreshes === 1 ? initial : refreshed),
+    getWorkspace: async () => result(++refreshes === 1 ? initial : refreshed),
+    previewMembershipBatch: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: Parameters<typeof base.previewMembershipBatch>[1],
+    ) => {
+      previews.push(request);
+      return result(batchImpact(request));
     },
-    collections: {
-      ...base.collections,
-      previewMemberEdit: async (
-        request: Parameters<typeof base.collections.previewMemberEdit>[0],
-      ) => {
-        previews.push(request);
-        return result(batchImpact(request));
-      },
-      editMembers: async (request: Parameters<typeof base.collections.editMembers>[0]) => {
-        changes.push(request);
-        return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
-      },
+    editMembers: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request: Parameters<typeof base.editMembers>[1],
+    ) => {
+      changes.push(request);
+      return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
     },
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -668,7 +644,6 @@ test("RENDER mixed direct and linked Entry origins removes only the direct origi
     setup.renderer.destroy();
   }
 });
-
 test("RENDER multi-owner removal opens a no-write task and Escape preserves Entry selections", async () => {
   const one = owner("/workspace/one.jsonc", "/collections/team");
   const two = owner("/workspace/two.jsonc", "/collections/team");
@@ -697,14 +672,11 @@ test("RENDER multi-owner removal opens a no-write task and Escape preserves Entr
   let changes = 0;
   const core = {
     ...base,
-    collections: {
-      ...base.collections,
-      previewMemberEdit: async () => (previews++, result({} as MembershipBatchImpact)),
-      editMembers: async () => (
-        changes++,
-        result({ level: "project" as const, file: "skill-cli.jsonc", changed: false })
-      ),
-    },
+    previewMembershipBatch: async () => (previews++, result({} as MembershipBatchImpact)),
+    editMembers: async () => (
+      changes++,
+      result({ level: "project" as const, file: "skill-cli.jsonc", changed: false })
+    ),
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 79,
@@ -735,7 +707,6 @@ test("RENDER multi-owner removal opens a no-write task and Escape preserves Entr
     setup.renderer.destroy();
   }
 });
-
 test("RENDER linked-only Entry removal is Cancel-only and retains selection", async () => {
   const base = directSourceCore(
     projection([{ kind: "via-link", outer: "outer", target: "target" }]),
@@ -744,14 +715,11 @@ test("RENDER linked-only Entry removal is Cancel-only and retains selection", as
   let changes = 0;
   const core = {
     ...base,
-    collections: {
-      ...base.collections,
-      previewMemberEdit: async () => (previews++, result({} as MembershipBatchImpact)),
-      editMembers: async () => (
-        changes++,
-        result({ level: "project" as const, file: "skill-cli.jsonc", changed: false })
-      ),
-    },
+    previewMembershipBatch: async () => (previews++, result({} as MembershipBatchImpact)),
+    editMembers: async () => (
+      changes++,
+      result({ level: "project" as const, file: "skill-cli.jsonc", changed: false })
+    ),
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 120,

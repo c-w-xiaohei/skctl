@@ -1,10 +1,10 @@
 import { lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { ConfigLevel } from "./types";
-import { SkillCliError, type CoreFactoryOptions, type OperationOptions } from "../shared";
+import { SkillCliError, type CoreOptions, type OperationOptions } from "../shared";
 import { runProviderChild } from "../source/git";
 
-export type ReadWorkspaceOptions = Pick<CoreFactoryOptions, "cwd" | "project" | "userConfigPath"> &
+export type ReadWorkspaceOptions = Pick<CoreOptions, "cwd" | "project" | "userConfigPath"> &
   OperationOptions;
 
 export async function resolveProjectRoot(

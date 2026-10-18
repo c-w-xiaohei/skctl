@@ -18,9 +18,7 @@ import {
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 async function tabToSharedReturn(setup: Setup) {
   let reached = false;
   for (let index = 0; index < 12; index++) {
@@ -33,7 +31,6 @@ async function tabToSharedReturn(setup: Setup) {
   }
   expect(reached).toBe(true);
 }
-
 async function openResourceContent(setup: Setup) {
   await openAllInstalledSkills(setup);
   await parsedEnter(setup);
@@ -46,7 +43,6 @@ async function openResourceContent(setup: Setup) {
   await parsedEnter(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
 }
-
 function configProjection(): WorkspaceView {
   const base = workspaceProjection({ includeContribution: false });
   const integrationOwner = { ...directOwner, pointer: "/agents/opencode" };
@@ -94,7 +90,6 @@ function configProjection(): WorkspaceView {
     },
   };
 }
-
 async function chooseProject(setup: Setup) {
   // The shell exists before the initial projection and its deferred focus landing.
   // This fixture starts with unmanaged Agent access; its recovery control proves
@@ -125,7 +120,6 @@ async function chooseProject(setup: Setup) {
     () => !!setup.renderer.root.findDescendantById("shell-section-project-tab-sources"),
   );
 }
-
 async function openProjectIntegrations(setup: Setup) {
   await chooseProject(setup);
   await focusLive(setup, "shell-section-project-tab-sources");
@@ -146,7 +140,6 @@ async function openProjectIntegrations(setup: Setup) {
     () => !!setup.renderer.root.findDescendantById("config-catalog-entry-inspector"),
   );
 }
-
 async function openProjectConfigSource(setup: Setup) {
   await chooseProject(setup);
   await focusLive(setup, "shell-section-project-tab-sources");
@@ -162,7 +155,6 @@ async function openProjectConfigSource(setup: Setup) {
   await parsedEnter(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-source-inspector"));
 }
-
 test("RENDER Reader resource uses shared Back without a route predecessor and preserves resource-list recovery", async () => {
   let settleRead:
     | ((value: { kind: "text"; path: string; format: "markdown"; text: string }) => void)
@@ -171,15 +163,13 @@ test("RENDER Reader resource uses shared Back without a route predecessor and pr
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async () => readerContent,
-            listResources: async () => readerResources,
-            read: (request) =>
-              new Promise((resolve) => {
-                settleRead = resolve;
-                expect(request.path).toBe("docs/guide.md");
-              }),
-          },
+          loadInstalledSkill: async () => readerContent,
+          listInstalledResources: async () => readerResources,
+          readInstalledResource: (_environment: import("@skill-cli/core").CoreOptions, request) =>
+            new Promise((resolve) => {
+              settleRead = resolve;
+              expect(request.path).toBe("docs/guide.md");
+            }),
         })}
         exit={() => {}}
       />
@@ -191,7 +181,6 @@ test("RENDER Reader resource uses shared Back without a route predecessor and pr
     expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(true);
     expect(!!setup.renderer.root.findDescendantById("reader-resource-back")).toBe(false);
     await expectSharedReturn(setup, "Back to Resources");
-
     for (const [width, height] of [
       [144, 40],
       [100, 24],
@@ -208,7 +197,6 @@ test("RENDER Reader resource uses shared Back without a route predecessor and pr
     }
     setup.resize(120, 40);
     await setup.flush();
-
     await focusLive(setup, "resource-content");
     await tabToSharedReturn(setup);
     setup.mockInput.pressKey("p", { ctrl: true });
@@ -217,7 +205,6 @@ test("RENDER Reader resource uses shared Back without a route predecessor and pr
     expect(actions.options.some((option) => option.value.id === "reader.resource.back")).toBe(true);
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "route-back");
-
     await parsedEnter(setup);
     await setup.waitFor(() => !setup.renderer.root.findDescendantById("resource-content"));
     const browser = setup.renderer.root.findDescendantById("resource-browser") as SelectRenderable;
@@ -230,7 +217,6 @@ test("RENDER Reader resource uses shared Back without a route predecessor and pr
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config catalog entry returns through the shared header one layer at a time", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -244,7 +230,6 @@ test("RENDER Config catalog entry returns through the shared header one layer at
       false,
     );
     await expectSharedReturn(setup, "Back to Integration");
-
     for (const [width, height] of [
       [144, 40],
       [100, 24],
@@ -273,7 +258,6 @@ test("RENDER Config catalog entry returns through the shared header one layer at
     }
     setup.resize(80, 30);
     await setup.flush();
-
     const back = setup.renderer.root.findDescendantById("route-back")!;
     await setup.mockMouse.click(back.screenX + 1, back.screenY);
     await setup.waitFor(
@@ -297,7 +281,6 @@ test("RENDER Config catalog entry returns through the shared header one layer at
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config Source inspector returns through the shared header to its selected list", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
@@ -311,7 +294,6 @@ test("RENDER Config Source inspector returns through the shared header to its se
       false,
     );
     await expectSharedReturn(setup, "Back to Config Sources");
-
     const normal = setup.renderer.root.findDescendantById("config-source-update-actions")!;
     const danger = setup.renderer.root.findDescendantById("config-source-danger-actions")!;
     expect(danger.screenY).toBeGreaterThan(normal.screenY);
@@ -320,7 +302,6 @@ test("RENDER Config Source inspector returns through the shared header to its se
       expect(control.screenX).toBeGreaterThanOrEqual(danger.screenX);
       expect(control.screenX + control.width).toBeLessThanOrEqual(danger.screenX + danger.width);
     }
-
     await enterLive(setup, "route-back");
     await setup.waitFor(() => !setup.renderer.root.findDescendantById("config-source-inspector"));
     const browser = setup.renderer.root.findDescendantById(
@@ -337,7 +318,6 @@ test("RENDER Config Source inspector returns through the shared header to its se
     setup.renderer.destroy();
   }
 });
-
 test("RENDER compact Collection tree keeps its path readable while shared Back returns to Skills", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(collectionsSourcesProjection())} exit={() => {}} />,
@@ -378,7 +358,6 @@ test("RENDER compact Collection tree keeps its path readable while shared Back r
     expect(tree.viewport.height).toBeGreaterThan(0);
     await expectSharedReturn(setup, "Back to Skills");
     expect(setup.captureCharFrame()).toContain("All installed");
-
     expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
     await tabToSharedReturn(setup);
     await parsedEnter(setup);
@@ -391,7 +370,6 @@ test("RENDER compact Collection tree keeps its path readable while shared Back r
     setup.renderer.destroy();
   }
 });
-
 test("RENDER standalone Config keeps explicit nested Back controls without a page-navigation provider", async () => {
   const projection = configProjection();
   const config = createConfigState();
@@ -419,7 +397,6 @@ test("RENDER standalone Config keeps explicit nested Back controls without a pag
     expect(config.integrationSurface("project")).toBe("inspector");
     await enterLive(setup, "config-command-config.integration.back");
     expect(config.integrationSurface("project")).toBe("list");
-
     config.land("project", "config-sources", "/configSources/shared");
     config.openConfigSourceInspector("project");
     await setup.renderOnce();
@@ -430,13 +407,12 @@ test("RENDER standalone Config keeps explicit nested Back controls without a pag
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Reader management groups stay inside the actual pane and keep danger separate", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent },
+          loadInstalledSkill: async () => readerContent,
         })}
         exit={() => {}}
       />

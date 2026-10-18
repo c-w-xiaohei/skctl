@@ -15,7 +15,6 @@ import {
   parsedEnter,
   selectedReaderTab,
 } from "./reader-test-controls";
-
 async function openSelectedSkillFromPointer(
   setup: Awaited<ReturnType<typeof testRender>>,
   address: string,
@@ -64,7 +63,6 @@ async function openSelectedSkillFromPointer(
         .slice(current.screenY, current.screenY + current.height)
         .join("\n")}`,
     );
-
   await setup.mockMouse.click(current.screenX + 1, current.screenY + row);
   expect(loads).toHaveLength(loadsBeforeOpen);
   await setup.waitFor(
@@ -92,7 +90,6 @@ async function openSelectedSkillFromPointer(
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
   await setup.waitFor(() => loads.length === loadsBeforeOpen + 1);
 }
-
 async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
   await new Promise<void>((resolve) => {
     const onKeypress = (event: { readonly name: string }) => {
@@ -107,34 +104,37 @@ async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
   await Promise.resolve();
   await setup.renderOnce();
 }
-
 test("RENDER Installed Skill pointer opens its exact Inspector before explicitly loading Reader content", async () => {
   const loads: string[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: {
-            load: async (request) => {
-              loads.push(request.address.path);
-              return request.address.path === readerSecondAddress.path
-                ? {
-                    address: readerSecondAddress,
-                    name: "reference",
-                    description: "custom",
-                    rawText: "",
-                    markdownText: "",
-                  }
-                : readerContent;
-            },
-            listResources: async () => readerResources,
-            read: async (request) => ({
-              kind: "text" as const,
-              path: request.path,
-              text: "resource body",
-              format: "text" as const,
-            }),
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            loads.push(request.address.path);
+            return request.address.path === readerSecondAddress.path
+              ? {
+                  address: readerSecondAddress,
+                  name: "reference",
+                  description: "custom",
+                  rawText: "",
+                  markdownText: "",
+                }
+              : readerContent;
           },
+          listInstalledResources: async () => readerResources,
+          readInstalledResource: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => ({
+            kind: "text" as const,
+            path: request.path,
+            text: "resource body",
+            format: "text" as const,
+          }),
         })}
         exit={() => {}}
       />

@@ -10,10 +10,8 @@ import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { enterLive, focusLive } from "./reader-test-controls";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
 const revision = "c".repeat(40);
-
 function bounds(target: ReturnType<Setup["renderer"]["root"]["findDescendantById"]>) {
   return target && !target.isDestroyed
     ? {
@@ -25,7 +23,6 @@ function bounds(target: ReturnType<Setup["renderer"]["root"]["findDescendantById
       }
     : undefined;
 }
-
 function diagnostic(setup: Setup, stage: string) {
   const root = setup.renderer.root;
   const page = root.findDescendantById("updates-page");
@@ -49,20 +46,17 @@ function diagnostic(setup: Setup, stage: string) {
     },
   )}\n${setup.captureCharFrame()}`;
 }
-
 async function key(setup: Setup, key: "down" | "enter") {
   if (key === "down") setup.mockInput.pressArrow("down");
   else setup.mockInput.pressEnter();
   await new Promise<void>((resolve) => setImmediate(resolve));
   await setup.renderOnce();
 }
-
 function rowNames(setup: Setup) {
   const browser = setup.renderer.root.findDescendantById("updates-browser");
   if (!(browser instanceof SelectRenderable)) return [];
   return browser.options.map((option) => option.name);
 }
-
 test("App Updates keeps Source results above actions after Stop removes the active command", async () => {
   const base = workspaceProjection({ includeContribution: false });
   const otherSource = { ...base.effective.sources[0]!, id: "other-source" };
@@ -81,7 +75,11 @@ test("App Updates keeps Source results above actions after Stop removes the acti
   };
   const checks: string[] = [];
   const completedChecks: string[] = [];
-  const updates: { source: string; paths: readonly string[]; exactRevision?: string }[] = [];
+  const updates: {
+    source: string;
+    paths: readonly string[];
+    exactRevision?: string;
+  }[] = [];
   let updateAborts = 0;
   const observation = (source: string, path: string): UpdateObservation => ({
     source,
@@ -94,32 +92,29 @@ test("App Updates keeps Source results above actions after Stop removes the acti
     unchanged: [],
   });
   const core = directSourceCore(projection, {
-    installed: {
-      checkUpdate: async ({ source }) => {
-        checks.push(source);
-        const result = {
-          value: observation(source, source === "team-main" ? "guide" : "other"),
-          diagnostics: [],
-        };
-        completedChecks.push(source);
-        return result;
-      },
-      update: (request, options) => {
-        updates.push(request);
-        return new Promise((_, reject) =>
-          options?.signal?.addEventListener(
-            "abort",
-            () => {
-              updateAborts++;
-              reject(new Error("stopped"));
-            },
-            { once: true },
-          ),
-        );
-      },
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+      checks.push(source);
+      const result = {
+        value: observation(source, source === "team-main" ? "guide" : "other"),
+        diagnostics: [],
+      };
+      completedChecks.push(source);
+      return result;
+    },
+    updateSkills: (_environment: import("@skill-cli/core").CoreOptions, request, options) => {
+      updates.push(request);
+      return new Promise((_, reject) =>
+        options?.signal?.addEventListener(
+          "abort",
+          () => {
+            updateAborts++;
+            reject(new Error("stopped"));
+          },
+          { once: true },
+        ),
+      );
     },
   });
-
   const priorCachePath = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
   const cacheDirectory = await mkdtemp(join(tmpdir(), "skill-cli-stop-layout-"));
   process.env.SKILL_TUI_UPDATE_CACHE_DIR = cacheDirectory;
@@ -137,7 +132,6 @@ test("App Updates keeps Source results above actions after Stop removes the acti
     for (let step = 0; step < 3; step++) await key(setup, "down");
     await key(setup, "enter");
     await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("updates-browser"));
-
     stage = "automatic startup checks settle";
     await setup.waitFor(() => completedChecks.length >= 2);
     await setup.waitFor(() => {
@@ -153,7 +147,6 @@ test("App Updates keeps Source results above actions after Stop removes the acti
     expect(setup.captureCharFrame(), diagnostic(setup, stage)).toContain(
       "Update available 2 Skills",
     );
-
     stage = "explicit manual refresh after startup settles";
     const beforeManualCheck = checks.length;
     const beforeManualCompletion = completedChecks.length;
@@ -177,7 +170,6 @@ test("App Updates keeps Source results above actions after Stop removes the acti
         !rows.some((row) => /checking|not checked/i.test(row))
       );
     });
-
     stage = "review exact checked targets";
     await enterLive(setup, "updates-update-all");
     await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("updates-review-execute"));
@@ -193,7 +185,6 @@ test("App Updates keeps Source results above actions after Stop removes the acti
     expect(review, diagnostic(setup, stage)).toContain("team-main/guide");
     expect(review, diagnostic(setup, stage)).toContain("other-source/other");
     expect(updates, diagnostic(setup, stage)).toEqual([]);
-
     stage = "execute reviewed two-Source batch";
     await enterLive(setup, "updates-review-execute");
     await setup.waitFor(
@@ -208,7 +199,6 @@ test("App Updates keeps Source results above actions after Stop removes the acti
       activeStop && !activeStop.isDestroyed && !!activeStop.parent,
       diagnostic(setup, stage),
     ).toBe(true);
-
     stage = "activate live Stop";
     await enterLive(setup, "updates-stop");
     await setup.waitFor(() => updateAborts === 1);
@@ -216,7 +206,6 @@ test("App Updates keeps Source results above actions after Stop removes the acti
     await setup.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "updates-browser");
     await setup.renderOnce();
     await setup.renderOnce();
-
     stage = "post-Stop result, feedback, focus, and geometry";
     const root = setup.renderer.root;
     const page = root.findDescendantById("updates-page");

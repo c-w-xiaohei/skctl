@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-// Native production App, isolated Core seam. No createSkillCliCore, real files, or transports.
+// Native production App, isolated API functions. No real files or transports.
 import { createCliRenderer } from "@opentui/core";
 import { render } from "@opentui/solid";
 import { appendFile, mkdir } from "node:fs/promises";
@@ -13,7 +13,6 @@ import {
   type SourceBindingView,
 } from "@skill-cli/core";
 import type { TuiCore } from "../packages/skill-tui/src/effects";
-
 const output = "tmp/tui-interaction-audit/fixture-calls.ndjson";
 await mkdir("tmp/tui-interaction-audit", { recursive: true });
 const result = <T,>(value: T): OperationResult<T> => ({ value, diagnostics: [] });
@@ -283,7 +282,6 @@ let projection: WorkspaceView = {
   })),
   diagnostics: [],
 };
-
 // Unsupported operations fail visibly rather than silently simulate completed domain changes.
 const unsupported = async (): Promise<never> => {
   throw new SkillCliError(
@@ -304,220 +302,228 @@ const emptyDelta: ConfigSourceImpact["delta"] = {
   removedCollections: [],
 };
 const core: TuiCore = {
-  workspace: { get: async () => result(structuredClone(projection)) },
-  installed: {
-    load: async ({ address }) => {
-      const markdownText =
-        `# ${address.source} / ${address.path}\n\nneedle first\n\n` +
-        Array.from(
-          { length: 65 },
-          (_, index) => `Line ${index}: ${index % 8 === 0 ? "needle" : "content"}\n`,
-        ).join("\n") +
-        "\n```ts\nconst needle = true;\n```\n";
-      return {
-        address,
-        name: address.path,
-        description: "Fixture content",
-        rawText: `---\ntitle: ${address.path}\n---\n${markdownText}`,
-        markdownText,
-      };
-    },
-    listResources: async () => [
-      { path: "docs", kind: "directory" },
-      { path: "docs/guide.md", kind: "file", size: 100 },
-      { path: "notes.txt", kind: "file", size: 50 },
-      { path: "blob.bin", kind: "file", size: 8 },
-      { path: "image.png", kind: "file", size: 64 },
-      { path: "large.txt", kind: "file", size: 30_000_000 },
-      { path: "link", kind: "symlink" },
-      { path: "submodule", kind: "gitlink", gitlinkCommit: "a".repeat(40) },
-    ],
-    read: async ({ path }) =>
-      path.endsWith(".md") || path === "notes.txt"
-        ? {
-            kind: "text" as const,
+  inspectCollection: async () => {
+    throw new Error("Unexpected fixture inspection");
+  },
+  getWorkspace: async () => result(structuredClone(projection)),
+  loadInstalledSkill: async (_environment: import("@skill-cli/core").CoreOptions, { address }) => {
+    const markdownText =
+      `# ${address.source} / ${address.path}\n\nneedle first\n\n` +
+      Array.from(
+        { length: 65 },
+        (_, index) => `Line ${index}: ${index % 8 === 0 ? "needle" : "content"}\n`,
+      ).join("\n") +
+      "\n```ts\nconst needle = true;\n```\n";
+    return {
+      address,
+      name: address.path,
+      description: "Fixture content",
+      rawText: `---\ntitle: ${address.path}\n---\n${markdownText}`,
+      markdownText,
+    };
+  },
+  listInstalledResources: async () => [
+    { path: "docs", kind: "directory" },
+    { path: "docs/guide.md", kind: "file", size: 100 },
+    { path: "notes.txt", kind: "file", size: 50 },
+    { path: "blob.bin", kind: "file", size: 8 },
+    { path: "image.png", kind: "file", size: 64 },
+    { path: "large.txt", kind: "file", size: 30000000 },
+    { path: "link", kind: "symlink" },
+    { path: "submodule", kind: "gitlink", gitlinkCommit: "a".repeat(40) },
+  ],
+  readInstalledResource: async (_environment: import("@skill-cli/core").CoreOptions, { path }) =>
+    path.endsWith(".md") || path === "notes.txt"
+      ? {
+          kind: "text" as const,
+          path,
+          format: path.endsWith(".md") ? ("markdown" as const) : ("text" as const),
+          text: `# ${path}\n\nresource needle\n\n${"Long content\n".repeat(60)}`,
+        }
+      : {
+          kind: "not-text" as const,
+          path,
+          reason:
+            path === "blob.bin"
+              ? ("binary" as const)
+              : path === "large.txt"
+                ? ("too-large" as const)
+                : ("unsupported" as const),
+          metadata: {
             path,
-            format: path.endsWith(".md") ? ("markdown" as const) : ("text" as const),
-            text: `# ${path}\n\nresource needle\n\n${"Long content\n".repeat(60)}`,
-          }
-        : {
-            kind: "not-text" as const,
-            path,
-            reason:
-              path === "blob.bin"
-                ? ("binary" as const)
-                : path === "large.txt"
-                  ? ("too-large" as const)
-                  : ("unsupported" as const),
-            metadata: {
-              path,
-              kind:
-                path === "link"
-                  ? ("symlink" as const)
-                  : path === "submodule"
-                    ? ("gitlink" as const)
-                    : ("file" as const),
-            },
+            kind:
+              path === "link"
+                ? ("symlink" as const)
+                : path === "submodule"
+                  ? ("gitlink" as const)
+                  : ("file" as const),
           },
-    previewUninstall: async ({ source, paths }) =>
-      result({
-        kind: "uninstall",
-        installed: paths.map((path) => ({ source, path })),
-        directMemberships: [],
-        disappearingSelectors: [],
-        retainedSelectors: [],
-        blockers: [],
-        allowed: true,
-      }),
-    uninstall: async ({ source, paths }) => {
-      projection = {
-        ...projection,
-        installedSkills: projection.installedSkills.filter(
-          (skill) => skill.address.source !== source || !paths.includes(skill.address.path),
-        ),
-      };
-      return result(undefined);
-    },
-    previewRebind: async ({ source, path, owner: nextOwner, ownerPath }) =>
-      result({
-        kind: "rebind",
-        address: { source, path },
-        owner: nextOwner,
-        ownerPath: ownerPath ?? path,
-        proof: "proven",
-        allowed: true,
-      }),
-    rebind: unsupported,
-    install: unsupported,
-    checkUpdate: async ({ source }) =>
-      result({
-        source,
-        kind: "github",
-        baseline: "fixture-update-baseline",
-        exactRevision: "b".repeat(40),
-        changed: [{ path: "guide", name: "guide", description: "Fixture update available" }],
-        added: [],
-        removed: [],
-        unchanged: [],
-      }),
-    previewUpdate: unsupported,
-    updateBaseline: async () => result("fixture-update-baseline"),
-    update: unsupported,
+        },
+  previewUninstall: async (
+    _environment: import("@skill-cli/core").CoreOptions,
+    { source, paths },
+  ) =>
+    result({
+      kind: "uninstall",
+      installed: paths.map((path) => ({ source, path })),
+      directMemberships: [],
+      disappearingSelectors: [],
+      retainedSelectors: [],
+      blockers: [],
+      allowed: true,
+    }),
+  uninstallSkills: async (
+    _environment: import("@skill-cli/core").CoreOptions,
+    { source, paths },
+  ) => {
+    projection = {
+      ...projection,
+      installedSkills: projection.installedSkills.filter(
+        (skill) => skill.address.source !== source || !paths.includes(skill.address.path),
+      ),
+    };
+    return result(undefined);
   },
-  sources: {
-    register: unsupported,
-    previewRemoval: async ({ source }) =>
-      result({
-        kind: "source-removal",
-        source,
-        owner: owner(`/sources/${source}`),
-        installed: [],
-        repairs: [],
-        blockers: [],
-        allowed: true,
-      }),
-    remove: unsupported,
-    discover: async ({ source }) =>
-      result({
-        source,
-        kind: "github",
-        exactRevision: "a".repeat(40),
-        candidates: [{ path: "new-guide", name: "new-guide", description: "Discoverable fixture" }],
-      }),
+  previewRebind: async (
+    _environment: import("@skill-cli/core").CoreOptions,
+    { source, path, owner: nextOwner, ownerPath },
+  ) =>
+    result({
+      kind: "rebind",
+      address: { source, path },
+      owner: nextOwner,
+      ownerPath: ownerPath ?? path,
+      proof: "proven",
+      allowed: true,
+    }),
+  rebindSkill: unsupported,
+  installSkills: unsupported,
+  checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) =>
+    result({
+      source,
+      kind: "github",
+      baseline: "fixture-update-baseline",
+      exactRevision: "b".repeat(40),
+      changed: [{ path: "guide", name: "guide", description: "Fixture update available" }],
+      added: [],
+      removed: [],
+      unchanged: [],
+    }),
+  previewUpdate: unsupported,
+  getUpdateBaseline: async () => result("fixture-update-baseline"),
+  updateSkills: unsupported,
+  registerSource: unsupported,
+  previewSourceRemoval: async (_environment: import("@skill-cli/core").CoreOptions, { source }) =>
+    result({
+      kind: "source-removal",
+      source,
+      owner: owner(`/sources/${source}`),
+      installed: [],
+      repairs: [],
+      blockers: [],
+      allowed: true,
+    }),
+  removeSource: unsupported,
+  discoverSkills: async (_environment: import("@skill-cli/core").CoreOptions, { source }) =>
+    result({
+      source,
+      kind: "github",
+      exactRevision: "a".repeat(40),
+      candidates: [{ path: "new-guide", name: "new-guide", description: "Discoverable fixture" }],
+    }),
+  registerConfigSource: unsupported,
+  observeConfigSource: async (_environment: import("@skill-cli/core").CoreOptions, { id }) =>
+    result({
+      id,
+      kind: "github",
+      exactRevision: "a".repeat(40),
+      contributions: { sources: [], collections: [] },
+    }),
+  previewConfigAdoption: async (
+    _environment: import("@skill-cli/core").CoreOptions,
+    { id, exactRevision, observation },
+  ) => {
+    const source = projection.configs
+      .flatMap((config) => config.direct.configSources)
+      .find((item) => item.id === id);
+    if (!source || source.binding.kind === "local") return unsupported();
+    return result({
+      kind: "config-source-adopt",
+      id,
+      owner: source.owner,
+      binding: source.binding,
+      exactRevision,
+      declarationRetained: true,
+      contributions: observation?.contributions ?? { sources: [], collections: [] },
+      delta: emptyDelta,
+      affectedInstalled: [],
+      disappearingSelectors: [],
+      blockers: [],
+      allowed: true,
+    });
   },
-  configSources: {
-    register: unsupported,
-    observe: async ({ id }) =>
-      result({
-        id,
-        kind: "github",
-        exactRevision: "a".repeat(40),
-        contributions: { sources: [], collections: [] },
-      }),
-    previewAdoption: async ({ id, exactRevision, observation }) => {
-      const source = projection.configs
-        .flatMap((config) => config.direct.configSources)
-        .find((item) => item.id === id);
-      if (!source || source.binding.kind === "local") return unsupported();
-      return result({
-        kind: "config-source-adopt",
-        id,
-        owner: source.owner,
-        binding: source.binding,
-        exactRevision,
-        declarationRetained: true,
-        contributions: observation?.contributions ?? { sources: [], collections: [] },
-        delta: emptyDelta,
-        affectedInstalled: [],
-        disappearingSelectors: [],
-        blockers: [],
-        allowed: true,
-      });
-    },
-    adopt: unsupported,
-    previewForget: unsupported,
-    forget: unsupported,
-    previewRemoval: unsupported,
-    remove: unsupported,
-  },
-  collections: {
-    create: unsupported,
-    remove: unsupported,
-    addMember: unsupported,
-    removeMember: unsupported,
-    editMembers: unsupported,
-    importMembers: unsupported,
-    addReference: unsupported,
-    removeReference: unsupported,
-    setLink: unsupported,
-    previewAddMember: unsupported,
-    previewRemoveMember: unsupported,
-    previewMemberEdit: async (request) =>
-      result({
-        kind: "membership-batch",
-        collection: request.collection,
-        decision: decision(request.collection),
-        additions: request.additions,
-        removals: request.removals,
-        affected: [],
-        blockers: [],
-        effectful: true,
-        allowed: true,
-      }),
-    previewImportMembers: unsupported,
-    previewAddReference: async (request) =>
-      result({
-        kind: "reference",
-        collection: request.collection,
-        name: request.name,
-        referencedCollection: request.target,
-        description: request.description,
-        decision: decision(request.collection),
-        exposure: [],
-        allowed: true,
-      }),
-    previewRemoveReference: unsupported,
-    previewSetLink: async (request) =>
-      result({
-        kind: "link-change",
-        collection: request.collection,
-        target: request.target,
-        linked: request.linked,
-        members: [],
-        disappearingSelectors: [],
-        retainedSelectors: [],
-        blockers: [],
-        allowed: true,
-      }),
-    previewRemoval: unsupported,
-  },
-  use: {
-    set: unsupported,
-    add: unsupported,
-    remove: unsupported,
-    previewSet: unsupported,
-  },
-  setManagedOpenCode: async ({ level, managed }) => {
+  adoptConfigSource: unsupported,
+  previewConfigForget: unsupported,
+  forgetConfig: unsupported,
+  previewConfigRemoval: unsupported,
+  removeConfig: unsupported,
+  createCollection: unsupported,
+  removeCollection: unsupported,
+  addMember: unsupported,
+  removeMember: unsupported,
+  editMembers: unsupported,
+  importMembers: unsupported,
+  addReference: unsupported,
+  removeReference: unsupported,
+  setLink: unsupported,
+  previewAddToCollection: unsupported,
+  previewMembershipRemoval: unsupported,
+  previewMembershipBatch: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+    result({
+      kind: "membership-batch",
+      collection: request.collection,
+      decision: decision(request.collection),
+      additions: request.additions,
+      removals: request.removals,
+      affected: [],
+      blockers: [],
+      effectful: true,
+      allowed: true,
+    }),
+  previewImport: unsupported,
+  previewAddReference: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+    result({
+      kind: "reference",
+      collection: request.collection,
+      name: request.name,
+      referencedCollection: request.target,
+      description: request.description,
+      decision: decision(request.collection),
+      exposure: [],
+      allowed: true,
+    }),
+  previewRemoveReference: unsupported,
+  previewLinkChange: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+    result({
+      kind: "link-change",
+      collection: request.collection,
+      target: request.target,
+      linked: request.linked,
+      members: [],
+      disappearingSelectors: [],
+      retainedSelectors: [],
+      blockers: [],
+      allowed: true,
+    }),
+  previewCollectionRemoval: unsupported,
+  setUse: unsupported,
+  addUse: unsupported,
+  removeUse: unsupported,
+  previewCollectionUse: unsupported,
+  setManagedOpenCode: async (
+    _environment: import("@skill-cli/core").CoreOptions,
+    { level, managed },
+  ) => {
     if (projection.effective.status !== "complete") return unsupported();
     projection = {
       ...projection,
@@ -530,8 +536,7 @@ const core: TuiCore = {
 // Failure/delay is selected by exact `family.method`, so no fixture-only UI keys steal inputs.
 const failOnce = new Set((process.env.TUI_FIXTURE_FAIL_ONCE ?? "").split(",").filter(Boolean));
 const delay = Number(process.env.TUI_FIXTURE_DELAY_MS ?? 0);
-if (!Number.isFinite(delay) || delay < 0 || delay > 10_000)
-  throw new Error("Invalid fixture delay");
+if (!Number.isFinite(delay) || delay < 0 || delay > 10000) throw new Error("Invalid fixture delay");
 const ignoreAbort = process.env.TUI_FIXTURE_IGNORE_ABORT === "1";
 const counts = new Map<string, number>();
 let sequence = 0;
@@ -543,7 +548,11 @@ function record(event: object) {
   return writes;
 }
 async function waitForResponse(
-  options: { readonly signal?: AbortSignal } | undefined,
+  options:
+    | {
+        readonly signal?: AbortSignal;
+      }
+    | undefined,
   method: string,
 ) {
   const signal = ignoreAbort ? undefined : options?.signal;
@@ -574,9 +583,16 @@ function traced<T extends object>(family: string, port: T): T {
         const method = `${family}.${String(property)}`;
         const call = ++sequence;
         counts.set(method, (counts.get(method) ?? 0) + 1);
-        await record({ phase: "call", call, method, request: args[0], count: counts.get(method) });
+        await record({ phase: "call", call, method, request: args[1], count: counts.get(method) });
         try {
-          await waitForResponse(args[1] as { readonly signal?: AbortSignal } | undefined, method);
+          await waitForResponse(
+            args[2] as
+              | {
+                  readonly signal?: AbortSignal;
+                }
+              | undefined,
+            method,
+          );
           if (failOnce.delete(method))
             throw new SkillCliError("PROVIDER_UNAVAILABLE", `Fixture fail-once: ${method}`);
           const valueResult = await value.apply(target, args);
@@ -591,16 +607,7 @@ function traced<T extends object>(family: string, port: T): T {
   });
 }
 // Deliberately does not honor AbortSignal: late completion probes App's stale-request guards.
-const isolated: TuiCore = {
-  workspace: traced("workspace", core.workspace),
-  sources: traced("sources", core.sources),
-  installed: traced("installed", core.installed),
-  configSources: traced("configSources", core.configSources),
-  collections: traced("collections", core.collections),
-  use: traced("use", core.use),
-  setManagedOpenCode: traced("core", { setManagedOpenCode: core.setManagedOpenCode })
-    .setManagedOpenCode,
-};
+const isolated = traced("core", core);
 const renderer = await createCliRenderer({
   screenMode: "alternate-screen",
   exitOnCtrlC: false,

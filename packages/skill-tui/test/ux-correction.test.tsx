@@ -15,13 +15,10 @@ import {
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
-
 const emptyProjection = () =>
   workspaceProjection({ includeDirect: false, includeContribution: false });
-
 const readerCore = () =>
-  directSourceCore(readerProjection(), { installed: { load: async () => readerContent } });
-
+  directSourceCore(readerProjection(), { loadInstalledSkill: async () => readerContent });
 async function openWorkspaceSection(
   setup: Awaited<ReturnType<typeof testRender>>,
   section: "skills" | "collections" | "sources",
@@ -88,7 +85,6 @@ async function openWorkspaceSection(
     );
   }
 }
-
 async function openContext(
   setup: Awaited<ReturnType<typeof testRender>>,
   destination: "workspace" | "global" | "project" | "local",
@@ -129,13 +125,11 @@ async function openContext(
     await focusLive(setup, "shell-section-navigation");
   }
 }
-
 async function openSkillReader(setup: Awaited<ReturnType<typeof testRender>>) {
   await openReaderFromInspector(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-identity"));
 }
-
 async function assertShellBackRestoresInspector(
   setup: Awaited<ReturnType<typeof testRender>>,
   activate: "pointer" | "enter" | "escape",
@@ -163,7 +157,6 @@ async function assertShellBackRestoresInspector(
   expect(setup.renderer.root.findDescendantById("route-back")).toBeDefined();
   expect(setup.captureCharFrame()).toContain("Back -> Workspace / Skills");
 }
-
 async function choosePaletteAction(setup: Awaited<ReturnType<typeof testRender>>, name: string) {
   const ids: Record<string, string> = { "Add Source": "palette-add-source" };
   const id = ids[name];
@@ -172,7 +165,6 @@ async function choosePaletteAction(setup: Awaited<ReturnType<typeof testRender>>
   await focusLive(setup, id);
   await parsedEnter(setup);
 }
-
 function WorkspaceContentFragment() {
   return (
     <>
@@ -180,11 +172,9 @@ function WorkspaceContentFragment() {
     </>
   );
 }
-
 function WorkspaceOptionalContent(props: { readonly visible: boolean }) {
   return props.visible ? <box id="workspace-inactive-child" /> : null;
 }
-
 test("RENDER Workspace content component has a renderable root", async () => {
   const setup = await testRender(
     () => (
@@ -201,7 +191,6 @@ test("RENDER Workspace content component has a renderable root", async () => {
     setup.renderer.destroy();
   }
 });
-
 test("RENDER inactive Workspace content branch omits its renderable", async () => {
   const setup = await testRender(
     () => (
@@ -218,7 +207,6 @@ test("RENDER inactive Workspace content branch omits its renderable", async () =
     setup.renderer.destroy();
   }
 });
-
 test("RENDER empty Workspace explains the first step and Enter opens Source registration", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -239,7 +227,6 @@ test("RENDER empty Workspace explains the first step and Enter opens Source regi
     setup.renderer.destroy();
   }
 });
-
 test("RENDER registration dialog replaces Browser help", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -259,7 +246,6 @@ test("RENDER registration dialog replaces Browser help", async () => {
     setup.renderer.destroy();
   }
 });
-
 test("RENDER unified shell names the current Context, Sections, and focused Content", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -283,7 +269,6 @@ test("RENDER unified shell names the current Context, Sections, and focused Cont
     expect(frame).not.toContain("Work Area");
     expect(frame).not.toContain("Workspace >");
     expect(frame).not.toContain("Esc back");
-
     const scope = setup.renderer.root.findDescendantById("top-navigation-tab-workspace");
     expect(scope).toBeDefined();
     scope!.focus();
@@ -298,7 +283,6 @@ test("RENDER unified shell names the current Context, Sections, and focused Cont
     setup.renderer.destroy();
   }
 });
-
 test("RENDER context identifies the selected Skill and its current Reader view", async () => {
   const setup = await testRender(() => <App core={readerCore()} exit={() => {}} />, {
     width: 120,
@@ -310,7 +294,6 @@ test("RENDER context identifies the selected Skill and its current Reader view",
     expect(setup.renderer.root.findDescendantById("shell-section-navigation")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("reader-identity")).toBeDefined();
     expect(setup.captureCharFrame()).toContain("SKILL.md");
-
     await openReaderTab(setup, 1);
     expect(setup.captureCharFrame()).toContain("Resources");
     expect(setup.captureCharFrame()).toContain("Back -> Workspace / Skills / Details");
@@ -320,7 +303,6 @@ test("RENDER context identifies the selected Skill and its current Reader view",
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Browser Arrow selection preserves the last activation transition", async () => {
   const setup = await testRender(() => <App core={readerCore()} exit={() => {}} />, {
     width: 120,
@@ -339,7 +321,6 @@ test("RENDER Browser Arrow selection preserves the last activation transition", 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER native Browser selection preserves the most recent Reader transition", async () => {
   const setup = await testRender(() => <App core={readerCore()} exit={() => {}} />, {
     width: 120,
@@ -359,7 +340,6 @@ test("RENDER native Browser selection preserves the most recent Reader transitio
     setup.renderer.destroy();
   }
 });
-
 test.each([80, 43])(
   "RENDER context preserves the hierarchy without overflowing at width %i",
   async (width) => {
@@ -377,7 +357,6 @@ test.each([80, 43])(
     }
   },
 );
-
 test.each([120, 80, 43])(
   "RENDER hierarchy labels remain visible at supported width %i",
   async (width) => {
@@ -397,7 +376,6 @@ test.each([120, 80, 43])(
     }
   },
 );
-
 test("RENDER Config context identifies the selected declaration", async () => {
   const setup = await testRender(() => <App core={readerCore()} exit={() => {}} />, {
     width: 120,
@@ -411,7 +389,6 @@ test("RENDER Config context identifies the selected declaration", async () => {
     setup.renderer.destroy();
   }
 });
-
 test("RENDER narrow chrome keeps the active region and essential actions within one row", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -423,14 +400,12 @@ test("RENDER narrow chrome keeps the active region and essential actions within 
     expect(frame).toContain("Workspace / Skills");
     expect(setup.renderer.root.findDescendantById("top-navigation-tab-workspace")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("shell-section-navigation")).toBeDefined();
-
     await focusLive(setup, "shell-section-navigation");
     expect(setup.captureCharFrame()).toContain("Workspace / Skills");
   } finally {
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Scope footer describes its action-oriented navigation policy", async () => {
   const empty = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -444,7 +419,6 @@ test("RENDER Scope footer describes its action-oriented navigation policy", asyn
     empty.renderer.destroy();
   }
 });
-
 test.each([120, 43])(
   "RENDER Config Browser focus does not advertise scope arrows consumed by native Select at width %i",
   async (width) => {
@@ -468,7 +442,6 @@ test.each([120, 43])(
     }
   },
 );
-
 test("RENDER populated Workspace Skills Browser omits scope arrows", async () => {
   const setup = await testRender(() => <App core={readerCore()} exit={() => {}} />, {
     width: 120,
@@ -482,7 +455,6 @@ test("RENDER populated Workspace Skills Browser omits scope arrows", async () =>
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Workspace sections open Collections and Sources without edge spillover", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -510,7 +482,6 @@ test("RENDER Workspace sections open Collections and Sources without edge spillo
     sources.renderer.destroy();
   }
 });
-
 test("RENDER populated Sources Browser omits scope arrows and retains native Right", async () => {
   const setup = await testRender(
     () => (
@@ -535,7 +506,6 @@ test("RENDER populated Sources Browser omits scope arrows and retains native Rig
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Reader Tab reports Reader actions without changing its native target", async () => {
   const setup = await testRender(() => <App core={readerCore()} exit={() => {}} />, {
     width: 120,
@@ -549,7 +519,6 @@ test("RENDER Reader Tab reports Reader actions without changing its native targe
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Details interactions identify stable Inspector action targets", async () => {
   const setup = await testRender(() => <App core={readerCore()} exit={() => {}} />, {
     width: 120,
@@ -574,7 +543,6 @@ test("RENDER Details interactions identify stable Inspector action targets", asy
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Config context and Section remain readable through automatic section navigation", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -584,7 +552,6 @@ test("RENDER Config context and Section remain readable through automatic sectio
     await setup.renderOnce();
     await openContext(setup, "global");
     expect(setup.captureCharFrame()).not.toContain("Global Config › Sources");
-
     await focusLive(setup, "shell-section-navigation");
     setup.mockInput.pressArrow("down");
     await setup.waitForFrame((frame) => frame.includes("Global Config / Config Sources"));
@@ -594,7 +561,6 @@ test("RENDER Config context and Section remain readable through automatic sectio
     setup.renderer.destroy();
   }
 });
-
 test("RENDER empty Workspace section navigation switches Skills, Collections, and Sources", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -623,7 +589,6 @@ test("RENDER empty Workspace section navigation switches Skills, Collections, an
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Context Right switches the route and body immediately without a second Enter commit", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -657,7 +622,6 @@ test("RENDER Context Right switches the route and body immediately without a sec
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Section Right switches its active token and body without a return frame", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -684,7 +648,6 @@ test("RENDER Section Right switches its active token and body without a return f
     setup.renderer.destroy();
   }
 });
-
 test("RENDER same-value Context click applies one Section focus transition", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -711,7 +674,6 @@ test("RENDER same-value Context click applies one Section focus transition", asy
     setup.renderer.destroy();
   }
 });
-
 for (const activate of ["pointer", "enter", "escape"] as const) {
   test(`RENDER shared shell Back ${activate} restores exactly one Reader predecessor`, async () => {
     const setup = await testRender(() => <App core={readerCore()} exit={() => {}} />, {
@@ -728,7 +690,6 @@ for (const activate of ["pointer", "enter", "escape"] as const) {
     }
   });
 }
-
 test("RENDER empty config sections expose readable actions", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -772,7 +733,6 @@ test("RENDER empty config sections expose readable actions", async () => {
     setup.renderer.destroy();
   }
 });
-
 test("RENDER width 80 keeps chrome, section tabs, and help readable", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -788,7 +748,6 @@ test("RENDER width 80 keeps chrome, section tabs, and help readable", async () =
     setup.renderer.destroy();
   }
 });
-
 test("RENDER width 43 keeps empty navigation and help readable", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(emptyProjection())} exit={() => {}} />,
@@ -804,7 +763,6 @@ test("RENDER width 43 keeps empty navigation and help readable", async () => {
     setup.renderer.destroy();
   }
 });
-
 test("RENDER focused search Input owns typing and arrows", async () => {
   const setup = await testRender(
     () => (
@@ -842,7 +800,13 @@ test("RENDER focused search Input owns typing and arrows", async () => {
     setup.mockInput.pressArrow("right");
     await setup.renderOnce();
     const input = setup.renderer.root.findDescendantById("skills-query");
-    expect((input as unknown as { value: string }).value).toBe("abc");
+    expect(
+      (
+        input as unknown as {
+          value: string;
+        }
+      ).value,
+    ).toBe("abc");
     expect(setup.captureCharFrame()).toContain("Workspace / Skills");
     expect(setup.captureCharFrame()).toContain("Esc");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-query");

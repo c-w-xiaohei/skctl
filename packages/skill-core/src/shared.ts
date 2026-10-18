@@ -1,7 +1,7 @@
 import type { ConfigDeclarationOwner } from "./config/types";
 import type { SkillAddress } from "./source/schema";
 
-export interface CoreFactoryOptions {
+export interface CoreOptions {
   readonly cwd: string;
   readonly project?: string;
   readonly userConfigPath?: string;
@@ -87,8 +87,3 @@ export class SkillCliError extends Error {
     this.diagnostics = diagnostics;
   }
 }
-
-export type Operation<Request, Result = void> = (
-  request: Request,
-  options?: OperationOptions,
-) => Promise<OperationResult<Result>>;

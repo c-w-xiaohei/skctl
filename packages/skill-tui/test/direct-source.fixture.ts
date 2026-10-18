@@ -9,7 +9,6 @@ import { createWorkspaceState } from "../src/workspace/state";
 import { createCollectionsState } from "../src/collections/state";
 import { createConfigState } from "../src/config/state";
 import { focusLive, parsedEnter } from "./reader-test-controls";
-
 export function testProjection() {
   const operation = createOperationState();
   const projection = createProjection(operation, {
@@ -19,24 +18,20 @@ export function testProjection() {
   });
   return { projection, operation };
 }
-
-export function testEffects(core: TuiCore) {
+export function testEffects(core: TuiCore, environment?: import("@skill-cli/core").CoreOptions) {
   const { projection, operation } = testProjection();
-  return { ...createTuiEffects(core, operation, projection.outcomes), operation };
+  return { ...createTuiEffects(core, operation, projection.outcomes, environment), operation };
 }
-
 export const directOwner = {
   level: "project" as const,
   file: "/workspace/skill-cli/skill-cli.jsonc",
   pointer: "/sources/team-main",
 };
-
 export const configSourceOwner = {
   level: "global" as const,
   file: "/home/user/.config/skill-cli.jsonc",
   pointer: "/configSources/team-config",
 };
-
 export function workspaceProjection(
   options: {
     readonly includeDirect?: boolean;
@@ -146,420 +141,349 @@ export function workspaceProjection(
     diagnostics: [],
   };
 }
-
 const result = <T>(value: T): OperationResult<T> => ({
   value,
   diagnostics: [],
 });
-
-export function directSourceCore(
-  projection: WorkspaceView,
-  hooks: {
-    readonly workspace?: Partial<TuiCore["workspace"]>;
-    readonly sources?: Partial<TuiCore["sources"]>;
-    readonly installed?: Partial<TuiCore["installed"]>;
-    readonly configSources?: Partial<TuiCore["configSources"]>;
-    readonly collections?: Partial<TuiCore["collections"]>;
-    readonly use?: Partial<TuiCore["use"]>;
-    readonly setManagedOpenCode?: TuiCore["setManagedOpenCode"];
-  } = {},
-): TuiCore {
+export function directSourceCore(projection: WorkspaceView, hooks: Partial<TuiCore> = {}): TuiCore {
   return {
-    workspace: {
-      get: (options) => hooks.workspace?.get?.(options) ?? Promise.resolve(result(projection)),
+    inspectCollection: async () => {
+      throw new Error("Unexpected inspection");
     },
-    sources: {
-      register:
-        hooks.sources?.register ??
-        (async () => result({ level: "project", file: directOwner.file, changed: true })),
-      discover:
-        hooks.sources?.discover ??
-        (async ({ source }) => result({ source, kind: "github", candidates: [] })),
-      previewRemoval:
-        hooks.sources?.previewRemoval ??
-        (async ({ source }) =>
-          result({
-            kind: "source-removal",
-            source,
-            owner: directOwner,
-            installed: [],
-            repairs: [],
-            blockers: [],
-            allowed: true,
-          })),
-      remove: hooks.sources?.remove ?? (async () => result(undefined)),
+    getWorkspace: () => Promise.resolve(result(projection)),
+    registerSource: async () => result({ level: "project", file: directOwner.file, changed: true }),
+    discoverSkills: async (_environment: import("@skill-cli/core").CoreOptions, { source }) =>
+      result({ source, kind: "github", candidates: [] }),
+    previewSourceRemoval: async (_environment: import("@skill-cli/core").CoreOptions, { source }) =>
+      result({
+        kind: "source-removal",
+        source,
+        owner: directOwner,
+        installed: [],
+        repairs: [],
+        blockers: [],
+        allowed: true,
+      }),
+    removeSource: async () => result(undefined),
+    loadInstalledSkill: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { address },
+    ) => ({
+      address,
+      name: address.path,
+      description: "",
+      rawText: `# ${address.path}`,
+      markdownText: `# ${address.path}`,
+    }),
+    listInstalledResources: async () => [],
+    readInstalledResource: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { path },
+    ) => ({
+      kind: "not-text",
+      path,
+      reason: "unsupported",
+      metadata: { path, kind: "file" },
+    }),
+    installSkills: async () => result([]),
+    previewUninstall: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { source, paths },
+    ) =>
+      result({
+        kind: "uninstall",
+        installed: paths.map((path) => ({ source, path })),
+        directMemberships: [],
+        disappearingSelectors: [],
+        retainedSelectors: [],
+        blockers: [],
+        allowed: true,
+      }),
+    uninstallSkills: async () => result(undefined),
+    previewRebind: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { source, path, owner, ownerPath },
+    ) =>
+      result({
+        kind: "rebind",
+        address: { source, path },
+        owner,
+        ownerPath: ownerPath ?? path,
+        proof: "proven",
+        allowed: true,
+      }),
+    rebindSkill: async () => result(undefined),
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) =>
+      result({
+        source,
+        kind: "github",
+        baseline: `baseline:${source}`,
+        changed: [],
+        added: [],
+        removed: [],
+        unchanged: [],
+      }),
+    getUpdateBaseline: async (_environment: import("@skill-cli/core").CoreOptions, { source }) =>
+      result(`baseline:${source}`),
+    previewUpdate: async () => {
+      throw new Error("Unexpected update preview");
     },
-    installed: {
-      load:
-        hooks.installed?.load ??
-        (async ({ address }) => ({
-          address,
-          name: address.path,
-          description: "",
-          rawText: `# ${address.path}`,
-          markdownText: `# ${address.path}`,
-        })),
-      listResources: hooks.installed?.listResources ?? (async () => []),
-      read:
-        hooks.installed?.read ??
-        (async ({ path }) => ({
-          kind: "not-text",
-          path,
-          reason: "unsupported",
-          metadata: { path, kind: "file" },
-        })),
-      install: hooks.installed?.install ?? (async () => result([])),
-      previewUninstall:
-        hooks.installed?.previewUninstall ??
-        (async ({ source, paths }) =>
-          result({
-            kind: "uninstall",
-            installed: paths.map((path) => ({ source, path })),
-            directMemberships: [],
-            disappearingSelectors: [],
-            retainedSelectors: [],
-            blockers: [],
-            allowed: true,
-          })),
-      uninstall: hooks.installed?.uninstall ?? (async () => result(undefined)),
-      previewRebind:
-        hooks.installed?.previewRebind ??
-        (async ({ source, path, owner, ownerPath }) =>
-          result({
-            kind: "rebind",
-            address: { source, path },
-            owner,
-            ownerPath: ownerPath ?? path,
-            proof: "proven",
-            allowed: true,
-          })),
-      rebind: hooks.installed?.rebind ?? (async () => result(undefined)),
-      checkUpdate:
-        hooks.installed?.checkUpdate ??
-        (async ({ source }) =>
-          result({
-            source,
-            kind: "github",
-            baseline: `baseline:${source}`,
-            changed: [],
-            added: [],
-            removed: [],
-            unchanged: [],
-          })),
-      updateBaseline:
-        hooks.installed?.updateBaseline ?? (async ({ source }) => result(`baseline:${source}`)),
-      previewUpdate:
-        hooks.installed?.previewUpdate ??
-        (async () => {
-          throw new Error("Unexpected update preview");
-        }),
-      update: hooks.installed?.update ?? (async () => result(undefined)),
-    },
-    configSources: {
-      register:
-        hooks.configSources?.register ??
-        (async () => result({ level: "global", file: configSourceOwner.file, changed: true })),
-      observe:
-        hooks.configSources?.observe ??
-        (async ({ id }) =>
-          result({
-            id,
-            kind: "github",
-            exactRevision: "a".repeat(40),
-            contributions: { sources: [], collections: [] },
-          })),
-      previewAdoption:
-        hooks.configSources?.previewAdoption ??
-        (async ({ id, exactRevision }) =>
-          result({
-            kind: "config-source-adopt",
-            id,
-            owner: configSourceOwner,
-            binding: {
-              kind: "github",
-              origin: "https://github.com/team/config",
-              root: "",
-              ref: "main",
-            },
-            exactRevision,
-            declarationRetained: true,
-            contributions: { sources: [], collections: [] },
-            delta: {
-              addedSources: [],
-              changedSources: [],
-              removedSources: [],
-              addedCollections: [],
-              changedCollections: [],
-              removedCollections: [],
-            },
-            affectedInstalled: [],
-            disappearingSelectors: [],
-            blockers: [],
-            allowed: true,
-          })),
-      adopt: hooks.configSources?.adopt ?? (async () => result(undefined)),
-      previewForget:
-        hooks.configSources?.previewForget ??
-        (async ({ id }) =>
-          result({
-            kind: "config-source-forget",
-            id,
-            owner: configSourceOwner,
-            binding: {
-              kind: "github",
-              origin: "https://github.com/team/config",
-              root: "",
-              ref: "main",
-            },
-            declarationRetained: true,
-            contributions: { sources: [], collections: [] },
-            delta: {
-              addedSources: [],
-              changedSources: [],
-              removedSources: [],
-              addedCollections: [],
-              changedCollections: [],
-              removedCollections: [],
-            },
-            affectedInstalled: [],
-            disappearingSelectors: [],
-            blockers: [],
-            allowed: true,
-          })),
-      forget: hooks.configSources?.forget ?? (async () => result(undefined)),
-      previewRemoval:
-        hooks.configSources?.previewRemoval ??
-        (async ({ id }) =>
-          result({
-            kind: "config-source-removal",
-            id,
-            owner: configSourceOwner,
-            binding: {
-              kind: "github",
-              origin: "https://github.com/team/config",
-              root: "",
-              ref: "main",
-            },
-            declarationRetained: false,
-            contributions: { sources: [], collections: [] },
-            delta: {
-              addedSources: [],
-              changedSources: [],
-              removedSources: [],
-              addedCollections: [],
-              changedCollections: [],
-              removedCollections: [],
-            },
-            affectedInstalled: [],
-            disappearingSelectors: [],
-            blockers: [],
-            allowed: true,
-          })),
-      remove: hooks.configSources?.remove ?? (async () => result(undefined)),
-    },
-    collections: {
-      create:
-        hooks.collections?.create ??
-        (async () => result({ level: "project", file: directOwner.file, changed: true })),
-      remove:
-        hooks.collections?.remove ??
-        (async () => result({ level: "project", file: directOwner.file, changed: true })),
-      addMember:
-        hooks.collections?.addMember ??
-        (async () => result({ level: "project", file: directOwner.file, changed: true })),
-      removeMember:
-        hooks.collections?.removeMember ??
-        (async () => result({ level: "project", file: directOwner.file, changed: true })),
-      editMembers:
-        hooks.collections?.editMembers ??
-        (async () => result({ level: "project", file: directOwner.file, changed: true })),
-      importMembers:
-        hooks.collections?.importMembers ??
-        (async () => result({ level: "project", file: directOwner.file, changed: true })),
-      addReference:
-        hooks.collections?.addReference ??
-        (async () => result({ level: "project", file: directOwner.file, changed: true })),
-      removeReference:
-        hooks.collections?.removeReference ??
-        (async () => result({ level: "project", file: directOwner.file, changed: true })),
-      setLink:
-        hooks.collections?.setLink ??
-        (async () => result({ level: "project", file: directOwner.file, changed: true })),
-      previewAddMember:
-        hooks.collections?.previewAddMember ??
-        (async (request) =>
-          result({
-            kind: "add-to-collection",
-            collection: request.collection,
-            address: request.address,
-            decision: { kind: "direct", owner: directOwner },
-            intent: { owner: directOwner, stableEntryName: request.name, address: request.address },
-            existing: [],
-            blockers: [],
-            allowed: true,
-          })),
-      previewRemoveMember:
-        hooks.collections?.previewRemoveMember ??
-        (async (request) =>
-          result({
-            kind: "membership-removal",
-            collection: request.collection,
-            name: request.name,
-            decision: { kind: "direct", owner: directOwner },
-            affected: request.expectedAddress
-              ? [
-                  {
-                    selector: `${request.collection}:${request.name}`,
-                    address: request.expectedAddress,
-                    paths: [],
-                  },
-                ]
-              : [],
-            retained: [],
-            disappearing: [],
-            linkActions: [],
-            allowed: true,
-          })),
-      previewMemberEdit:
-        hooks.collections?.previewMemberEdit ??
-        (async (request) =>
-          result({
-            kind: "membership-batch",
-            collection: request.collection,
-            decision: { kind: "direct", owner: directOwner },
-            additions: request.additions,
-            removals: request.removals,
-            affected: [],
-            blockers: [],
-            effectful: true,
-            allowed: true,
-          })),
-      previewImportMembers:
-        hooks.collections?.previewImportMembers ??
-        (async (request) =>
-          result({
-            kind: "collection-import",
-            source: request.from,
-            destination: request.into,
-            owner: directOwner,
-            additions: [],
-            skipped: [],
-            conflicts: [],
-            allowed: true,
-          })),
-      previewAddReference:
-        hooks.collections?.previewAddReference ??
-        (async (request) =>
-          result({
-            kind: "reference",
-            collection: request.collection,
-            name: request.name,
-            referencedCollection: request.target,
-            description: request.description,
-            owner: directOwner,
-            decision: { kind: "direct", owner: directOwner },
-            allowed: true,
-          })),
-      previewRemoveReference:
-        hooks.collections?.previewRemoveReference ??
-        (async (request) =>
-          result({
-            kind: "reference",
-            collection: request.collection,
-            name: request.name,
-            referencedCollection: request.expected?.collection ?? "target",
-            description: request.expected?.description ?? "",
-            owner: directOwner,
-            decision: { kind: "direct", owner: directOwner },
-            allowed: true,
-          })),
-      previewSetLink:
-        hooks.collections?.previewSetLink ??
-        (async (request) =>
-          result({
-            kind: "link-change",
-            collection: request.collection,
-            target: request.target,
-            owner: directOwner,
-            linked: request.linked,
-            members: [],
-            disappearingSelectors: [],
-            retainedSelectors: [],
-            blockers: [],
-            allowed: true,
-          })),
-      previewRemoval:
-        hooks.collections?.previewRemoval ??
-        (async () =>
-          result({
-            kind: "collection-removal",
-            owner: directOwner,
-            decision: { kind: "direct", owner: directOwner },
-            repository: { derived: false, producers: [] },
-            disappearingSelectors: [],
-            retainedSelectors: [],
-            blockers: [],
-            allowed: true,
-          })),
-    },
-    use: {
-      set:
-        hooks.use?.set ??
-        (async () =>
-          result({
-            level: "project",
-            file: directOwner.file,
-            changed: true,
-            use: { before: [], after: [] },
-          })),
-      add:
-        hooks.use?.add ??
-        (async () =>
-          result({
-            level: "project",
-            file: directOwner.file,
-            changed: true,
-            use: { before: [], after: [] },
-          })),
-      remove:
-        hooks.use?.remove ??
-        (async () =>
-          result({
-            level: "project",
-            file: directOwner.file,
-            changed: true,
-            use: { before: [], after: [] },
-          })),
-      previewSet:
-        hooks.use?.previewSet ??
-        (async (request) =>
-          result({
-            kind: "collection-use",
-            owner: directOwner,
-            oldCollections: [],
-            newCollections: request.collections,
-            affectedSelectors: [],
-            newlyExposed: [],
-            removedAtOwner: [],
-            retained: [],
-            alternateOwners: [],
-            currentComplete: true,
-            proposedComplete: true,
-            blockers: [],
-            allowed: true,
-          })),
-    },
-    setManagedOpenCode:
-      hooks.setManagedOpenCode ??
-      (async () => result({ level: "project", file: directOwner.file, changed: true })),
+    updateSkills: async () => result(undefined),
+    registerConfigSource: async () =>
+      result({ level: "global", file: configSourceOwner.file, changed: true }),
+    observeConfigSource: async (_environment: import("@skill-cli/core").CoreOptions, { id }) =>
+      result({
+        id,
+        kind: "github",
+        exactRevision: "a".repeat(40),
+        contributions: { sources: [], collections: [] },
+      }),
+    previewConfigAdoption: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { id, exactRevision },
+    ) =>
+      result({
+        kind: "config-source-adopt",
+        id,
+        owner: configSourceOwner,
+        binding: {
+          kind: "github",
+          origin: "https://github.com/team/config",
+          root: "",
+          ref: "main",
+        },
+        exactRevision,
+        declarationRetained: true,
+        contributions: { sources: [], collections: [] },
+        delta: {
+          addedSources: [],
+          changedSources: [],
+          removedSources: [],
+          addedCollections: [],
+          changedCollections: [],
+          removedCollections: [],
+        },
+        affectedInstalled: [],
+        disappearingSelectors: [],
+        blockers: [],
+        allowed: true,
+      }),
+    adoptConfigSource: async () => result(undefined),
+    previewConfigForget: async (_environment: import("@skill-cli/core").CoreOptions, { id }) =>
+      result({
+        kind: "config-source-forget",
+        id,
+        owner: configSourceOwner,
+        binding: {
+          kind: "github",
+          origin: "https://github.com/team/config",
+          root: "",
+          ref: "main",
+        },
+        declarationRetained: true,
+        contributions: { sources: [], collections: [] },
+        delta: {
+          addedSources: [],
+          changedSources: [],
+          removedSources: [],
+          addedCollections: [],
+          changedCollections: [],
+          removedCollections: [],
+        },
+        affectedInstalled: [],
+        disappearingSelectors: [],
+        blockers: [],
+        allowed: true,
+      }),
+    forgetConfig: async () => result(undefined),
+    previewConfigRemoval: async (_environment: import("@skill-cli/core").CoreOptions, { id }) =>
+      result({
+        kind: "config-source-removal",
+        id,
+        owner: configSourceOwner,
+        binding: {
+          kind: "github",
+          origin: "https://github.com/team/config",
+          root: "",
+          ref: "main",
+        },
+        declarationRetained: false,
+        contributions: { sources: [], collections: [] },
+        delta: {
+          addedSources: [],
+          changedSources: [],
+          removedSources: [],
+          addedCollections: [],
+          changedCollections: [],
+          removedCollections: [],
+        },
+        affectedInstalled: [],
+        disappearingSelectors: [],
+        blockers: [],
+        allowed: true,
+      }),
+    removeConfig: async () => result(undefined),
+    createCollection: async () =>
+      result({ level: "project", file: directOwner.file, changed: true }),
+    removeCollection: async () =>
+      result({ level: "project", file: directOwner.file, changed: true }),
+    addMember: async () => result({ level: "project", file: directOwner.file, changed: true }),
+    removeMember: async () => result({ level: "project", file: directOwner.file, changed: true }),
+    editMembers: async () => result({ level: "project", file: directOwner.file, changed: true }),
+    importMembers: async () => result({ level: "project", file: directOwner.file, changed: true }),
+    addReference: async () => result({ level: "project", file: directOwner.file, changed: true }),
+    removeReference: async () =>
+      result({ level: "project", file: directOwner.file, changed: true }),
+    setLink: async () => result({ level: "project", file: directOwner.file, changed: true }),
+    previewAddToCollection: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+      result({
+        kind: "add-to-collection",
+        collection: request.collection,
+        address: request.address,
+        decision: { kind: "direct", owner: directOwner },
+        intent: { owner: directOwner, stableEntryName: request.name, address: request.address },
+        existing: [],
+        blockers: [],
+        allowed: true,
+      }),
+    previewMembershipRemoval: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request,
+    ) =>
+      result({
+        kind: "membership-removal",
+        collection: request.collection,
+        name: request.name,
+        decision: { kind: "direct", owner: directOwner },
+        affected: request.expectedAddress
+          ? [
+              {
+                selector: `${request.collection}:${request.name}`,
+                address: request.expectedAddress,
+                paths: [],
+              },
+            ]
+          : [],
+        retained: [],
+        disappearing: [],
+        linkActions: [],
+        allowed: true,
+      }),
+    previewMembershipBatch: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+      result({
+        kind: "membership-batch",
+        collection: request.collection,
+        decision: { kind: "direct", owner: directOwner },
+        additions: request.additions,
+        removals: request.removals,
+        affected: [],
+        blockers: [],
+        effectful: true,
+        allowed: true,
+      }),
+    previewImport: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+      result({
+        kind: "collection-import",
+        source: request.from,
+        destination: request.into,
+        owner: directOwner,
+        additions: [],
+        skipped: [],
+        conflicts: [],
+        allowed: true,
+      }),
+    previewAddReference: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+      result({
+        kind: "reference",
+        collection: request.collection,
+        name: request.name,
+        referencedCollection: request.target,
+        description: request.description,
+        owner: directOwner,
+        decision: { kind: "direct", owner: directOwner },
+        allowed: true,
+      }),
+    previewRemoveReference: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+      result({
+        kind: "reference",
+        collection: request.collection,
+        name: request.name,
+        referencedCollection: request.expected?.collection ?? "target",
+        description: request.expected?.description ?? "",
+        owner: directOwner,
+        decision: { kind: "direct", owner: directOwner },
+        allowed: true,
+      }),
+    previewLinkChange: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+      result({
+        kind: "link-change",
+        collection: request.collection,
+        target: request.target,
+        owner: directOwner,
+        linked: request.linked,
+        members: [],
+        disappearingSelectors: [],
+        retainedSelectors: [],
+        blockers: [],
+        allowed: true,
+      }),
+    previewCollectionRemoval: async () =>
+      result({
+        kind: "collection-removal",
+        owner: directOwner,
+        decision: { kind: "direct", owner: directOwner },
+        repository: { derived: false, producers: [] },
+        disappearingSelectors: [],
+        retainedSelectors: [],
+        blockers: [],
+        allowed: true,
+      }),
+    setUse: async () =>
+      result({
+        level: "project",
+        file: directOwner.file,
+        changed: true,
+        use: { before: [], after: [] },
+      }),
+    addUse: async () =>
+      result({
+        level: "project",
+        file: directOwner.file,
+        changed: true,
+        use: { before: [], after: [] },
+      }),
+    removeUse: async () =>
+      result({
+        level: "project",
+        file: directOwner.file,
+        changed: true,
+        use: { before: [], after: [] },
+      }),
+    previewCollectionUse: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+      result({
+        kind: "collection-use",
+        owner: directOwner,
+        oldCollections: [],
+        newCollections: request.collections,
+        affectedSelectors: [],
+        newlyExposed: [],
+        removedAtOwner: [],
+        retained: [],
+        alternateOwners: [],
+        currentComplete: true,
+        proposedComplete: true,
+        blockers: [],
+        allowed: true,
+      }),
+    setManagedOpenCode: async () =>
+      result({ level: "project", file: directOwner.file, changed: true }),
+    ...hooks,
   };
 }
-
 async function settleReaderHighlighting(node: BaseRenderable): Promise<void> {
   if (node instanceof CodeRenderable) await node.highlightingDone;
   for (const child of node.getChildren()) await settleReaderHighlighting(child);
 }
-
 /** Focuses the directly mounted Reader, entering it from the browser when visible. */
 export async function openReaderFromInspector(setup: Awaited<ReturnType<typeof testRender>>) {
   const browserNode = setup.renderer.root.findDescendantById("installed-skill-browser");

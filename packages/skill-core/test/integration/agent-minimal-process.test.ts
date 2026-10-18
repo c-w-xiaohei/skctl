@@ -1,9 +1,8 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createSkillCliCore } from "../../src/create-core";
-
 test("Agent preserves multi-line metadata and raw content, forwards exit status and keeps persistent output", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-minimal-agent-"));
   const previousState = process.env.SKILL_CLI_STATE_DIR;
@@ -33,15 +32,15 @@ test("Agent preserves multi-line metadata and raw content, forwards exit status 
         agents: { opencode: "managed" },
       }),
     );
-    const core = createSkillCliCore({
+    const core = {
       cwd: root,
       userConfigPath: join(config, "skill-cli/config.jsonc"),
-    });
+    };
     expect(
-      (await core.sources.discover({ source: "local" })).value.candidates[0]!.description,
+      (await api.discoverSkills(core, { source: "local" })).value.candidates[0]!.description,
     ).toBe("Use for code review.");
-    await core.installed.install({ source: "local", paths: ["review"] });
-    expect(await core.content.load({ selector: "engineering:review" })).toMatchObject({
+    await api.installSkills(core, { source: "local", paths: ["review"] });
+    expect(await api.loadSkill(core, { selector: "engineering:review" })).toMatchObject({
       name: "review",
       description: "Use for code review.",
       text,

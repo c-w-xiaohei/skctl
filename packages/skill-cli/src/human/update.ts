@@ -1,8 +1,7 @@
 import type { Command } from "commander";
 import type { CommandContext } from "../command-context";
 import { formatObservation, revision } from "./shared";
-
-export function updateCommand(parent: Command, { core, stdout }: CommandContext) {
+export function updateCommand(parent: Command, { api, environment, stdout }: CommandContext) {
   const update = parent
     .command("update")
     .description("Review and apply Source updates for already installed Skills.");
@@ -11,7 +10,7 @@ export function updateCommand(parent: Command, { core, stdout }: CommandContext)
     .description("Compare installed Skills with the Source's current tracked revision.")
     .option("--json")
     .action(async (source, flags, action) => {
-      const { value } = await core(action).installed.checkUpdate({ source });
+      const { value } = await api.checkUpdate(environment(action), { source });
       const { baseline: _baseline, ...observation } = value;
       stdout.write(
         formatObservation(observation, !!flags.json, [
@@ -33,7 +32,7 @@ export function updateCommand(parent: Command, { core, stdout }: CommandContext)
     .option("--revision <revision>", "Exact remote commit to apply.", revision)
     .action(async (source, paths, flags, action) => {
       const remove = flags.remove ?? [];
-      await core(action).installed.update({
+      await api.updateSkills(environment(action), {
         source,
         paths,
         remove,

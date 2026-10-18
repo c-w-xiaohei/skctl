@@ -1,3 +1,4 @@
+import * as api from "@skill-cli/core";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { testRender } from "@opentui/solid";
@@ -8,15 +9,13 @@ import {
   type RGBA,
 } from "@opentui/core";
 import { selectScrollOffset } from "../packages/skill-tui/src/select-scroll";
-import { createSkillCliCore } from "@skill-cli/core";
 import { App } from "../packages/skill-tui/src/app";
-
 // A bounded visual preview, not a test-suite runner. It reads a real Core projection
 // and mounts production App. No mutation, build, network fixture, or assertion suite.
 // Readiness follows parsed input, including the native standalone-Esc delay.
 const output = resolve(process.argv[3] ?? "tmp/tui-visual-reset-preview");
 const project = resolve(process.argv[2] ?? ".");
-const core = createSkillCliCore({ cwd: project, project });
+const core = { cwd: project, project };
 const startedAt = new Date().toISOString();
 const sources = await Promise.all(
   [
@@ -45,10 +44,9 @@ const sources = await Promise.all(
     sha256: new Bun.CryptoHasher("sha256").update(await readFile(path)).digest("hex"),
   })),
 );
-const projection = await core.workspace.get();
-const previewCore = { ...core, workspace: { get: async () => projection } };
+const projection = await api.getWorkspace(core);
+const previewCore = { ...api, getWorkspace: async () => projection };
 await mkdir(output, { recursive: true });
-
 const escapeHtml = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const color = (value: RGBA, fallback: string) => {
@@ -68,8 +66,10 @@ function frameHtml(frame: CapturedFrame) {
     )
     .join("\n");
 }
-
-const samples: { label: string; html: string }[] = [];
+const samples: {
+  label: string;
+  html: string;
+}[] = [];
 const interactions: unknown[] = [];
 type Setup = Awaited<ReturnType<typeof testRender>>;
 async function parsedEscape(setup: Setup) {
@@ -117,10 +117,13 @@ for (const [width, height] of [
   [80, 24],
   [43, 30],
 ] as const) {
-  const setup = await testRender(() => <App core={previewCore} exit={() => {}} />, {
-    width,
-    height,
-  });
+  const setup = await testRender(
+    () => <App core={previewCore} environment={core} exit={() => {}} />,
+    {
+      width,
+      height,
+    },
+  );
   try {
     await setup.waitForVisualIdle({ maxFrames: 20 });
     const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
@@ -260,10 +263,13 @@ for (const [width, height] of [
   }
 }
 await writeFile(join(output, "interaction-traces.json"), JSON.stringify(interactions, null, 2));
-const compact = await testRender(() => <App core={previewCore} exit={() => {}} />, {
-  width: 80,
-  height: 16,
-});
+const compact = await testRender(
+  () => <App core={previewCore} environment={core} exit={() => {}} />,
+  {
+    width: 80,
+    height: 16,
+  },
+);
 try {
   await compact.waitForVisualIdle({ maxFrames: 20 });
   const sourcesTab = compact.renderer.root.findDescendantById("shell-section-tab-sources");

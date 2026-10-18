@@ -15,14 +15,12 @@ import {
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
-
 const selectedTreeRow = (setup: Awaited<ReturnType<typeof testRender>>, key: string) => {
   const row = setup.renderer.root.findDescendantById(
     `collection-browser-row-${encodeURIComponent(key)}`,
   );
   return row instanceof BoxRenderable && row.backgroundColor.a > 0;
 };
-
 async function press(setup: Awaited<ReturnType<typeof testRender>>, key: string) {
   await new Promise<void>((resolve) => {
     const observed = () => {
@@ -34,7 +32,6 @@ async function press(setup: Awaited<ReturnType<typeof testRender>>, key: string)
   });
   await setup.flush();
 }
-
 async function applyProjectFilter(setup: Awaited<ReturnType<typeof testRender>>) {
   await enterLive(setup, "collections-filter");
   await setup.waitFor(
@@ -60,7 +57,6 @@ async function applyProjectFilter(setup: Awaited<ReturnType<typeof testRender>>)
   await parsedEnter(setup);
   await setup.flush();
 }
-
 function expectSearchControlsBounded(setup: Awaited<ReturnType<typeof testRender>>) {
   const row = setup.renderer.root.findDescendantById("collections-search-controls-pane")!;
   const query = setup.renderer.root.findDescendantById("collections-query")!;
@@ -76,7 +72,6 @@ function expectSearchControlsBounded(setup: Awaited<ReturnType<typeof testRender
     expect(filter.screenX + filter.width).toBeLessThanOrEqual(row.screenX + row.width);
   }
 }
-
 function denseProjection(): WorkspaceView {
   const projection = collectionsSourcesProjection();
   if (projection.effective.status !== "complete") throw new Error("Expected complete fixture");
@@ -159,11 +154,10 @@ function denseProjection(): WorkspaceView {
     },
   };
 }
-
 async function mount(width: number, height: number) {
   const projection = denseProjection();
   const core = directSourceCore(projection);
-  core.collections.addMember = async () => {
+  core.addMember = async () => {
     throw new Error("The navigator layout must not mutate configuration");
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
@@ -178,7 +172,6 @@ async function mount(width: number, height: number) {
   await setup.flush();
   return { setup, dispose: () => setup.renderer.destroy() };
 }
-
 test.each([
   [144, 40, "dark"],
   [132, 24, "dark"],
@@ -276,7 +269,6 @@ test.each([
         expect(action?.destination).toBeDefined();
       }
       await parsedEscape(setup);
-
       const query = setup.renderer.root.findDescendantById("collections-query")!;
       query.focus();
       await setup.mockInput.typeText("team");
@@ -296,7 +288,6 @@ test.each([
     }
   },
 );
-
 test("Collections navigator preserves deep path, expanded state, query/filter and Back context", async () => {
   const mounted = await mount(144, 40);
   const { setup } = mounted;
@@ -382,7 +373,6 @@ test("Collections navigator preserves deep path, expanded state, query/filter an
     expect(restoredTree.scrollTop).toBe(selectedScroll);
     setup.resize(144, 40);
     await setup.flush();
-
     const query = setup.renderer.root.findDescendantById("collections-query")!;
     query.focus();
     await setup.mockInput.typeText("reference-3");
@@ -393,7 +383,6 @@ test("Collections navigator preserves deep path, expanded state, query/filter an
       ),
     ).toBeDefined();
     expect(setup.captureCharFrame()).toContain("reference-3");
-
     await applyProjectFilter(setup);
     expect(setup.captureCharFrame()).toContain("Filter 1");
     expect(setup.captureCharFrame()).toContain("reference-3");

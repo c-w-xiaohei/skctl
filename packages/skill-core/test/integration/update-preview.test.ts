@@ -1,16 +1,14 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createSkillCliCore } from "../../src/create-core";
-
 async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
   const output = await new Response(child.stdout).text();
   if (await child.exited) throw new Error(await new Response(child.stderr).text());
   return output.trim();
 }
-
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "update-preview-"));
   const prior = process.env.SKILL_CLI_STATE_DIR;
@@ -37,12 +35,12 @@ async function fixture() {
   await git(root, `--git-dir=${bare}`, "config", "uploadpack.allowReachableSHA1InWant", "true");
   await git(work, "remote", "add", "origin", bare);
   await git(work, "push", "origin", "main");
-  const core = createSkillCliCore({
+  const core = {
     cwd: root,
     userConfigPath: join(root, "user.jsonc"),
     sourceTransport: () => bare,
-  });
-  await core.sources.register({
+  };
+  await api.registerSource(core, {
     level: "project",
     id: "team",
     binding: {
@@ -52,7 +50,7 @@ async function fixture() {
       ref: "main",
     },
   });
-  await core.installed.install({
+  await api.installSkills(core, {
     source: "team",
     paths: ["review"],
     exactRevision: await git(work, "rev-parse", "HEAD"),
@@ -75,7 +73,6 @@ async function fixture() {
     },
   };
 }
-
 test("preview compares installed bytes to the checked commit, covers every changed file and does not publish", async () => {
   const f = await fixture();
   try {
@@ -89,7 +86,7 @@ test("preview compares installed bytes to the checked commit, covers every chang
     await writeFile(join(f.skill, "image.bin"), Buffer.from([0, 1, 3]));
     await chmod(join(f.skill, "mode.sh"), 0o755);
     await f.commit();
-    const checked = (await f.core.installed.checkUpdate({ source: "team" })).value;
+    const checked = (await api.checkUpdate(f.core, { source: "team" })).value;
     const config = await readFile(join(f.root, "skill-cli.jsonc"));
     const state = await readFile(join(f.root, "state", "state.json"));
     await writeFile(
@@ -98,7 +95,7 @@ test("preview compares installed bytes to the checked commit, covers every chang
     );
     await f.commit();
     const preview = (
-      await f.core.installed.previewUpdate({
+      await api.previewUpdate(f.core, {
         source: "team",
         path: "review",
         exactRevision: checked.exactRevision,
@@ -138,16 +135,17 @@ test("preview compares installed bytes to the checked commit, covers every chang
     expect(await readFile(join(f.root, "skill-cli.jsonc"))).toEqual(config);
     expect(await readFile(join(f.root, "state", "state.json"))).toEqual(state);
     expect(
-      (await f.core.installed.load({ address: { source: "team", path: "review" } })).rawText,
+      (await api.loadInstalledSkill(f.core, { address: { source: "team", path: "review" } }))
+        .rawText,
     ).toContain("Old instructions");
-    await f.core.installed.update({
+    await api.updateSkills(f.core, {
       source: "team",
       paths: ["review"],
       exactRevision: checked.exactRevision,
       expectedBaseline: checked.baseline,
     });
     await expect(
-      f.core.installed.previewUpdate({
+      api.previewUpdate(f.core, {
         source: "team",
         path: "review",
         exactRevision: checked.exactRevision,
@@ -158,15 +156,14 @@ test("preview compares installed bytes to the checked commit, covers every chang
     await f.dispose();
   }
 });
-
 test("preview of a removed Root shows deleted installed files, never a fabricated empty comparison", async () => {
   const f = await fixture();
   try {
     await rm(f.skill, { recursive: true });
     await f.commit();
-    const checked = (await f.core.installed.checkUpdate({ source: "team" })).value;
+    const checked = (await api.checkUpdate(f.core, { source: "team" })).value;
     const preview = (
-      await f.core.installed.previewUpdate({
+      await api.previewUpdate(f.core, {
         source: "team",
         path: "review",
         exactRevision: checked.exactRevision,
@@ -180,11 +177,10 @@ test("preview of a removed Root shows deleted installed files, never a fabricate
     await f.dispose();
   }
 });
-
 test("preview rejects stale baselines, missing exact commits, unsafe addresses and cancellation", async () => {
   const f = await fixture();
   try {
-    const checked = (await f.core.installed.checkUpdate({ source: "team" })).value;
+    const checked = (await api.checkUpdate(f.core, { source: "team" })).value;
     const request = {
       source: "team",
       path: "review",
@@ -192,37 +188,36 @@ test("preview rejects stale baselines, missing exact commits, unsafe addresses a
       expectedBaseline: checked.baseline!,
     };
     await expect(
-      f.core.installed.previewUpdate({ ...request, expectedBaseline: "stale" }),
+      api.previewUpdate(f.core, { ...request, expectedBaseline: "stale" }),
     ).rejects.toMatchObject({ code: "TRANSACTION_CONFLICT" });
     await expect(
-      f.core.installed.previewUpdate({ ...request, exactRevision: undefined }),
+      api.previewUpdate(f.core, { ...request, exactRevision: undefined }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     await expect(
-      f.core.installed.previewUpdate({ ...request, path: "../review" }),
+      api.previewUpdate(f.core, { ...request, path: "../review" }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     await expect(
-      f.core.installed.previewUpdate(request, { signal: AbortSignal.abort() }),
+      api.previewUpdate(f.core, request, { signal: AbortSignal.abort() }),
     ).rejects.toMatchObject({ code: "CANCELLED" });
   } finally {
     await f.dispose();
   }
 });
-
 test("local live content is explicitly unavailable rather than compared with itself", async () => {
   const f = await fixture();
   try {
-    await f.core.sources.register({
+    await api.registerSource(f.core, {
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./work", root: "skills" },
     });
-    await f.core.installed.install({ source: "local", paths: ["review"] });
+    await api.installSkills(f.core, { source: "local", paths: ["review"] });
     await writeFile(join(f.skill, "removed.txt"), "Changed in place\n");
-    const checked = (await f.core.installed.checkUpdate({ source: "local" })).value;
+    const checked = (await api.checkUpdate(f.core, { source: "local" })).value;
     const state = await readFile(join(f.root, "state", "state.json"));
     expect(
       (
-        await f.core.installed.previewUpdate({
+        await api.previewUpdate(f.core, {
           source: "local",
           path: "review",
           expectedBaseline: checked.baseline!,
@@ -238,17 +233,16 @@ test("local live content is explicitly unavailable rather than compared with its
     await f.dispose();
   }
 });
-
 test("large and aggregate-limited files remain listed without acquiring unbounded text", async () => {
   const f = await fixture();
   try {
-    await writeFile(join(f.skill, "huge.txt"), "x".repeat(1_048_577));
+    await writeFile(join(f.skill, "huge.txt"), "x".repeat(1048577));
     for (let i = 0; i < 5; i++)
-      await writeFile(join(f.skill, `text-${i}.txt`), "x".repeat(1_048_576));
+      await writeFile(join(f.skill, `text-${i}.txt`), "x".repeat(1048576));
     await f.commit();
-    const checked = (await f.core.installed.checkUpdate({ source: "team" })).value;
+    const checked = (await api.checkUpdate(f.core, { source: "team" })).value;
     const result = (
-      await f.core.installed.previewUpdate({
+      await api.previewUpdate(f.core, {
         source: "team",
         path: "review",
         exactRevision: checked.exactRevision,

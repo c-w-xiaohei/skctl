@@ -1,4 +1,3 @@
-import type { OperationOptions } from "../shared";
 import type { SkillAddress } from "../source/schema";
 import type { SkillProvenance } from "../source/types";
 import type { SkillMetadata } from "./text";
@@ -69,13 +68,3 @@ export type InstalledResourceResult =
       readonly reason: "binary" | "too-large" | "unsupported";
       readonly metadata: ResourceDescriptor;
     };
-
-export interface ContentCapability {
-  load(request: LoadSkillRequest, options?: OperationOptions): Promise<LoadedSkill>;
-  read(request: ReadResourceRequest, options?: OperationOptions): Promise<ReadResourceResult>;
-  download(
-    request: DownloadResourceRequest,
-    options?: OperationOptions,
-  ): Promise<DownloadResourceResult>;
-  run(request: RunSkillRequest, options?: OperationOptions): Promise<RunSkillResult>;
-}

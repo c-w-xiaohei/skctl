@@ -19,7 +19,6 @@ import {
   waitForReaderBody,
   type ReaderSetup,
 } from "./reader-test-controls";
-
 const shellSlots = [
   "global-bar",
   "shell-context-panel",
@@ -54,7 +53,6 @@ async function chooseAction(setup: ReaderSetup, id: string) {
   for (let step = 0; step < index; step++) setup.mockInput.pressArrow("down");
   await parsedEnter(setup);
 }
-
 test.each([
   [144, 40],
   [100, 24],
@@ -84,33 +82,36 @@ test.each([
       () => (
         <App
           core={directSourceCore(projection, {
-            workspace: {
-              get: async () => {
-                await loading;
-                return { value: projection, diagnostics: [] };
-              },
+            getWorkspace: async () => {
+              await loading;
+              return { value: projection, diagnostics: [] };
             },
-            installed: {
-              checkUpdate: async (_request, options) => {
-                checks++;
-                checkStarted();
-                signal = options?.signal;
-                await new Promise<void>((_resolve, reject) => {
-                  const abort = () =>
-                    reject(Object.assign(new Error("cancelled"), { code: "CANCELLED" }));
-                  if (signal?.aborted) abort();
-                  else signal?.addEventListener("abort", abort, { once: true });
-                });
-                throw new Error("Only cancellation settles this check");
-              },
-              load: async ({ address }) => ({
-                address,
-                name: address.path,
-                description: "Navigation geometry fixture",
-                rawText: "# Installed instructions\n\nRead without moving navigation.",
-                markdownText: "# Installed instructions\n\nRead without moving navigation.",
-              }),
+            checkUpdate: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              _request,
+              options,
+            ) => {
+              checks++;
+              checkStarted();
+              signal = options?.signal;
+              await new Promise<void>((_resolve, reject) => {
+                const abort = () =>
+                  reject(Object.assign(new Error("cancelled"), { code: "CANCELLED" }));
+                if (signal?.aborted) abort();
+                else signal?.addEventListener("abort", abort, { once: true });
+              });
+              throw new Error("Only cancellation settles this check");
             },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              { address },
+            ) => ({
+              address,
+              name: address.path,
+              description: "Navigation geometry fixture",
+              rawText: "# Installed instructions\n\nRead without moving navigation.",
+              markdownText: "# Installed instructions\n\nRead without moving navigation.",
+            }),
           })}
           exit={() => {}}
         />
@@ -223,7 +224,6 @@ test.each([
     }
   },
 );
-
 test.each([144, 80])(
   "object Reader has an explicit inventory landing and Back restores the retained page view at %i columns",
   async (width) => {
@@ -235,15 +235,16 @@ test.each([144, 80])(
       () => (
         <App
           core={directSourceCore(collectionsSourcesProjection(), {
-            installed: {
-              load: async ({ address }) => ({
-                address,
-                name: address.path,
-                description: "Installed object",
-                rawText: "Exact installed object",
-                markdownText: "Exact installed object",
-              }),
-            },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              { address },
+            ) => ({
+              address,
+              name: address.path,
+              description: "Installed object",
+              rawText: "Exact installed object",
+              markdownText: "Exact installed object",
+            }),
           })}
           exit={() => {}}
         />

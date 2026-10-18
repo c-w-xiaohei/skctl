@@ -11,7 +11,6 @@ import {
   openReaderTab,
   parsedEnter,
 } from "./reader-test-controls";
-
 async function mount(width: number, height = 30) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/keyboard-guidance-");
@@ -20,16 +19,14 @@ async function mount(width: number, height = 30) {
   let loads = 0;
   let updates = 0;
   const core = directSourceCore(readerProjection(), {
-    installed: {
-      load: async () => {
-        loads++;
-        return readerContent;
-      },
-      listResources: async () => readerResources,
-      update: async () => {
-        updates++;
-        return { value: undefined, diagnostics: [] };
-      },
+    loadInstalledSkill: async () => {
+      loads++;
+      return readerContent;
+    },
+    listInstalledResources: async () => readerResources,
+    updateSkills: async () => {
+      updates++;
+      return { value: undefined, diagnostics: [] };
     },
   });
   let setup: Awaited<ReturnType<typeof testRender>> | undefined;
@@ -50,7 +47,6 @@ async function mount(width: number, height = 30) {
     throw error;
   }
 }
-
 test("Skill controls expose their actual Enter action and Tab moves without executing", async () => {
   const mounted = await mount(100);
   const { setup } = mounted;
@@ -92,7 +88,6 @@ test("Skill controls expose their actual Enter action and Tab moves without exec
     await mounted.dispose();
   }
 });
-
 test("narrow Reader retains specific Enter guidance and native tab selection", async () => {
   const mounted = await mount(43);
   const { setup } = mounted;

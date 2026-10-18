@@ -13,9 +13,7 @@ import {
 } from "./reader-test-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection, readerResources } from "./installed-reader.fixture";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 async function openReaderFromInspector(setup: Setup) {
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("skills-view-tab-current-exposure"),
@@ -44,11 +42,9 @@ async function openReaderFromInspector(setup: Setup) {
   setup.mockInput.pressEnter();
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
 }
-
 function selectionText(setup: Setup) {
   return setup.renderer.getSelection()?.getSelectedText() ?? "";
 }
-
 async function pressParsedEscape(setup: Setup) {
   await new Promise<void>((resolve) => {
     const onKeypress = (event: { readonly name: string }) => {
@@ -62,12 +58,10 @@ async function pressParsedEscape(setup: Setup) {
   });
   await setup.renderOnce();
 }
-
 async function openReader(setup: Setup) {
   await openReaderFromInspector(setup);
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
 }
-
 async function chooseReaderTab(setup: Setup, stepsRight: number) {
   const index = stepsRight === 0 || stepsRight === 1 || stepsRight === 2 ? stepsRight : null;
   if (index === null) throw new Error(`Invalid Reader tab index: ${stepsRight}`);
@@ -78,19 +72,16 @@ async function chooseReaderTab(setup: Setup, stepsRight: number) {
   setup.mockInput.pressKey("TAB");
   await setup.renderOnce();
 }
-
 async function openResources(setup: Setup) {
   await openReader(setup);
   await chooseReaderTab(setup, 1);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
 }
-
 async function openDetails(setup: Setup) {
   await openReader(setup);
   await chooseReaderTab(setup, 2);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
 }
-
 async function dragFirstLine(setup: Setup, id: string, width: number) {
   const surface = setup.renderer.root.findDescendantById(id);
   expect(surface).toBeInstanceOf(ScrollBoxRenderable);
@@ -105,23 +96,18 @@ async function dragFirstLine(setup: Setup, id: string, width: number) {
   );
   await setup.flush();
 }
-
 function readerApp(overrides: Parameters<typeof directSourceCore>[1] = {}) {
   return (
     <App
       core={directSourceCore(readerProjection(), {
         ...overrides,
-        installed: {
-          load: async () => readerContent,
-          listResources: async () => readerResources,
-          ...overrides.installed,
-        },
+        loadInstalledSkill: async () => readerContent,
+        listInstalledResources: async () => readerResources,
       })}
       exit={() => {}}
     />
   );
 }
-
 test("RENDER native Details selection exposes Source provenance through the renderer", async () => {
   const setup = await testRender(() => readerApp(), { width: 120, height: 40 });
   try {
@@ -140,8 +126,11 @@ test("RENDER native Details selection exposes Source provenance through the rend
       node
         .getChildren()
         .filter(
-          (child): child is { getChildren(): readonly unknown[] } =>
-            !!child && typeof child === "object" && "getChildren" in child,
+          (
+            child,
+          ): child is {
+            getChildren(): readonly unknown[];
+          } => !!child && typeof child === "object" && "getChildren" in child,
         )
         .map(binding)
         .find(Boolean);
@@ -159,19 +148,19 @@ test("RENDER native Details selection exposes Source provenance through the rend
     setup.renderer.destroy();
   }
 });
-
 test("RENDER native text resource selection exposes file content through the renderer", async () => {
   const setup = await testRender(
     () =>
       readerApp({
-        installed: {
-          read: async (request) => ({
-            kind: "text" as const,
-            path: request.path,
-            text: "selectable resource text",
-            format: "text" as const,
-          }),
-        },
+        readInstalledResource: async (
+          _environment: import("@skill-cli/core").CoreOptions,
+          request,
+        ) => ({
+          kind: "text" as const,
+          path: request.path,
+          text: "selectable resource text",
+          format: "text" as const,
+        }),
       }),
     { width: 120, height: 40 },
   );
@@ -190,19 +179,19 @@ test("RENDER native text resource selection exposes file content through the ren
     setup.renderer.destroy();
   }
 });
-
 test("RENDER native unsupported-resource selection exposes descriptor metadata", async () => {
   const setup = await testRender(
     () =>
       readerApp({
-        installed: {
-          read: async (request) => ({
-            kind: "not-text" as const,
-            path: request.path,
-            reason: "binary",
-            metadata: { path: request.path, kind: "file" as const, size: 8 },
-          }),
-        },
+        readInstalledResource: async (
+          _environment: import("@skill-cli/core").CoreOptions,
+          request,
+        ) => ({
+          kind: "not-text" as const,
+          path: request.path,
+          reason: "binary",
+          metadata: { path: request.path, kind: "file" as const, size: 8 },
+        }),
       }),
     { width: 120, height: 40 },
   );
@@ -233,15 +222,12 @@ test("RENDER native unsupported-resource selection exposes descriptor metadata",
     setup.renderer.destroy();
   }
 });
-
 test("RENDER native resource read errors expose their typed code and message", async () => {
   const setup = await testRender(
     () =>
       readerApp({
-        installed: {
-          read: async () => {
-            throw new SkillCliError("RESOURCE_NOT_FOUND", "resource moved");
-          },
+        readInstalledResource: async () => {
+          throw new SkillCliError("RESOURCE_NOT_FOUND", "resource moved");
         },
       }),
     { width: 120, height: 40 },
@@ -266,19 +252,19 @@ test("RENDER native resource read errors expose their typed code and message", a
     setup.renderer.destroy();
   }
 });
-
 test("RENDER native Markdown resource selection records the memory-renderer boundary", async () => {
   const setup = await testRender(
     () =>
       readerApp({
-        installed: {
-          read: async (request) => ({
-            kind: "text" as const,
-            path: request.path,
-            text: "# Resource heading\n\nstable prose for native selection",
-            format: "markdown" as const,
-          }),
-        },
+        readInstalledResource: async (
+          _environment: import("@skill-cli/core").CoreOptions,
+          request,
+        ) => ({
+          kind: "text" as const,
+          path: request.path,
+          text: "# Resource heading\n\nstable prose for native selection",
+          format: "markdown" as const,
+        }),
       }),
     { width: 120, height: 40 },
   );

@@ -1,4 +1,4 @@
-import type { InstalledCapability, WorkspaceView } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import type { SkillAddress } from "@skill-cli/core";
 import {
   InputRenderable,
@@ -67,7 +67,6 @@ import { formatColumns, inlineNameColumnWidth } from "./ui/list-text";
 import { SourceUpdatesPage, UpdatesPage } from "./updates/page";
 import type { UpdateAddress } from "./updates/scope";
 import type { UpdatesState, UpdateRun } from "./updates/state";
-
 export interface WorkspacePageProps {
   readonly surface: NavigationSurface;
   readonly workspace: WorkspaceReadonly;
@@ -157,7 +156,8 @@ export interface WorkspacePageProps {
   readonly onUpdatesStopChecking?: () => void;
   readonly onUpdatesRetry?: () => void;
   readonly onUpdatesOpenSkill?: (address: UpdateAddress, tab?: "skill" | "details") => void;
-  readonly previewUpdate?: InstalledCapability["previewUpdate"];
+  readonly previewUpdate?: typeof import("@skill-cli/core").previewUpdate;
+  readonly environment?: import("@skill-cli/core").CoreOptions;
   readonly onUpdatesOpenSource?: (source: string) => void;
   readonly onSourceUpdatesDetails?: (source: string) => void;
   readonly sourceUpdates?: () =>
@@ -170,20 +170,20 @@ export interface WorkspacePageProps {
   readonly onSourceUpdatesQuery?: (value: string) => void;
   readonly onSourceUpdatesFilter?: (value: "all" | "updates") => void;
 }
-
-const views: readonly { label: string; value: SkillsView }[] = [
+const views: readonly {
+  label: string;
+  value: SkillsView;
+}[] = [
   { label: "Agent access", value: "current-exposure" },
   { label: "All Skills", value: "all-installed-skills" },
   { label: "Unassigned", value: "unassigned" },
   { label: "Problems", value: "problems" },
 ];
-
 const field = (label: string, value: string): MetadataField => ({
   label,
   value,
   wrap: "word",
 });
-
 /** Workspace surfaces use the existing state owners; no page-local router or cache. */
 export function WorkspacePage(props: WorkspacePageProps) {
   const renderer = useRenderer();
@@ -219,7 +219,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
     const address = workspace.selectedSkill();
     return allSkills().find((candidate) => address && sameSkillAddress(candidate.address, address));
   });
-
   const bind = (owner: FocusOwner, target: Renderable) => {
     const dispose = props.focusRegistry?.register(owner, target);
     target.once("destroyed", () => dispose?.());
@@ -359,7 +358,11 @@ export function WorkspacePage(props: WorkspacePageProps) {
     recordId: string,
     execute: () => void,
     destination = "",
-    options: { intent?: "primary" | "neutral"; palette?: boolean; priority?: number } = {},
+    options: {
+      intent?: "primary" | "neutral";
+      palette?: boolean;
+      priority?: number;
+    } = {},
   ) =>
     command(
       id,
@@ -455,7 +458,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
       )}
     </box>
   );
-
   const SkillList = () => {
     let browser: SelectRenderable | undefined;
     const [listWidth, setListWidth] = createSignal(0);
@@ -700,7 +702,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
       </Pane>
     );
   };
-
   const ReaderSurface = () => (
     <Show when={skill()}>
       {(selected) => (
@@ -728,7 +729,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
       )}
     </Show>
   );
-
   const CollectionBrowser = () => {
     const [treeRoot, setTreeRoot] = createSignal<Renderable>();
     const sharedReturn = usePageReturn(() =>
@@ -865,7 +865,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
       </Pane>
     );
   };
-
   const AgentAccess = () => {
     const tree = createMemo(() =>
       deriveAgentAccessTree(props.projection(), workspace.expandedExposurePaths()),
@@ -1149,7 +1148,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
       </box>
     );
   };
-
   const Problems = () => {
     let browser: SelectRenderable | undefined;
     const rows = createMemo(() =>
@@ -1259,7 +1257,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
       </Pane>
     );
   };
-
   const Sources = () => {
     const sources = () => props.projection()?.effective.sources ?? [];
     const selected = () =>
@@ -1627,7 +1624,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
       </box>
     );
   };
-
   return (
     <box id="workspace-content" flexDirection="column" flexGrow={1} minHeight={0}>
       <Show when={section() === "skills"}>
@@ -1794,6 +1790,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
                       onStopChecking={() => props.onUpdatesStopChecking?.()}
                       onRetry={() => props.onUpdatesRetry?.()}
                       previewUpdate={props.previewUpdate}
+                      environment={props.environment}
                       onInspectSkill={(address) => props.onUpdatesOpenSkill?.(address, "details")}
                       onInspectSource={(source) => props.onSourceUpdatesDetails?.(source)}
                       onOpenSource={(source) => props.onUpdatesOpenSource?.(source)}
@@ -1828,6 +1825,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
                       onQuery={(value) => props.onSourceUpdatesQuery?.(value)}
                       onFilter={(value) => props.onSourceUpdatesFilter?.(value)}
                       previewUpdate={props.previewUpdate}
+                      environment={props.environment}
                       onInspectSkill={(address) => props.onUpdatesOpenSkill?.(address, "details")}
                       onInspectSource={(source) => props.onSourceUpdatesDetails?.(source)}
                       onSourceDetails={() => props.onSourceUpdatesDetails?.(sourceView().source)}

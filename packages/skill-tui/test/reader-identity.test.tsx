@@ -21,14 +21,11 @@ import {
   selectedReaderTab,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 function textIn(renderable: BaseRenderable): string {
   if (renderable instanceof TextBufferRenderable) return renderable.plainText;
   return renderable.getChildren().map(textIn).join("\n");
 }
-
 function expectReaderBounds(setup: Setup, width: number, height: number) {
   const reader = setup.renderer.root.findDescendantById("reader-scrollbox");
   const identity = setup.renderer.root.findDescendantById("reader-identity");
@@ -50,7 +47,6 @@ function expectReaderBounds(setup: Setup, width: number, height: number) {
   expect(frame).toHaveLength(height + 1);
   for (const line of frame.slice(0, height)) expect(line.length).toBe(width);
 }
-
 function expectVisibleIdentity(setup: Setup, frame: string, name: string) {
   const identity = setup.renderer.root.findDescendantById("reader-identity")!;
   const lines = frame
@@ -66,13 +62,13 @@ function expectVisibleIdentity(setup: Setup, frame: string, name: string) {
     painted.find((span) => span.text.includes(name))!.attributes & TextAttributes.BOLD,
   ).not.toBe(0);
 }
-
 test("RENDER Reader names one Installed Skill and retains exact ownership across sibling views", async () => {
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          installed: { load: async () => readerContent, listResources: async () => [] },
+          loadInstalledSkill: async () => readerContent,
+          listInstalledResources: async () => [],
         })}
         exit={() => {}}
       />
@@ -103,7 +99,6 @@ test("RENDER Reader names one Installed Skill and retains exact ownership across
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Reader retains full structural identity and native Markdown/raw wrapping through supported resizes", async () => {
   const address = {
     source: "production-shared-skills-source-id",
@@ -130,17 +125,18 @@ test("RENDER Reader retains full structural identity and native Markdown/raw wra
         core={directSourceCore(
           { ...projection, installedSkills: [longSkill] },
           {
-            installed: {
-              load: async (request) => {
-                reads.push(request.address);
-                return {
-                  ...readerContent,
-                  address,
-                  name: longSkill.name,
-                  markdownText: `# Guide\n\n${longProse}`,
-                  rawText: longProse,
-                };
-              },
+            loadInstalledSkill: async (
+              _environment: import("@skill-cli/core").CoreOptions,
+              request,
+            ) => {
+              reads.push(request.address);
+              return {
+                ...readerContent,
+                address,
+                name: longSkill.name,
+                markdownText: `# Guide\n\n${longProse}`,
+                rawText: longProse,
+              };
             },
           },
         )}

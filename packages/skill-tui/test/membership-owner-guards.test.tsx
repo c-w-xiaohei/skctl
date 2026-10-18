@@ -8,7 +8,6 @@ import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { enterLive } from "./reader-test-controls";
-
 function findManage(root: BaseRenderable): ButtonRenderable | undefined {
   for (const child of root.getChildren()) {
     if (
@@ -21,7 +20,6 @@ function findManage(root: BaseRenderable): ButtonRenderable | undefined {
     if (nested) return nested;
   }
 }
-
 for (const fault of [
   "level",
   "file",
@@ -72,11 +70,14 @@ for (const fault of [
     });
     const requests: unknown[] = [];
     let writes = 0;
-    core.collections.removeMember = async () => {
+    core.removeMember = async () => {
       writes++;
       throw new Error("Guard must not write");
     };
-    core.collections.previewMemberEdit = async (request) => {
+    core.previewMembershipBatch = async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request,
+    ) => {
       requests.push(request);
       const declaration = collection.declared[0]!;
       const receipt: MembershipBatchImpact = {

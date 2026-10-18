@@ -1,6 +1,6 @@
 import type { MemberOriginPath, ResolvedMember } from "./graph";
 import type { ConfigLevel, ConfigDeclarationOwner, ConfigWriteResult } from "../config/types";
-import type { Operation } from "../shared";
+
 import type { SkillAddress } from "../source/schema";
 import type { CollectionReference } from "./schema";
 
@@ -262,41 +262,4 @@ export interface SetUseRequest {
 export interface UseCollectionRequest {
   readonly level: ConfigLevel;
   readonly collection: string;
-}
-
-export interface CollectionsCapability {
-  inspect: Operation<
-    { readonly collection: string; readonly level?: ConfigLevel },
-    CollectionInspection
-  >;
-  create: Operation<Pick<CollectionRequest, "level" | "collection">, ConfigWriteResult>;
-  remove: Operation<CollectionRequest, ConfigWriteResult>;
-  addMember: Operation<AddMemberRequest, ConfigWriteResult>;
-  removeMember: Operation<RemoveMemberRequest, ConfigWriteResult>;
-  editMembers: Operation<ReviewedMemberEditRequest, ConfigWriteResult>;
-  importMembers: Operation<ImportMembersRequest, ConfigWriteResult>;
-  addReference: Operation<AddReferenceRequest, ConfigWriteResult>;
-  removeReference: Operation<RemoveReferenceRequest, ConfigWriteResult>;
-  setLink: Operation<SetLinkRequest, ConfigWriteResult>;
-  previewAddMember: Operation<
-    Omit<AddMemberRequest, "level"> & { readonly level?: ConfigLevel },
-    AddToCollectionImpact
-  >;
-  previewRemoveMember: Operation<
-    Omit<RemoveMemberRequest, "level"> & { readonly level?: ConfigLevel },
-    MembershipRemovalImpact
-  >;
-  previewMemberEdit: Operation<MemberEditRequest, MembershipBatchImpact>;
-  previewImportMembers: Operation<ImportMembersRequest, ImportImpact>;
-  previewAddReference: Operation<AddReferenceRequest, ReferenceImpact>;
-  previewRemoveReference: Operation<RemoveReferenceRequest, ReferenceImpact>;
-  previewSetLink: Operation<SetLinkRequest, LinkChangeImpact>;
-  previewRemoval: Operation<CollectionRequest, CollectionRemovalImpact>;
-}
-
-export interface UseCapability {
-  set: Operation<SetUseRequest, UseWriteResult>;
-  add: Operation<UseCollectionRequest, UseWriteResult>;
-  remove: Operation<UseCollectionRequest, UseWriteResult>;
-  previewSet: Operation<SetUseRequest, CollectionUseImpact>;
 }

@@ -2,7 +2,7 @@ import type { ManagedAgentView } from "../catalog/types";
 import type { MemberOriginPath } from "../collection/graph";
 import type { CollectionView } from "../collection/types";
 import type { ConfigLevel, ConfigDeclarationOwner, ConfigSourceView } from "../config/types";
-import type { OperationOptions, OperationResult, Diagnostic } from "../shared";
+import type { Diagnostic } from "../shared";
 import type { SkillAddress } from "../source/schema";
 import type { SourceBindingView, SkillSourceRef } from "../source/types";
 import type { SkillMetadata } from "../content/text";
@@ -102,8 +102,4 @@ export interface WorkspaceView {
     readonly problems: readonly Diagnostic[];
   })[];
   readonly diagnostics: readonly Diagnostic[];
-}
-
-export interface WorkspaceCapability {
-  get(options?: OperationOptions): Promise<OperationResult<WorkspaceView>>;
 }

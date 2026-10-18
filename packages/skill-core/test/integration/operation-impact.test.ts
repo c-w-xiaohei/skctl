@@ -1,12 +1,11 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSkillCliCore } from "../../src/create-core";
 import { bindingDigest } from "../../src/source/identity";
 import { StateCoordinator } from "../../src/storage/state";
 import type { IdentityEvidence } from "../../src/storage/schema";
-
 async function installRemoteReview(
   state: string,
   identityEvidence: IdentityEvidence = { status: "unavailable" },
@@ -28,7 +27,6 @@ async function installRemoteReview(
     identityEvidence,
   });
 }
-
 async function fixture(config = "{}\n") {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-impact-"));
   const previous = process.env.SKILL_CLI_STATE_DIR;
@@ -51,7 +49,7 @@ async function fixture(config = "{}\n") {
       join(root, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: Review\n---\n",
     );
-    const core = createSkillCliCore({ cwd: root, userConfigPath: global });
+    const core = { cwd: root, userConfigPath: global };
     return { root, state, global, core, cleanup };
   } catch (error) {
     try {
@@ -62,15 +60,13 @@ async function fixture(config = "{}\n") {
     throw error;
   }
 }
-
 async function registerLocalSource(core: Awaited<ReturnType<typeof fixture>>["core"]) {
-  await core.sources.register({
+  await api.registerSource(core, {
     level: "project",
     id: "local",
     binding: { kind: "local", path: "./skills", root: "" },
   });
 }
-
 function assertPublicImpact(value: unknown) {
   const forbidden = new Set([
     "weight",
@@ -97,12 +93,11 @@ function assertPublicImpact(value: unknown) {
   };
   visit(JSON.parse(JSON.stringify(value)));
 }
-
 test("MGMT-002 removes a direct zero-installed Source while preserving other declarations and state", async () => {
   const value = await fixture();
   try {
     await registerLocalSource(value.core);
-    const empty = await value.core.sources.previewRemoval({ source: "local" });
+    const empty = await api.previewSourceRemoval(value.core, { source: "local" });
     expect(empty.value).toMatchObject({
       kind: "source-removal",
       allowed: true,
@@ -110,7 +105,7 @@ test("MGMT-002 removes a direct zero-installed Source while preserving other dec
       installed: [],
     });
     assertPublicImpact(empty.value);
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "other",
       binding: { kind: "local", path: "./other", root: "" },
@@ -118,7 +113,7 @@ test("MGMT-002 removes a direct zero-installed Source while preserving other dec
     const stateBefore = await Bun.file(join(value.state, "state.json"))
       .text()
       .catch(() => undefined);
-    await value.core.sources.remove({ source: "local" });
+    await api.removeSource(value.core, { source: "local" });
     const config = JSON.parse(await readFile(join(value.root, "skill-cli.jsonc"), "utf8"));
     expect(config.sources.local).toBeUndefined();
     expect(config.sources.other).toBeDefined();
@@ -131,22 +126,22 @@ test("MGMT-002 removes a direct zero-installed Source while preserving other dec
     await value.cleanup();
   }
 });
-
 test("MGMT-003 stale Source removal rejects newly installed owners then permits current unblocked execution", async () => {
   const value = await fixture();
   try {
     await registerLocalSource(value.core);
-    expect((await value.core.sources.previewRemoval({ source: "local" })).value.allowed).toBe(true);
-
-    await value.core.installed.install({ source: "local", paths: ["review"] });
+    expect((await api.previewSourceRemoval(value.core, { source: "local" })).value.allowed).toBe(
+      true,
+    );
+    await api.installSkills(value.core, { source: "local", paths: ["review"] });
     const configBefore = await readFile(join(value.root, "skill-cli.jsonc"), "utf8");
     const stateBefore = await readFile(join(value.state, "state.json"), "utf8");
-    await expect(value.core.sources.remove({ source: "local" })).rejects.toMatchObject({
+    await expect(api.removeSource(value.core, { source: "local" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toBe(configBefore);
     expect(await readFile(join(value.state, "state.json"), "utf8")).toBe(stateBefore);
-    const source = await value.core.sources.previewRemoval({ source: "local" });
+    const source = await api.previewSourceRemoval(value.core, { source: "local" });
     expect(source.value).toMatchObject({
       allowed: false,
       installed: [{ source: "local", path: "review" }],
@@ -158,8 +153,8 @@ test("MGMT-003 stale Source removal rejects newly installed owners then permits 
       ],
     });
     assertPublicImpact(source.value);
-    await value.core.installed.uninstall({ source: "local", paths: ["review"] });
-    await value.core.sources.remove({ source: "local" });
+    await api.uninstallSkills(value.core, { source: "local", paths: ["review"] });
+    await api.removeSource(value.core, { source: "local" });
     expect(JSON.parse(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).sources).toEqual(
       {},
     );
@@ -167,7 +162,6 @@ test("MGMT-003 stale Source removal rejects newly installed owners then permits 
     await value.cleanup();
   }
 });
-
 test("MGMT-010 Uninstall impact preserves repository-derived and Link origin paths and leaves Source declared", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -189,7 +183,7 @@ test("MGMT-010 Uninstall impact preserves repository-derived and Link origin pat
       canonicalOrigin: "https://github.com/acme/skills",
       originRelativeSkillRoot: "review",
     });
-    const impact = await value.core.installed.previewUninstall({
+    const impact = await api.previewUninstall(value.core, {
       source: "remote",
       paths: ["review"],
     });
@@ -208,8 +202,8 @@ test("MGMT-010 Uninstall impact preserves repository-derived and Link origin pat
       ],
     });
     assertPublicImpact(impact.value);
-    await value.core.installed.uninstall({ source: "remote", paths: ["review"] });
-    expect((await value.core.workspace.get()).value.installedSkills).toEqual([]);
+    await api.uninstallSkills(value.core, { source: "remote", paths: ["review"] });
+    expect((await api.getWorkspace(value.core)).value.installedSkills).toEqual([]);
     expect(
       JSON.parse(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).sources.remote,
     ).toBeDefined();
@@ -217,13 +211,12 @@ test("MGMT-010 Uninstall impact preserves repository-derived and Link origin pat
     await value.cleanup();
   }
 });
-
 test("MGMT-011 stale Uninstall rejects a new direct Membership without changing bytes then succeeds after removal", async () => {
   const value = await fixture();
   try {
     await registerLocalSource(value.core);
-    await value.core.installed.install({ source: "local", paths: ["review"] });
-    const uninstall = await value.core.installed.previewUninstall({
+    await api.installSkills(value.core, { source: "local", paths: ["review"] });
+    const uninstall = await api.previewUninstall(value.core, {
       source: "local",
       paths: ["review"],
     });
@@ -233,15 +226,14 @@ test("MGMT-011 stale Uninstall rejects a new direct Membership without changing 
       installed: [{ source: "local", path: "review" }],
     });
     assertPublicImpact(uninstall.value);
-
-    await value.core.collections.create({ level: "project", collection: "team" });
-    await value.core.collections.addMember({
+    await api.createCollection(value.core, { level: "project", collection: "team" });
+    await api.addMember(value.core, {
       level: "project",
       collection: "team",
       name: "review",
       address: { source: "local", path: "review" },
     });
-    const blocked = await value.core.installed.previewUninstall({
+    const blocked = await api.previewUninstall(value.core, {
       source: "local",
       paths: ["review"],
     });
@@ -252,23 +244,22 @@ test("MGMT-011 stale Uninstall rejects a new direct Membership without changing 
     const before = await readFile(join(value.root, "state", "state.json"), "utf8");
     const blockedConfig = await readFile(join(value.root, "skill-cli.jsonc"), "utf8");
     await expect(
-      value.core.installed.uninstall({ source: "local", paths: ["review"] }),
+      api.uninstallSkills(value.core, { source: "local", paths: ["review"] }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(join(value.root, "state", "state.json"), "utf8")).toBe(before);
     expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toBe(blockedConfig);
-    await value.core.collections.removeMember({
+    await api.removeMember(value.core, {
       level: "project",
       collection: "team",
       name: "review",
       expectedAddress: { source: "local", path: "review" },
     });
-    await value.core.installed.uninstall({ source: "local", paths: ["review"] });
-    expect((await value.core.workspace.get()).value.installedSkills).toEqual([]);
+    await api.uninstallSkills(value.core, { source: "local", paths: ["review"] });
+    expect((await api.getWorkspace(value.core)).value.installedSkills).toEqual([]);
   } finally {
     await value.cleanup();
   }
 });
-
 test("MGMT-004 contributed Sources allow management reads but reject host removal or edits", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -287,41 +278,42 @@ test("MGMT-004 contributed Sources allow management reads but reject host remova
       join(value.root, "module", "config.jsonc"),
       JSON.stringify({ sources: { skills: { kind: "local", path: "./skills", root: "" } } }),
     );
-    const core = createSkillCliCore({ cwd: value.root });
+    const core = { cwd: value.root };
     expect(
-      (await core.sources.discover({ source: "shared/skills" })).value.candidates,
+      (await api.discoverSkills(core, { source: "shared/skills" })).value.candidates,
     ).toMatchObject([{ path: "review" }]);
-    await core.installed.install({ source: "shared/skills", paths: ["review"] });
+    await api.installSkills(core, { source: "shared/skills", paths: ["review"] });
     expect(
-      (await core.installed.checkUpdate({ source: "shared/skills" })).value.unchanged.map(
+      (await api.checkUpdate(core, { source: "shared/skills" })).value.unchanged.map(
         (item) => item.path,
       ),
     ).toEqual(["review"]);
-    await expect(core.sources.previewRemoval({ source: "shared/skills" })).rejects.toMatchObject({
-      code: "INVALID_ARGUMENT",
-    });
-    await expect(core.sources.remove({ source: "shared/skills" })).rejects.toMatchObject({
+    await expect(api.previewSourceRemoval(core, { source: "shared/skills" })).rejects.toMatchObject(
+      {
+        code: "INVALID_ARGUMENT",
+      },
+    );
+    await expect(api.removeSource(core, { source: "shared/skills" })).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
     });
   } finally {
     await value.cleanup();
   }
 });
-
 test("MGMT-018/019/020/021 Link, Use, and Collection impacts retain exact declaration dependencies", async () => {
   const value = await fixture();
   try {
     await registerLocalSource(value.core);
-    await value.core.installed.install({ source: "local", paths: ["review"] });
+    await api.installSkills(value.core, { source: "local", paths: ["review"] });
     for (const collection of ["source", "target"])
-      await value.core.collections.create({ level: "project", collection });
-    await value.core.collections.addMember({
+      await api.createCollection(value.core, { level: "project", collection });
+    await api.addMember(value.core, {
       level: "project",
       collection: "target",
       name: "review",
       address: { source: "local", path: "review" },
     });
-    const add = await value.core.collections.previewSetLink({
+    const add = await api.previewLinkChange(value.core, {
       level: "project",
       collection: "source",
       target: "target",
@@ -331,21 +323,21 @@ test("MGMT-018/019/020/021 Link, Use, and Collection impacts retain exact declar
       allowed: true,
       members: [{ name: "review", address: { source: "local", path: "review" } }],
     });
-    await value.core.collections.setLink({
+    await api.setLink(value.core, {
       level: "project",
       collection: "source",
       target: "target",
       linked: true,
     });
-    const remove = await value.core.collections.previewSetLink({
+    const remove = await api.previewLinkChange(value.core, {
       level: "project",
       collection: "source",
       target: "target",
       linked: false,
     });
     expect(remove.value.disappearingSelectors).toMatchObject([{ selector: "source:review" }]);
-    await value.core.use.set({ level: "project", collections: ["source"] });
-    const use = await value.core.use.previewSet({
+    await api.setUse(value.core, { level: "project", collections: ["source"] });
+    const use = await api.previewCollectionUse(value.core, {
       level: "project",
       collections: ["target"],
     });
@@ -353,7 +345,7 @@ test("MGMT-018/019/020/021 Link, Use, and Collection impacts retain exact declar
       allowed: true,
       affectedSelectors: [{ selector: "target:review" }],
     });
-    const removal = await value.core.collections.previewRemoval({
+    const removal = await api.previewCollectionRemoval(value.core, {
       level: "project",
       collection: "target",
     });
@@ -362,13 +354,12 @@ test("MGMT-018/019/020/021 Link, Use, and Collection impacts retain exact declar
       blockers: [{ reason: "link", owner: { pointer: "/collections/source/links/0" } }],
     });
     await expect(
-      value.core.collections.remove({ level: "project", collection: "target" }),
+      api.removeCollection(value.core, { level: "project", collection: "target" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
   } finally {
     await value.cleanup();
   }
 });
-
 test("MGMT-020 Collection Use reports selected-owner deltas, completeness, and alternate owners", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -381,10 +372,9 @@ test("MGMT-020 Collection Use reports selected-owner deltas, completeness, and a
   );
   try {
     await registerLocalSource(value.core);
-    await value.core.installed.install({ source: "local", paths: ["review"] });
+    await api.installSkills(value.core, { source: "local", paths: ["review"] });
     await writeFile(join(value.root, "skill-cli.local.jsonc"), JSON.stringify({ use: ["other"] }));
-
-    const impact = await value.core.use.previewSet({
+    const impact = await api.previewCollectionUse(value.core, {
       level: "project",
       collections: ["other"],
     });
@@ -404,7 +394,6 @@ test("MGMT-020 Collection Use reports selected-owner deltas, completeness, and a
     await value.cleanup();
   }
 });
-
 test("MGMT-026 keeps Membership Link and Use removal choices distinct", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -416,18 +405,18 @@ test("MGMT-026 keeps Membership Link and Use removal choices distinct", async ()
     }),
   );
   try {
-    const membership = await value.core.collections.previewRemoveMember({
+    const membership = await api.previewMembershipRemoval(value.core, {
       level: "project",
       collection: "direct",
       name: "review",
     });
-    const link = await value.core.collections.previewSetLink({
+    const link = await api.previewLinkChange(value.core, {
       level: "project",
       collection: "linked",
       target: "direct",
       linked: false,
     });
-    const use = await value.core.use.previewSet({
+    const use = await api.previewCollectionUse(value.core, {
       level: "project",
       collections: ["direct"],
     });
@@ -445,26 +434,24 @@ test("MGMT-026 keeps Membership Link and Use removal choices distinct", async ()
     await value.cleanup();
   }
 });
-
 test("MGMT-021 Collection removal distinguishes selected ownership and retained derived members", async () => {
   const value = await fixture();
   try {
     await registerLocalSource(value.core);
-    await value.core.installed.install({ source: "local", paths: ["review"] });
-    await value.core.collections.create({ level: "project", collection: "team" });
-    await value.core.collections.addMember({
+    await api.installSkills(value.core, { source: "local", paths: ["review"] });
+    await api.createCollection(value.core, { level: "project", collection: "team" });
+    await api.addMember(value.core, {
       level: "project",
       collection: "team",
       name: "review",
       address: { source: "local", path: "review" },
     });
-    const wrongLevel = await value.core.collections.previewRemoval({
+    const wrongLevel = await api.previewCollectionRemoval(value.core, {
       level: "local",
       collection: "team",
     });
     expect(wrongLevel.value).toMatchObject({ decision: { kind: "missing" }, allowed: false });
-
-    const impact = await value.core.collections.previewRemoval({
+    const impact = await api.previewCollectionRemoval(value.core, {
       level: "project",
       collection: "team",
     });
@@ -478,13 +465,12 @@ test("MGMT-021 Collection removal distinguishes selected ownership and retained 
     await value.cleanup();
   }
 });
-
 test("MGMT-021 Collection removal reports exact outgoing Link dependencies", async () => {
   const value = await fixture(
     JSON.stringify({ collections: { source: { links: ["target"] }, target: {} } }),
   );
   try {
-    const impact = await value.core.collections.previewRemoval({
+    const impact = await api.previewCollectionRemoval(value.core, {
       level: "project",
       collection: "source",
     });
@@ -496,7 +482,6 @@ test("MGMT-021 Collection removal reports exact outgoing Link dependencies", asy
     await value.cleanup();
   }
 });
-
 test("MGMT-021 Collection removal execution revalidates outgoing Links without changing bytes", async () => {
   const value = await fixture(
     JSON.stringify({ collections: { source: { links: ["target"] }, target: {} } }),
@@ -504,7 +489,7 @@ test("MGMT-021 Collection removal execution revalidates outgoing Links without c
   try {
     expect(
       (
-        await value.core.collections.previewRemoval({
+        await api.previewCollectionRemoval(value.core, {
           level: "project",
           collection: "source",
         })
@@ -512,11 +497,10 @@ test("MGMT-021 Collection removal execution revalidates outgoing Links without c
     ).toBe(false);
     const blocked = await readFile(join(value.root, "skill-cli.jsonc"), "utf8");
     await expect(
-      value.core.collections.remove({ level: "project", collection: "source" }),
+      api.removeCollection(value.core, { level: "project", collection: "source" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toBe(blocked);
-
-    await value.core.collections.setLink({
+    await api.setLink(value.core, {
       level: "project",
       collection: "source",
       target: "target",
@@ -524,13 +508,13 @@ test("MGMT-021 Collection removal execution revalidates outgoing Links without c
     });
     expect(
       (
-        await value.core.collections.previewRemoval({
+        await api.previewCollectionRemoval(value.core, {
           level: "project",
           collection: "source",
         })
       ).value.allowed,
     ).toBe(true);
-    await value.core.collections.setLink({
+    await api.setLink(value.core, {
       level: "project",
       collection: "source",
       target: "target",
@@ -538,42 +522,41 @@ test("MGMT-021 Collection removal execution revalidates outgoing Links without c
     });
     const stale = await readFile(join(value.root, "skill-cli.jsonc"), "utf8");
     await expect(
-      value.core.collections.remove({ level: "project", collection: "source" }),
+      api.removeCollection(value.core, { level: "project", collection: "source" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toBe(stale);
-    await value.core.collections.setLink({
+    await api.setLink(value.core, {
       level: "project",
       collection: "source",
       target: "target",
       linked: false,
     });
-    await value.core.collections.remove({ level: "project", collection: "source" });
+    await api.removeCollection(value.core, { level: "project", collection: "source" });
     expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).not.toContain('"source"');
   } finally {
     await value.cleanup();
   }
 });
-
 test("MGMT-013/015/026 previews direct membership ownership and alternate link paths", async () => {
   const value = await fixture();
   try {
     await registerLocalSource(value.core);
-    await value.core.installed.install({ source: "local", paths: ["review"] });
+    await api.installSkills(value.core, { source: "local", paths: ["review"] });
     for (const collection of ["source", "target"])
-      await value.core.collections.create({ level: "project", collection });
-    await value.core.collections.addMember({
+      await api.createCollection(value.core, { level: "project", collection });
+    await api.addMember(value.core, {
       level: "project",
       collection: "target",
       name: "review",
       address: { source: "local", path: "review" },
     });
-    await value.core.collections.setLink({
+    await api.setLink(value.core, {
       level: "project",
       collection: "source",
       target: "target",
       linked: true,
     });
-    const add = await value.core.collections.previewAddMember({
+    const add = await api.previewAddToCollection(value.core, {
       level: "project",
       collection: "target",
       address: { source: "local", path: "review" },
@@ -583,7 +566,7 @@ test("MGMT-013/015/026 previews direct membership ownership and alternate link p
       kind: "add-to-collection",
       decision: { kind: "direct", owner: { pointer: "/collections/target" } },
     });
-    const remove = await value.core.collections.previewRemoveMember({
+    const remove = await api.previewMembershipRemoval(value.core, {
       level: "project",
       collection: "target",
       name: "review",
@@ -599,7 +582,6 @@ test("MGMT-013/015/026 previews direct membership ownership and alternate link p
     await value.cleanup();
   }
 });
-
 test("MGMT-013/015/016/017 expose owner-specific collection operations without UI state", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -612,7 +594,7 @@ test("MGMT-013/015/016/017 expose owner-specific collection operations without U
   );
   try {
     const address = { source: "local", path: "review" };
-    const add = await value.core.collections.previewAddMember({
+    const add = await api.previewAddToCollection(value.core, {
       collection: "direct",
       address,
       name: "review",
@@ -622,14 +604,13 @@ test("MGMT-013/015/016/017 expose owner-specific collection operations without U
       intent: { owner: { pointer: "/collections/direct" }, address },
       allowed: true,
     });
-    const missing = await value.core.collections.previewAddMember({
+    const missing = await api.previewAddToCollection(value.core, {
       collection: "missing",
       address,
       name: "review",
     });
     expect(missing.value).toMatchObject({ decision: { kind: "missing" }, allowed: false });
-
-    const removal = await value.core.collections.previewRemoveMember({
+    const removal = await api.previewMembershipRemoval(value.core, {
       collection: "direct",
       name: "review",
     });
@@ -637,7 +618,7 @@ test("MGMT-013/015/016/017 expose owner-specific collection operations without U
       decision: { kind: "direct", owner: { pointer: "/collections/direct/members/review" } },
       disappearing: [{ selector: "direct:review" }],
     });
-    const linked = await value.core.collections.previewRemoveMember({
+    const linked = await api.previewMembershipRemoval(value.core, {
       collection: "linked",
       name: "review",
     });
@@ -645,8 +626,7 @@ test("MGMT-013/015/016/017 expose owner-specific collection operations without U
       decision: { kind: "via-link" },
       linkActions: [{ owner: { pointer: "/collections/linked/links/0" } }],
     });
-
-    const imported = await value.core.collections.previewImportMembers({
+    const imported = await api.previewImport(value.core, {
       from: "direct",
       into: "empty",
       level: "project",
@@ -657,7 +637,7 @@ test("MGMT-013/015/016/017 expose owner-specific collection operations without U
       conflicts: [],
       allowed: true,
     });
-    const reference = await value.core.collections.previewAddReference({
+    const reference = await api.previewAddReference(value.core, {
       collection: "empty",
       name: "docs",
       target: "direct",
@@ -675,7 +655,6 @@ test("MGMT-013/015/016/017 expose owner-specific collection operations without U
     await value.cleanup();
   }
 });
-
 test("MGMT-013/015 reports repository-derived choices and preserves direct alternatives", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -690,7 +669,7 @@ test("MGMT-013/015 reports repository-derived choices and preserves direct alter
   );
   try {
     const address = { source: "local", path: "review" };
-    const composed = await value.core.collections.previewAddMember({
+    const composed = await api.previewAddToCollection(value.core, {
       collection: "acme/skills",
       address,
       name: "review",
@@ -698,7 +677,7 @@ test("MGMT-013/015 reports repository-derived choices and preserves direct alter
     expect(composed.value).toMatchObject({
       decision: { kind: "direct", owner: { pointer: "/collections/acme/skills" } },
     });
-    const via = await value.core.collections.previewRemoveMember({
+    const via = await api.previewMembershipRemoval(value.core, {
       collection: "linked",
       name: "review",
     });
@@ -707,33 +686,32 @@ test("MGMT-013/015 reports repository-derived choices and preserves direct alter
     await value.cleanup();
   }
 });
-
 test("MGMT-012/018/019/026 previews prospective Link graphs with exact retained origins", async () => {
   const value = await fixture();
   try {
     await registerLocalSource(value.core);
-    await value.core.installed.install({ source: "local", paths: ["review"] });
+    await api.installSkills(value.core, { source: "local", paths: ["review"] });
     for (const collection of ["source", "middle", "target"])
-      await value.core.collections.create({ level: "project", collection });
-    await value.core.collections.addMember({
+      await api.createCollection(value.core, { level: "project", collection });
+    await api.addMember(value.core, {
       level: "project",
       collection: "source",
       name: "review",
       address: { source: "local", path: "review" },
     });
-    await value.core.collections.addMember({
+    await api.addMember(value.core, {
       level: "project",
       collection: "target",
       name: "review",
       address: { source: "local", path: "review" },
     });
-    await value.core.collections.setLink({
+    await api.setLink(value.core, {
       level: "project",
       collection: "middle",
       target: "target",
       linked: true,
     });
-    const add = await value.core.collections.previewSetLink({
+    const add = await api.previewLinkChange(value.core, {
       level: "project",
       collection: "source",
       target: "middle",
@@ -764,7 +742,6 @@ test("MGMT-012/018/019/026 previews prospective Link graphs with exact retained 
     await value.cleanup();
   }
 });
-
 test("MGMT-012 reports repository and plural Link paths without a false direct Membership blocker", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -786,7 +763,7 @@ test("MGMT-012 reports repository and plural Link paths without a false direct M
   );
   try {
     await installRemoteReview(value.state);
-    const impact = await value.core.installed.previewUninstall({
+    const impact = await api.previewUninstall(value.core, {
       source: "remote",
       paths: ["review"],
     });
@@ -803,7 +780,6 @@ test("MGMT-012 reports repository and plural Link paths without a false direct M
     await value.cleanup();
   }
 });
-
 test("MGMT-013 distinguishes direct contributed derived and composed Add-to-Collection decisions", async () => {
   const value = await fixture();
   try {
@@ -832,7 +808,7 @@ test("MGMT-013 distinguishes direct contributed derived and composed Add-to-Coll
     const address = { source: "remote", path: "review" };
     expect(
       (
-        await value.core.collections.previewAddMember({
+        await api.previewAddToCollection(value.core, {
           collection: "direct",
           address,
           name: "review",
@@ -841,7 +817,7 @@ test("MGMT-013 distinguishes direct contributed derived and composed Add-to-Coll
     ).toMatchObject({ decision: { kind: "direct" }, allowed: true });
     expect(
       (
-        await value.core.collections.previewAddMember({
+        await api.previewAddToCollection(value.core, {
           collection: "shared/contributed",
           address,
           name: "review",
@@ -850,7 +826,7 @@ test("MGMT-013 distinguishes direct contributed derived and composed Add-to-Coll
     ).toMatchObject({ decision: { kind: "contributed" }, allowed: false });
     expect(
       (
-        await value.core.collections.previewAddMember({
+        await api.previewAddToCollection(value.core, {
           collection: "acme/skills",
           address,
           name: "review",
@@ -861,10 +837,10 @@ test("MGMT-013 distinguishes direct contributed derived and composed Add-to-Coll
       createDirectContribution: { collection: "acme/skills" },
       allowed: false,
     });
-    await value.core.collections.create({ level: "project", collection: "acme/skills" });
+    await api.createCollection(value.core, { level: "project", collection: "acme/skills" });
     expect(
       (
-        await value.core.collections.previewAddMember({
+        await api.previewAddToCollection(value.core, {
           collection: "acme/skills",
           address,
           name: "review",
@@ -875,7 +851,6 @@ test("MGMT-013 distinguishes direct contributed derived and composed Add-to-Coll
     await value.cleanup();
   }
 });
-
 test("MGMT-015 removes only direct Memberships while derived and via-Link origins remain owner actions", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -886,11 +861,11 @@ test("MGMT-015 removes only direct Memberships while derived and via-Link origin
     }),
   );
   try {
-    const direct = await value.core.collections.previewRemoveMember({
+    const direct = await api.previewMembershipRemoval(value.core, {
       collection: "direct",
       name: "review",
     });
-    const linked = await value.core.collections.previewRemoveMember({
+    const linked = await api.previewMembershipRemoval(value.core, {
       collection: "linked",
       name: "review",
     });
@@ -900,7 +875,7 @@ test("MGMT-015 removes only direct Memberships while derived and via-Link origin
       linkActions: [{ owner: { pointer: "/collections/linked/links/0" } }],
       allowed: false,
     });
-    await value.core.collections.removeMember({
+    await api.removeMember(value.core, {
       level: "project",
       collection: "direct",
       name: "review",
@@ -914,7 +889,6 @@ test("MGMT-015 removes only direct Memberships while derived and via-Link origin
     await value.cleanup();
   }
 });
-
 test("MGMT-015 reports repository-derived Membership removal as a producer action", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -932,7 +906,7 @@ test("MGMT-015 reports repository-derived Membership removal as a producer actio
     await installRemoteReview(value.state);
     expect(
       (
-        await value.core.collections.previewRemoveMember({
+        await api.previewMembershipRemoval(value.core, {
           collection: "acme/skills",
           name: "review",
         })
@@ -948,7 +922,6 @@ test("MGMT-015 reports repository-derived Membership removal as a producer actio
     await value.cleanup();
   }
 });
-
 test("MGMT-019 Remove Link reports whole-member fan-out and retained direct alternatives", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -967,7 +940,7 @@ test("MGMT-019 Remove Link reports whole-member fan-out and retained direct alte
     }),
   );
   try {
-    const impact = await value.core.collections.previewSetLink({
+    const impact = await api.previewLinkChange(value.core, {
       level: "project",
       collection: "source",
       target: "target",
@@ -985,7 +958,6 @@ test("MGMT-019 Remove Link reports whole-member fan-out and retained direct alte
     await value.cleanup();
   }
 });
-
 test("MGMT-021 blocks dependent direct removal and refuses contributed or derived removal as direct", async () => {
   const value = await fixture(
     JSON.stringify({
@@ -998,7 +970,7 @@ test("MGMT-021 blocks dependent direct removal and refuses contributed or derive
   try {
     expect(
       (
-        await value.core.collections.previewRemoval({
+        await api.previewCollectionRemoval(value.core, {
           level: "project",
           collection: "direct",
         })
@@ -1006,7 +978,7 @@ test("MGMT-021 blocks dependent direct removal and refuses contributed or derive
     ).toMatchObject({ allowed: false, blockers: [{ reason: "reference" }] });
     expect(
       (
-        await value.core.collections.previewRemoval({
+        await api.previewCollectionRemoval(value.core, {
           level: "local",
           collection: "direct",
         })
@@ -1016,7 +988,6 @@ test("MGMT-021 blocks dependent direct removal and refuses contributed or derive
     await value.cleanup();
   }
 });
-
 test("MGMT-021 refuses contributed and repository-derived Collection removal as direct declarations", async () => {
   const value = await fixture();
   try {
@@ -1040,7 +1011,7 @@ test("MGMT-021 refuses contributed and repository-derived Collection removal as 
     await installRemoteReview(value.state);
     expect(
       (
-        await value.core.collections.previewRemoval({
+        await api.previewCollectionRemoval(value.core, {
           level: "project",
           collection: "shared/team",
         })
@@ -1048,7 +1019,7 @@ test("MGMT-021 refuses contributed and repository-derived Collection removal as 
     ).toMatchObject({ decision: { kind: "contributed" }, allowed: false });
     expect(
       (
-        await value.core.collections.previewRemoval({
+        await api.previewCollectionRemoval(value.core, {
           level: "project",
           collection: "acme/skills",
         })
@@ -1058,14 +1029,13 @@ test("MGMT-021 refuses contributed and repository-derived Collection removal as 
     await value.cleanup();
   }
 });
-
 test("MGMT-033 explicit observations remain caller-owned and absent from declarations and private state", async () => {
   const value = await fixture();
   try {
     await registerLocalSource(value.core);
-    const discovered = await value.core.sources.discover({ source: "local" });
-    await value.core.installed.install({ source: "local", paths: ["review"] });
-    const checked = await value.core.installed.checkUpdate({ source: "local" });
+    const discovered = await api.discoverSkills(value.core, { source: "local" });
+    await api.installSkills(value.core, { source: "local", paths: ["review"] });
+    const checked = await api.checkUpdate(value.core, { source: "local" });
     expect(discovered.value.candidates).toHaveLength(1);
     expect(checked.value.unchanged.map((item) => item.path)).toEqual(["review"]);
     const persisted = `${await readFile(join(value.root, "skill-cli.jsonc"), "utf8")}\n${await readFile(join(value.state, "state.json"), "utf8")}`;
@@ -1075,12 +1045,11 @@ test("MGMT-033 explicit observations remain caller-owned and absent from declara
     await value.cleanup();
   }
 });
-
 test("MGMT-032 management mutations return focused results without an embedded Workspace", async () => {
   const value = await fixture();
   try {
     await registerLocalSource(value.core);
-    const result = await value.core.sources.remove({ source: "local" });
+    const result = await api.removeSource(value.core, { source: "local" });
     expect(result).toEqual({ value: undefined, diagnostics: [] });
     expect("workspace" in result).toBe(false);
   } finally {

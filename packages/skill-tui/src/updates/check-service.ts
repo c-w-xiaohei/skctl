@@ -1,24 +1,11 @@
-import type {
-  InstalledCapability,
-  WorkspaceView,
-  OperationResult,
-  UpdateObservation,
-} from "@skill-cli/core";
+import type { WorkspaceView, UpdateObservation } from "@skill-cli/core";
 import {
   createUpdateCheckCache,
   isFreshUpdateCheck,
   type CachedUpdateCheck,
   type UpdateCheckCache,
 } from "./check-cache";
-
 export type CheckedUpdateObservation = UpdateObservation;
-
-export interface UpdateBaselineCapability {
-  updateBaseline(
-    request: { readonly source: string },
-    options?: { readonly signal?: AbortSignal },
-  ): Promise<OperationResult<string>>;
-}
 
 export type UpdateCheckStatus =
   | "not-checked"
@@ -39,20 +26,18 @@ export interface UpdateCheckActivity {
   readonly phase: "checking" | "paused" | "stopping";
   readonly source: string;
 }
-
 export interface UpdateCheckServiceOptions {
+  readonly environment?: import("@skill-cli/core").CoreOptions;
   readonly cache?: UpdateCheckCache;
   readonly now?: () => number;
   readonly onChange?: (check: SourceUpdateCheck) => void;
   /** Notifies session owners when running/queued/warning facts change. */
   readonly onActivity?: () => void;
 }
-
-type CheckManagement = Pick<InstalledCapability, "checkUpdate"> & UpdateBaselineCapability;
+type CheckManagement = Pick<typeof import("@skill-cli/core"), "checkUpdate" | "getUpdateBaseline">;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const cancelled = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "CANCELLED";
-
 /**
  * Session-owned, serial Source checks. It deliberately has no UI or foreground-lane
  * ownership: callers publish its snapshots into whatever scopes currently exist.
@@ -61,21 +46,30 @@ export function createUpdateCheckService(
   management: CheckManagement,
   options: UpdateCheckServiceOptions = {},
 ) {
+  const environment = options.environment ?? { cwd: process.cwd() };
   const cache = options.cache ?? createUpdateCheckCache();
   const now = options.now ?? Date.now;
   const checks = new Map<string, SourceUpdateCheck>();
-  const pending: { source: string; force: boolean }[] = [];
+  const pending: {
+    source: string;
+    force: boolean;
+  }[] = [];
   const queued = new Set<string>();
   const waiters = new Map<string, (() => void)[]>();
   const preempted = new Set<string>();
-  let running: { source: string; controller: AbortController; stopRequested: boolean } | undefined;
+  let running:
+    | {
+        source: string;
+        controller: AbortController;
+        stopRequested: boolean;
+      }
+    | undefined;
   let stopped = false;
   let paused = false;
   // A late automatic-start hydration must not undo the user's newer Stop.
   let stopVersion = 0;
   let hydration: Promise<readonly CachedUpdateCheck[]> | undefined;
   let cacheWarning: string | undefined;
-
   const publish = (check: SourceUpdateCheck) => {
     checks.set(check.source, check);
     options.onChange?.(check);
@@ -102,7 +96,7 @@ export function createUpdateCheckService(
     }
   };
   const baseline = async (source: string, signal?: AbortSignal) => {
-    return (await management.updateBaseline({ source }, { signal })).value;
+    return (await management.getUpdateBaseline(environment, { source }, { signal })).value;
   };
   const persist = async () => {
     const entries: CachedUpdateCheck[] = [...checks.values()].flatMap((check) =>
@@ -137,6 +131,7 @@ export function createUpdateCheckService(
     publish({ ...checks.get(request.source), source: request.source, status: "checking" });
     try {
       const result = await management.checkUpdate(
+        environment,
         { source: request.source },
         { signal: controller.signal },
       );
@@ -233,7 +228,6 @@ export function createUpdateCheckService(
           error: "Installed Skills changed; check updates again",
         });
   };
-
   return {
     checks: () => [...checks.values()],
     check: (source: string) => checks.get(source),

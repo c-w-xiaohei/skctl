@@ -3,10 +3,9 @@ import { SkillCliError } from "@skill-cli/core";
 import { constants } from "node:os";
 import type { CommandContext } from "../command-context";
 import { skillSelector } from "./arguments";
-
 export function runCommand(
   parent: Command,
-  { core }: CommandContext,
+  { api, environment }: CommandContext,
   setExitCode: (code: number) => void,
 ) {
   return parent
@@ -38,7 +37,8 @@ export function runCommand(
         return { signal, handler };
       });
       try {
-        const value = await core(action).content.run(
+        const value = await api.runSkill(
+          environment(action),
           { selector, argv: [executable, ...args] },
           { signal: controller.signal },
         );

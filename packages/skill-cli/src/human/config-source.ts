@@ -9,8 +9,7 @@ import {
   scopeOptions,
   sourceBinding,
 } from "./shared";
-
-export function configSourceCommand(parent: Command, { core, stdout }: CommandContext) {
+export function configSourceCommand(parent: Command, { api, environment, stdout }: CommandContext) {
   const configs = parent
     .command("config-source")
     .description("Manage reusable Config origins and their adopted declarations.");
@@ -32,7 +31,7 @@ export function configSourceCommand(parent: Command, { core, stdout }: CommandCo
         );
       if (kind !== "local" && flags.ref === undefined)
         throw new SkillCliError("INVALID_ARGUMENT", "Remote Config Source requires --ref");
-      const { value } = await core(action).configSources.register({
+      const { value } = await api.registerConfigSource(environment(action), {
         level: scope(flags)!,
         id,
         binding: sourceBinding(kind, origin, flags),
@@ -43,7 +42,7 @@ export function configSourceCommand(parent: Command, { core, stdout }: CommandCo
     .description("Remove a directly declared Config Source at one scope.")
     .action(async (id, flags, action) => {
       const selectedScope = scope(flags, null);
-      await core(action).configSources.remove({ id, level: selectedScope });
+      await api.removeConfig(environment(action), { id, level: selectedScope });
       stdout.write(
         `Removed config source "${id}"${selectedScope ? ` from ${selectedScope} scope` : ""}.\n`,
       );
@@ -52,7 +51,7 @@ export function configSourceCommand(parent: Command, { core, stdout }: CommandCo
     .command("observe <id>")
     .option("--json")
     .action(async (id, flags, action) => {
-      const { value } = await core(action).configSources.observe({ id });
+      const { value } = await api.observeConfigSource(environment(action), { id });
       stdout.write(
         formatObservation(value, !!flags.json, [
           ...(value.exactRevision ? [`revision ${value.exactRevision}`] : []),
@@ -67,11 +66,11 @@ export function configSourceCommand(parent: Command, { core, stdout }: CommandCo
     .command("adopt <id>")
     .requiredOption("--revision <revision>", "Exact remote commit to adopt.", revision)
     .action(async (id, flags, action) => {
-      await core(action).configSources.adopt({ id, exactRevision: flags.revision });
+      await api.adoptConfigSource(environment(action), { id, exactRevision: flags.revision });
       stdout.write(`Adopted config source "${id}".\n`);
     });
   configs.command("forget <id>").action(async (id, _flags, action) => {
-    await core(action).configSources.forget({ id });
+    await api.forgetConfig(environment(action), { id });
     stdout.write(`Forgot adopted config source "${id}".\n`);
   });
 }

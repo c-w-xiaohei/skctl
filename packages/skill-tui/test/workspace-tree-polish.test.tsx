@@ -18,13 +18,11 @@ import {
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
-
 let setup: Awaited<ReturnType<typeof testRender>> | undefined;
 afterEach(() => {
   setup?.renderer.destroy();
   setup = undefined;
 });
-
 async function arrow(direction: "up" | "down") {
   await new Promise<void>((resolve) => {
     const parsed = () => {
@@ -36,7 +34,6 @@ async function arrow(direction: "up" | "down") {
   });
   await setup!.renderOnce();
 }
-
 function projection() {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("Complete fixture required");
@@ -82,7 +79,6 @@ function projection() {
     },
   };
 }
-
 async function capture(name: string) {
   const directory = process.env.QUIET_UPDATE_CAPTURE_DIR;
   if (!directory) return;
@@ -96,7 +92,6 @@ async function capture(name: string) {
   await setup!.renderOnce();
   await writeFile(join(directory, `${name}.txt`), setup!.captureCharFrame());
 }
-
 async function waitForBody(text: string) {
   const nodes = (node: BaseRenderable): BaseRenderable[] => [
     node,
@@ -136,24 +131,24 @@ async function waitForBody(text: string) {
     throw error;
   }
 }
-
 test("default disclosure is guided and selection reads directly in a stable Reader", async () => {
   const reads: string[] = [];
   setup = await testRender(
     () => (
       <App
         core={directSourceCore(projection(), {
-          installed: {
-            load: async ({ address }) => {
-              reads.push(address.path);
-              return {
-                address,
-                name: address.path,
-                description: "",
-                markdownText: `# ${address.path}\n\nBody: ${address.path}`,
-                rawText: `Body: ${address.path}`,
-              };
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => {
+            reads.push(address.path);
+            return {
+              address,
+              name: address.path,
+              description: "",
+              markdownText: `# ${address.path}\n\nBody: ${address.path}`,
+              rawText: `Body: ${address.path}`,
+            };
           },
         })}
         exit={() => {}}
@@ -222,7 +217,6 @@ test("default disclosure is guided and selection reads directly in a stable Read
   await parsedEscape(setup);
   await setup.waitFor(() => setup!.renderer.currentFocusedRenderable === tree);
 });
-
 test("All Skills Collection tree filters descendants and survives popup clearing and responsive hiding", async () => {
   setup = await testRender(() => <App core={directSourceCore(projection())} exit={() => {}} />, {
     width: 144,
@@ -279,7 +273,6 @@ test("All Skills Collection tree filters descendants and survives popup clearing
   expect(setup.renderer.root.findDescendantById("collection-filter-tree")).toBe(tree);
   expect(browser.options).toHaveLength(2);
 });
-
 test("native Tree scrollbar focus keeps Tree commands and does not select another object", async () => {
   const base = projection();
   const root = base.effective.collectionsView[0]!;
@@ -324,7 +317,6 @@ test("native Tree scrollbar focus keeps Tree commands and does not select anothe
   await setup.waitForFrame((frame) => frame.includes("Enter expand"));
   expect(tree.scrollTop).toBe(0);
 });
-
 test("an incomplete projection offers Problems without suggesting an unrelated Managed mutation", async () => {
   const base = projection();
   const unavailable = {

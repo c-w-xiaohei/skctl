@@ -13,7 +13,6 @@ import {
   collectionFilterPathKey,
   deriveCollectionFilterTree,
 } from "../src/collections/collection-filter-tree";
-
 async function mount(
   width: number,
   height: number,
@@ -28,18 +27,19 @@ async function mount(
     () => (
       <App
         core={directSourceCore(projection, {
-          installed: {
-            load: async ({ address }) => {
-              reads.push(address);
-              const text = "# guide\n\nScoped installed instructions.";
-              return {
-                address,
-                name: "guide",
-                description: "Scoped instructions",
-                rawText: text,
-                markdownText: text,
-              };
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => {
+            reads.push(address);
+            const text = "# guide\n\nScoped installed instructions.";
+            return {
+              address,
+              name: "guide",
+              description: "Scoped instructions",
+              rawText: text,
+              markdownText: text,
+            };
           },
         })}
         exit={() => {}}
@@ -58,7 +58,6 @@ async function mount(
     },
   };
 }
-
 test.each([
   [144, 40],
   [100, 24],
@@ -93,7 +92,6 @@ test.each([
     await mounted.dispose();
   }
 });
-
 test.each([
   [144, 40],
   [100, 24],
@@ -184,7 +182,6 @@ test.each([
     }
   },
 );
-
 test("an open Scope popup follows resize without changing its candidate and outside click restores the trigger", async () => {
   const mounted = await mount(144, 40);
   const { setup } = mounted;
@@ -215,7 +212,6 @@ test("an open Scope popup follows resize without changing its candidate and outs
     await mounted.dispose();
   }
 });
-
 test("search reveals matching nested Collections with their Reference ancestor context", async () => {
   const mounted = await mount(100, 24);
   const { setup } = mounted;
@@ -242,7 +238,6 @@ test("search reveals matching nested Collections with their Reference ancestor c
     await mounted.dispose();
   }
 });
-
 test("Scope popup deactivates the underlying Collection tree and closing does not reclaim tree focus", async () => {
   const mounted = await mount(100, 24);
   const { setup } = mounted;
@@ -262,7 +257,6 @@ test("Scope popup deactivates the underlying Collection tree and closing does no
     await mounted.dispose();
   }
 });
-
 test("Tab reaches bulk tree controls and their arrows stay within that region", async () => {
   const mounted = await mount(100, 24);
   const { setup } = mounted;
@@ -291,7 +285,6 @@ test("Tab reaches bulk tree controls and their arrows stay within that region", 
     await mounted.dispose();
   }
 });
-
 test.each([
   [100, 24],
   [43, 13],
@@ -341,7 +334,6 @@ test.each([
     }
   },
 );
-
 test("cycle termination is explained and Enter can still enter the actual available Collection", async () => {
   const base = collectionsSourcesProjection();
   if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
@@ -381,7 +373,6 @@ test("cycle termination is explained and Enter can still enter the actual availa
     await mounted.dispose();
   }
 });
-
 test("issue Escape returns locally before an existing Reference route predecessor", async () => {
   const base = collectionsSourcesProjection();
   if (base.effective.status !== "complete") throw new Error("Expected complete fixture");

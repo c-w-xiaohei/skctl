@@ -4,11 +4,10 @@ import { DiffRenderable, ScrollBoxRenderable, SelectRenderable } from "@opentui/
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { InstalledCapability, WorkspaceView, UpdatePreview } from "@skill-cli/core";
+import type { WorkspaceView, UpdatePreview } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
-
 const revision = "d".repeat(40);
 const address = { source: "team-main", path: "guide" };
 const preview: UpdatePreview = {
@@ -45,8 +44,11 @@ const preview: UpdatePreview = {
     { path: "image.bin", status: "modified", content: { kind: "unavailable", reason: "binary" } },
   ],
 };
-
-async function mount(width: number, height: number, hook?: InstalledCapability["previewUpdate"]) {
+async function mount(
+  width: number,
+  height: number,
+  hook?: typeof import("@skill-cli/core").previewUpdate,
+) {
   const prior = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/update-preview-");
@@ -67,38 +69,40 @@ async function mount(width: number, height: number, hook?: InstalledCapability["
       problems: [],
     })),
   };
-  const requests: Parameters<InstalledCapability["previewUpdate"]>[0][] = [];
+  const requests: Parameters<typeof import("@skill-cli/core").previewUpdate>[1][] = [];
   const mutations: unknown[] = [];
   const core = directSourceCore(projection, {
-    installed: {
-      checkUpdate: async () => ({
-        value: {
-          source: address.source,
-          kind: "github",
-          exactRevision: revision,
-          baseline: "checked",
-          changed: projection.installedSkills.map((skill) => ({
-            path: skill.address.path,
-            name: skill.name,
-            description: skill.description,
-          })),
-          unchanged: [],
-          removed: [],
-          added: [],
-        },
-        diagnostics: [],
-      }),
-      previewUpdate: async (request, options) => {
-        requests.push(request);
-        return hook ? hook(request, options) : { value: preview, diagnostics: [] };
+    checkUpdate: async () => ({
+      value: {
+        source: address.source,
+        kind: "github",
+        exactRevision: revision,
+        baseline: "checked",
+        changed: projection.installedSkills.map((skill) => ({
+          path: skill.address.path,
+          name: skill.name,
+          description: skill.description,
+        })),
+        unchanged: [],
+        removed: [],
+        added: [],
       },
-      update: async (request) => {
-        mutations.push(request);
-        return { value: undefined, diagnostics: [] };
-      },
-      load: async () => {
-        throw new Error("Updates activation must not open the installed Reader");
-      },
+      diagnostics: [],
+    }),
+    previewUpdate: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request,
+      options,
+    ) => {
+      requests.push(request);
+      return hook ? hook(_environment, request, options) : { value: preview, diagnostics: [] };
+    },
+    updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      mutations.push(request);
+      return { value: undefined, diagnostics: [] };
+    },
+    loadInstalledSkill: async () => {
+      throw new Error("Updates activation must not open the installed Reader");
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
@@ -119,7 +123,6 @@ async function mount(width: number, height: number, hook?: InstalledCapability["
     },
   };
 }
-
 test.each([
   [144, 40],
   [100, 24],
@@ -229,12 +232,12 @@ test.each([
     }
   },
 );
-
 test("leaving a pending preview aborts its read and a late reply cannot replace the next preview", async () => {
   const signals: AbortSignal[] = [];
-  const resolvers: ((value: Awaited<ReturnType<InstalledCapability["previewUpdate"]>>) => void)[] =
-    [];
-  const mounted = await mount(80, 24, async (_request, options) => {
+  const resolvers: ((
+    value: Awaited<ReturnType<typeof import("@skill-cli/core").previewUpdate>>,
+  ) => void)[] = [];
+  const mounted = await mount(80, 24, async (_environment, _request, options) => {
     signals.push(options!.signal!);
     return await new Promise((resolve) => resolvers.push(resolve));
   });
@@ -260,7 +263,6 @@ test("leaving a pending preview aborts its read and a late reply cannot replace 
     await mounted.dispose();
   }
 });
-
 test("preview errors remain readable and Back returns without triggering a recheck or update", async () => {
   const mounted = await mount(80, 24, async () => {
     throw new Error("Installed comparison changed; check updates again");

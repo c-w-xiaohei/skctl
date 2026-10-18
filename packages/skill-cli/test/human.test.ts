@@ -3,9 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMain } from "../src/main";
-import type { SkillCliCore } from "@skill-cli/core";
-
-function core(calls: unknown[]): SkillCliCore {
+import type * as api from "@skill-cli/core";
+function core(calls: unknown[]): Partial<typeof api> {
   const unsupported = async (): Promise<never> => {
     throw new Error("Unsupported Core method in human CLI test fake");
   };
@@ -14,229 +13,227 @@ function core(calls: unknown[]): SkillCliCore {
     diagnostics: [],
   });
   return {
-    workspace: { get: unsupported },
-    collections: {
-      inspect: unsupported,
-      create: async (request) => {
-        calls.push({ method: "create", request });
-        return write(request);
-      },
-      remove: async (request) => {
-        calls.push({ method: "remove", request });
-        return write(request);
-      },
-      addMember: async (request) => {
-        calls.push({ method: "addMember", request });
-        return write(request);
-      },
-      removeMember: async (request) => {
-        calls.push({ method: "removeMember", request });
-        return write(request);
-      },
-      editMembers: async (request) => {
-        calls.push({ method: "editMembers", request });
-        return write(request);
-      },
-      importMembers: async (request) => {
-        calls.push({ method: "importMembers", request });
-        return write(request);
-      },
-      addReference: async (request) => {
-        calls.push({ method: "addReference", request });
-        return write(request);
-      },
-      removeReference: async (request) => {
-        calls.push({ method: "removeReference", request });
-        return write(request);
-      },
-      setLink: async (request) => {
-        calls.push({ method: "setLink", request });
-        return write(request);
-      },
-      previewAddMember: unsupported,
-      previewRemoveMember: unsupported,
-      previewMemberEdit: unsupported,
-      previewImportMembers: unsupported,
-      previewAddReference: unsupported,
-      previewRemoveReference: unsupported,
-      previewSetLink: unsupported,
-      previewRemoval: unsupported,
+    getWorkspace: unsupported,
+    inspectCollection: unsupported,
+    createCollection: async (_environment, request) => {
+      calls.push({ method: "create", request });
+      return write(request);
     },
-    use: {
-      set: async (request) => {
-        calls.push({ method: "use.set", request });
-        return {
-          value: {
-            ...(await write(request)).value,
-            use: { before: [], after: request.collections },
-          },
-          diagnostics: [],
-        };
-      },
-      add: async (request) => {
-        calls.push({ method: "use.add", request });
-        return {
-          value: {
-            ...(await write(request)).value,
-            use: { before: [], after: [request.collection] },
-          },
-          diagnostics: [],
-        };
-      },
-      remove: async (request) => {
-        calls.push({ method: "use.remove", request });
-        return {
-          value: {
-            ...(await write(request)).value,
-            use: { before: [request.collection], after: [] },
-          },
-          diagnostics: [],
-        };
-      },
-      previewSet: unsupported,
+    removeCollection: async (_environment, request) => {
+      calls.push({ method: "remove", request });
+      return write(request);
     },
-    setManagedOpenCode: async (request) => {
+    addMember: async (_environment, request) => {
+      calls.push({ method: "addMember", request });
+      return write(request);
+    },
+    removeMember: async (_environment, request) => {
+      calls.push({ method: "removeMember", request });
+      return write(request);
+    },
+    editMembers: async (_environment, request) => {
+      calls.push({ method: "editMembers", request });
+      return write(request);
+    },
+    importMembers: async (_environment, request) => {
+      calls.push({ method: "importMembers", request });
+      return write(request);
+    },
+    addReference: async (_environment, request) => {
+      calls.push({ method: "addReference", request });
+      return write(request);
+    },
+    removeReference: async (_environment, request) => {
+      calls.push({ method: "removeReference", request });
+      return write(request);
+    },
+    setLink: async (_environment, request) => {
+      calls.push({ method: "setLink", request });
+      return write(request);
+    },
+    previewAddToCollection: unsupported,
+    previewMembershipRemoval: unsupported,
+    previewMembershipBatch: unsupported,
+    previewImport: unsupported,
+    previewAddReference: unsupported,
+    previewRemoveReference: unsupported,
+    previewLinkChange: unsupported,
+    previewCollectionRemoval: unsupported,
+    setUse: async (_environment, request) => {
+      calls.push({ method: "use.set", request });
+      return {
+        value: {
+          ...(await write(request)).value,
+          use: { before: [], after: [...request.collections] },
+        },
+        diagnostics: [],
+      };
+    },
+    addUse: async (_environment, request) => {
+      calls.push({ method: "use.add", request });
+      return {
+        value: {
+          ...(await write(request)).value,
+          use: { before: [], after: [request.collection] },
+        },
+        diagnostics: [],
+      };
+    },
+    removeUse: async (_environment, request) => {
+      calls.push({ method: "use.remove", request });
+      return {
+        value: {
+          ...(await write(request)).value,
+          use: { before: [request.collection], after: [] },
+        },
+        diagnostics: [],
+      };
+    },
+    previewCollectionUse: unsupported,
+    setManagedOpenCode: async (_environment, request) => {
       calls.push({ method: "managed", request });
       return write(request);
     },
-    sources: {
-      register: async (request) => {
-        calls.push(["source.register", request]);
-        return write(request);
-      },
-      discover: async (request) => {
-        calls.push(["discover", request]);
-        return {
-          value: {
-            source: request.source,
-            kind: "git",
-            exactRevision: "a".repeat(40),
-            candidates: [{ path: "review", name: "review", description: "Review" }],
-          },
-          diagnostics: [],
-        };
-      },
-      previewRemoval: unsupported,
-      remove: async (request) => {
-        calls.push(["removeSource", request]);
-        return { value: undefined, diagnostics: [] };
-      },
+    registerSource: async (_environment, request) => {
+      calls.push(["source.register", request]);
+      return write(request);
     },
-    configSources: {
-      register: async (request) => {
-        calls.push(["configSources.register", request]);
-        return write(request);
-      },
-      observe: async (request) => ({
+    discoverSkills: async (_environment, request) => {
+      calls.push(["discover", request]);
+      return {
         value: {
-          id: request.id,
+          source: request.source,
           kind: "git",
           exactRevision: "a".repeat(40),
-          contributions: { sources: [], collections: [] },
+          candidates: [{ path: "review", name: "review", description: "Review" }],
         },
         diagnostics: [],
-      }),
-      adopt: async (request) => {
-        calls.push(["adoptConfig", request]);
-        return { value: undefined, diagnostics: [] };
-      },
-      previewAdoption: unsupported,
-      forget: async (request) => {
-        calls.push(["forgetConfig", request]);
-        return { value: undefined, diagnostics: [] };
-      },
-      previewForget: unsupported,
-      remove: async (request) => {
-        calls.push(["removeConfig", request]);
-        return { value: undefined, diagnostics: [] };
-      },
-      previewRemoval: unsupported,
+      };
     },
-    installed: {
-      install: async (request) => {
-        calls.push(["install", request]);
-        return {
-          value: [{ path: "review", name: "review", description: "Review" }],
-          diagnostics: [],
-        };
-      },
-      uninstall: async (request) => {
-        calls.push(["uninstall", request]);
-        return { value: undefined, diagnostics: [] };
-      },
-      previewUninstall: unsupported,
-      rebind: async (request) => {
-        calls.push(["rebind", request]);
-        return { value: undefined, diagnostics: [] };
-      },
-      previewRebind: unsupported,
-      checkUpdate: async (request) => {
-        calls.push(["check", request]);
-        return {
-          value: {
-            source: request.source,
-            kind: "git",
-            baseline: "fixture-baseline",
-            exactRevision: "a".repeat(40),
-            changed: [{ path: "changed", name: "changed", description: "Changed" }],
-            added: [{ path: "added", name: "added", description: "Added" }],
-            removed: [{ path: "removed", name: "removed", description: "Removed" }],
-            unchanged: [{ path: "unchanged", name: "unchanged", description: "Unchanged" }],
-          },
-          diagnostics: [],
-        };
-      },
-      previewUpdate: unsupported,
-      updateBaseline: async () => ({ value: "fixture-baseline" as never, diagnostics: [] }),
-      update: async (request) => {
-        calls.push(["update", request]);
-        return { value: undefined, diagnostics: [] };
-      },
-      load: async () => ({}) as never,
-      listResources: async () => [],
-      read: async () => ({}) as never,
+    previewSourceRemoval: unsupported,
+    removeSource: async (_environment, request) => {
+      calls.push(["removeSource", request]);
+      return { value: undefined, diagnostics: [] };
     },
+    registerConfigSource: async (_environment, request) => {
+      calls.push(["configSources.register", request]);
+      return write(request);
+    },
+    observeConfigSource: async (_environment, request) => ({
+      value: {
+        id: request.id,
+        kind: "git",
+        exactRevision: "a".repeat(40),
+        contributions: { sources: [], collections: [] },
+      },
+      diagnostics: [],
+    }),
+    adoptConfigSource: async (_environment, request) => {
+      calls.push(["adoptConfig", request]);
+      return { value: undefined, diagnostics: [] };
+    },
+    previewConfigAdoption: unsupported,
+    forgetConfig: async (_environment, request) => {
+      calls.push(["forgetConfig", request]);
+      return { value: undefined, diagnostics: [] };
+    },
+    previewConfigForget: unsupported,
+    removeConfig: async (_environment, request) => {
+      calls.push(["removeConfig", request]);
+      return { value: undefined, diagnostics: [] };
+    },
+    previewConfigRemoval: unsupported,
+    installSkills: async (_environment, request) => {
+      calls.push(["install", request]);
+      return {
+        value: [{ path: "review", name: "review", description: "Review" }],
+        diagnostics: [],
+      };
+    },
+    uninstallSkills: async (_environment, request) => {
+      calls.push(["uninstall", request]);
+      return { value: undefined, diagnostics: [] };
+    },
+    previewUninstall: unsupported,
+    rebindSkill: async (_environment, request) => {
+      calls.push(["rebind", request]);
+      return { value: undefined, diagnostics: [] };
+    },
+    previewRebind: unsupported,
+    checkUpdate: async (_environment, request) => {
+      calls.push(["check", request]);
+      return {
+        value: {
+          source: request.source,
+          kind: "git",
+          baseline: "fixture-baseline",
+          exactRevision: "a".repeat(40),
+          changed: [{ path: "changed", name: "changed", description: "Changed" }],
+          added: [{ path: "added", name: "added", description: "Added" }],
+          removed: [{ path: "removed", name: "removed", description: "Removed" }],
+          unchanged: [{ path: "unchanged", name: "unchanged", description: "Unchanged" }],
+        },
+        diagnostics: [],
+      };
+    },
+    previewUpdate: unsupported,
+    getUpdateBaseline: async (_environment) => ({
+      value: "fixture-baseline" as never,
+      diagnostics: [],
+    }),
+    updateSkills: async (_environment, request) => {
+      calls.push(["update", request]);
+      return { value: undefined, diagnostics: [] };
+    },
+    loadInstalledSkill: async (_environment) => ({}) as never,
+    listInstalledResources: async (_environment) => [],
+    readInstalledResource: async (_environment) => ({}) as never,
     gc: async () => {
       calls.push(["gc"]);
       return { value: undefined, diagnostics: [] };
     },
-    catalog: {
-      browse: async () => ({ value: {} as never, diagnostics: [] }),
-      search: async () => ({ value: { results: [], truncated: false }, diagnostics: [] }),
+    browseCatalog: async (_environment) => ({ value: {} as never, diagnostics: [] }),
+    searchSkills: async (_environment) => ({
+      value: { results: [], truncated: false },
+      diagnostics: [],
+    }),
+    loadSkill: async (_environment, request) => {
+      calls.push(["load", request]);
+      return {
+        selector: request.selector,
+        name: "review",
+        description: "Review a change",
+        path: "SKILL.md",
+        text: "# Review\n",
+        provenance: {
+          source: "workspace",
+          origin: "local",
+          stability: "mutable-local",
+        },
+      };
     },
-    content: {
-      load: async (request) => {
-        calls.push(["load", request]);
-        return {
-          selector: request.selector,
-          name: "review",
-          description: "Review a change",
-          path: "SKILL.md",
-          text: "# Review\n",
-          provenance: {
-            source: "workspace",
-            origin: "local",
-            stability: "mutable-local",
-          },
-        };
-      },
-      read: async () => ({}) as never,
-      download: async () => ({}) as never,
-      run: async (request) => {
-        calls.push(["run", request]);
-        return { selector: request.selector, exitCode: 1, signal: null, cancelled: false };
-      },
+    readResource: async (_environment) => ({}) as never,
+    downloadResource: async (_environment) => ({}) as never,
+    runSkill: async (_environment, request) => {
+      calls.push(["run", request]);
+      return { selector: request.selector, exitCode: 1, signal: null, cancelled: false };
     },
   };
 }
-
 test("CLI-001/PROJ-023 maps finalized source and management commands through Core", async () => {
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
-    createCore: (context: { cwd: string; project?: string }) => {
-      expect(context).toEqual({ cwd: "/tmp", project: "/workspace" });
-      return core(calls);
+    api: {
+      ...core(calls),
+      registerSource: async (environment: api.CoreOptions, request: api.RegisterSourceRequest) => {
+        expect(environment).toEqual({ cwd: "/tmp", project: "/workspace" });
+        calls.push(["source.register", request]);
+        return {
+          value: { level: request.level, file: `/tmp/${request.level}.jsonc`, changed: true },
+          diagnostics: [],
+        };
+      },
     },
     stdout: { write() {} },
     stderr: { write() {} },
@@ -282,14 +279,20 @@ test("CLI-001/PROJ-023 maps finalized source and management commands through Cor
     ["uninstall", { source: "local", paths: ["review"] }],
   ]);
 });
-
 test("CLI-001 maps collection, use, managed, and content commands through named APIs", async () => {
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
-    createCore: (context: { cwd: string; project?: string }) => {
-      expect(context).toEqual({ cwd: "/tmp", project: "/workspace" });
-      return core(calls);
+    api: {
+      ...core(calls),
+      registerSource: async (environment: api.CoreOptions, request: api.RegisterSourceRequest) => {
+        expect(environment).toEqual({ cwd: "/tmp", project: "/workspace" });
+        calls.push(["source.register", request]);
+        return {
+          value: { level: request.level, file: `/tmp/${request.level}.jsonc`, changed: true },
+          diagnostics: [],
+        };
+      },
     },
     stdout: { write() {} },
     stderr: { write() {} },
@@ -371,27 +374,22 @@ test("CLI-001 maps collection, use, managed, and content commands through named 
   expect(calls).toContainEqual(["run", { selector: "engineering:review", argv: ["true"] }]);
   expect(await runMain(["profile", "set", "x"], options)).toBe(2);
 });
-
 test("MGMT-031 maps scoped Config Source removal through configSources", async () => {
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
-    createCore: () => core(calls),
+    api: core(calls),
     stdout: { write() {} },
     stderr: { write() {} },
   };
   expect(await runMain(["config-source", "remove", "module", "-g"], options)).toBe(0);
   expect(calls).toEqual([["removeConfig", { id: "module", level: "global" }]]);
 });
-
 test("MGMT-001 and MGMT-027 reject unknown Config levels before any Core call", async () => {
-  let created = 0;
+  const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
-    createCore: () => {
-      created += 1;
-      return core([]);
-    },
+    api: core(calls),
     stdout: { write() {} },
     stderr: { write() {} },
   };
@@ -400,9 +398,8 @@ test("MGMT-001 and MGMT-027 reject unknown Config levels before any Core call", 
     ["managed", "unset", "--level", "user"],
   ])
     expect(await runMain(argv, options)).toBe(2);
-  expect(created).toBe(0);
+  expect(calls).toEqual([]);
 });
-
 test("MGMT-001 real human Source registration writes only exact Global Project and Local targets", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-human-source-levels-"));
   const xdg = join(root, "xdg");
@@ -442,7 +439,6 @@ test("MGMT-001 real human Source registration writes only exact Global Project a
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-006/007/023 human observations emit deterministic exact-revision lines and equivalent JSON", async () => {
   const calls: unknown[] = [];
   const run = async (argv: string[]) => {
@@ -450,7 +446,7 @@ test("MGMT-006/007/023 human observations emit deterministic exact-revision line
     expect(
       await runMain(argv, {
         cwd: "/tmp",
-        createCore: () => core(calls),
+        api: core(calls),
         stdout: { write: (value) => output.push(String(value)) },
         stderr: { write() {} },
       }),
@@ -480,12 +476,11 @@ test("MGMT-006/007/023 human observations emit deterministic exact-revision line
     `revision ${"a".repeat(40)}\nconfig-source remote\n`,
   );
 });
-
 test("MGMT-034 rejects malformed exact revisions before any apply Core call", async () => {
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
-    createCore: () => core(calls),
+    api: core(calls),
     stdout: { write() {} },
     stderr: { write() {} },
   };
@@ -498,7 +493,6 @@ test("MGMT-034 rejects malformed exact revisions before any apply Core call", as
     expect(await runMain(argv, options)).toBe(2);
   expect(calls).toEqual([]);
 });
-
 test("human help is written to stdout and succeeds without an error", async () => {
   for (const argv of [["--help"], ["help"], ["help", "source"], ["source", "register", "--help"]]) {
     const stdout: string[] = [];
@@ -518,7 +512,6 @@ test("human help is written to stdout and succeeds without an error", async () =
     expect(stderr.join("")).toBe("");
   }
 });
-
 test("source, config-source, install, and global use help explain the remote workflow", async () => {
   const help = async (argv: string[]) => {
     const stdout: string[] = [];
@@ -541,14 +534,13 @@ test("source, config-source, install, and global use help explain the remote wor
   expect(await help(["install", "--help"])).toContain("exact 40-hex commit");
   expect(await help(["use", "add", "--help"])).toContain("use add <owner/repository> -g");
 });
-
 test("use Help names declaration scope and accepts --scope as the primary option", async () => {
   const stdout: string[] = [];
   const stderr: string[] = [];
   expect(
     await runMain(["use", "add", "catalog", "--scope", "global"], {
       cwd: "/tmp",
-      createCore: () => core([]),
+      api: core([]),
       stdout: { write: (value) => stdout.push(String(value)) },
       stderr: { write: (value) => stderr.push(String(value)) },
     }),
@@ -564,12 +556,11 @@ test("use Help names declaration scope and accepts --scope as the primary option
   expect(stdout.join("")).toContain("direct catalog root");
   expect(stderr.join("")).toBe("");
 });
-
 test("declaration commands accept --level and -g/-p/-l as equivalent scope selectors", async () => {
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
-    createCore: () => core(calls),
+    api: core(calls),
     stdout: { write() {} },
     stderr: { write() {} },
   };
@@ -590,17 +581,15 @@ test("declaration commands accept --level and -g/-p/-l as equivalent scope selec
     await runMain(["collection", "create", "ambiguous", "-g", "--level", "local"], options),
   ).toBe(2);
 });
-
 test("human mutations describe their completed action, level, target file, and installed skills", async () => {
   const calls: unknown[] = [];
   const output: string[] = [];
   const options = {
     cwd: "/tmp",
-    createCore: () => core(calls),
+    api: core(calls),
     stdout: { write: (value: string) => output.push(value) },
     stderr: { write() {} },
   };
-
   expect(
     await runMain(
       ["source", "register", "local", "workspace", "./skills", "--level", "local"],
@@ -618,7 +607,6 @@ test("human mutations describe their completed action, level, target file, and i
   expect(
     await runMain(["install", "workspace", "review", "--revision", "a".repeat(40)], options),
   ).toBe(0);
-
   expect(output.join("")).toContain(
     'Registered source "workspace" at local level in /tmp/local.jsonc.',
   );
@@ -640,12 +628,11 @@ test("human mutations describe their completed action, level, target file, and i
     { source: "workspace", paths: ["review"], exactRevision: "a".repeat(40) },
   ]);
 });
-
 test("collection inspect labels configuration preview separately from disclosure", async () => {
   const output: string[] = [];
   const calls: unknown[] = [];
   const fake = core(calls);
-  fake.collections.inspect = async (request) => {
+  fake.inspectCollection = async (_environment, request) => {
     calls.push({ method: "inspect", request });
     return {
       value: {
@@ -663,7 +650,7 @@ test("collection inspect labels configuration preview separately from disclosure
   expect(
     await runMain(["collection", "inspect", "child", "--json"], {
       cwd: "/tmp",
-      createCore: () => fake,
+      api: fake,
       stdout: { write: (value) => output.push(String(value)) },
       stderr: { write() {} },
     }),
@@ -677,7 +664,7 @@ test("collection inspect labels configuration preview separately from disclosure
   expect(
     await runMain(["collection", "inspect", "child", "--scope", "global", "--json"], {
       cwd: "/tmp",
-      createCore: () => fake,
+      api: fake,
       stdout: { write: (value) => output.push(String(value)) },
       stderr: { write() {} },
     }),
@@ -687,22 +674,20 @@ test("collection inspect labels configuration preview separately from disclosure
     request: { collection: "child", level: "global" },
   });
 });
-
 test("human mutations report no-op configuration writes and affected update paths", async () => {
   const calls: unknown[] = [];
   const output: string[] = [];
   const fake = core(calls);
-  fake.setManagedOpenCode = async (request) => ({
+  fake.setManagedOpenCode = async (_environment, request) => ({
     value: { changed: false, level: request.level, file: "/tmp/project.jsonc" },
     diagnostics: [],
   });
   const options = {
     cwd: "/tmp",
-    createCore: () => fake,
+    api: fake,
     stdout: { write: (value: string) => output.push(value) },
     stderr: { write() {} },
   };
-
   expect(await runMain(["managed", "set"], options)).toBe(0);
   expect(
     await runMain(
@@ -710,7 +695,6 @@ test("human mutations report no-op configuration writes and affected update path
       options,
     ),
   ).toBe(0);
-
   expect(output.join("")).toContain(
     "No configuration changes were needed at project level in /tmp/project.jsonc.",
   );
@@ -718,37 +702,34 @@ test("human mutations report no-op configuration writes and affected update path
     'Updated skills from source "workspace": review, docs; removed: old, legacy.',
   );
 });
-
 test("human init, repair, and content commands report actual results", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-human-output-"));
   const calls: unknown[] = [];
   const output: string[] = [];
-  const fake: SkillCliCore = {
+  const fake: Partial<typeof api> = {
     ...core(calls),
-    workspace: {
-      get: async () => ({
-        value: {
-          project: { root, resolution: "explicit" },
-          configs: [],
-          effective: {
-            status: "complete",
-            sources: [],
-            collections: [],
-            use: [],
-            managed: false,
-            collectionsView: [],
-            agent: { status: "unavailable", integration: [], use: [], reasons: [], catalog: [] },
-          },
-          installedSkills: [],
-          diagnostics: [],
+    getWorkspace: async (_environment) => ({
+      value: {
+        project: { root, resolution: "explicit" },
+        configs: [],
+        effective: {
+          status: "complete",
+          sources: [],
+          collections: [],
+          use: [],
+          managed: false,
+          collectionsView: [],
+          agent: { status: "unavailable", integration: [], use: [], reasons: [], catalog: [] },
         },
+        installedSkills: [],
         diagnostics: [],
-      }),
-    },
+      },
+      diagnostics: [],
+    }),
   };
   const options = {
     cwd: root,
-    createCore: () => fake,
+    api: fake,
     stdout: { write: (value: string) => output.push(value) },
     stderr: { write() {} },
   };
@@ -757,7 +738,6 @@ test("human init, repair, and content commands report actual results", async () 
     expect(await runMain(["repair"], options)).toBe(0);
     expect(await runMain(["content", "load", "engineering:review"], options)).toBe(0);
     expect(await runMain(["content", "run", "engineering:review", "--", "false"], options)).toBe(0);
-
     expect(output.join("")).toContain(
       `Initialized configuration at ${join(root, "nested", "skill-cli.local.jsonc")}.`,
     );
@@ -771,7 +751,6 @@ test("human init, repair, and content commands report actual results", async () 
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("init reports an existing configuration without claiming to validate or change it", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-human-init-existing-"));
   const file = join(root, "skill-cli.jsonc");
@@ -794,7 +773,6 @@ test("init reports an existing configuration without claiming to validate or cha
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("init rejects directories and symlinks without changing their targets", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-human-init-non-file-"));
   const file = join(root, "skill-cli.jsonc");
@@ -814,7 +792,6 @@ test("init rejects directories and symlinks without changing their targets", asy
     expect(directoryErrors.join("")).toBe(
       `INVALID_ARGUMENT: Configuration path is not an ordinary file: ${file}\n`,
     );
-
     await rm(file, { recursive: true });
     await writeFile(target, "unvalidated\n");
     await symlink(target, file);
@@ -836,7 +813,6 @@ test("init rejects directories and symlinks without changing their targets", asy
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("human errors do not treat application errors as Commander help", async () => {
   for (const error of [
     { code: "commander.help", exitCode: 0, message: "application failure" },
@@ -851,7 +827,7 @@ test("human errors do not treat application errors as Commander help", async () 
     expect(
       await runMain(["managed", "set"], {
         cwd: "/tmp",
-        createCore: () => fake,
+        api: fake,
         stdout: { write: (value) => stdout.push(String(value)) },
         stderr: { write: (value) => stderr.push(String(value)) },
       }),
@@ -860,12 +836,11 @@ test("human errors do not treat application errors as Commander help", async () 
     expect(stderr.join("")).toStartWith("INVALID_ARGUMENT:");
   }
 });
-
 test("content load preserves its body exactly after a metadata separator", async () => {
   const output: string[] = [];
   const fake = core([]);
   const text = "line one  \nline two\n\n  ";
-  fake.content.load = async (request) => ({
+  fake.loadSkill = async (_environment, request) => ({
     selector: request.selector,
     name: "review",
     description: "Review a change",
@@ -876,7 +851,7 @@ test("content load preserves its body exactly after a metadata separator", async
   expect(
     await runMain(["content", "load", "engineering:review"], {
       cwd: "/tmp",
-      createCore: () => fake,
+      api: fake,
       stdout: { write: (value) => output.push(String(value)) },
       stderr: { write() {} },
     }),
@@ -884,7 +859,6 @@ test("content load preserves its body exactly after a metadata separator", async
   expect(output.join("")).toContain("source workspace\n---\n");
   expect(output.join("")).toEndWith(text);
 });
-
 test("content run reports signal and cancellation results", async () => {
   const output: string[] = [];
   const fake = core([]);
@@ -892,10 +866,10 @@ test("content run reports signal and cancellation results", async () => {
     { selector: "engineering:review", exitCode: null, signal: "SIGTERM", cancelled: false },
     { selector: "engineering:review", exitCode: null, signal: null, cancelled: true },
   ];
-  fake.content.run = async () => results.shift()!;
+  fake.runSkill = async () => results.shift()!;
   const options = {
     cwd: "/tmp",
-    createCore: () => fake,
+    api: fake,
     stdout: { write: (value: string) => output.push(value) },
     stderr: { write() {} },
   };

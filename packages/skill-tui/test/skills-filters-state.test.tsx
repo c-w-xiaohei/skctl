@@ -14,9 +14,7 @@ import {
   selectedReaderTab,
 } from "./reader-test-controls";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
-
 function projection(): WorkspaceView {
   const base = readerProjection();
   const [guide, reference] = base.installedSkills;
@@ -83,25 +81,21 @@ function projection(): WorkspaceView {
     ],
   };
 }
-
 async function key(setup: Setup, name: string, shift = false) {
   if (name === "ENTER") setup.mockInput.pressEnter();
   else if (name === "ARROW_DOWN") setup.mockInput.pressArrow("down");
   else setup.mockInput.pressKey(name, shift ? { shift: true } : undefined);
   await setup.renderOnce();
 }
-
 async function type(setup: Setup, value: string) {
   for (const character of value.toLocaleLowerCase()) await key(setup, character);
 }
-
 async function click(setup: Setup, id: string) {
   const target = setup.renderer.root.findDescendantById(id);
   expect(target).toBeDefined();
   await setup.mockMouse.click(target!.screenX + 1, target!.screenY);
   await setup.renderOnce();
 }
-
 async function clickFilterOption(
   setup: Setup,
   id: "skills-filter-dimensions" | "skills-filter-values",
@@ -118,7 +112,6 @@ async function clickFilterOption(
   await setup.mockMouse.click(select.screenX + 1, select.screenY + index);
   await setup.renderOnce();
 }
-
 async function clearFilterWithKeyboard(setup: Setup, id: string) {
   const target = setup.renderer.root.findDescendantById(id);
   expect(target).toBeDefined();
@@ -136,7 +129,6 @@ async function clearFilterWithKeyboard(setup: Setup, id: string) {
   await parsedEnter(setup);
   await setup.waitFor(() => setup.renderer.root.findDescendantById(id) === undefined);
 }
-
 async function parsedEscape(setup: Setup) {
   await new Promise<void>((resolve) => {
     const onKeypress = (event: { readonly name: string }) => {
@@ -150,7 +142,6 @@ async function parsedEscape(setup: Setup) {
   });
   await setup.renderOnce();
 }
-
 async function parsedEnter(setup: Setup) {
   await new Promise<void>((resolve) => {
     const onKeypress = (event: { readonly name: string }) => {
@@ -164,7 +155,6 @@ async function parsedEnter(setup: Setup) {
   await new Promise<void>((resolve) => setImmediate(resolve));
   await setup.renderOnce();
 }
-
 async function chooseFilter(setup: Setup, dimension: string, value: string) {
   await focusAllInstalledSkills(setup);
   const query = setup.renderer.root.findDescendantById("skills-query")!;
@@ -192,7 +182,6 @@ async function chooseFilter(setup: Setup, dimension: string, value: string) {
   browser.focus();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
 }
-
 async function focusAllInstalledSkills(setup: Setup) {
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills"),
@@ -210,7 +199,6 @@ async function focusAllInstalledSkills(setup: Setup) {
   browser.focus();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
 }
-
 async function query(setup: Setup, value: string) {
   await focusAllInstalledSkills(setup);
   const query = setup.renderer.root.findDescendantById("skills-query")!;
@@ -218,13 +206,11 @@ async function query(setup: Setup, value: string) {
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === query);
   await type(setup, value);
 }
-
 function filterChipIds(setup: Setup): readonly string[] {
   return ["Collection", "Source", "Config", "Problems"].flatMap((dimension) =>
     setup.renderer.root.findDescendantById(`clear-skills-filter-${dimension}`) ? [dimension] : [],
   );
 }
-
 test("STATE-012 RENDER Skills compose query and dimensions, clear one physically, then clear all", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
@@ -245,10 +231,8 @@ test("STATE-012 RENDER Skills compose query and dimensions, clear one physically
       "reference",
     );
     expect(filterChipIds(setup)).toEqual(["Source"]);
-
     await clearFilterWithKeyboard(setup, "clear-skills-filter-Source");
     expect(filterChipIds(setup)).toEqual([]);
-
     await chooseFilter(setup, "Source", "team-main-extra");
     await click(setup, "clear-all-skills-filters");
     await setup.waitForFrame((frame) => frame.includes("Installed Skills 3/3"));
@@ -261,7 +245,6 @@ test("STATE-012 RENDER Skills compose query and dimensions, clear one physically
     setup.renderer.destroy();
   }
 });
-
 test("STATE-012 RENDER Skills toolbar discloses the active filter count", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
@@ -276,7 +259,6 @@ test("STATE-012 RENDER Skills toolbar discloses the active filter count", async 
     setup.renderer.destroy();
   }
 });
-
 test("STATE-012 source view remains the bounding context after Clear all", () => {
   const workspace = createWorkspaceState();
   workspace.showInstalledSkillsFromSource("team-main");
@@ -289,7 +271,6 @@ test("STATE-012 source view remains the bounding context after Clear all", () =>
     filters: {},
   });
 });
-
 test("STATE-012 accepted refresh to empty while a filter is active clears Skill selection", () => {
   const current = projection();
   const workspace = createWorkspaceState();
@@ -298,18 +279,18 @@ test("STATE-012 accepted refresh to empty while a filter is active clears Skill 
   workspace.reconcile(current, { ...current, installedSkills: [] });
   expect(workspace.selectedSkill()).toBeUndefined();
 });
-
 test("STATE-004 RENDER empty filtering clears action context and destination return retains local filters", async () => {
   const loads: string[] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(projection(), {
-          installed: {
-            load: async ({ address }) => {
-              loads.push(address.path);
-              return readerContent;
-            },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => {
+            loads.push(address.path);
+            return readerContent;
           },
         })}
         exit={() => {}}
@@ -335,7 +316,6 @@ test("STATE-004 RENDER empty filtering clears action context and destination ret
     setup.renderer.destroy();
   }
 });
-
 const refreshedProblemsTest = async () => {
   const base = projection();
   const initial: WorkspaceView = {
@@ -387,40 +367,41 @@ const refreshedProblemsTest = async () => {
     () => (
       <App
         core={directSourceCore(current, {
-          workspace: { get: async () => ({ value: current, diagnostics: [] }) },
-          installed: {
-            checkUpdate: async (request) => {
-              checkedSources.push(request.source);
-              return {
-                value: {
-                  source: request.source,
-                  kind: "github",
-                  changed: [{ path: "guide", name: "guide", description: "Refresh guide" }],
-                  added: [],
-                  removed: [],
-                  unchanged: [],
-                  baseline: "baseline:test",
-                },
-                diagnostics: [],
-              };
-            },
-            update: async (request) => {
-              updates.push(request);
-              current = refreshed;
-              return { value: undefined, diagnostics: [] };
-            },
-            load: async ({ address }) => {
-              loads.push(address.path);
-              return address.path === "reference"
-                ? {
-                    ...readerContent,
-                    address,
-                    name: "reference",
-                    rawText: "---\ntitle: Reference\n---\n# Reference\n",
-                    markdownText: "# Reference\n",
-                  }
-                : readerContent;
-            },
+          getWorkspace: async () => ({ value: current, diagnostics: [] }),
+          checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+            checkedSources.push(request.source);
+            return {
+              value: {
+                source: request.source,
+                kind: "github",
+                changed: [{ path: "guide", name: "guide", description: "Refresh guide" }],
+                added: [],
+                removed: [],
+                unchanged: [],
+                baseline: "baseline:test",
+              },
+              diagnostics: [],
+            };
+          },
+          updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+            updates.push(request);
+            current = refreshed;
+            return { value: undefined, diagnostics: [] };
+          },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => {
+            loads.push(address.path);
+            return address.path === "reference"
+              ? {
+                  ...readerContent,
+                  address,
+                  name: "reference",
+                  rawText: "---\ntitle: Reference\n---\n# Reference\n",
+                  markdownText: "# Reference\n",
+                }
+              : readerContent;
           },
         })}
         exit={() => {}}
@@ -436,7 +417,6 @@ const refreshedProblemsTest = async () => {
         `Problems filter did not apply; focus=${setup.renderer.currentFocusedRenderable?.id}\n${setup.captureCharFrame()}`,
       );
     await setup.waitForFrame((frame) => frame.includes("Installed Skills 1/2"));
-
     await enterInstalledAddress(setup, { source: "team-main", path: "guide" });
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
@@ -477,7 +457,6 @@ const refreshedProblemsTest = async () => {
     await enterLive(setup, "source-operation-submit");
     await setup.waitFor(() => updates.length === 1);
     await setup.waitForFrame((frame) => frame.includes("Address  team-main-extra/reference"));
-
     expect(updates).toEqual([{ source: "team-main", paths: ["guide"] }]);
     expect(loads).toEqual(["guide", "reference"]);
     expect(setup.captureCharFrame()).toContain("Address  team-main-extra/reference");
@@ -504,7 +483,6 @@ const refreshedProblemsTest = async () => {
     setup.renderer.destroy();
   }
 };
-
 test("STATE-005 RENDER resize retains filters and never leaves unmounted clear focus", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
@@ -552,7 +530,6 @@ test("STATE-005 RENDER resize retains filters and never leaves unmounted clear f
     setup.renderer.destroy();
   }
 });
-
 test("STATE-012 RENDER local filtering makes no workspace, provider, or management calls", async () => {
   const calls = {
     workspace: 0,
@@ -563,49 +540,43 @@ test("STATE-012 RENDER local filtering makes no workspace, provider, or manageme
     remove: 0,
   };
   const core: TuiCore = directSourceCore(projection(), {
-    workspace: {
-      get: async () => {
-        calls.workspace++;
-        return { value: projection(), diagnostics: [] };
-      },
+    getWorkspace: async () => {
+      calls.workspace++;
+      return { value: projection(), diagnostics: [] };
     },
-    sources: {
-      discover: async (request) => {
-        calls.discover++;
-        return {
-          value: { source: request.source, kind: "github", candidates: [] },
-          diagnostics: [],
-        };
-      },
-      remove: async () => {
-        calls.remove++;
-        return { value: undefined, diagnostics: [] };
-      },
+    discoverSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      calls.discover++;
+      return {
+        value: { source: request.source, kind: "github", candidates: [] },
+        diagnostics: [],
+      };
     },
-    installed: {
-      checkUpdate: async (request) => {
-        calls.checkUpdate++;
-        return {
-          value: {
-            source: request.source,
-            kind: "github",
-            changed: [],
-            added: [],
-            removed: [],
-            unchanged: [],
-            baseline: "baseline:test",
-          },
-          diagnostics: [],
-        };
-      },
-      install: async () => {
-        calls.install++;
-        return { value: [], diagnostics: [] };
-      },
-      update: async () => {
-        calls.update++;
-        return { value: undefined, diagnostics: [] };
-      },
+    removeSource: async () => {
+      calls.remove++;
+      return { value: undefined, diagnostics: [] };
+    },
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      calls.checkUpdate++;
+      return {
+        value: {
+          source: request.source,
+          kind: "github",
+          changed: [],
+          added: [],
+          removed: [],
+          unchanged: [],
+          baseline: "baseline:test",
+        },
+        diagnostics: [],
+      };
+    },
+    installSkills: async () => {
+      calls.install++;
+      return { value: [], diagnostics: [] };
+    },
+    updateSkills: async () => {
+      calls.update++;
+      return { value: undefined, diagnostics: [] };
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -633,7 +604,6 @@ test("STATE-012 RENDER local filtering makes no workspace, provider, or manageme
     setup.renderer.destroy();
   }
 });
-
 test(
   "STATE-012 RENDER refreshed Problems membership reselects the visible Skill and its Reader actions",
   refreshedProblemsTest,

@@ -1,3 +1,4 @@
+import * as api from "@skill-cli/core";
 import {
   createCliRenderer,
   InputRenderable,
@@ -16,12 +17,7 @@ import {
   Show,
   untrack,
 } from "solid-js";
-import type {
-  ConfigSourceObservation,
-  ConfigSourceImpact,
-  WorkspaceView,
-  SkillCliCore,
-} from "@skill-cli/core";
+import type { ConfigSourceObservation, ConfigSourceImpact, WorkspaceView } from "@skill-cli/core";
 import type { SkillAddress } from "@skill-cli/core";
 import {
   actionIntent,
@@ -129,13 +125,11 @@ import {
   useModalControl,
   useModalControls,
 } from "./modal-controls";
-
 const topOptions = () =>
   destinations.map((value) => ({
     label: value === "workspace" ? "Workspace" : value[0]!.toUpperCase() + value.slice(1),
     value,
   }));
-
 /** Context is chosen explicitly; moving through the menu never changes the route. */
 function ScopeChoices(props: {
   readonly current: Destination;
@@ -200,22 +194,51 @@ function ScopeChoices(props: {
 }
 const configBindingLine = (binding: ConfigSourceImpact["binding"]) =>
   `${binding.kind} ${binding.kind === "local" ? binding.path : binding.origin} ${binding.root}`;
-
 type CollectionReview = import("./effects").CollectionReview;
 type CollectionDraft =
-  | Extract<import("./effects").CollectionIntent, { readonly kind: "collection-import" }>
-  | Extract<import("./effects").CollectionIntent, { readonly kind: "reference-add" }>
-  | Extract<import("./effects").CollectionIntent, { readonly kind: "reference-remove" }>
-  | Extract<import("./effects").CollectionIntent, { readonly kind: "link-change" }>
-  | Extract<import("./effects").CollectionIntent, { readonly kind: "collection-use" }>;
-
+  | Extract<
+      import("./effects").CollectionIntent,
+      {
+        readonly kind: "collection-import";
+      }
+    >
+  | Extract<
+      import("./effects").CollectionIntent,
+      {
+        readonly kind: "reference-add";
+      }
+    >
+  | Extract<
+      import("./effects").CollectionIntent,
+      {
+        readonly kind: "reference-remove";
+      }
+    >
+  | Extract<
+      import("./effects").CollectionIntent,
+      {
+        readonly kind: "link-change";
+      }
+    >
+  | Extract<
+      import("./effects").CollectionIntent,
+      {
+        readonly kind: "collection-use";
+      }
+    >;
 type AppOverlayPayload =
-  | { readonly family: "source-removal"; readonly review?: SourceRemovalReview }
+  | {
+      readonly family: "source-removal";
+      readonly review?: SourceRemovalReview;
+    }
   | {
       readonly family: "source-observation";
       readonly intent: ReturnType<typeof sourceOperationIntent>;
     }
-  | { readonly family: "config-observation"; readonly id: string }
+  | {
+      readonly family: "config-observation";
+      readonly id: string;
+    }
   | {
       readonly family: "source-selection";
       readonly review: DiscoveryReview;
@@ -231,13 +254,25 @@ type AppOverlayPayload =
   | {
       readonly family: "installed-rebind";
       readonly sources: readonly string[];
-      readonly address: { readonly source: string; readonly path: string };
+      readonly address: {
+        readonly source: string;
+        readonly path: string;
+      };
       readonly sourceRemoval?: SourceRemovalReview;
     }
-  | { readonly family: "palette" }
-  | { readonly family: "diagnostic-log"; readonly text: string }
-  | { readonly family: "skills-filter" }
-  | { readonly family: "scope-selection" }
+  | {
+      readonly family: "palette";
+    }
+  | {
+      readonly family: "diagnostic-log";
+      readonly text: string;
+    }
+  | {
+      readonly family: "skills-filter";
+    }
+  | {
+      readonly family: "scope-selection";
+    }
   | {
       readonly family: "collection-choices";
       readonly choices: readonly {
@@ -277,7 +312,10 @@ type AppOverlayPayload =
       readonly expectedOwner?: import("@skill-cli/core").ConfigDeclarationOwner;
       readonly additions: readonly {
         readonly name: string;
-        readonly address: { readonly source: string; readonly path: string };
+        readonly address: {
+          readonly source: string;
+          readonly path: string;
+        };
       }[];
     }
   | {
@@ -310,15 +348,24 @@ type AppOverlayPayload =
       readonly kind: "source" | "config-source";
       readonly level?: "global" | "project" | "local";
     };
-
-export function App(props: { readonly core: TuiCore; readonly exit: () => void }) {
+export function App(props: {
+  readonly core: TuiCore;
+  readonly environment?: api.CoreOptions;
+  readonly exit: () => void;
+}) {
   const operation = createOperationState();
   const [overlaySession, setOverlaySession] = createSignal(createOverlaySession());
   const overlayKind = () => overlaySession().kind;
   const [transition, setTransition] = createSignal<string | undefined>();
-  const readerOwner = createReaderOwner(props.core.installed, () => {
-    if (physicalFocusOwner() === "reader-resource-content") requestFocus("reader-resource-content");
-  });
+  const environment = props.environment ?? { cwd: process.cwd() };
+  const readerOwner = createReaderOwner(
+    props.core,
+    () => {
+      if (physicalFocusOwner() === "reader-resource-content")
+        requestFocus("reader-resource-content");
+    },
+    environment,
+  );
   const reader = readerOwner.current;
   const workspaceState = createWorkspaceState((selected) => {
     const address = selected
@@ -403,7 +450,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
       }
     | undefined;
   const modalControls = createModalControlRegistry();
-  let routeBackBinding: { readonly target: Renderable; readonly cleanup: () => void } | undefined;
+  let routeBackBinding:
+    | {
+        readonly target: Renderable;
+        readonly cleanup: () => void;
+      }
+    | undefined;
   const bindRouteBack = (target: Renderable) => {
     if (routeBackBinding?.target === target) return;
     routeBackBinding?.cleanup();
@@ -650,33 +702,38 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     const current = projection.workspace();
     if (current) collectionsState.reconcile(current, current);
   };
-  effects = createTuiEffects(props.core, operation, {
-    ...projection.outcomes,
-    applyProjection: (snapshot) => {
-      batch(() => {
-        const changed = (projection.workspace()?.installedSkills ?? []).filter((previous) => {
-          const next = snapshot.installedSkills.find((item) =>
-            sameSkillAddress(item.address, previous.address),
-          );
-          return (
-            !next ||
-            !!previous.owner.relevantLocalRoot ||
-            !!next.owner.relevantLocalRoot ||
-            previous.owner.relevantRemoteRevision !== next.owner.relevantRemoteRevision ||
-            previous.owner.source !== next.owner.source
-          );
-        });
-        if (
-          changed.some(
-            (item) => reader()?.address && sameSkillAddress(item.address, reader()!.address!),
+  effects = createTuiEffects(
+    props.core,
+    operation,
+    {
+      ...projection.outcomes,
+      applyProjection: (snapshot) => {
+        batch(() => {
+          const changed = (projection.workspace()?.installedSkills ?? []).filter((previous) => {
+            const next = snapshot.installedSkills.find((item) =>
+              sameSkillAddress(item.address, previous.address),
+            );
+            return (
+              !next ||
+              !!previous.owner.relevantLocalRoot ||
+              !!next.owner.relevantLocalRoot ||
+              previous.owner.relevantRemoteRevision !== next.owner.relevantRemoteRevision ||
+              previous.owner.source !== next.owner.source
+            );
+          });
+          if (
+            changed.some(
+              (item) => reader()?.address && sameSkillAddress(item.address, reader()!.address!),
+            )
           )
-        )
-          readerOwner.cancelContent();
-        for (const item of changed) readerOwner.invalidate(item.address);
-        projection.outcomes.applyProjection(snapshot);
-      });
+            readerOwner.cancelContent();
+          for (const item of changed) readerOwner.invalidate(item.address);
+          projection.outcomes.applyProjection(snapshot);
+        });
+      },
     },
-  });
+    environment,
+  );
   const openUpdates = (entry: UpdateScopeEntry, check = false) => {
     const workspace = projection.workspace();
     if (!workspace) return;
@@ -749,7 +806,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   const payload = <Family extends AppOverlayPayload["family"]>(family: Family) => {
     const value = sessionPayload();
     return value?.family === family
-      ? (value as Extract<AppOverlayPayload, { readonly family: Family }>)
+      ? (value as Extract<
+          AppOverlayPayload,
+          {
+            readonly family: Family;
+          }
+        >)
       : undefined;
   };
   const collectionChoices = () => payload("collection-choices")?.choices;
@@ -1738,7 +1800,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     else settleFailedExecution(begun);
   };
   const previewMembershipRemoval = async (
-    intent: Extract<CollectionRelationshipIntent, { readonly kind: "collection-direct" }>,
+    intent: Extract<
+      CollectionRelationshipIntent,
+      {
+        readonly kind: "collection-direct";
+      }
+    >,
   ) => {
     const effective = projection.workspace()?.effective;
     const collection =
@@ -2301,7 +2368,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     });
   });
   let gatedFocus: FocusOwner | undefined;
-  let gatedContent: { readonly id: string; readonly routeRevision: number } | undefined;
+  let gatedContent:
+    | {
+        readonly id: string;
+        readonly routeRevision: number;
+      }
+    | undefined;
   let restoreGatedContent = false;
   const resize = (width: number, height: number) => {
     const physical = physicalFocusOwner();
@@ -3354,9 +3426,8 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         onUpdatesOpenSkill={(address, tab) =>
                           openReaderSkill(address, tab ?? "skill")
                         }
-                        previewUpdate={(request, options) =>
-                          props.core.installed.previewUpdate(request, options)
-                        }
+                        previewUpdate={props.core.previewUpdate}
+                        environment={environment}
                         onFirstSkill={() => void dispatchAction("add-source")}
                         onDetail={() => {
                           if (workspaceState.section() === "sources") {
@@ -5045,8 +5116,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     </Show>
   );
 }
-
-export async function runTui(core: SkillCliCore): Promise<void> {
+export async function runTui(environment: api.CoreOptions): Promise<void> {
   const renderer = await createCliRenderer({
     screenMode: "alternate-screen",
     exitOnCtrlC: false,
@@ -5062,7 +5132,7 @@ export async function runTui(core: SkillCliCore): Promise<void> {
   };
   const destroyed = new Promise<void>((resolve) => renderer.on("destroy", resolve));
   try {
-    await render(() => <App core={core} exit={exit} />, renderer);
+    await render(() => <App core={api} environment={environment} exit={exit} />, renderer);
   } catch (error) {
     exit();
     throw error;

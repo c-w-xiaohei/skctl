@@ -22,9 +22,7 @@ import {
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
-
 const owner = { level: "project" as const, file: "/project.jsonc", pointer: "/collections/root" };
-
 function projection() {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete projection");
@@ -69,7 +67,6 @@ function projection() {
     },
   };
 }
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
 const rootPathKey = JSON.stringify([["root", null]]);
 const referencePathKey = JSON.stringify([
@@ -82,7 +79,6 @@ async function palette(setup: Setup) {
   await setup.flush();
   return live(setup, "palette-choices") as SelectRenderable;
 }
-
 async function choosePaletteAction(setup: Setup, choices: SelectRenderable, id: string) {
   const index = choices.options.findIndex((option) => option.value.id === id);
   expect(index, `Global Actions must expose ${id}`).toBeGreaterThanOrEqual(0);
@@ -93,18 +89,15 @@ async function choosePaletteAction(setup: Setup, choices: SelectRenderable, id: 
   await parsedEnter(setup);
   await setup.flush();
 }
-
 test("RENDER Agent access Reference full text is adjacent and scrollable; global Actions preserves its exact update scope", async () => {
   let contentLoads = 0;
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(projection(), {
-          installed: {
-            load: async () => {
-              contentLoads++;
-              throw new Error("Agent access browsing must not read SKILL.md");
-            },
+          loadInstalledSkill: async () => {
+            contentLoads++;
+            throw new Error("Agent access browsing must not read SKILL.md");
           },
         })}
         exit={() => {}}
@@ -154,18 +147,15 @@ test("RENDER Agent access Reference full text is adjacent and scrollable; global
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Agent access Reference Enter stays in the tree and optional Details opens its target Collection", async () => {
   let contentLoads = 0;
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(projection(), {
-          installed: {
-            load: async () => {
-              contentLoads++;
-              throw new Error("Agent access browsing must not read SKILL.md");
-            },
+          loadInstalledSkill: async () => {
+            contentLoads++;
+            throw new Error("Agent access browsing must not read SKILL.md");
           },
         })}
         exit={() => {}}
@@ -200,53 +190,53 @@ test("RENDER Agent access Reference Enter stays in the tree and optional Details
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Agent access Reader Update submits only its current Skill despite other changed Source paths", async () => {
   let snapshot = skillProjection();
   const revision = "d".repeat(40);
-  const updates: Parameters<TuiCore["installed"]["update"]>[0][] = [];
+  const updates: Parameters<TuiCore["updateSkills"]>[1][] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(snapshot, {
-          workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-          installed: {
-            load: async ({ address }) => ({
-              address,
-              name: address.path,
-              description: "",
-              rawText: `Body ${address.path}`,
-              markdownText: `# ${address.path}\n\nBody ${address.path}`,
-            }),
-            checkUpdate: async ({ source }) => ({
-              value: {
-                source,
-                kind: "github",
-                exactRevision: revision,
-                baseline: "agent-reader-baseline",
-                changed: snapshot.installedSkills.map((skill) => ({
-                  path: skill.address.path,
-                  name: skill.name,
-                  description: "",
-                })),
-                unchanged: [],
-                removed: [],
-                added: [],
-              },
-              diagnostics: [],
-            }),
-            update: async (request) => {
-              updates.push(request);
-              snapshot = {
-                ...snapshot,
-                installedSkills: snapshot.installedSkills.map((skill) =>
-                  request.paths.includes(skill.address.path)
-                    ? { ...skill, owner: { ...skill.owner, relevantRemoteRevision: revision } }
-                    : skill,
-                ),
-              };
-              return { value: undefined, diagnostics: [] };
+          getWorkspace: async () => ({ value: snapshot, diagnostics: [] }),
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => ({
+            address,
+            name: address.path,
+            description: "",
+            rawText: `Body ${address.path}`,
+            markdownText: `# ${address.path}\n\nBody ${address.path}`,
+          }),
+          checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => ({
+            value: {
+              source,
+              kind: "github",
+              exactRevision: revision,
+              baseline: "agent-reader-baseline",
+              changed: snapshot.installedSkills.map((skill) => ({
+                path: skill.address.path,
+                name: skill.name,
+                description: "",
+              })),
+              unchanged: [],
+              removed: [],
+              added: [],
             },
+            diagnostics: [],
+          }),
+          updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+            updates.push(request);
+            snapshot = {
+              ...snapshot,
+              installedSkills: snapshot.installedSkills.map((skill) =>
+                request.paths.includes(skill.address.path)
+                  ? { ...skill, owner: { ...skill.owner, relevantRemoteRevision: revision } }
+                  : skill,
+              ),
+            };
+            return { value: undefined, diagnostics: [] };
           },
         })}
         exit={() => {}}
@@ -273,7 +263,6 @@ test("RENDER Agent access Reader Update submits only its current Skill despite o
     setup.renderer.destroy();
   }
 });
-
 function skillProjection() {
   const base = projection();
   if (base.effective.status !== "complete") throw new Error("expected complete projection");
@@ -303,77 +292,82 @@ function skillProjection() {
     },
   };
 }
-
 const skillKey = (path: string) => JSON.stringify([rootPathKey, "skill", path, "team-main", path]);
-
 async function selectTreeName(setup: Setup, key: string) {
   const name = live(setup, `${rowId(key)}-name`);
   await setup.mockMouse.click(name.screenX, name.screenY);
   await setup.flush();
   expect(selected(setup, key)).toBe(true);
 }
-
 test("RENDER Agent access Reader Details targets current B while global batch Actions retains checked A/C", async () => {
-  const previews: { source: string; paths: readonly string[] }[] = [];
-  const batches: Parameters<TuiCore["collections"]["previewMemberEdit"]>[0][] = [];
+  const previews: {
+    source: string;
+    paths: readonly string[];
+  }[] = [];
+  const batches: Parameters<TuiCore["previewMembershipBatch"]>[1][] = [];
   let mutations = 0;
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(skillProjection(), {
-          collections: {
-            editMembers: async () => {
-              mutations++;
-              return {
-                value: { level: "project", file: "skill-cli.jsonc", changed: true },
-                diagnostics: [],
-              };
-            },
-            previewMemberEdit: async (request) => {
-              batches.push(request);
-              return {
-                value: {
-                  kind: "membership-batch",
-                  collection: request.collection,
-                  decision: { kind: "direct", owner },
-                  additions: request.additions,
-                  removals: request.removals,
-                  affected: [],
-                  blockers: [],
-                  effectful: true,
-                  allowed: true,
-                },
-                diagnostics: [],
-              };
-            },
+          editMembers: async () => {
+            mutations++;
+            return {
+              value: { level: "project", file: "skill-cli.jsonc", changed: true },
+              diagnostics: [],
+            };
           },
-          installed: {
-            load: async ({ address }) => ({
-              address,
-              name: address.path,
-              description: "",
-              rawText: `Body ${address.path}`,
-              markdownText: `# ${address.path}\n\nBody ${address.path}`,
-            }),
-            previewUninstall: async (request) => {
-              previews.push(request);
-              return {
-                value: {
-                  kind: "uninstall",
-                  installed: request.paths.map((path) => ({ source: request.source, path })),
-                  directMemberships: [],
-                  disappearingSelectors: [],
-                  retainedSelectors: [],
-                  blockers: [],
-                  allowed: true,
-                },
-                diagnostics: [],
-              };
-            },
-            uninstall: async () => {
-              mutations++;
-              return { value: undefined, diagnostics: [] };
-            },
+          previewMembershipBatch: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            batches.push(request);
+            return {
+              value: {
+                kind: "membership-batch",
+                collection: request.collection,
+                decision: { kind: "direct", owner },
+                additions: request.additions,
+                removals: request.removals,
+                affected: [],
+                blockers: [],
+                effectful: true,
+                allowed: true,
+              },
+              diagnostics: [],
+            };
+          },
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => ({
+            address,
+            name: address.path,
+            description: "",
+            rawText: `Body ${address.path}`,
+            markdownText: `# ${address.path}\n\nBody ${address.path}`,
+          }),
+          previewUninstall: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            request,
+          ) => {
+            previews.push(request);
+            return {
+              value: {
+                kind: "uninstall",
+                installed: request.paths.map((path) => ({ source: request.source, path })),
+                directMemberships: [],
+                disappearingSelectors: [],
+                retainedSelectors: [],
+                blockers: [],
+                allowed: true,
+              },
+              diagnostics: [],
+            };
+          },
+          uninstallSkills: async () => {
+            mutations++;
+            return { value: undefined, diagnostics: [] };
           },
         })}
         exit={() => {}}
@@ -482,9 +476,8 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Agent access late A content cannot replace selected B or B's Reader action target", async () => {
-  type LoadResult = Awaited<ReturnType<TuiCore["installed"]["load"]>>;
+  type LoadResult = Awaited<ReturnType<TuiCore["loadInstalledSkill"]>>;
   let resolveFirst!: (result: LoadResult) => void;
   const first = new Promise<LoadResult>((resolve) => {
     resolveFirst = resolve;
@@ -494,27 +487,28 @@ test("RENDER Agent access late A content cannot replace selected B or B's Reader
     () => (
       <App
         core={directSourceCore(skillProjection(), {
-          installed: {
-            load: async ({ address }) => {
-              reads.push(address.path);
-              if (address.path === "guide") {
-                if (reads.filter((path) => path === "guide").length === 1) return first;
-                return {
-                  address,
-                  name: address.path,
-                  description: "",
-                  rawText: "Fresh A instructions",
-                  markdownText: "# A\n\nFresh A instructions",
-                };
-              }
+          loadInstalledSkill: async (
+            _environment: import("@skill-cli/core").CoreOptions,
+            { address },
+          ) => {
+            reads.push(address.path);
+            if (address.path === "guide") {
+              if (reads.filter((path) => path === "guide").length === 1) return first;
               return {
                 address,
                 name: address.path,
                 description: "",
-                rawText: "Current B instructions",
-                markdownText: "# B\n\nCurrent B instructions",
+                rawText: "Fresh A instructions",
+                markdownText: "# A\n\nFresh A instructions",
               };
-            },
+            }
+            return {
+              address,
+              name: address.path,
+              description: "",
+              rawText: "Current B instructions",
+              markdownText: "# B\n\nCurrent B instructions",
+            };
           },
         })}
         exit={() => {}}

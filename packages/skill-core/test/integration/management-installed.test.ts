@@ -1,12 +1,11 @@
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSkillCliCore } from "../../src/create-core";
 import { bindingDigest, canonicalLocalOrigin } from "../../src/source/identity";
 import { setManagementPublicationHookForTest } from "../../src/installed/update";
-
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-management-"));
   const skills = join(root, "skills");
@@ -21,9 +20,8 @@ async function fixture() {
     "---\nname: publish\ndescription: Publish\n---\n",
   );
   process.env.SKILL_CLI_STATE_DIR = join(root, "state");
-  return { root, skills, global, core: createSkillCliCore({ cwd: root, userConfigPath: global }) };
+  return { root, skills, global, core: { cwd: root, userConfigPath: global } };
 }
-
 function legacyLocal(root: string, source: string, path: string) {
   const origin = canonicalLocalOrigin("./skills", root);
   return {
@@ -37,33 +35,32 @@ function legacyLocal(root: string, source: string, path: string) {
     bindingDigest: bindingDigest({ kind: "local", origin, root: "", path: origin }),
   };
 }
-
 test("MGMT-006 Local discovery installs an atomic selected set without an invented revision", async () => {
   const value = await fixture();
   try {
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "team/local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
     await expect(
-      value.core.sources.register({
+      api.registerSource(value.core, {
         level: "project",
         id: "team/local",
         binding: { kind: "local", path: "./other", root: "" },
       }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     await expect(
-      value.core.sources.register({
+      api.registerSource(value.core, {
         level: "project",
         id: "team/local",
         binding: { kind: "local", path: "./skills", root: "" },
       }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
-    const discovery = await value.core.sources.discover({ source: "team/local" });
+    const discovery = await api.discoverSkills(value.core, { source: "team/local" });
     expect(discovery.value.candidates.map((candidate) => candidate.path)).toEqual(["one", "two"]);
-    await value.core.installed.install({ source: "team/local", paths: ["two", "one"] });
-    expect((await value.core.installed.checkUpdate({ source: "team/local" })).value).toMatchObject({
+    await api.installSkills(value.core, { source: "team/local", paths: ["two", "one"] });
+    expect((await api.checkUpdate(value.core, { source: "team/local" })).value).toMatchObject({
       source: "team/local",
       kind: "local",
       changed: [],
@@ -74,43 +71,41 @@ test("MGMT-006 Local discovery installs an atomic selected set without an invent
         { path: "two", name: "publish", description: "Publish" },
       ],
     });
-    await value.core.installed.uninstall({ source: "team/local", paths: ["two"] });
-    await value.core.installed.install({ source: "team/local", paths: ["two"] });
+    await api.uninstallSkills(value.core, { source: "team/local", paths: ["two"] });
+    await api.installSkills(value.core, { source: "team/local", paths: ["two"] });
     expect(
-      (await value.core.installed.checkUpdate({ source: "team/local" })).value.unchanged.map(
+      (await api.checkUpdate(value.core, { source: "team/local" })).value.unchanged.map(
         (item) => item.path,
       ),
     ).toEqual(["one", "two"]);
-    expect((await value.core.workspace.get()).value.effective.sources).toHaveLength(1);
+    expect((await api.getWorkspace(value.core)).value.effective.sources).toHaveLength(1);
     expect(
-      (await value.core.workspace.get()).value.installedSkills.map((item) => item.address.path),
+      (await api.getWorkspace(value.core)).value.installedSkills.map((item) => item.address.path),
     ).toEqual(["one", "two"]);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-006 rejects the whole selected Local set when one candidate is invalid", async () => {
   const value = await fixture();
   try {
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
     await expect(
-      value.core.installed.install({ source: "local", paths: ["one", "missing"] }),
+      api.installSkills(value.core, { source: "local", paths: ["one", "missing"] }),
     ).rejects.toMatchObject({
       code: "SKILL_NOT_FOUND",
     });
-    expect((await value.core.workspace.get()).value.installedSkills).toEqual([]);
+    expect((await api.getWorkspace(value.core)).value.installedSkills).toEqual([]);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("INS-001 permits same frontmatter names for distinct Local identities", async () => {
   const value = await fixture();
   try {
@@ -119,46 +114,45 @@ test("INS-001 permits same frontmatter names for distinct Local identities", asy
       join(value.root, "other", "review", "SKILL.md"),
       "---\nname: review\ndescription: Other\n---\n",
     );
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "second",
       binding: { kind: "local", path: "./other", root: "" },
     });
-    await value.core.installed.install({ source: "first", paths: ["one"] });
-    await value.core.installed.install({ source: "second", paths: ["review"] });
-    expect((await value.core.workspace.get()).value.installedSkills).toHaveLength(2);
+    await api.installSkills(value.core, { source: "first", paths: ["one"] });
+    await api.installSkills(value.core, { source: "second", paths: ["review"] });
+    expect((await api.getWorkspace(value.core)).value.installedSkills).toHaveLength(2);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("INS-001 rejects a second Source that attempts to install the same Local identity", async () => {
   const value = await fixture();
   try {
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "second",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.installed.install({ source: "first", paths: ["one"] });
+    await api.installSkills(value.core, { source: "first", paths: ["one"] });
     await expect(
-      value.core.installed.install({ source: "second", paths: ["one"] }),
+      api.installSkills(value.core, { source: "second", paths: ["one"] }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
-    expect((await value.core.workspace.get()).value.installedSkills).toHaveLength(1);
-    expect((await value.core.workspace.get()).value.installedSkills[0]).toMatchObject({
+    expect((await api.getWorkspace(value.core)).value.installedSkills).toHaveLength(1);
+    expect((await api.getWorkspace(value.core)).value.installedSkills[0]).toMatchObject({
       address: { source: "first", path: "one" },
     });
   } finally {
@@ -166,11 +160,10 @@ test("INS-001 rejects a second Source that attempts to install the same Local id
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("INS-001 rejects a first install whose owner is removed after acquisition", async () => {
   const value = await fixture();
   try {
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
@@ -179,28 +172,27 @@ test("INS-001 rejects a first install whose owner is removed after acquisition",
       await writeFile(join(value.root, "skill-cli.jsonc"), "{}\n");
     });
     await expect(
-      value.core.installed.install({ source: "local", paths: ["one"] }),
+      api.installSkills(value.core, { source: "local", paths: ["one"] }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
-    expect((await value.core.workspace.get()).value.installedSkills).toEqual([]);
+    expect((await api.getWorkspace(value.core)).value.installedSkills).toEqual([]);
   } finally {
     setManagementPublicationHookForTest();
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-003 Source removal independently rejects every owned Installed address without changing state", async () => {
   const value = await fixture();
   try {
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.installed.install({ source: "local", paths: ["one", "two"] });
-    const impact = await value.core.sources.previewRemoval({ source: "local" });
+    await api.installSkills(value.core, { source: "local", paths: ["one", "two"] });
+    const impact = await api.previewSourceRemoval(value.core, { source: "local" });
     expect(impact.value).toMatchObject({
       allowed: false,
       installed: [
@@ -210,7 +202,7 @@ test("MGMT-003 Source removal independently rejects every owned Installed addres
       repairs: [{ actions: ["rebind", "uninstall"] }, { actions: ["rebind", "uninstall"] }],
     });
     const before = await readFile(join(value.root, "state", "state.json"), "utf8");
-    await expect(value.core.sources.remove({ source: "local" })).rejects.toMatchObject({
+    await expect(api.removeSource(value.core, { source: "local" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(await readFile(join(value.root, "state", "state.json"), "utf8")).toBe(before);
@@ -219,47 +211,46 @@ test("MGMT-003 Source removal independently rejects every owned Installed addres
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-005 diagnoses missing or drifted owners, keeps content readable, and limits repair to Rebind or Uninstall", async () => {
   const value = await fixture();
   try {
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.installed.install({ source: "first", paths: ["one"] });
+    await api.installSkills(value.core, { source: "first", paths: ["one"] });
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./other", "root": "" } } }\n',
     );
-    await expect(value.core.sources.discover({ source: "first" })).rejects.toMatchObject({
+    await expect(api.discoverSkills(value.core, { source: "first" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(
-      (await value.core.installed.load({ address: { source: "first", path: "one" } })).name,
+      (await api.loadInstalledSkill(value.core, { address: { source: "first", path: "one" } }))
+        .name,
     ).toBe("review");
     await writeFile(join(value.root, "skill-cli.jsonc"), "{}\n");
-    await expect(value.core.sources.discover({ source: "first" })).rejects.toMatchObject({
+    await expect(api.discoverSkills(value.core, { source: "first" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
-    await value.core.installed.rebind({ source: "first", path: "one", owner: "second" });
-    expect((await value.core.workspace.get()).value.installedSkills[0]!.address.source).toBe(
+    await api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" });
+    expect((await api.getWorkspace(value.core)).value.installedSkills[0]!.address.source).toBe(
       "second",
     );
-    await value.core.installed.uninstall({ source: "second", paths: ["one"] });
-    expect((await value.core.workspace.get()).value.installedSkills).toEqual([]);
+    await api.uninstallSkills(value.core, { source: "second", paths: ["one"] });
+    expect((await api.getWorkspace(value.core)).value.installedSkills).toEqual([]);
     expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toContain('"second"');
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("SRC-003 rebinds same canonical identity through a different binding and rejects a distinct identity", async () => {
   const value = await fixture();
   try {
@@ -268,18 +259,18 @@ test("SRC-003 rebinds same canonical identity through a different binding and re
       join(value.skills, "nested", "one", "SKILL.md"),
       "---\nname: nested\ndescription: Nested\n---\n",
     );
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.installed.install({ source: "first", paths: ["nested/one"] });
+    await api.installSkills(value.core, { source: "first", paths: ["nested/one"] });
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "nested" }, "third": { "kind": "local", "path": "./skills", "root": "other" } } }\n',
     );
     const before = await Bun.file(join(value.root, "state", "state.json")).text();
-    await value.core.installed.rebind({
+    await api.rebindSkill(value.core, {
       source: "first",
       path: "nested/one",
       owner: "second",
@@ -289,7 +280,7 @@ test("SRC-003 rebinds same canonical identity through a different binding and re
       .installed[0];
     expect(rebound).toMatchObject({ source: "second", path: "one" });
     await expect(
-      value.core.installed.rebind({ source: "second", path: "one", owner: "third" }),
+      api.rebindSkill(value.core, { source: "second", path: "one", owner: "third" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await Bun.file(join(value.root, "state", "state.json")).text()).not.toBe(before);
     expect(
@@ -300,22 +291,21 @@ test("SRC-003 rebinds same canonical identity through a different binding and re
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-009 rebinds a missing legacy owner only when retained identity evidence proves the replacement", async () => {
   const value = await fixture();
   try {
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.installed.install({ source: "first", paths: ["one"] });
+    await api.installSkills(value.core, { source: "first", paths: ["one"] });
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
-    await value.core.installed.rebind({ source: "first", path: "one", owner: "second" });
-    expect((await value.core.workspace.get()).value.installedSkills[0]!.address).toEqual({
+    await api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" });
+    expect((await api.getWorkspace(value.core)).value.installedSkills[0]!.address).toEqual({
       source: "second",
       path: "one",
     });
@@ -324,27 +314,26 @@ test("MGMT-009 rebinds a missing legacy owner only when retained identity eviden
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-009 preview reports proven, distinct, and unprovable Rebind proof without private state", async () => {
   const value = await fixture();
   try {
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "second",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.installed.install({ source: "first", paths: ["one"] });
+    await api.installSkills(value.core, { source: "first", paths: ["one"] });
     expect(
-      (await value.core.installed.previewRebind({ source: "first", path: "one", owner: "second" }))
+      (await api.previewRebind(value.core, { source: "first", path: "one", owner: "second" }))
         .value,
     ).toMatchObject({ proof: "proven", allowed: true });
     const serialized = JSON.stringify(
-      (await value.core.installed.previewRebind({ source: "first", path: "one", owner: "second" }))
+      (await api.previewRebind(value.core, { source: "first", path: "one", owner: "second" }))
         .value,
     );
     for (const field of [
@@ -365,26 +354,23 @@ test("MGMT-009 preview reports proven, distinct, and unprovable Rebind proof wit
       "writable",
     ])
       expect(serialized).not.toContain(`"${field}"`);
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "other",
       binding: { kind: "local", path: "./other", root: "" },
     });
     expect(
-      (await value.core.installed.previewRebind({ source: "first", path: "one", owner: "other" }))
-        .value,
+      (await api.previewRebind(value.core, { source: "first", path: "one", owner: "other" })).value,
     ).toMatchObject({ proof: "distinct", allowed: false });
     await writeFile(join(value.root, "skill-cli.jsonc"), "{}\n");
     expect(
-      (await value.core.installed.previewRebind({ source: "first", path: "one", owner: "other" }))
-        .value,
+      (await api.previewRebind(value.core, { source: "first", path: "one", owner: "other" })).value,
     ).toMatchObject({ proof: "unprovable", allowed: false });
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-009 migrates literal v1 Local evidence once, then proves a differently sliced replacement after owner removal", async () => {
   const value = await fixture();
   try {
@@ -404,9 +390,9 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
       `${JSON.stringify({ version: 1, generation: 4, installed: [legacy], configs: {} })}\n`,
     );
     const before = await readFile(join(value.root, "state", "state.json"), "utf8");
-    expect((await value.core.workspace.get()).value.installedSkills).toHaveLength(1);
+    expect((await api.getWorkspace(value.core)).value.installedSkills).toHaveLength(1);
     expect(await readFile(join(value.root, "state", "state.json"), "utf8")).toBe(before);
-    await value.core.installed.install({ source: "first", paths: ["two"] });
+    await api.installSkills(value.core, { source: "first", paths: ["two"] });
     const migrated = JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"));
     expect(migrated).toMatchObject({ version: 3, generation: 5 });
     expect(migrated.installed[0]).toMatchObject({
@@ -422,14 +408,14 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "second": { "kind": "local", "path": "./skills", "root": "nested" } } }\n',
     );
-    await value.core.installed.rebind({
+    await api.rebindSkill(value.core, {
       source: "first",
       path: "nested/one",
       owner: "second",
       ownerPath: "one",
     });
     expect(
-      (await value.core.workspace.get()).value.installedSkills.map((item) => item.address),
+      (await api.getWorkspace(value.core)).value.installedSkills.map((item) => item.address),
     ).toContainEqual({
       source: "second",
       path: "one",
@@ -439,7 +425,6 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-009 degrades an already-missing literal v1 owner without provider access and leaves it readable and uninstallable", async () => {
   const value = await fixture();
   try {
@@ -453,13 +438,13 @@ test("MGMT-009 degrades an already-missing literal v1 owner without provider acc
       join(value.root, "state", "state.json"),
       `${JSON.stringify({ version: 1, generation: 2, installed: [legacy], configs: {} })}\n`,
     );
-    const core = createSkillCliCore({
+    const core = {
       cwd: value.root,
       sourceTransport: () => {
         throw new Error("migration must not contact a provider");
       },
-    });
-    await core.installed.install({ source: "second", paths: ["two"] });
+    };
+    await api.installSkills(core, { source: "second", paths: ["two"] });
     const migrated = JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"));
     expect(migrated).toMatchObject({ version: 3, generation: 3 });
     expect(migrated.installed[0]).toMatchObject({
@@ -467,17 +452,17 @@ test("MGMT-009 degrades an already-missing literal v1 owner without provider acc
       identityEvidence: { status: "unavailable" },
     });
     expect(
-      (await core.workspace.get()).value.installedSkills.map((item) => item.address),
+      (await api.getWorkspace(core)).value.installedSkills.map((item) => item.address),
     ).toContainEqual({
       source: "missing",
       path: "one",
     });
     await expect(
-      core.installed.rebind({ source: "missing", path: "one", owner: "second" }),
+      api.rebindSkill(core, { source: "missing", path: "one", owner: "second" }),
     ).rejects.toMatchObject({ code: "REBIND_UNPROVABLE" });
-    await core.installed.uninstall({ source: "missing", paths: ["one"] });
+    await api.uninstallSkills(core, { source: "missing", paths: ["one"] });
     expect(
-      (await core.workspace.get()).value.installedSkills.map((item) => item.address),
+      (await api.getWorkspace(core)).value.installedSkills.map((item) => item.address),
     ).not.toContainEqual({
       source: "missing",
       path: "one",
@@ -487,7 +472,6 @@ test("MGMT-009 degrades an already-missing literal v1 owner without provider acc
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-009 derives literal v1 Remote evidence during a state-only uninstall without resolving its ref", async () => {
   const value = await fixture();
   try {
@@ -521,13 +505,13 @@ test("MGMT-009 derives literal v1 Remote evidence during a state-only uninstall 
         configs: {},
       })}\n`,
     );
-    const core = createSkillCliCore({
+    const core = {
       cwd: value.root,
       sourceTransport: () => {
         throw new Error("migration must not resolve a remote ref");
       },
-    });
-    await core.installed.uninstall({ source: "remote", paths: ["review"] });
+    };
+    await api.uninstallSkills(core, { source: "remote", paths: ["review"] });
     expect(JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"))).toEqual({
       version: 3,
       generation: 9,
@@ -539,23 +523,22 @@ test("MGMT-009 derives literal v1 Remote evidence during a state-only uninstall 
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner without state publication", async () => {
   const value = await fixture();
   try {
-    await value.core.sources.register({
+    await api.registerSource(value.core, {
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.installed.install({ source: "first", paths: ["one"] });
+    await api.installSkills(value.core, { source: "first", paths: ["one"] });
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
     const before = await Bun.file(join(value.root, "state", "state.json")).text();
     expect(
-      (await value.core.installed.previewRebind({ source: "first", path: "one", owner: "second" }))
+      (await api.previewRebind(value.core, { source: "first", path: "one", owner: "second" }))
         .value,
     ).toMatchObject({ proof: "proven", allowed: true });
     const removedOwnerBytes =
@@ -564,7 +547,7 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
       writeFile(join(value.root, "skill-cli.jsonc"), removedOwnerBytes),
     );
     await expect(
-      value.core.installed.rebind({ source: "first", path: "one", owner: "second" }),
+      api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await Bun.file(join(value.root, "state", "state.json")).text()).toBe(before);
     expect(await Bun.file(join(value.root, "skill-cli.jsonc")).text()).toBe(removedOwnerBytes);
@@ -573,8 +556,8 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
-    await value.core.installed.rebind({ source: "first", path: "one", owner: "second" });
-    expect((await value.core.workspace.get()).value.installedSkills[0]!.address.source).toBe(
+    await api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" });
+    expect((await api.getWorkspace(value.core)).value.installedSkills[0]!.address.source).toBe(
       "second",
     );
   } finally {
@@ -583,7 +566,6 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 test("private snapshot fixture publication cannot forge a Remote Installed identity", async () => {
   const value = await fixture();
   try {
@@ -605,20 +587,17 @@ test("private snapshot fixture publication cannot forge a Remote Installed ident
     await rm(value.root, { recursive: true, force: true });
   }
 });
-
 async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
   const output = await new Response(child.stdout).text();
   if (await child.exited) throw new Error(await new Response(child.stderr).text());
   return output.trim();
 }
-
 async function initBare(cwd: string, path: string) {
   await git(cwd, "init", "--bare", path);
   await git(cwd, `--git-dir=${path}`, "config", "uploadpack.allowFilter", "true");
   await git(cwd, `--git-dir=${path}`, "config", "uploadpack.allowReachableSHA1InWant", "true");
 }
-
 test("MGMT-006 Remote discovery installs the reviewed exact commit after the tracked ref moves", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-managed-git-"));
   const work = join(root, "work");
@@ -641,11 +620,12 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
     await git(work, "remote", "add", "origin", bare);
     await git(work, "push", "origin", "HEAD:main");
     try {
-      const core = createSkillCliCore({
+      const core = {
         cwd: root,
-        sourceTransport: (url) => (url === "https://example.test/skills.git" ? bare : undefined),
-      });
-      await core.sources.register({
+        sourceTransport: (url: string) =>
+          url === "https://example.test/skills.git" ? bare : undefined,
+      };
+      await api.registerSource(core, {
         level: "project",
         id: "remote",
         binding: {
@@ -655,7 +635,7 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
           ref: "main",
         },
       });
-      const observation = await core.sources.discover({ source: "remote" });
+      const observation = await api.discoverSkills(core, { source: "remote" });
       expect(observation.value.candidates.map((candidate) => candidate.path)).toEqual(["review"]);
       await writeFile(
         join(work, "skills", "review", "SKILL.md"),
@@ -664,7 +644,7 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
       await git(work, "add", ".");
       await git(work, "commit", "-m", "moved");
       await git(work, "push", "origin", "HEAD:main");
-      await core.installed.install({
+      await api.installSkills(core, {
         source: "remote",
         paths: ["review"],
         exactRevision: observation.value.exactRevision,
@@ -694,7 +674,6 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable commits, and binding drift without publication", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-install-integrity-"));
   const work = join(root, "work");
@@ -715,11 +694,11 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
     await initBare(root, bare);
     await git(work, "remote", "add", "origin", bare);
     await git(work, "push", "origin", "HEAD:main");
-    const core = createSkillCliCore({
+    const core = {
       cwd: root,
       sourceTransport: () => bare,
-    });
-    await core.sources.register({
+    };
+    await api.registerSource(core, {
       level: "project",
       id: "remote",
       binding: {
@@ -729,7 +708,7 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
         ref: "main",
       },
     });
-    const observed = await core.sources.discover({ source: "remote" });
+    const observed = await api.discoverSkills(core, { source: "remote" });
     for (const request of [
       { source: "remote", paths: ["foreign"], exactRevision: observed.value.exactRevision },
       {
@@ -739,7 +718,7 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
       },
       { source: "remote", paths: ["review"], exactRevision: "f".repeat(40) },
     ]) {
-      await expect(core.installed.install(request)).rejects.toMatchObject({
+      await expect(api.installSkills(core, request)).rejects.toMatchObject({
         code: expect.stringMatching(/SKILL_NOT_FOUND|INVALID_ARGUMENT|PINNED_COMMIT_UNAVAILABLE/),
       });
       expect(await Bun.file(join(root, "state", "state.json")).exists()).toBe(false);
@@ -752,7 +731,7 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
       ),
     );
     await expect(
-      core.installed.install({
+      api.installSkills(core, {
         source: "remote",
         paths: ["review"],
         exactRevision: observed.value.exactRevision,
@@ -765,7 +744,6 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("MGMT-006 GitHub discovery and install use its controlled API at the reviewed exact revision", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-managed-github-"));
   const work = join(root, "work");
@@ -854,12 +832,13 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
       },
     });
     try {
-      const core = createSkillCliCore({
+      const core = {
         cwd: root,
-        sourceTransport: (url) => (url === "https://github.com/acme/skills.git" ? bare : undefined),
+        sourceTransport: (url: string) =>
+          url === "https://github.com/acme/skills.git" ? bare : undefined,
         githubApiBaseUrl: server.url.toString(),
-      });
-      await core.sources.register({
+      };
+      await api.registerSource(core, {
         level: "project",
         id: "github",
         binding: {
@@ -869,16 +848,16 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
           ref: "main",
         },
       });
-      const observation = await core.sources.discover({ source: "github" });
+      const observation = await api.discoverSkills(core, { source: "github" });
       expect(observation.value.candidates.map((candidate) => candidate.path)).toEqual(["review"]);
-      await core.installed.install({
+      await api.installSkills(core, {
         source: "github",
         paths: ["review"],
         exactRevision: observation.value.exactRevision,
       });
       const state = JSON.parse(await Bun.file(join(root, "state", "state.json")).text());
       expect(state.installed[0]).toMatchObject({ kind: "remote", adoptedRevision: revision });
-      expect((await core.installed.checkUpdate({ source: "github" })).value).toMatchObject({
+      expect((await api.checkUpdate(core, { source: "github" })).value).toMatchObject({
         source: "github",
         kind: "github",
         exactRevision: revision,

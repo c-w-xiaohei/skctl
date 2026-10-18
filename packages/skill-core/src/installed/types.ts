@@ -1,11 +1,6 @@
 import type { ImpactBlocker, MembershipAffected } from "../collection/types";
 import type { ConfigDeclarationOwner } from "../config/types";
-import type {
-  ResourceDescriptor,
-  LoadedInstalledSkill,
-  InstalledResourceResult,
-} from "../content/types";
-import type { OperationOptions, Operation } from "../shared";
+
 import type { SkillAddress, SourceBinding } from "../source/schema";
 import type { DiscoveredSkillCandidate } from "../source/types";
 
@@ -82,34 +77,4 @@ export interface InstallRequest extends InstalledSelection {
 export interface UpdateRequest extends InstallRequest {
   readonly remove?: readonly string[];
   readonly expectedBaseline?: string;
-}
-
-export interface InstalledCapability {
-  load(
-    request: { readonly address: SkillAddress },
-    options?: OperationOptions,
-  ): Promise<LoadedInstalledSkill>;
-  listResources(
-    request: { readonly address: SkillAddress },
-    options?: OperationOptions,
-  ): Promise<readonly ResourceDescriptor[]>;
-  read(
-    request: { readonly address: SkillAddress; readonly path: string },
-    options?: OperationOptions,
-  ): Promise<InstalledResourceResult>;
-  previewUninstall: Operation<InstalledSelection, UninstallImpact>;
-  previewRebind: Operation<RebindRequest, RebindImpact>;
-  install: Operation<InstallRequest, readonly DiscoveredSkillCandidate[]>;
-  uninstall: Operation<InstalledSelection>;
-  rebind: Operation<RebindRequest>;
-  checkUpdate: Operation<{ readonly source: string }, UpdateObservation>;
-  previewUpdate: Operation<
-    SkillAddress & {
-      readonly exactRevision?: string;
-      readonly expectedBaseline: string;
-    },
-    UpdatePreview
-  >;
-  updateBaseline: Operation<{ readonly source: string }, string>;
-  update: Operation<UpdateRequest>;
 }

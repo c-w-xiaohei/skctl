@@ -3,9 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMain } from "../../../skill-cli/src/main";
-import { createSkillCliCore } from "../../src/create-core";
 import { StateCoordinator } from "../../src/storage/state";
-
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-reference-"));
   const state = join(root, "state");
@@ -44,23 +42,25 @@ async function fixture() {
     await coordinator.installLocal("source", name, join(root, "skills", name));
   return { root, state, global };
 }
-
 async function command(
   root: string,
   global: string,
   argv: readonly string[],
-): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> {
+): Promise<{
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}> {
   let stdout = "";
   let stderr = "";
   const code = await runMain(["agent", ...argv], {
     cwd: root,
-    createCore: (options) => createSkillCliCore({ ...options, userConfigPath: global }),
+    environment: { userConfigPath: global },
     stdout: { write: (value) => (stdout += String(value)) },
     stderr: { write: (value) => (stderr += String(value)) },
   });
   return { code, stdout, stderr };
 }
-
 test("agent browse returns only Use roots before progressively disclosing collection contents", async () => {
   const previousState = process.env.SKILL_CLI_STATE_DIR;
   const { root, global } = await fixture();
@@ -91,7 +91,6 @@ test("agent browse returns only Use roots before progressively disclosing collec
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("agent browse uses a global catalog outside a project", async () => {
   const previousState = process.env.SKILL_CLI_STATE_DIR;
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-global-"));
@@ -119,9 +118,7 @@ test("agent browse uses a global catalog outside a project", async () => {
       }),
     );
     await new StateCoordinator(state).installLocal("source", "router", skill);
-
     const result = await command(outside, global, ["browse", "catalog"]);
-
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain('<managed_skill_catalog scope="collection" id="catalog">');
@@ -133,7 +130,6 @@ test("agent browse uses a global catalog outside a project", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("agent browse and load permit a reference-reachable category but reject an inaccessible collection", async () => {
   const previousState = process.env.SKILL_CLI_STATE_DIR;
   const { root, global } = await fixture();
@@ -143,21 +139,17 @@ test("agent browse and load permit a reference-reachable category but reject an 
     expect(listed.stdout).toContain('<managed_skill_catalog scope="collection" id="category">');
     expect(listed.stdout).toContain("<selector>category:specialist</selector>");
     expect(listed.stdout).toContain("<description>specialist skill</description>");
-
     const loaded = await command(root, global, ["load", "category:specialist"]);
     expect(loaded.code).toBe(0);
     expect(loaded.stdout).toBe("---\nname: specialist\ndescription: specialist skill\n---\n");
-
     const hidden = await command(root, global, ["load", "hidden:private"]);
     expect(hidden.code).toBe(1);
     expect(hidden.stdout).toBe("");
     expect(hidden.stderr).toContain("Skill Selector is not exposed");
     expect(hidden.stderr).not.toContain("SKILL_NOT_FOUND");
-
     const inaccessibleList = await command(root, global, ["browse", "hidden"]);
     expect(inaccessibleList.code).toBe(1);
     expect(inaccessibleList.stdout).toBe("");
-
     const rootSearch = await command(root, global, ["search", "router"]);
     expect(JSON.parse(rootSearch.stdout)).toEqual({
       results: [
@@ -186,13 +178,11 @@ test("agent browse and load permit a reference-reachable category but reject an 
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("agent read reports a missing resource directory as not found", async () => {
   const previousState = process.env.SKILL_CLI_STATE_DIR;
   const { root, global } = await fixture();
   try {
     const result = await command(root, global, ["read", "gingiris:router", "docs/missing.md"]);
-
     expect(result.code).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("Resource not found\n");
@@ -202,7 +192,6 @@ test("agent read reports a missing resource directory as not found", async () =>
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("agent loads a ready child Skill without requiring unrelated child members", async () => {
   const previousState = process.env.SKILL_CLI_STATE_DIR;
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-partial-child-"));
@@ -254,7 +243,6 @@ test("agent loads a ready child Skill without requiring unrelated child members"
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("agent refuses content when the host Use is incomplete", async () => {
   const previousState = process.env.SKILL_CLI_STATE_DIR;
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-incomplete-root-"));
@@ -294,7 +282,6 @@ test("agent refuses content when the host Use is incomplete", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("agent search includes each Use-root selector for one installed Skill", async () => {
   const previousState = process.env.SKILL_CLI_STATE_DIR;
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-multiple-use-"));
@@ -333,7 +320,6 @@ test("agent search includes each Use-root selector for one installed Skill", asy
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("agent commands reject the removed list protocol and JSON flags", async () => {
   for (const argv of [
     ["list"],
@@ -348,22 +334,20 @@ test("agent commands reject the removed list protocol and JSON flags", async () 
     expect(result.stderr).not.toContain("INVALID_ARGUMENT");
   }
 });
-
 test("agent reports unavailable catalogs as system-prompt guidance", async () => {
   const result = await command("/tmp", "/missing", ["browse"]);
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("managed catalog is unavailable");
   expect(result.stderr).toBe("");
 });
-
 test("agent rejects collection IDs and Skill Selectors in the wrong address positions before Core", async () => {
   let created = 0;
   const options = {
     cwd: "/tmp",
-    createCore: () => {
+    api: (() => {
       created += 1;
       throw new Error("Core must not be called");
-    },
+    })(),
     stdout: { write() {} },
     stderr: { write() {} },
   };
@@ -384,7 +368,6 @@ test("agent rejects collection IDs and Skill Selectors in the wrong address posi
     expect(await runMain(["agent", ...argv], options)).toBe(1);
   expect(created).toBe(0);
 });
-
 test("agent help explains the browse to Skill workflow on stdout", async () => {
   const result = await command("/tmp", "/missing", ["--help"]);
   expect(result.code).toBe(0);
@@ -394,7 +377,6 @@ test("agent help explains the browse to Skill workflow on stdout", async () => {
   expect(result.stdout).toContain("browse [collection-id]");
   expect(result.stdout).toContain("load <selector>");
 });
-
 test("agent subcommand help identifies the accepted address", async () => {
   const browse = await command("/tmp", "/missing", ["browse", "--help"]);
   const load = await command("/tmp", "/missing", ["load", "--help"]);

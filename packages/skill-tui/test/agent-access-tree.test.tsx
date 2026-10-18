@@ -7,9 +7,7 @@ import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { live, parsedEscape } from "./reader-test-controls";
 import { openAgentAccess, press, rowId, selected, waitForBody } from "./agent-access-test-controls";
-
 const owner = { level: "project" as const, file: "/project.jsonc", pointer: "/collections/root" };
-
 function projection(childSkillCount = 0) {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete projection");
@@ -49,33 +47,30 @@ function projection(childSkillCount = 0) {
     },
   };
 }
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
 const rows = (tree: ScrollBoxRenderable) => tree.content.getChildren();
-
 async function clickPart(setup: Setup, key: string, part: "name" | "disclosure", cell = 0) {
   const target = live(setup, `${rowId(key)}-${part}`);
   await setup.mockMouse.click(target.screenX + cell, target.screenY);
   await setup.flush();
 }
-
 function readingCore(childSkillCount = 0, reads: string[] = []) {
   return directSourceCore(projection(childSkillCount), {
-    installed: {
-      load: async ({ address }) => {
-        reads.push(`${address.source}/${address.path}`);
-        return {
-          address,
-          name: address.path,
-          description: "",
-          rawText: "Installed guide body",
-          markdownText: "# Guide\n\nInstalled guide body",
-        };
-      },
+    loadInstalledSkill: async (
+      _environment: import("@skill-cli/core").CoreOptions,
+      { address },
+    ) => {
+      reads.push(`${address.source}/${address.path}`);
+      return {
+        address,
+        name: address.path,
+        description: "",
+        rawText: "Installed guide body",
+        markdownText: "# Guide\n\nInstalled guide body",
+      };
     },
   });
 }
-
 const rootPathKey = JSON.stringify([["root", null]]);
 const childPathKey = JSON.stringify([
   ["root", null],
@@ -83,7 +78,6 @@ const childPathKey = JSON.stringify([
 ]);
 const skillRowKey = (pathKey: string, entry: string) =>
   JSON.stringify([pathKey, "skill", entry, "team-main", "guide"]);
-
 test("RENDER Agent access is the focused startup view with folded Use roots and Right reveals one layer", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection(1))} exit={() => {}} />,
@@ -110,7 +104,6 @@ test("RENDER Agent access is the focused startup view with folded Use roots and 
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Agent access disclosure has three real Button cells and never opens a Collection", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
@@ -132,7 +125,6 @@ test("RENDER Agent access disclosure has three real Button cells and never opens
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Agent access name click only selects and Collection Enter toggles in place", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
@@ -152,7 +144,6 @@ test("RENDER Agent access name click only selects and Collection Enter toggles i
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Agent access Down selection directly reads its exact Skill and Enter focuses the displayed body", async () => {
   const reads: string[] = [];
   const setup = await testRender(() => <App core={readingCore(12, reads)} exit={() => {}} />, {
@@ -182,7 +173,6 @@ test("RENDER Agent access Down selection directly reads its exact Skill and Ente
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Agent access tree consumes leaf Right and root Left while Skill Left returns its parent", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
@@ -209,7 +199,6 @@ test("RENDER Agent access tree consumes leaf Right and root Left while Skill Lef
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Agent access collapsing a root glyph with its direct Skill selected selects the root", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
@@ -229,7 +218,6 @@ test("RENDER Agent access collapsing a root glyph with its direct Skill selected
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Agent access collapsing a Reference glyph with its direct Skill selected returns to that Reference", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection(12))} exit={() => {}} />,
@@ -252,7 +240,6 @@ test("RENDER Agent access collapsing a Reference glyph with its direct Skill sel
     setup.renderer.destroy();
   }
 });
-
 test("RENDER Agent access Escape restores a non-root Skill path, tree scroll and expansion without another content read", async () => {
   const reads: string[] = [];
   const setup = await testRender(() => <App core={readingCore(12, reads)} exit={() => {}} />, {

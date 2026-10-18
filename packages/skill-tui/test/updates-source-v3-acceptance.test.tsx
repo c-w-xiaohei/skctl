@@ -15,7 +15,6 @@ import { App } from "../src/app";
 import { collectionFilterPathKey } from "../src/collections/collection-filter-tree";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
-
 type Setup = Awaited<ReturnType<typeof testRender>>;
 const longFailure = `Remote unavailable: ${"the upstream request failed with a deliberately long diagnostic; ".repeat(8)}`;
 const revision = "d".repeat(40);
@@ -24,7 +23,6 @@ const viewports = [
   [80, 16],
   [43, 30],
 ] as const;
-
 async function renderApp(
   core: ReturnType<typeof directSourceCore>,
   size = { width: 80, height: 24 },
@@ -48,7 +46,6 @@ async function renderApp(
     throw error;
   }
 }
-
 function sourceFixture(count: number): WorkspaceView {
   const base = workspaceProjection({ includeContribution: false });
   const sources = Array.from({ length: count }, (_, index) => ({
@@ -75,7 +72,6 @@ function sourceFixture(count: number): WorkspaceView {
     ),
   };
 }
-
 function collectionFixture(): WorkspaceView {
   const projection = sourceFixture(2);
   if (projection.effective.status !== "complete") throw new Error("Expected complete projection");
@@ -103,7 +99,6 @@ function collectionFixture(): WorkspaceView {
     },
   };
 }
-
 function observation(source: string, paths: readonly string[]): UpdateObservation {
   return {
     source,
@@ -116,7 +111,6 @@ function observation(source: string, paths: readonly string[]): UpdateObservatio
     unchanged: [],
   };
 }
-
 // Only external Core inputs/calls are fixtures; App owns drafts, routes and tasks.
 function updateCore(projection: WorkspaceView) {
   const checks: string[] = [];
@@ -124,49 +118,42 @@ function updateCore(projection: WorkspaceView) {
   const updates: unknown[] = [];
   const reads: unknown[] = [];
   const core = directSourceCore(projection, {
-    installed: {
-      checkUpdate: async ({ source }) => {
-        checks.push(source);
-        const paths = projection.installedSkills
-          .filter((skill) => skill.address.source === source)
-          .map((skill) => skill.address.path);
-        completed.push(source);
-        return { value: observation(source, paths), diagnostics: [] };
-      },
-      update: async (request) => {
-        updates.push(request);
-        return { value: undefined, diagnostics: [] };
-      },
-      load: async (request) => {
-        reads.push(request);
-        throw new Error("Updates navigation must not read installed Skill content");
-      },
+    checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+      checks.push(source);
+      const paths = projection.installedSkills
+        .filter((skill) => skill.address.source === source)
+        .map((skill) => skill.address.path);
+      completed.push(source);
+      return { value: observation(source, paths), diagnostics: [] };
+    },
+    updateSkills: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      updates.push(request);
+      return { value: undefined, diagnostics: [] };
+    },
+    loadInstalledSkill: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+      reads.push(request);
+      throw new Error("Updates navigation must not read installed Skill content");
     },
   });
   return { core, checks, completed, updates, reads };
 }
-
 function text(setup: Setup, id: string) {
   const target = setup.renderer.root.findDescendantById(id);
   return target instanceof TextRenderable ? target.plainText : undefined;
 }
-
 const rowId = (table: string, key: string) => `${table}-row-${encodeURIComponent(key)}`;
 const skillRow = (path: string) => rowId("source-updates-browser", `team-main\u0000${path}`);
-
 function tableRows(setup: Setup, id: string) {
   const body = setup.renderer.root.findDescendantById(`${id}-body`);
   return body instanceof ScrollBoxRenderable
     ? body.content.getChildren().filter((child) => child.id.startsWith(`${id}-row-`))
     : [];
 }
-
 async function openUpdates(setup: Setup) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-updates"));
   await enterLive(setup, "shell-section-tab-updates");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
 }
-
 async function settledSources(
   setup: Setup,
   completed: readonly string[],
@@ -183,7 +170,6 @@ async function settledSources(
   );
   expect(tableRows(setup, "updates-browser")).toHaveLength(sources.length);
 }
-
 async function openActions(setup: Setup) {
   setup.mockInput.pressKey("p", { ctrl: true });
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
@@ -191,7 +177,6 @@ async function openActions(setup: Setup) {
   if (!(choices instanceof SelectRenderable)) throw new Error("Actions must be a native Select");
   return choices;
 }
-
 async function chooseAction(setup: Setup, id: string) {
   const choices = await openActions(setup);
   const index = choices.options.findIndex((option) => option.value.id === id);
@@ -200,7 +185,6 @@ async function chooseAction(setup: Setup, id: string) {
   for (let step = 0; step < index; step++) setup.mockInput.pressArrow("down");
   await parsedEnter(setup);
 }
-
 function expectActionBounds(setup: Setup, prefix: string, actionId: string) {
   const pane = setup.renderer.root.findDescendantById(`${prefix}-page`)!;
   const browser = setup.renderer.root.findDescendantById(`${prefix}-browser`)!;
@@ -224,7 +208,6 @@ function expectActionBounds(setup: Setup, prefix: string, actionId: string) {
   expect(action.screenY + action.height).toBeLessThanOrEqual(setup.renderer.height - 1);
   return action;
 }
-
 test.each([12, 2])(
   "App Updates keeps %i startup Sources and local actions bounded across short/narrow viewports",
   async (count) => {
@@ -233,20 +216,18 @@ test.each([12, 2])(
     const completed: string[] = [];
     const reads: unknown[] = [];
     const core = directSourceCore(projection, {
-      installed: {
-        checkUpdate: async ({ source }) => {
-          checks.push(source);
-          try {
-            if (source === "source-12") throw new Error(longFailure);
-            return { value: observation(source, []), diagnostics: [] };
-          } finally {
-            completed.push(source);
-          }
-        },
-        load: async (request) => {
-          reads.push(request);
-          throw new Error("Opening Updates must not read installed content");
-        },
+      checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) => {
+        checks.push(source);
+        try {
+          if (source === "source-12") throw new Error(longFailure);
+          return { value: observation(source, []), diagnostics: [] };
+        } finally {
+          completed.push(source);
+        }
+      },
+      loadInstalledSkill: async (_environment: import("@skill-cli/core").CoreOptions, request) => {
+        reads.push(request);
+        throw new Error("Opening Updates must not read installed content");
       },
     });
     const mounted = await renderApp(core, { width: 80, height: 16 });
@@ -387,7 +368,6 @@ test.each([12, 2])(
     }
   },
 );
-
 test("Source row activation and semantic Back restore the exact overview row without new work", async () => {
   const fixture = updateCore(sourceFixture(2));
   const mounted = await renderApp(fixture.core);
@@ -414,7 +394,6 @@ test("Source row activation and semantic Back restore the exact overview row wit
     await mounted.dispose();
   }
 });
-
 test("Committed Source query and hidden checked targets survive draft cancellation, Back and re-entry", async () => {
   const fixture = updateCore(sourceFixture(2));
   const mounted = await renderApp(fixture.core);
@@ -451,7 +430,6 @@ test("Committed Source query and hidden checked targets survive draft cancellati
     );
     expect(setup.captureCharFrame()).toContain("Filter: bravo");
     expect(fixture.updates).toEqual([]);
-
     // Shared Back navigates; browser Escape intentionally clears selection/query first.
     await enterLive(setup, "route-back");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "updates-browser");
@@ -495,13 +473,15 @@ test("Committed Source query and hidden checked targets survive draft cancellati
     await mounted.dispose();
   }
 });
-
 test("An empty Source draft submits all legal targets; Stop before mutation keeps it empty and retry stays exact", async () => {
   const fixture = updateCore(sourceFixture(2));
-  const get = fixture.core.workspace.get;
+  const get = fixture.core.getWorkspace;
   let holdSubmission = false;
   let heldSignal: AbortSignal | undefined;
-  fixture.core.workspace.get = async (options) => {
+  fixture.core.getWorkspace = async (
+    _environment: import("@skill-cli/core").CoreOptions,
+    options,
+  ) => {
     if (holdSubmission) {
       heldSignal = options?.signal;
       await new Promise<void>((_resolve, reject) => {
@@ -512,7 +492,7 @@ test("An empty Source draft submits all legal targets; Stop before mutation keep
         );
       });
     }
-    return get(options);
+    return get(_environment, options);
   };
   const mounted = await renderApp(fixture.core);
   const { setup } = mounted;
@@ -569,7 +549,6 @@ test("An empty Source draft submits all legal targets; Stop before mutation keep
     await mounted.dispose();
   }
 });
-
 test.each(["current-exposure", "problems"] as const)(
   "Collection Source drill-down from %s retains its bounded draft, selection and check count across Back and recheck",
   async (initialView) => {

@@ -5,9 +5,7 @@ import type { TuiCore } from "../src/effects";
 import { findLiteralMatches, rawOffsetForMarkdownMatch } from "../src/types";
 import { directSourceCore, testEffects, workspaceProjection } from "./direct-source.fixture";
 import { deferred, installedContent, observeReader, pendingReader } from "./reader-owner.fixture";
-
 const address = { source: "team-main", path: "guide" };
-
 test("Reader restores per-Skill Details disclosure state without replacing cached bytes", () => {
   const { owner } = pendingReader();
   owner.select(address);
@@ -28,7 +26,6 @@ test("Reader restores per-Skill Details disclosure state without replacing cache
     tab: "details",
   });
 });
-
 test("READ-012 finds literal case-sensitive non-overlapping matches with source positions", () => {
   expect(findLiteralMatches("one one\r\nOne\n😀one", "one")).toEqual([
     { offset: 0, line: 0, column: 0 },
@@ -42,24 +39,21 @@ test("READ-012 finds literal case-sensitive non-overlapping matches with source 
   expect(findLiteralMatches("one", "")).toEqual([]);
   expect(rawOffsetForMarkdownMatch("---\ntitle: Demo\n---\n# Demo", "# Demo", 0)).toBe(20);
 });
-
 test("STATE-014/015 replaces only the Reader lane and suppresses stale content failures", async () => {
   let firstAbort = 0;
-  const second = deferred<Awaited<ReturnType<TuiCore["installed"]["load"]>>>();
+  const second = deferred<Awaited<ReturnType<TuiCore["loadInstalledSkill"]>>>();
   const core = directSourceCore(workspaceProjection(), {
-    installed: {
-      load: (request, options) =>
-        request.address.path === "first"
-          ? new Promise((_, reject) =>
-              options?.signal?.addEventListener("abort", () => {
-                firstAbort++;
-                reject(new SkillCliError("CANCELLED", "first cancelled"));
-              }),
-            )
-          : second.promise,
-    },
+    loadInstalledSkill: (_environment: import("@skill-cli/core").CoreOptions, request, options) =>
+      request.address.path === "first"
+        ? new Promise((_, reject) =>
+            options?.signal?.addEventListener("abort", () => {
+              firstAbort++;
+              reject(new SkillCliError("CANCELLED", "first cancelled"));
+            }),
+          )
+        : second.promise,
   });
-  const owner = createReaderOwner(core.installed);
+  const owner = createReaderOwner(core);
   const observed = observeReader(owner);
   const firstAddress = { ...address, path: "first" };
   const secondAddress = { ...address, path: "second" };
@@ -75,7 +69,6 @@ test("STATE-014/015 replaces only the Reader lane and suppresses stale content f
   owner.dispose();
   observed.dispose();
 });
-
 test("Reader selection does not load and Details selection only changes the selected cache view", () => {
   const { owner, loads, lists, reads } = pendingReader();
   owner.select(address, "details");
@@ -89,7 +82,6 @@ test("Reader selection does not load and Details selection only changes the sele
   expect(reads).toEqual([]);
   owner.dispose();
 });
-
 test("Reader cache, epochs, and stale guards keep colliding display shorthands independent", async () => {
   const first = { source: "team", path: "main/guide" };
   const second = { source: "team/main", path: "guide" };
@@ -109,28 +101,29 @@ test("Reader cache, epochs, and stale guards keep colliding display shorthands i
   expect(owner.cached(first)).not.toBe(owner.cached(second));
   owner.dispose();
 });
-
 test("STATE-014/015 keeps concurrent SKILL.md content and resource-list transports independent", async () => {
   const calls: unknown[] = [];
-  const content = deferred<Awaited<ReturnType<TuiCore["installed"]["load"]>>>();
-  const resources = deferred<Awaited<ReturnType<TuiCore["installed"]["listResources"]>>>();
+  const content = deferred<Awaited<ReturnType<TuiCore["loadInstalledSkill"]>>>();
+  const resources = deferred<Awaited<ReturnType<TuiCore["listInstalledResources"]>>>();
   let contentSignal: AbortSignal | undefined;
   let resourceSignal: AbortSignal | undefined;
   const core = directSourceCore(workspaceProjection(), {
-    installed: {
-      load: (request, options) => {
-        calls.push({ type: "content", request });
-        contentSignal = options?.signal;
-        return content.promise;
-      },
-      listResources: (request, options) => {
-        calls.push({ type: "resources", request });
-        resourceSignal = options?.signal;
-        return resources.promise;
-      },
+    loadInstalledSkill: (_environment: import("@skill-cli/core").CoreOptions, request, options) => {
+      calls.push({ type: "content", request });
+      contentSignal = options?.signal;
+      return content.promise;
+    },
+    listInstalledResources: (
+      _environment: import("@skill-cli/core").CoreOptions,
+      request,
+      options,
+    ) => {
+      calls.push({ type: "resources", request });
+      resourceSignal = options?.signal;
+      return resources.promise;
     },
   });
-  const owner = createReaderOwner(core.installed);
+  const owner = createReaderOwner(core);
   owner.select(address);
   const loading = owner.load(address);
   const listing = owner.list(address);
@@ -160,40 +153,43 @@ test("STATE-014/015 keeps concurrent SKILL.md content and resource-list transpor
   });
   owner.dispose();
 });
-
 test("STATE-014 replaces resource list and read requests in the Reader lane without aborting a Source operation", async () => {
   let listAborts = 0;
   let readAborts = 0;
   let discoveryAborts = 0;
   const core = directSourceCore(workspaceProjection(), {
-    installed: {
-      listResources: (_request, options) =>
-        new Promise((_, reject) =>
-          options?.signal?.addEventListener("abort", () => {
-            listAborts++;
-            reject(new SkillCliError("CANCELLED", "list cancelled"));
-          }),
-        ),
-      read: (_request, options) =>
-        new Promise((_, reject) =>
-          options?.signal?.addEventListener("abort", () => {
-            readAborts++;
-            reject(new SkillCliError("CANCELLED", "read cancelled"));
-          }),
-        ),
-    },
-    sources: {
-      discover: (_request, options) =>
-        new Promise((_, reject) =>
-          options?.signal?.addEventListener("abort", () => {
-            discoveryAborts++;
-            reject(new SkillCliError("CANCELLED", "discovery cancelled"));
-          }),
-        ),
-    },
+    listInstalledResources: (
+      _environment: import("@skill-cli/core").CoreOptions,
+      _request,
+      options,
+    ) =>
+      new Promise((_, reject) =>
+        options?.signal?.addEventListener("abort", () => {
+          listAborts++;
+          reject(new SkillCliError("CANCELLED", "list cancelled"));
+        }),
+      ),
+    readInstalledResource: (
+      _environment: import("@skill-cli/core").CoreOptions,
+      _request,
+      options,
+    ) =>
+      new Promise((_, reject) =>
+        options?.signal?.addEventListener("abort", () => {
+          readAborts++;
+          reject(new SkillCliError("CANCELLED", "read cancelled"));
+        }),
+      ),
+    discoverSkills: (_environment: import("@skill-cli/core").CoreOptions, _request, options) =>
+      new Promise((_, reject) =>
+        options?.signal?.addEventListener("abort", () => {
+          discoveryAborts++;
+          reject(new SkillCliError("CANCELLED", "discovery cancelled"));
+        }),
+      ),
   });
   const effects = testEffects(core);
-  const owner = createReaderOwner(core.installed);
+  const owner = createReaderOwner(core);
   owner.select(address);
   const source = effects.discover({ kind: "source-discovery", source: "team-main" });
   const list = owner.list(address);
@@ -208,32 +204,27 @@ test("STATE-014 replaces resource list and read requests in the Reader lane with
   expect(readAborts).toBe(1);
   expect(discoveryAborts).toBe(1);
 });
-
 test("STATE-014 selecting a Reader target aborts only the prior Reader request while Source observation remains pending", async () => {
   let readerAborts = 0;
   let sourceAborts = 0;
   const core = directSourceCore(workspaceProjection(), {
-    installed: {
-      load: (_request, options) =>
-        new Promise((_, reject) =>
-          options?.signal?.addEventListener("abort", () => {
-            readerAborts++;
-            reject(new SkillCliError("CANCELLED", "reader cancelled"));
-          }),
-        ),
-    },
-    sources: {
-      discover: (_request, options) =>
-        new Promise((_, reject) =>
-          options?.signal?.addEventListener("abort", () => {
-            sourceAborts++;
-            reject(new SkillCliError("CANCELLED", "source cancelled"));
-          }),
-        ),
-    },
+    loadInstalledSkill: (_environment: import("@skill-cli/core").CoreOptions, _request, options) =>
+      new Promise((_, reject) =>
+        options?.signal?.addEventListener("abort", () => {
+          readerAborts++;
+          reject(new SkillCliError("CANCELLED", "reader cancelled"));
+        }),
+      ),
+    discoverSkills: (_environment: import("@skill-cli/core").CoreOptions, _request, options) =>
+      new Promise((_, reject) =>
+        options?.signal?.addEventListener("abort", () => {
+          sourceAborts++;
+          reject(new SkillCliError("CANCELLED", "source cancelled"));
+        }),
+      ),
   });
   const effects = testEffects(core);
-  const owner = createReaderOwner(core.installed);
+  const owner = createReaderOwner(core);
   owner.select({ ...address, path: "first" });
   const source = effects.discover({ kind: "source-discovery", source: "team-main" });
   const first = owner.load({ ...address, path: "first" });
@@ -248,7 +239,6 @@ test("STATE-014 selecting a Reader target aborts only the prior Reader request w
   expect(readerAborts).toBe(2);
   expect(sourceAborts).toBe(1);
 });
-
 test("STATE-015 stale resource list failure cannot replace a newer resource read", async () => {
   const { owner, lists, reads } = pendingReader();
   owner.select(address);
@@ -264,7 +254,6 @@ test("STATE-015 stale resource list failure cannot replace a newer resource read
   expect(owner.current()?.error).toBeUndefined();
   owner.dispose();
 });
-
 test.each(["resources", "resource"] as const)(
   "Reader %s replacement retains the shared controller after an older request settles",
   async (request) => {
@@ -301,24 +290,21 @@ test.each(["resources", "resource"] as const)(
     observed.dispose();
   },
 );
-
 test.each(["resources", "resource"] as const)(
   "Reader %s preserves direct success values, failure conversion, and cancellation silence",
   async (request) => {
     let error: unknown;
     const core = directSourceCore(workspaceProjection(), {
-      installed: {
-        listResources: async () => {
-          if (error) throw error;
-          return [{ path: "guide.md", kind: "file" }];
-        },
-        read: async () => {
-          if (error) throw error;
-          return { kind: "text", path: "guide.md", text: "current", format: "text" };
-        },
+      listInstalledResources: async () => {
+        if (error) throw error;
+        return [{ path: "guide.md", kind: "file" }];
+      },
+      readInstalledResource: async () => {
+        if (error) throw error;
+        return { kind: "text", path: "guide.md", text: "current", format: "text" };
       },
     });
-    const owner = createReaderOwner(core.installed);
+    const owner = createReaderOwner(core);
     owner.select(address);
     const observed = observeReader(owner);
     const run = () =>
@@ -358,15 +344,14 @@ test.each(["resources", "resource"] as const)(
     observed.dispose();
   },
 );
-
 function pendingContentReads() {
   const calls: {
     readonly address: ReaderAddress;
     readonly signal?: AbortSignal;
-    readonly resolve: (value: Awaited<ReturnType<TuiCore["installed"]["load"]>>) => void;
+    readonly resolve: (value: Awaited<ReturnType<TuiCore["loadInstalledSkill"]>>) => void;
     readonly reject: (error: unknown) => void;
   }[] = [];
-  const load: TuiCore["installed"]["load"] = (request, options) =>
+  const load: TuiCore["loadInstalledSkill"] = (_environment, request, options) =>
     new Promise((resolve, reject) => {
       calls.push({
         address: request.address,
@@ -375,11 +360,10 @@ function pendingContentReads() {
         reject,
       });
     });
-  const core = directSourceCore(workspaceProjection(), { installed: { load } });
-  const owner = createReaderOwner(core.installed);
+  const core = directSourceCore(workspaceProjection(), { loadInstalledSkill: load });
+  const owner = createReaderOwner(core);
   return { owner, calls };
 }
-
 test("rapid A-B-A clears canceled caches and ignores late canceled successes and diagnostics", async () => {
   const a = { ...address, path: "a" };
   const b = { ...address, path: "b" };
@@ -410,7 +394,6 @@ test("rapid A-B-A clears canceled caches and ignores late canceled successes and
   owner.dispose();
   observed.dispose();
 });
-
 test("switching to a cached Skill can cancel pending content without stranding its loading state", async () => {
   const a = { ...address, path: "a" };
   const b = { ...address, path: "b" };
@@ -437,7 +420,6 @@ test("switching to a cached Skill can cancel pending content without stranding i
   expect(owner.current()).toMatchObject({ address: b, text: "retried B", loading: false });
   owner.dispose();
 });
-
 test("Core content cancellation without a replacement remains reloadable", async () => {
   const { owner, calls } = pendingContentReads();
   owner.select(address);
@@ -453,30 +435,29 @@ test("Core content cancellation without a replacement remains reloadable", async
   expect(owner.current()).toMatchObject({ loading: false, text: "reloaded" });
   owner.dispose();
 });
-
 test("explicit content navigation cancellation does not cancel a pending Source operation", async () => {
-  const pending = deferred<Awaited<ReturnType<TuiCore["installed"]["load"]>>>();
+  const pending = deferred<Awaited<ReturnType<TuiCore["loadInstalledSkill"]>>>();
   let contentSignal: AbortSignal | undefined;
   let sourceSignal: AbortSignal | undefined;
   const core = directSourceCore(workspaceProjection(), {
-    installed: {
-      load: (_request, options) => {
-        contentSignal = options?.signal;
-        return pending.promise;
-      },
+    loadInstalledSkill: (
+      _environment: import("@skill-cli/core").CoreOptions,
+      _request,
+      options,
+    ) => {
+      contentSignal = options?.signal;
+      return pending.promise;
     },
-    sources: {
-      discover: (_request, options) =>
-        new Promise((_, reject) => {
-          sourceSignal = options?.signal;
-          sourceSignal?.addEventListener("abort", () =>
-            reject(new SkillCliError("CANCELLED", "source canceled on teardown")),
-          );
-        }),
-    },
+    discoverSkills: (_environment: import("@skill-cli/core").CoreOptions, _request, options) =>
+      new Promise((_, reject) => {
+        sourceSignal = options?.signal;
+        sourceSignal?.addEventListener("abort", () =>
+          reject(new SkillCliError("CANCELLED", "source canceled on teardown")),
+        );
+      }),
   });
   const effects = testEffects(core);
-  const owner = createReaderOwner(core.installed);
+  const owner = createReaderOwner(core);
   owner.select(address);
   const source = effects.discover({ kind: "source-discovery", source: "team-main" });
   const read = owner.load(address);
@@ -490,7 +471,6 @@ test("explicit content navigation cancellation does not cancel a pending Source 
   effects.teardown();
   await source;
 });
-
 test("B failure and explicit retry retain B identity and never reuse A content", async () => {
   const a = { ...address, path: "a" };
   const b = { ...address, path: "b" };
@@ -519,7 +499,6 @@ test("B failure and explicit retry retain B identity and never reuse A content",
   expect(owner.current()?.text).toBe("A only");
   owner.dispose();
 });
-
 test("explicit installed refresh retires in-flight content and reloads without resetting reading preferences", async () => {
   const { owner, calls } = pendingContentReads();
   owner.select(address);
@@ -544,7 +523,6 @@ test("explicit installed refresh retires in-flight content and reloads without r
   });
   owner.dispose();
 });
-
 test("accepted failure notification follows committed state for either lane only at the active content view", async () => {
   const notified: unknown[] = [];
   const pending: ReturnType<typeof pendingReader> = pendingReader(() =>
@@ -558,13 +536,11 @@ test("accepted failure notification follows committed state for either lane only
   await content;
   expect(notified).toEqual([{ code: "INTERNAL", severity: "warning", message: "content failed" }]);
   expect(notified[0]).toBe(owner.current()?.error);
-
   const body = owner.read(address, "guide.md");
   reads[0]!.reject(new Error("body failed"));
   await body;
   expect(notified).toHaveLength(2);
   expect(notified[1]).toBe(owner.current()?.error);
-
   owner.patch({ resourceLevel: "list" });
   const listView = owner.load(address);
   loads[1]!.reject(new Error("no content focus"));
@@ -573,7 +549,6 @@ test("accepted failure notification follows committed state for either lane only
   expect(notified).toHaveLength(2);
   owner.dispose();
 });
-
 test("Reader dispose suppresses late content and resource writes without changing resource promise results", async () => {
   const { owner, loads, reads } = pendingReader();
   owner.select(address);
@@ -604,7 +579,6 @@ test("Reader dispose suppresses late content and resource writes without changin
   expect(reads).toHaveLength(1);
   observed.dispose();
 });
-
 test("an old content finally cannot release a replacement that is still pending", async () => {
   const { owner, calls } = pendingContentReads();
   owner.select(address);
@@ -621,7 +595,6 @@ test("an old content finally cannot release a replacement that is still pending"
   expect(owner.current()?.text).toBeUndefined();
   owner.dispose();
 });
-
 test("resource list start retains successful body while body start clears it and loaded-empty stays loaded", async () => {
   const { owner, lists, reads } = pendingReader();
   owner.select(address);

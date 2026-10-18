@@ -20,7 +20,6 @@ import {
   selectedReaderTab,
   waitForReaderBody,
 } from "./reader-test-controls";
-
 let setup: Awaited<ReturnType<typeof testRender>> | undefined;
 afterEach(() => {
   setup?.renderer.destroy();
@@ -35,7 +34,6 @@ const descendants = (node: BaseRenderable): BaseRenderable[] => [
   ...node.getChildren().flatMap(descendants),
 ];
 const node = (id: string) => setup!.renderer.root.findDescendantById(id)!;
-
 async function mount(width = 144, height = 40) {
   const projection = readerProjection();
   const source = projection.installedSkills[0]!;
@@ -47,7 +45,7 @@ async function mount(width = 144, height = 40) {
             ...projection,
             installedSkills: [{ ...source, description }, ...projection.installedSkills.slice(1)],
           },
-          { installed: { load: async () => readerContent } },
+          { loadInstalledSkill: async () => readerContent },
         )}
         exit={() => {}}
       />
@@ -58,7 +56,6 @@ async function mount(width = 144, height = 40) {
   await parsedEnter(setup);
   await waitForReaderBody(setup, "needle in prose");
 }
-
 async function capture(name: string) {
   const directory = process.env.QUIET_UPDATE_CAPTURE_DIR;
   if (!directory) return;
@@ -69,7 +66,6 @@ async function capture(name: string) {
   await writeFile(join(directory, `${name}.txt`), setup!.captureCharFrame());
   await writeFile(join(directory, `${name}.json`), JSON.stringify(setup!.captureSpans(), null, 2));
 }
-
 test.each([
   [144, 40],
   [100, 24],
@@ -110,7 +106,6 @@ test.each([
   await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "reader-reload");
   await capture(`manage-${width}x${height}`);
 });
-
 test("pointer selects each Reader view immediately without requiring Enter", async () => {
   await mount();
   for (const [value, index] of [
@@ -133,7 +128,6 @@ test("pointer selects each Reader view immediately without requiring Enter", asy
     ).toBeDefined();
   }
 });
-
 test("reselecting a view is idempotent and content arrows never jump to Update", async () => {
   await mount();
   const body = node("reader-scrollbox") as ScrollBoxRenderable;
@@ -151,7 +145,6 @@ test("reselecting a view is idempotent and content arrows never jump to Update",
   setup!.mockInput.pressArrow("up");
   await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable === tab);
 });
-
 test.each([
   [144, 40],
   [43, 13],
