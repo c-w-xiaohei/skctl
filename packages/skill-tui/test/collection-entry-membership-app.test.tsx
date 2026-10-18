@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import type { ManagementProjection, MembershipBatchImpact, OperationResult } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { enterLive, parsedEnter } from "./reader-test-controls";
+import { enterLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 
 const result = <T,>(value: T): OperationResult<T> => ({
   value,
@@ -190,21 +190,6 @@ async function selectOrigins(setup: Awaited<ReturnType<typeof testRender>>, coun
 
 async function activateRemove(setup: Awaited<ReturnType<typeof testRender>>) {
   await enterLive(setup, "remove-from-collection");
-}
-
-async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
-  await new Promise<void>((resolve) => {
-    const listener = (event: { readonly name: string }) => {
-      const name = event.name.toLowerCase();
-      if (name !== "escape" && name !== "esc") return;
-      setup.renderer.keyInput.off("keypress", listener);
-      resolve();
-    };
-    setup.renderer.keyInput.prependListener("keypress", listener);
-    setup.mockInput.pressKey("ESCAPE");
-  });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  await setup.renderOnce();
 }
 
 async function removeSelected(setup: Awaited<ReturnType<typeof testRender>>) {
