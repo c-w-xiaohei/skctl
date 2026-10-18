@@ -8,7 +8,7 @@ import {
 } from "@opentui/core";
 import { ButtonRenderable } from "@tuiparts/core/button";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
@@ -81,7 +81,7 @@ async function mount(width: number, height = 24, adoptedConfig = false) {
   const prior = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
   process.env.SKILL_TUI_UPDATE_CACHE_DIR = cache;
   const base = collectionsSourcesProjection();
-  const projection: ManagementProjection = adoptedConfig
+  const projection: WorkspaceView = adoptedConfig
     ? {
         ...base,
         configs: base.configs.map((config) =>
@@ -110,16 +110,15 @@ async function mount(width: number, height = 24, adoptedConfig = false) {
     () => (
       <App
         core={directSourceCore(projection, {
-          loadInstalled: async ({ address }) => ({
-            value: {
+          installed: {
+            load: async ({ address }) => ({
               address,
               name: address.path,
               description: "Installed instructions",
               rawText: "Installed instructions",
               markdownText: "Installed instructions",
-            },
-            diagnostics: [],
-          }),
+            }),
+          },
         })}
         exit={() => {}}
       />

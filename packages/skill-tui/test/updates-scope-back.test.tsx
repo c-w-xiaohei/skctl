@@ -51,35 +51,38 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
   const updates: { source: string; paths: readonly string[] }[] = [];
   let updateSignal: AbortSignal | undefined;
   const core = directSourceCore(projection, {
-    checkUpdate: async ({ source }) => {
-      checks.push(source);
-      try {
-        return {
-          value: {
-            source,
-            kind: "github" as const,
-            exactRevision: revision,
-            changed: ["one", "two"].map((path) => ({ path, name: path, description: path })),
-            added: [],
-            removed: [],
-            unchanged: [],
-          },
-          diagnostics: [],
-        };
-      } finally {
-        completed.push(source);
-      }
-    },
-    update: async ({ source, paths }, options) => {
-      updates.push({ source, paths });
-      updateSignal = options?.signal;
-      await new Promise<never>((_resolve, reject) => {
-        const abort = () =>
-          reject(new SkillCliError("CANCELLED", "Stopped before fixture publication"));
-        if (updateSignal?.aborted) abort();
-        else updateSignal?.addEventListener("abort", abort, { once: true });
-      });
-      throw new Error("The cancelled fixture must never publish an update");
+    installed: {
+      checkUpdate: async ({ source }) => {
+        checks.push(source);
+        try {
+          return {
+            value: {
+              source,
+              kind: "github" as const,
+              baseline: "baseline:test",
+              exactRevision: revision,
+              changed: ["one", "two"].map((path) => ({ path, name: path, description: path })),
+              added: [],
+              removed: [],
+              unchanged: [],
+            },
+            diagnostics: [],
+          };
+        } finally {
+          completed.push(source);
+        }
+      },
+      update: async ({ source, paths }, options) => {
+        updates.push({ source, paths });
+        updateSignal = options?.signal;
+        await new Promise<never>((_resolve, reject) => {
+          const abort = () =>
+            reject(new SkillCliError("CANCELLED", "Stopped before fixture publication"));
+          if (updateSignal?.aborted) abort();
+          else updateSignal?.addEventListener("abort", abort, { once: true });
+        });
+        throw new Error("The cancelled fixture must never publish an update");
+      },
     },
   });
   const cacheKey = await mkdtemp(join(tmpdir(), "source-scope-back-"));

@@ -42,8 +42,7 @@ async function fixture() {
     userConfigPath: join(root, "user.jsonc"),
     sourceTransport: () => bare,
   });
-  await core.configuration.change({
-    type: "source.register",
+  await core.sources.register({
     level: "project",
     id: "team",
     binding: {
@@ -53,7 +52,7 @@ async function fixture() {
       ref: "main",
     },
   });
-  await core.management.install({
+  await core.installed.install({
     source: "team",
     paths: ["review"],
     exactRevision: await git(work, "rev-parse", "HEAD"),
@@ -90,7 +89,7 @@ test("preview compares installed bytes to the checked commit, covers every chang
     await writeFile(join(f.skill, "image.bin"), Buffer.from([0, 1, 3]));
     await chmod(join(f.skill, "mode.sh"), 0o755);
     await f.commit();
-    const checked = (await f.core.management.checkUpdate({ source: "team" })).value;
+    const checked = (await f.core.installed.checkUpdate({ source: "team" })).value;
     const config = await readFile(join(f.root, "skill-cli.jsonc"));
     const state = await readFile(join(f.root, "state", "state.json"));
     await writeFile(
@@ -99,7 +98,7 @@ test("preview compares installed bytes to the checked commit, covers every chang
     );
     await f.commit();
     const preview = (
-      await f.core.management.previewUpdate({
+      await f.core.installed.previewUpdate({
         source: "team",
         path: "review",
         exactRevision: checked.exactRevision,
@@ -139,17 +138,16 @@ test("preview compares installed bytes to the checked commit, covers every chang
     expect(await readFile(join(f.root, "skill-cli.jsonc"))).toEqual(config);
     expect(await readFile(join(f.root, "state", "state.json"))).toEqual(state);
     expect(
-      (await f.core.content.loadInstalled({ address: { source: "team", path: "review" } })).value
-        .rawText,
+      (await f.core.installed.load({ address: { source: "team", path: "review" } })).rawText,
     ).toContain("Old instructions");
-    await f.core.management.update({
+    await f.core.installed.update({
       source: "team",
       paths: ["review"],
       exactRevision: checked.exactRevision,
       expectedBaseline: checked.baseline,
     });
     await expect(
-      f.core.management.previewUpdate({
+      f.core.installed.previewUpdate({
         source: "team",
         path: "review",
         exactRevision: checked.exactRevision,
@@ -166,9 +164,9 @@ test("preview of a removed Root shows deleted installed files, never a fabricate
   try {
     await rm(f.skill, { recursive: true });
     await f.commit();
-    const checked = (await f.core.management.checkUpdate({ source: "team" })).value;
+    const checked = (await f.core.installed.checkUpdate({ source: "team" })).value;
     const preview = (
-      await f.core.management.previewUpdate({
+      await f.core.installed.previewUpdate({
         source: "team",
         path: "review",
         exactRevision: checked.exactRevision,
@@ -186,7 +184,7 @@ test("preview of a removed Root shows deleted installed files, never a fabricate
 test("preview rejects stale baselines, missing exact commits, unsafe addresses and cancellation", async () => {
   const f = await fixture();
   try {
-    const checked = (await f.core.management.checkUpdate({ source: "team" })).value;
+    const checked = (await f.core.installed.checkUpdate({ source: "team" })).value;
     const request = {
       source: "team",
       path: "review",
@@ -194,16 +192,16 @@ test("preview rejects stale baselines, missing exact commits, unsafe addresses a
       expectedBaseline: checked.baseline!,
     };
     await expect(
-      f.core.management.previewUpdate({ ...request, expectedBaseline: "stale" }),
+      f.core.installed.previewUpdate({ ...request, expectedBaseline: "stale" }),
     ).rejects.toMatchObject({ code: "TRANSACTION_CONFLICT" });
     await expect(
-      f.core.management.previewUpdate({ ...request, exactRevision: undefined }),
+      f.core.installed.previewUpdate({ ...request, exactRevision: undefined }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     await expect(
-      f.core.management.previewUpdate({ ...request, path: "../review" }),
+      f.core.installed.previewUpdate({ ...request, path: "../review" }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     await expect(
-      f.core.management.previewUpdate(request, { signal: AbortSignal.abort() }),
+      f.core.installed.previewUpdate(request, { signal: AbortSignal.abort() }),
     ).rejects.toMatchObject({ code: "CANCELLED" });
   } finally {
     await f.dispose();
@@ -213,19 +211,18 @@ test("preview rejects stale baselines, missing exact commits, unsafe addresses a
 test("local live content is explicitly unavailable rather than compared with itself", async () => {
   const f = await fixture();
   try {
-    await f.core.configuration.change({
-      type: "source.register",
+    await f.core.sources.register({
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./work", root: "skills" },
     });
-    await f.core.management.install({ source: "local", paths: ["review"] });
+    await f.core.installed.install({ source: "local", paths: ["review"] });
     await writeFile(join(f.skill, "removed.txt"), "Changed in place\n");
-    const checked = (await f.core.management.checkUpdate({ source: "local" })).value;
+    const checked = (await f.core.installed.checkUpdate({ source: "local" })).value;
     const state = await readFile(join(f.root, "state", "state.json"));
     expect(
       (
-        await f.core.management.previewUpdate({
+        await f.core.installed.previewUpdate({
           source: "local",
           path: "review",
           expectedBaseline: checked.baseline!,
@@ -249,9 +246,9 @@ test("large and aggregate-limited files remain listed without acquiring unbounde
     for (let i = 0; i < 5; i++)
       await writeFile(join(f.skill, `text-${i}.txt`), "x".repeat(1_048_576));
     await f.commit();
-    const checked = (await f.core.management.checkUpdate({ source: "team" })).value;
+    const checked = (await f.core.installed.checkUpdate({ source: "team" })).value;
     const result = (
-      await f.core.management.previewUpdate({
+      await f.core.installed.previewUpdate({
         source: "team",
         path: "review",
         exactRevision: checked.exactRevision,

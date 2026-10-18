@@ -1012,9 +1012,11 @@ test("RENDER narrow Problems handoff reads the exact installed subject and Escap
     () => (
       <App
         core={directSourceCore(projection, {
-          loadInstalled: (request) => {
-            loads.push(request.address.path);
-            return Promise.resolve({ value: readerContent, diagnostics: [] });
+          installed: {
+            load: (request) => {
+              loads.push(request.address.path);
+              return Promise.resolve(readerContent);
+            },
           },
         })}
         exit={() => {}}
@@ -1577,16 +1579,15 @@ test("RENDER Collection producer Open Source navigates to its owning Source", as
     () => (
       <App
         core={directSourceCore(projection, {
-          loadInstalled: (request) => {
-            loads.push(request.address.path);
-            const result = {
-              value:
+          installed: {
+            load: (request) => {
+              loads.push(request.address.path);
+              const result =
                 request.address.path === readerSecondAddress.path
                   ? readerSecondContent
-                  : readerContent,
-              diagnostics: [],
-            };
-            return Promise.resolve(result);
+                  : readerContent;
+              return Promise.resolve(result);
+            },
           },
         })}
         exit={() => {}}

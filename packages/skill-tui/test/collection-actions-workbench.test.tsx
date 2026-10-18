@@ -10,8 +10,8 @@ import {
 import { testRender } from "@opentui/solid";
 import {
   SkillCliError,
-  type ConfigurationCapability,
-  type ManagementProjection,
+  type CollectionsCapability,
+  type WorkspaceView,
   type SkillAddress,
 } from "@skill-cli/core";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -27,7 +27,7 @@ import {
   waitForReaderBody,
 } from "./reader-test-controls";
 
-function projection(): ManagementProjection {
+function projection(): WorkspaceView {
   const base = collectionsSourcesProjection();
   if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
   const team = base.effective.collectionsView[0]!;
@@ -83,8 +83,11 @@ type Setup = Awaited<ReturnType<typeof testRender>>;
 async function mount(
   width: number,
   height: number,
-  input: ManagementProjection = projection(),
-  configuration: Partial<ConfigurationCapability> = {},
+  input: WorkspaceView = projection(),
+  configuration: {
+    readonly collections?: Partial<CollectionsCapability>;
+    readonly use?: Partial<import("@skill-cli/core").UseCapability>;
+  } = {},
 ) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/collection-actions-");
@@ -95,36 +98,50 @@ async function mount(
     previews: unknown[] = [],
     usePreviews: unknown[] = [];
   const core = directSourceCore(input, {
-    loadInstalled: async ({ address }) => {
-      reads.push(address);
-      const text = `# ${address.path}\n\nExact installed ${address.path} instructions.`;
-      return {
-        value: {
+    installed: {
+      load: async ({ address }) => {
+        reads.push(address);
+        const text = `# ${address.path}\n\nExact installed ${address.path} instructions.`;
+        return {
           address,
           name: address.path,
           description: address.path,
           rawText: text,
           markdownText: text,
-        },
-        diagnostics: [],
-      };
+        };
+      },
     },
+    collections: configuration.collections,
+    use: configuration.use,
   });
-  Object.assign(core.configuration, configuration);
-  const preview = core.configuration.previewMembershipBatch;
-  core.configuration.previewMembershipBatch = async (request, options) => {
+  const preview = core.collections.previewMemberEdit;
+  core.collections.previewMemberEdit = async (request, options) => {
     previews.push(request);
     return preview(request, options);
   };
-  const previewUse = core.configuration.previewCollectionUse;
-  core.configuration.previewCollectionUse = async (request, options) => {
+  const previewUse = core.use.previewSet;
+  core.use.previewSet = async (request, options) => {
     usePreviews.push(request);
     return previewUse(request, options);
   };
-  core.configuration.change = async (request, options) => {
-    changes.push(request);
-    if (configuration.change) return configuration.change(request, options);
+  const guardWrite = async () => {
     throw new Error("Unconfirmed row actions must not mutate Config");
+  };
+  core.collections.addMember = async (request) => {
+    changes.push({ method: "addMember", request });
+    return guardWrite();
+  };
+  core.collections.removeMember = async (request) => {
+    changes.push({ method: "removeMember", request });
+    return guardWrite();
+  };
+  core.collections.editMembers = async (request) => {
+    changes.push({ method: "editMembers", request });
+    return guardWrite();
+  };
+  core.use.set = async (request) => {
+    changes.push({ method: "use.set", request });
+    return guardWrite();
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
   return {
@@ -372,6 +389,164 @@ test("Reference Manage to Link preserves action meaning without entering Unlink"
   }
 });
 
+test("unlinking a direct relation previews and executes with its enclosing Collection owner", async () => {
+  const base = projection();
+  if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
+  const team = base.effective.collectionsView[0]!;
+  const owner = team.declared[0]!;
+  const input = {
+    ...base,
+    effective: {
+      ...base.effective,
+      collectionsView: [
+        {
+          ...team,
+          links: [
+            { collection: "docs", owner: { ...owner, pointer: "/collections/team/links/0" } },
+          ],
+        },
+        ...base.effective.collectionsView.slice(1),
+      ],
+    },
+  };
+  const previews: unknown[] = [];
+  const writes: unknown[] = [];
+  const mounted = await mount(144, 40, input, {
+    collections: {
+      previewSetLink: async (request) => {
+        previews.push(request);
+        return {
+          value: {
+            kind: "link-change",
+            collection: request.collection,
+            target: request.target,
+            owner,
+            linked: request.linked,
+            members: [],
+            disappearingSelectors: [],
+            retainedSelectors: [],
+            blockers: [],
+            allowed: true,
+          },
+          diagnostics: [],
+        };
+      },
+      setLink: async (request) => {
+        writes.push(request);
+        return { value: { level: owner.level, file: owner.file, changed: true }, diagnostics: [] };
+      },
+    },
+  });
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await enterLive(setup, "collection-tabs-tab-relations");
+    await setup.flush();
+    await selectRow(setup, 2);
+    await chooseAction(setup, "relationship.unlink");
+    await enterLive(setup, "link-review");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-review-choice"));
+    expect(previews).toEqual([
+      {
+        level: "project",
+        collection: "team",
+        target: "docs",
+        linked: false,
+        expectedOwner: owner,
+      },
+    ]);
+    await enterLive(setup, "collection-review-confirm");
+    await setup.waitFor(() => writes.length === 1);
+    expect(writes).toEqual([
+      {
+        level: "project",
+        collection: "team",
+        target: "docs",
+        linked: false,
+        expectedOwner: owner,
+      },
+    ]);
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("removing a direct Reference preserves its expected value and enclosing Collection owner", async () => {
+  const base = projection();
+  if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
+  const team = base.effective.collectionsView[0]!;
+  const owner = team.declared[0]!;
+  const input = {
+    ...base,
+    effective: {
+      ...base.effective,
+      collectionsView: [
+        {
+          ...team,
+          references: [
+            {
+              name: "docs-ref",
+              collection: "docs",
+              description: "Team docs",
+              owner: { ...owner, pointer: "/collections/team/references/docs-ref" },
+            },
+          ],
+        },
+        ...base.effective.collectionsView.slice(1),
+      ],
+    },
+  };
+  const previews: unknown[] = [];
+  const writes: unknown[] = [];
+  const mounted = await mount(144, 40, input, {
+    collections: {
+      previewRemoveReference: async (request) => {
+        previews.push(request);
+        return {
+          value: {
+            kind: "reference",
+            collection: request.collection,
+            name: request.name,
+            referencedCollection: "docs",
+            description: "Team docs",
+            owner,
+            decision: { kind: "direct", owner },
+            allowed: true,
+          },
+          diagnostics: [],
+        };
+      },
+      removeReference: async (request) => {
+        writes.push(request);
+        return { value: { level: owner.level, file: owner.file, changed: true }, diagnostics: [] };
+      },
+    },
+  });
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await enterLive(setup, "collection-tabs-tab-relations");
+    await setup.flush();
+    await selectRow(setup, 0);
+    await chooseAction(setup, "relationship.remove-reference");
+    await enterLive(setup, "reference-review");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-review-choice"));
+    const expected = {
+      level: "project",
+      collection: "team",
+      name: "docs-ref",
+      expected: { collection: "docs", description: "Team docs" },
+      expectedOwner: owner,
+    };
+    expect(previews).toEqual([expected]);
+    await enterLive(setup, "collection-review-confirm");
+    await setup.waitFor(() => writes.length === 1);
+    expect(writes).toEqual([expected]);
+  } finally {
+    await mounted.dispose();
+  }
+});
+
 test("inline Use edit retains the host Config's other roots and cancellation writes nothing", async () => {
   const base = projection();
   const input = {
@@ -483,26 +658,28 @@ test("Collection unified preview preserves mounted Reference draft on failure an
   let previews = 0;
   let writes = 0;
   const mounted = await mount(144, 40, input, {
-    previewReference: async (request) => {
-      if (++previews === 1) throw new SkillCliError("PROVIDER_UNAVAILABLE", "retry preview");
-      return {
-        value: {
-          kind: "reference",
-          collection: request.collection,
-          name: request.name,
-          referencedCollection: request.target,
-          description: request.description,
-          decision: { kind: "direct", owner },
-          owner,
-          exposure: [],
-          allowed: true,
-        },
-        diagnostics: [],
-      };
-    },
-    change: async () => {
-      if (++writes === 1) throw new SkillCliError("CONFIG_CONFLICT", "changed after preview");
-      return { value: { level: "project", changed: true }, diagnostics: [] };
+    collections: {
+      previewAddReference: async (request) => {
+        if (++previews === 1) throw new SkillCliError("PROVIDER_UNAVAILABLE", "retry preview");
+        return {
+          value: {
+            kind: "reference",
+            collection: request.collection,
+            name: request.name,
+            referencedCollection: request.target,
+            description: request.description,
+            decision: { kind: "direct", owner },
+            owner,
+            allowed: true,
+          },
+          diagnostics: [],
+        };
+      },
+      addReference: async (request) => {
+        mounted.changes.push({ method: "addReference", request });
+        if (++writes === 1) throw new SkillCliError("CONFIG_CONFLICT", "changed after preview");
+        return { value: { level: "project", file: owner.file, changed: true }, diagnostics: [] };
+      },
     },
   });
   const { setup } = mounted;
@@ -533,20 +710,24 @@ test("Collection unified preview preserves mounted Reference draft on failure an
     await setup.waitFor(() => !setup.renderer.root.findDescendantById("collection-review-confirm"));
     expect(mounted.changes).toEqual([
       {
-        type: "collection.reference.set",
-        level: "project",
-        collection: "team",
-        name: "new-docs",
-        target: "docs",
-        description: "Read next",
+        method: "addReference",
+        request: {
+          level: "project",
+          collection: "team",
+          name: "new-docs",
+          target: "docs",
+          description: "Read next",
+        },
       },
       {
-        type: "collection.reference.set",
-        level: "project",
-        collection: "team",
-        name: "new-docs",
-        target: "docs",
-        description: "Read next",
+        method: "addReference",
+        request: {
+          level: "project",
+          collection: "team",
+          name: "new-docs",
+          target: "docs",
+          description: "Read next",
+        },
       },
     ]);
     expect(previews).toBe(2);
@@ -561,26 +742,28 @@ test("Collection removal close and reopen ignores the previous session's late pr
   const owner = input.effective.collectionsView[0]!.declared[0]!;
   const pending: { readonly signal?: AbortSignal; readonly finish: () => void }[] = [];
   const mounted = await mount(144, 40, input, {
-    previewCollectionRemoval: (_request, options) =>
-      new Promise((resolve) => {
-        pending.push({
-          signal: options?.signal,
-          finish: () =>
-            resolve({
-              value: {
-                kind: "collection-removal",
-                owner,
-                decision: { kind: "direct", owner },
-                repository: { derived: false, producers: [] },
-                disappearingSelectors: [],
-                retainedSelectors: [],
-                blockers: [],
-                allowed: true,
-              },
-              diagnostics: [],
-            }),
-        });
-      }),
+    collections: {
+      previewRemoval: (_request, options) =>
+        new Promise((resolve) => {
+          pending.push({
+            signal: options?.signal,
+            finish: () =>
+              resolve({
+                value: {
+                  kind: "collection-removal",
+                  owner,
+                  decision: { kind: "direct", owner },
+                  repository: { derived: false, producers: [] },
+                  disappearingSelectors: [],
+                  retainedSelectors: [],
+                  blockers: [],
+                  allowed: true,
+                },
+                diagnostics: [],
+              }),
+          });
+        }),
+    },
   });
   const { setup } = mounted;
   try {
@@ -613,25 +796,27 @@ test("Collection removal-plan dismissal retains checked origins when a cancelled
   let finish!: () => void;
   let signal: AbortSignal | undefined;
   const mounted = await mount(144, 40, input, {
-    previewMembershipBatch: (request, options) =>
-      new Promise((resolve) => {
-        signal = options?.signal;
-        finish = () =>
-          resolve({
-            value: {
-              kind: "membership-batch",
-              collection: request.collection,
-              decision: { kind: "direct", owner },
-              additions: request.additions,
-              removals: request.removals,
-              affected: [],
-              blockers: [],
-              effectful: true,
-              allowed: true,
-            },
-            diagnostics: [],
-          });
-      }),
+    collections: {
+      previewMemberEdit: (request, options) =>
+        new Promise((resolve) => {
+          signal = options?.signal;
+          finish = () =>
+            resolve({
+              value: {
+                kind: "membership-batch",
+                collection: request.collection,
+                decision: { kind: "direct", owner },
+                additions: request.additions,
+                removals: request.removals,
+                affected: [],
+                blockers: [],
+                effectful: true,
+                allowed: true,
+              },
+              diagnostics: [],
+            });
+        }),
+    },
   });
   const { setup } = mounted;
   try {

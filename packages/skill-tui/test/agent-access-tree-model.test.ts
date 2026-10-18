@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { deriveAgentAccessTree, exposureTreePathKey } from "../src/collections/agent-access-tree";
 import { readerProjection } from "./installed-reader.fixture";
 
 const owner = { level: "project" as const, file: "/project.jsonc", pointer: "/collections" };
 
-function projection(): ManagementProjection {
+function projection(): WorkspaceView {
   const base = readerProjection();
   return {
     ...base,
@@ -99,7 +99,7 @@ test("Agent access preserves repeated target paths and displays only ancestor cy
           : collection,
       ),
     },
-  } satisfies ManagementProjection;
+  } satisfies WorkspaceView;
   const roots = deriveAgentAccessTree(tree);
   if (roots.status !== "available") throw new Error("expected available tree");
   expect(roots.rows.map((row) => row.key)).toEqual([
@@ -146,7 +146,7 @@ test("Link-merged effective members stay as local Skill leaves without traversin
           : collection,
       ),
     },
-  } satisfies ManagementProjection;
+  } satisfies WorkspaceView;
   const root = deriveAgentAccessTree(linked);
   if (root.status !== "available") throw new Error("expected available tree");
   const expanded = deriveAgentAccessTree(linked, { [root.rows[0]!.key]: true });
@@ -166,7 +166,7 @@ test("Link-merged effective members stay as local Skill leaves without traversin
 test("Agent Skill leaves retain metadata but explicitly mark unhealthy installed records unavailable", () => {
   const source = projection();
   const healthValues = ["missing", "drifted", "unresolved-config"] as const;
-  const unhealthyProjection: ManagementProjection = {
+  const unhealthyProjection: WorkspaceView = {
     ...source,
     installedSkills: source.installedSkills.map((skill) =>
       skill.address.path === "guide"
@@ -195,7 +195,7 @@ test("Agent Skill leaves retain metadata but explicitly mark unhealthy installed
   });
 
   for (const health of healthValues) {
-    const changed: ManagementProjection = {
+    const changed: WorkspaceView = {
       ...unhealthyProjection,
       installedSkills: unhealthyProjection.installedSkills.map((skill) =>
         skill.address.path === "guide" ? { ...skill, owner: { ...skill.owner, health } } : skill,

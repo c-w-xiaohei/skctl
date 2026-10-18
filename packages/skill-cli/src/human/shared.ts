@@ -1,8 +1,8 @@
 import { Option, type Command } from "commander";
-import { SkillCliError, type ConfigurationChangeResult } from "@skill-cli/core";
+import { SkillCliError, type ConfigWriteResult } from "@skill-cli/core";
 
-export function formatChange(result: ConfigurationChangeResult, message = "Updated configuration") {
-  const at = `at ${result.level} level in ${result.file ?? "the configuration file"}`;
+export function formatChange(result: ConfigWriteResult, message = "Updated configuration") {
+  const at = `at ${result.level} level in ${result.file}`;
   return `${result.changed ? message : "No configuration changes were needed"} ${at}.\n`;
 }
 
@@ -51,11 +51,17 @@ export function scope(
     p?: boolean;
     l?: boolean;
   },
-  defaultScope: "global" | "project" | "local" | undefined = "project",
+  defaultScope: "global" | "project" | "local" | null = "project",
 ) {
   return (
     options.scope ??
     options.level ??
-    (options.g ? "global" : options.p ? "project" : options.l ? "local" : defaultScope)
+    (options.g
+      ? "global"
+      : options.p
+        ? "project"
+        : options.l
+          ? "local"
+          : (defaultScope ?? undefined))
   );
 }

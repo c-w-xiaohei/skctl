@@ -1,16 +1,14 @@
 import {
   type DiscoveryObservation,
   type ConfigSourceObservation,
-  type ContentCapability,
-  type ConfigurationCapability,
-  type ConfigChange,
   type ConfigLevel,
   SkillCliError,
-  type ManagementCapability,
+  type SkillCliCore,
+  type RegisterSourceRequest,
   type SourceRemovalImpact,
   type RebindImpact,
   type UninstallImpact,
-  type ManagementProjection,
+  type WorkspaceView,
   type WorkspaceCapability,
 } from "@skill-cli/core";
 import { createSignal } from "solid-js";
@@ -49,49 +47,31 @@ interface ForegroundRequest {
 
 export interface TuiCore {
   readonly workspace: Pick<WorkspaceCapability, "get">;
-  readonly management: Pick<
-    ManagementCapability,
-    | "previewSourceRemoval"
-    | "removeSource"
-    | "discover"
-    | "install"
-    | "checkUpdate"
-    | "previewUpdate"
-    | "update"
-    | "previewUninstall"
-    | "uninstall"
-    | "previewRebind"
-    | "rebind"
-    | "observeConfig"
-    | "previewAdoptConfig"
-    | "adoptConfig"
-    | "previewForgetConfig"
-    | "forgetConfig"
-    | "previewRemoveConfig"
-    | "removeConfig"
-  > & {
-    /** Optional while existing test fakes transition to Core's baseline capability. */
-    readonly getUpdateBaseline?: (
-      request: { readonly source: string },
-      options?: { readonly signal?: AbortSignal },
-    ) => ReturnType<ManagementCapability["getUpdateBaseline"]>;
-  };
-  readonly content: Pick<
-    ContentCapability,
-    "loadInstalled" | "listInstalledResources" | "readInstalled"
+  readonly sources: SkillCliCore["sources"];
+  readonly installed: SkillCliCore["installed"];
+  readonly configSources: SkillCliCore["configSources"];
+  readonly collections: Pick<
+    SkillCliCore["collections"],
+    | "create"
+    | "remove"
+    | "addMember"
+    | "removeMember"
+    | "editMembers"
+    | "importMembers"
+    | "addReference"
+    | "removeReference"
+    | "setLink"
+    | "previewAddMember"
+    | "previewRemoveMember"
+    | "previewMemberEdit"
+    | "previewImportMembers"
+    | "previewAddReference"
+    | "previewRemoveReference"
+    | "previewSetLink"
+    | "previewRemoval"
   >;
-  readonly configuration: Pick<
-    ConfigurationCapability,
-    | "change"
-    | "previewAddToCollection"
-    | "previewMembershipBatch"
-    | "previewMembershipRemoval"
-    | "previewImport"
-    | "previewReference"
-    | "previewLinkChange"
-    | "previewCollectionUse"
-    | "previewCollectionRemoval"
-  >;
+  readonly use: SkillCliCore["use"];
+  setManagedOpenCode: SkillCliCore["setManagedOpenCode"];
 }
 
 export interface SourceRemovalReview {
@@ -144,10 +124,10 @@ export function createTuiEffects(
   let liveReview: SourceRemovalReview | undefined;
   let liveDiscovery: DiscoveryReview | undefined;
   let liveInstalledReview: InstalledSkillReview | undefined;
-  let liveCollection: Awaited<ReturnType<typeof previewCollection>> | undefined;
+  let liveCollection: CollectionReview | undefined;
   let sequence = 0;
   let closed = false;
-  let latestProjection: ManagementProjection | undefined;
+  let latestProjection: WorkspaceView | undefined;
   const [updates, setUpdates] = createSignal<UpdatesState>();
   const [updatesBlockedReason, setUpdatesBlockedReason] = createSignal<string>();
   const [updateTask, setUpdateTask] = createSignal<{
@@ -176,7 +156,7 @@ export function createTuiEffects(
         draft.rebaseCheckedScope(buildUpdateScope(snapshot, draft.scope.entry), check.source);
     }
   };
-  const updateChecks = createUpdateCheckService(core.management, {
+  const updateChecks = createUpdateCheckService(core.installed, {
     onChange: (check) => {
       if (closed) return;
       applyUpdateCheck(check);
@@ -187,7 +167,7 @@ export function createTuiEffects(
     },
   });
   const next = () => `${++sequence}`;
-  const reconcileDraftWithSnapshot = (draft: UpdatesState, snapshot: ManagementProjection) => {
+  const reconcileDraftWithSnapshot = (draft: UpdatesState, snapshot: WorkspaceView) => {
     const fresh = buildUpdateScope(snapshot, draft.scope.entry);
     // Compare against the prior displayed/guarded facts before replacing current
     // membership. Otherwise a stale binding/revision could be hidden by a cached
@@ -200,7 +180,7 @@ export function createTuiEffects(
       if (check) draft.applyCheck(check);
     }
   };
-  const reconcileUpdateDraftScopes = (snapshot: ManagementProjection) => {
+  const reconcileUpdateDraftScopes = (snapshot: WorkspaceView) => {
     for (const draft of updateDrafts.values()) {
       if (draft === activeUpdateState()) continue;
       reconcileDraftWithSnapshot(draft, snapshot);
@@ -345,17 +325,15 @@ export function createTuiEffects(
             {
               source,
               observation: check.observation,
-              baseline: check.observation.baseline ?? "",
+              baseline: check.observation.baseline,
               checkedAt: check.checkedAt,
             },
             Date.now(),
           )
         )
           return undefined;
-        if (core.management.getUpdateBaseline) {
-          const baseline = (await core.management.getUpdateBaseline({ source }, { signal })).value;
-          if (baseline !== check.observation.baseline) return undefined;
-        }
+        const baseline = (await core.installed.updateBaseline({ source }, { signal })).value;
+        if (baseline !== check.observation.baseline) return undefined;
         return check.observation;
       },
     });
@@ -367,7 +345,7 @@ export function createTuiEffects(
   };
   const selectUpdatesScope = (
     entry: UpdateScopeEntry,
-    snapshot?: import("@skill-cli/core").ManagementProjection,
+    snapshot?: import("@skill-cli/core").WorkspaceView,
   ) => {
     const current = updates();
     const projectionSnapshot = snapshot;
@@ -399,7 +377,7 @@ export function createTuiEffects(
   };
   const restoreUpdatesScope = (
     state: UpdatesState,
-    snapshot?: import("@skill-cli/core").ManagementProjection,
+    snapshot?: import("@skill-cli/core").WorkspaceView,
   ) => {
     if (!snapshot || closed) return undefined;
     const current = updates();
@@ -424,8 +402,8 @@ export function createTuiEffects(
 
   const review = async (intent: DirectSourceIntent): Promise<SourceRemovalReview | undefined> => {
     return withForeground("preview", undefined, async ({ id, signal, active }) => {
-      const result = await core.management.previewSourceRemoval(
-        { source: intent.source },
+      const result = await core.sources.previewRemoval(
+        { source: intent.source, level: intent.owner.level, expectedOwner: intent.owner },
         { signal },
       );
       if (!active()) return undefined;
@@ -456,7 +434,14 @@ export function createTuiEffects(
       "execute",
       false,
       async ({ id, signal, active }) => {
-        await core.management.removeSource({ source: reviewed.intent.source }, { signal });
+        await core.sources.remove(
+          {
+            source: reviewed.intent.source,
+            level: reviewed.intent.owner.level,
+            expectedOwner: reviewed.intent.owner,
+          },
+          { signal },
+        );
         const refreshed = await refresh();
         if (active())
           settle(id, refreshed ? "Source removed" : "Source removed; Workspace is stale");
@@ -477,7 +462,7 @@ export function createTuiEffects(
       "observe",
       undefined,
       async ({ id, signal, active }) => {
-        const result = await core.management.discover({ source: intent.source }, { signal });
+        const result = await core.sources.discover({ source: intent.source }, { signal });
         if (!active() || result.value.source !== intent.source) {
           if (active()) {
             const error = {
@@ -517,7 +502,7 @@ export function createTuiEffects(
       "execute",
       false,
       async ({ id, signal, active }) => {
-        await core.management.install(
+        await core.installed.install(
           {
             source: reviewed.observation.source,
             paths,
@@ -568,7 +553,7 @@ export function createTuiEffects(
     }
     return withForeground("preview", undefined, async ({ id, signal, active }) => {
       if (request.kind === "uninstall") {
-        const result = await core.management.previewUninstall(
+        const result = await core.installed.previewUninstall(
           { source: request.address.source, paths: [request.address.path] },
           { signal },
         );
@@ -595,7 +580,7 @@ export function createTuiEffects(
         liveInstalledReview = review;
         return review;
       }
-      const result = await core.management.previewRebind(
+      const result = await core.installed.previewRebind(
         {
           source: request.address.source,
           path: request.address.path,
@@ -636,14 +621,15 @@ export function createTuiEffects(
     intent: CollectionPreviewIntent,
   ): Promise<CollectionReview | undefined> => {
     if (closed || foreground) return undefined;
+    const stableIntent = structuredClone(intent);
     return withForeground(
       "preview",
       undefined,
       async ({ id, signal, active }) => {
-        const prepared = await previewCollection(core.configuration, intent, id, signal);
+        const prepared = await previewCollection(core, stableIntent, id, signal);
         if (!active()) return undefined;
         liveCollection = prepared;
-        return prepared.review;
+        return prepared;
       },
       undefined,
       false,
@@ -655,18 +641,10 @@ export function createTuiEffects(
   ) => {
     const creating = reviewed.kind === "collection-create";
     const intent = creating ? reviewed : reviewed.intent;
-    const change = creating
-      ? {
-          type: "collection.create" as const,
-          level: reviewed.level,
-          collection: reviewed.collection,
-        }
-      : liveCollection?.change;
     if (
       closed ||
       foreground ||
-      (!creating && (liveCollection?.review !== reviewed || !reviewed.impact.allowed)) ||
-      !change
+      (!creating && (liveCollection !== reviewed || !reviewed.impact.allowed))
     )
       return false;
     const semanticOwner =
@@ -679,12 +657,83 @@ export function createTuiEffects(
       "execute",
       false,
       async ({ id, signal, active }) => {
-        await core.configuration.change(change, { signal });
+        if (reviewed.kind === "collection-create")
+          await core.collections.create(
+            { level: reviewed.level, collection: reviewed.collection },
+            { signal },
+          );
+        else {
+          switch (reviewed.kind) {
+            case "add-to-collection": {
+              const { kind: _kind, ...request } = reviewed.intent;
+              await core.collections.addMember(request, { signal });
+              break;
+            }
+            case "membership-removal": {
+              const { intent, impact } = reviewed;
+              const level =
+                intent.level ??
+                intent.expectedOwner?.level ??
+                (impact.decision.kind === "direct" ? impact.decision.owner.level : undefined);
+              if (!level)
+                throw new SkillCliError(
+                  "CONFIG_CONFLICT",
+                  "Membership owner is no longer available",
+                );
+              const request = {
+                level,
+                collection: intent.collection,
+                name: intent.name,
+                expectedAddress: intent.expectedAddress,
+                ...(intent.expectedOwner ? { expectedOwner: intent.expectedOwner } : {}),
+              };
+              await core.collections.removeMember(request, { signal });
+              break;
+            }
+            case "membership-batch": {
+              const { kind: _kind, ...request } = reviewed.intent;
+              await core.collections.editMembers(
+                { ...request, reviewedAffected: reviewed.impact.affected },
+                { signal },
+              );
+              break;
+            }
+            case "collection-import": {
+              const { kind: _kind, ...request } = reviewed.intent;
+              await core.collections.importMembers(request, { signal });
+              break;
+            }
+            case "reference-add": {
+              const { kind: _kind, ...request } = reviewed.intent;
+              await core.collections.addReference(request, { signal });
+              break;
+            }
+            case "reference-remove": {
+              const { kind: _kind, ...request } = reviewed.intent;
+              await core.collections.removeReference(request, { signal });
+              break;
+            }
+            case "link-change": {
+              const { kind: _kind, ...request } = reviewed.intent;
+              await core.collections.setLink(request, { signal });
+              break;
+            }
+            case "collection-use": {
+              const { kind: _kind, ...request } = reviewed.intent;
+              await core.use.set(request, { signal });
+              break;
+            }
+            case "collection-removal": {
+              const { kind: _kind, ...request } = reviewed.intent;
+              await core.collections.remove(request, { signal });
+              break;
+            }
+          }
+        }
         const refreshed = await refresh();
         if (active())
           settle(id, refreshed ? "Collection updated" : "Collection updated; Workspace is stale");
-        if (active() && !creating && liveCollection?.review === reviewed)
-          liveCollection = undefined;
+        if (active() && !creating && liveCollection === reviewed) liveCollection = undefined;
         return true;
       },
       { title: "Updating Collection", semanticOwner },
@@ -699,12 +748,12 @@ export function createTuiEffects(
       false,
       async ({ id, signal, active }) => {
         if (review.kind === "uninstall")
-          await core.management.uninstall(
+          await core.installed.uninstall(
             { source: review.address.source, paths: [review.address.path] },
             { signal },
           );
         else
-          await core.management.rebind(
+          await core.installed.rebind(
             {
               source: review.address.source,
               path: review.address.path,
@@ -767,7 +816,7 @@ export function createTuiEffects(
     updatesActive,
     updateRun: () => updateTask()?.controller.run(),
     updateTaskEntry: () => updateTask()?.entry,
-    startUpdateChecks: (snapshot?: import("@skill-cli/core").ManagementProjection) => {
+    startUpdateChecks: (snapshot?: import("@skill-cli/core").WorkspaceView) => {
       if (snapshot && !latestProjection) latestProjection = snapshot;
       return snapshot ? updateChecks.start(snapshot) : Promise.resolve();
     },
@@ -812,7 +861,7 @@ export function createTuiEffects(
         "observe",
         undefined,
         async ({ signal, active }) => {
-          const result = await core.management.observeConfig({ id }, { signal });
+          const result = await core.configSources.observe({ id }, { signal });
           return active() ? result.value : undefined;
         },
         undefined,
@@ -834,17 +883,24 @@ export function createTuiEffects(
         async ({ signal, active }) => {
           const result =
             request.kind === "adopt"
-              ? await core.management.previewAdoptConfig(
+              ? await core.configSources.previewAdoption(
                   {
                     id: request.id,
-                    exactRevision: request.observation.exactRevision!,
+                    exactRevision:
+                      request.observation.exactRevision ??
+                      (() => {
+                        throw new SkillCliError(
+                          "INVALID_ARGUMENT",
+                          "Config Source observation lacks an exact revision",
+                        );
+                      })(),
                     observation: request.observation,
                   },
                   { signal },
                 )
               : request.kind === "forget"
-                ? await core.management.previewForgetConfig({ id: request.id }, { signal })
-                : await core.management.previewRemoveConfig({ id: request.id }, { signal });
+                ? await core.configSources.previewForget({ id: request.id }, { signal })
+                : await core.configSources.previewRemoval({ id: request.id }, { signal });
           return active() ? result.value : undefined;
         },
         undefined,
@@ -856,13 +912,13 @@ export function createTuiEffects(
         "Adopting Config Source",
         { kind: "config-source", id },
         async (signal) => {
-          const preview = await core.management.previewAdoptConfig(
+          const preview = await core.configSources.previewAdoption(
             { id, exactRevision, observation },
             { signal },
           );
           if (!preview.value.allowed)
             throw new SkillCliError("CONFIG_CONFLICT", "Config Source adoption is blocked");
-          await core.management.adoptConfig({ id, exactRevision, observation }, { signal });
+          await core.configSources.adopt({ id, exactRevision, observation }, { signal });
         },
       ),
     forgetConfig: (id: string) =>
@@ -870,10 +926,10 @@ export function createTuiEffects(
         "Forgetting Config Source",
         { kind: "config-source", id },
         async (signal) => {
-          const preview = await core.management.previewForgetConfig({ id }, { signal });
+          const preview = await core.configSources.previewForget({ id }, { signal });
           if (!preview.value.allowed)
             throw new SkillCliError("CONFIG_CONFLICT", "Config Source forget is blocked");
-          await core.management.forgetConfig({ id }, { signal });
+          await core.configSources.forget({ id }, { signal });
         },
       ),
     removeConfig: (id: string) =>
@@ -881,29 +937,30 @@ export function createTuiEffects(
         "Removing Config Source",
         { kind: "config-source", id },
         async (signal) => {
-          const preview = await core.management.previewRemoveConfig({ id }, { signal });
+          const preview = await core.configSources.previewRemoval({ id }, { signal });
           if (!preview.value.allowed)
             throw new SkillCliError("CONFIG_CONFLICT", "Config Source removal is blocked");
-          await core.management.removeConfig({ id }, { signal });
+          await core.configSources.remove({ id }, { signal });
         },
       ),
     setManagedOpenCode: (level: ConfigLevel, managed: boolean) =>
       executeConfigLifecycle(
         `${managed ? "Enabling" : "Disabling"} Managed OpenCode`,
         { kind: "config", level },
-        (signal) =>
-          core.configuration.change({ type: "agent.managed.set", level, managed }, { signal }),
+        (signal) => core.setManagedOpenCode({ level, managed }, { signal }),
       ),
     registerSource: (
-      change: Extract<
-        ConfigChange,
-        { readonly type: "source.register" | "config-source.register" }
-      >,
+      registration: { readonly kind: "source" | "config-source" } & RegisterSourceRequest,
     ) =>
       executeConfigLifecycle(
-        change.type === "source.register" ? "Registering Source" : "Registering Config Source",
-        { kind: change.type === "source.register" ? "source" : "config-source", id: change.id },
-        (signal) => core.configuration.change(change, { signal }),
+        registration.kind === "source" ? "Registering Source" : "Registering Config Source",
+        { kind: registration.kind === "source" ? "source" : "config-source", id: registration.id },
+        (signal) => {
+          const { kind, ...request } = registration;
+          return kind === "source"
+            ? core.sources.register(request, { signal })
+            : core.configSources.register(request, { signal });
+        },
       ),
     createCollection: (intent: Extract<CollectionIntent, { readonly kind: "collection-create" }>) =>
       executeCollection(intent),
@@ -942,7 +999,7 @@ export function createTuiEffects(
       if (liveInstalledReview === reviewed) liveInstalledReview = undefined;
     },
     discardCollectionReview: (reviewed: CollectionReview) => {
-      if (liveCollection?.review === reviewed) liveCollection = undefined;
+      if (liveCollection === reviewed) liveCollection = undefined;
     },
     teardown: () => {
       if (!closed) {

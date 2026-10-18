@@ -10,7 +10,7 @@ export function contentCommand(parent: Command, { core, stdout }: CommandContext
     .command("load <selector>")
     .description("Load an installed Skill's SKILL.md and provenance.")
     .action(async (selector, _flags, action) => {
-      const { value } = await core(action).content.load({ selector });
+      const value = await core(action).content.load({ selector });
       stdout.write(
         [
           `selector ${value.selector}`,
@@ -30,7 +30,7 @@ export function contentCommand(parent: Command, { core, stdout }: CommandContext
     .action(async (selector, argv, _flags, action) => {
       if (!argv.length)
         throw new SkillCliError("INVALID_ARGUMENT", "Run command requires child argv after --");
-      const { value } = await core(action).content.run({ selector, argv });
+      const value = await core(action).content.run({ selector, argv });
       let outcome: string;
       if (value.cancelled) outcome = "was cancelled";
       else if (value.signal) outcome = `was terminated by signal ${value.signal}`;

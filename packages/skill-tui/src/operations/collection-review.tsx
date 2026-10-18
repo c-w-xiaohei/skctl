@@ -20,7 +20,7 @@ export function CollectionReviewOverlay(props: {
     props.review.kind === "membership-removal" ||
     props.review.kind === "collection-removal" ||
     (props.review.kind === "membership-batch" && props.review.impact.removals.length > 0) ||
-    (props.review.kind === "reference" && props.review.intent.remove) ||
+    props.review.kind === "reference-remove" ||
     (props.review.kind === "link-change" && !props.review.impact.linked);
   const verb =
     impact.kind === "membership-batch"
@@ -30,7 +30,7 @@ export function CollectionReviewOverlay(props: {
       : impact.kind === "membership-removal"
         ? "Remove Membership"
         : impact.kind === "reference"
-          ? props.review.kind === "reference" && props.review.intent.remove
+          ? props.review.kind === "reference-remove"
             ? "Remove Reference"
             : "Add Reference"
           : impact.kind === "link-change"

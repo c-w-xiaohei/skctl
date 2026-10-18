@@ -44,6 +44,7 @@ function projection() {
 const observation = (source: string, changed: string[] = []) => ({
   source,
   kind: "github" as const,
+  baseline: `baseline:${source}`,
   changed: changed.map((path) => ({ path, name: path, description: `${path} change` })),
   added: [{ path: "new", name: "new", description: "new root" }],
   removed: [{ path: "old", name: "old", description: "removed root" }],

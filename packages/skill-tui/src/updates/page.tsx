@@ -28,7 +28,7 @@ import type { UpdateAddress } from "./scope";
 import type { UpdateRun, UpdatesState } from "./state";
 import { updateFeedback, type UpdateFeedback } from "./feedback";
 import { SkillUpdatePreview, type UpdatePreviewRequest } from "./preview";
-import type { ManagementCapability } from "@skill-cli/core";
+import type { InstalledCapability } from "@skill-cli/core";
 
 interface UpdateSkill {
   readonly address: UpdateAddress;
@@ -43,7 +43,7 @@ export interface UpdatesPageProps {
   readonly onStop: () => void;
   readonly onRetry?: () => void;
   readonly onOpenSource?: (source: string) => void;
-  readonly previewUpdate?: ManagementCapability["previewUpdate"];
+  readonly previewUpdate?: InstalledCapability["previewUpdate"];
   readonly onInspectSkill?: (address: UpdateAddress) => void;
   readonly onInspectSource?: (source: string) => void;
   readonly active?: () => boolean;
@@ -540,7 +540,7 @@ function UpdateWorkbench(
         source: address.source,
         path: address.path,
         exactRevision: observation?.exactRevision,
-        expectedBaseline: observation?.baseline ?? "",
+        expectedBaseline: observation!.baseline,
       },
       unavailableReason:
         !observation?.baseline || group?.stale

@@ -1,11 +1,11 @@
-import type { CollectionView, ConfigDeclarationOwner, ManagementProjection } from "@skill-cli/core";
+import type { CollectionView, ConfigDeclarationOwner, WorkspaceView } from "@skill-cli/core";
 import { sameSkillAddress, skillAddressKey } from "@skill-cli/core";
 
 export interface CollectionFilter {
   readonly query?: string;
   readonly filters: Readonly<Record<string, string>>;
   readonly agentUse?: readonly string[];
-  readonly installedSkills?: ManagementProjection["installedSkills"];
+  readonly installedSkills?: WorkspaceView["installedSkills"];
 }
 
 export const collectionFilterDimensions = [

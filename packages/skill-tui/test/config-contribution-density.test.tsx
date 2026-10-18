@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { SelectRenderable, TextRenderable, type BaseRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { createSignal } from "solid-js";
 import { ConfigPage } from "../src/config-page";
 import { createConfigState } from "../src/config/state";
@@ -66,7 +66,7 @@ function contributionProjection(sourceIds: readonly string[], collectionIds: rea
           }
         : config,
     ),
-  } satisfies ManagementProjection;
+  } satisfies WorkspaceView;
 }
 
 const cases = [
@@ -89,7 +89,7 @@ for (const scenario of cases) {
     { name: "short", width: 52, height: 12 },
   ]) {
     test(`RENDER ${scenario.name} stays dense and hands off the selected item at ${size.name} size`, async () => {
-      const [projection, setProjection] = createSignal<ManagementProjection>(
+      const [projection, setProjection] = createSignal<WorkspaceView>(
         contributionProjection(scenario.sources, scenario.collections),
       );
       const state = createConfigState();

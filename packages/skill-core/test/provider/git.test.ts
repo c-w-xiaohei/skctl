@@ -2,12 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openGitSource, resolveGitRef } from "../../src/internal/source-git";
-import {
-  discoverSnapshotSkills,
-  openSource,
-  type RemoteSnapshot,
-} from "../../src/internal/sources";
+import { openGitSource, resolveGitRef } from "../../src/source/git";
+import { discoverSnapshotSkills, openSource, type RemoteSnapshot } from "../../src/source/snapshot";
 import { createExecutableFixture } from "../executable-fixture";
 
 // Recognize invocation-level config without weakening the shim's intended failure.

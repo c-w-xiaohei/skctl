@@ -33,7 +33,7 @@ test("CLI-002 process agent browse writes an agent-ready root catalog", async ()
       cmd: [
         process.execPath,
         "--eval",
-        `import { StateCoordinator } from ${JSON.stringify(join(import.meta.dir, "../../src/internal/state.ts"))}; await new StateCoordinator(${JSON.stringify(state)}).installLocal("source", "review", ${JSON.stringify(skill)});`,
+        `import { StateCoordinator } from ${JSON.stringify(join(import.meta.dir, "../../src/storage/state.ts"))}; await new StateCoordinator(${JSON.stringify(state)}).installLocal("source", "review", ${JSON.stringify(skill)});`,
       ],
       stdout: "pipe",
       stderr: "pipe",

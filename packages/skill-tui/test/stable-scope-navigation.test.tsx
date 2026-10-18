@@ -67,9 +67,11 @@ test("RENDER changing Skills scope from Reader returns to its browser and Back r
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => {
-            readerLoads++;
-            return { value: readerContent, diagnostics: [] };
+          installed: {
+            load: async () => {
+              readerLoads++;
+              return readerContent;
+            },
           },
         })}
         exit={() => {}}

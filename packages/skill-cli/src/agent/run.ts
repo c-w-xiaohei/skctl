@@ -38,7 +38,7 @@ export function runCommand(
         return { signal, handler };
       });
       try {
-        const { value } = await core(action).content.run(
+        const value = await core(action).content.run(
           { selector, argv: [executable, ...args] },
           { signal: controller.signal },
         );

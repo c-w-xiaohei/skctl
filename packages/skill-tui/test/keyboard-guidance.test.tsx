@@ -20,14 +20,16 @@ async function mount(width: number, height = 30) {
   let loads = 0;
   let updates = 0;
   const core = directSourceCore(readerProjection(), {
-    loadInstalled: async () => {
-      loads++;
-      return { value: readerContent, diagnostics: [] };
-    },
-    listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
-    update: async () => {
-      updates++;
-      return { value: undefined, diagnostics: [] };
+    installed: {
+      load: async () => {
+        loads++;
+        return readerContent;
+      },
+      listResources: async () => readerResources,
+      update: async () => {
+        updates++;
+        return { value: undefined, diagnostics: [] };
+      },
     },
   });
   let setup: Awaited<ReturnType<typeof testRender>> | undefined;

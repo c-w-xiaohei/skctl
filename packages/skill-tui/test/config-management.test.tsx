@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { SelectRenderable, type BaseRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { TabsTabRenderable } from "@tuiparts/core/tabs";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { createSignal } from "solid-js";
 import { App } from "../src/app";
 import { ConfigPage } from "../src/config-page";
@@ -12,7 +12,7 @@ import type { ActionRecord } from "../src/actions";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 
-function configProjection(): ManagementProjection {
+function configProjection(): WorkspaceView {
   const base = workspaceProjection();
   const global = base.configs[0]!;
   const project = base.configs[1]!;
@@ -567,7 +567,7 @@ test("RENDER projection removal clears the Config Source browser into its empty 
   };
   const state = createConfigState();
   state.land("project", "config-sources", "/configSources/team");
-  const [projection, setProjection] = createSignal<ManagementProjection>(before);
+  const [projection, setProjection] = createSignal<WorkspaceView>(before);
   const setup = await testRender(
     () => (
       <ConfigPage
@@ -782,7 +782,7 @@ test.each(["invalid", "unreadable"] as const)(
       const base = configProjection();
       const selected =
         base.configs.find((config) => config.level === destination) ?? base.configs.at(-1)!;
-      const projection: ManagementProjection = {
+      const projection: WorkspaceView = {
         ...base,
         configs: base.configs.map((config) =>
           config === selected
@@ -1099,7 +1099,7 @@ test("RENDER integrations use native rows and an inspect-only catalog surface", 
   const projection = configProjection();
   const project = projection.configs.find((item) => item.level === "project")!;
   if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
-  const adjustedProjection: ManagementProjection = {
+  const adjustedProjection: WorkspaceView = {
     ...projection,
     effective: {
       ...projection.effective,
@@ -1231,7 +1231,7 @@ test("RENDER mixed integration owners keep Actions and Palette owner-safe", asyn
     file: "/home/user/.config/skill-cli.jsonc",
     pointer: "/agents/opencode",
   };
-  const mixed: ManagementProjection = {
+  const mixed: WorkspaceView = {
     ...projection,
     effective: {
       ...projection.effective,
@@ -1307,7 +1307,7 @@ test("RENDER stale catalog entry keeps an explicit Back to Integration action", 
       description: string;
       aliases: readonly string[];
     }[],
-  ): ManagementProjection => ({
+  ): WorkspaceView => ({
     ...initial,
     effective: {
       ...complete,
@@ -1322,7 +1322,7 @@ test("RENDER stale catalog entry keeps an explicit Back to Integration action", 
       },
     },
   });
-  const [projection, setProjection] = createSignal<ManagementProjection>(
+  const [projection, setProjection] = createSignal<WorkspaceView>(
     catalogProjection([
       {
         selector: "team:guide",
@@ -1384,7 +1384,7 @@ test("RENDER stale catalog entry keeps an explicit Back to Integration action", 
 
 test("RENDER unavailable integrations distinguish reasons from an available empty catalog and expose one enable action", async () => {
   const projection = configProjection();
-  const adjustedProjection: ManagementProjection = {
+  const adjustedProjection: WorkspaceView = {
     ...projection,
     configs: projection.configs.map((config) =>
       config.level === "project"
@@ -1449,7 +1449,7 @@ test("RENDER unavailable integrations distinguish reasons from an available empt
 test("RENDER empty Config Integrations enables Managed OpenCode without an existing owner", async () => {
   const projection = workspaceProjection();
   const project = projection.configs.find((config) => config.level === "project")!;
-  const adjusted: ManagementProjection = {
+  const adjusted: WorkspaceView = {
     ...projection,
     configs: projection.configs.map((config) =>
       config.level === "project"
@@ -1462,10 +1462,9 @@ test("RENDER empty Config Integrations enables Managed OpenCode without an exist
     () => (
       <App
         core={directSourceCore(adjusted, {
-          configuration: {
-            ...directSourceCore(adjusted).configuration,
-            change: async (change) => {
-              changes.push(change);
+          collections: {
+            create: async (request) => {
+              changes.push(request);
               return {
                 value: {
                   level: project.level,
@@ -1549,7 +1548,7 @@ test("RENDER contributed integrations expose only their read-only owning Config 
         }
       : undefined,
   };
-  const adjusted: ManagementProjection = {
+  const adjusted: WorkspaceView = {
     ...projection,
     configs: projection.configs.map((config) =>
       config.level === "project"
@@ -1614,7 +1613,7 @@ test("RENDER Config keeps duplicate integration pointers distinct by owner", asy
     file: "/home/user/.config/skill-cli.jsonc",
     pointer: "/agents/opencode",
   };
-  const adjusted: ManagementProjection = {
+  const adjusted: WorkspaceView = {
     ...projection,
     configs: projection.configs.map((config) =>
       config.level === "project"
@@ -1677,7 +1676,7 @@ test("RENDER Config keeps duplicate integration pointers distinct by owner", asy
 test("RENDER contributed Collection Use remains editable when its Collection declaration is contributed", async () => {
   const projection = configProjection();
   const project = projection.configs.find((item) => item.level === "project")!;
-  const adjusted: ManagementProjection = {
+  const adjusted: WorkspaceView = {
     ...projection,
     configs: projection.configs.map((config) =>
       config.level === "project"
@@ -1730,7 +1729,7 @@ test("RENDER contributed Collection Use remains editable when its Collection dec
 
 test("RENDER contributed Collection without Collection Use has no false owning-Use action", async () => {
   const projection = configProjection();
-  const adjusted: ManagementProjection = {
+  const adjusted: WorkspaceView = {
     ...projection,
     configs: projection.configs.map((config) =>
       config.level === "project"

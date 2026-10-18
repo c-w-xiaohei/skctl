@@ -11,7 +11,7 @@ import { testRender } from "@opentui/solid";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
-import { SkillCliError, type ManagementProjection } from "@skill-cli/core";
+import { SkillCliError, type WorkspaceView } from "@skill-cli/core";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import {
@@ -57,21 +57,19 @@ async function mount(
     () => (
       <App
         core={directSourceCore(projection, {
-          ...hooks,
-          loadInstalled: async (request, options) => {
-            const { address } = request;
-            reads.push(address.path);
-            if (hooks.loadInstalled) return hooks.loadInstalled(request, options);
-            return {
-              value: {
+          installed: {
+            load: async (request, options) => {
+              const { address } = request;
+              reads.push(address.path);
+              if (hooks.installed?.load) return hooks.installed.load(request, options);
+              return {
                 address,
                 name: address.path,
                 description: "",
                 markdownText: `# ${address.path}\n\nBody of ${address.path}\n\n${Array.from({ length: 80 }, (_, index) => `Line ${index}`).join("\n\n")}`,
                 rawText: `Body of ${address.path}`,
-              },
-              diagnostics: [],
-            };
+              };
+            },
           },
         })}
         exit={() => {}}
@@ -118,17 +116,21 @@ async function executeReaderAction(id: string, search: string) {
 test("wide list selection displays installed body without an Inspector or activation", async () => {
   const mutations: string[] = [];
   const reads = await mount(144, 40, readerProjection(), {
-    discover: async () => {
-      mutations.push("discover");
-      throw new Error("Reader must not acquire provider content");
+    sources: {
+      discover: async () => {
+        mutations.push("discover");
+        throw new Error("Reader must not acquire provider content");
+      },
     },
-    install: async () => {
-      mutations.push("install");
-      return { value: [], diagnostics: [] };
-    },
-    update: async () => {
-      mutations.push("update");
-      return { value: undefined, diagnostics: [] };
+    installed: {
+      install: async () => {
+        mutations.push("install");
+        return { value: [], diagnostics: [] };
+      },
+      update: async () => {
+        mutations.push("update");
+        return { value: undefined, diagnostics: [] };
+      },
     },
   });
   await setup!.waitForFrame((frame) => frame.includes("Body of guide"));
@@ -146,19 +148,18 @@ test("wide list selection displays installed body without an Inspector or activa
 test("failed B reads and retries stay B while the list remains usable", async () => {
   let attempts = 0;
   const reads = await mount(144, 40, readerProjection(), {
-    loadInstalled: async ({ address }) => {
-      if (address.path === "reference" && ++attempts === 1)
-        throw new SkillCliError("RESOURCE_NOT_FOUND", "B instructions missing");
-      return {
-        value: {
+    installed: {
+      load: async ({ address }) => {
+        if (address.path === "reference" && ++attempts === 1)
+          throw new SkillCliError("RESOURCE_NOT_FOUND", "B instructions missing");
+        return {
           address,
           name: address.path,
           description: "",
           markdownText: `Body of ${address.path}`,
           rawText: `Body of ${address.path}`,
-        },
-        diagnostics: [],
-      };
+        };
+      },
     },
   });
   setup!.mockInput.pressArrow("down");
@@ -268,27 +269,28 @@ test("explicit installed Reload refreshes Local instructions and an already-acti
     })),
   };
   const reads = await mount(144, 40, projection, {
-    get: async () => {
-      workspaceReads++;
-      return { value: projection, diagnostics: [] };
+    workspace: {
+      get: async () => {
+        workspaceReads++;
+        return { value: projection, diagnostics: [] };
+      },
     },
-    checkUpdate: async () => {
-      checks++;
-      throw new Error("Unexpected remote check from Reader");
-    },
-    loadInstalled: async ({ address }) => ({
-      value: {
+    installed: {
+      checkUpdate: async () => {
+        checks++;
+        throw new Error("Unexpected remote check from Reader");
+      },
+      load: async ({ address }) => ({
         address,
         name: address.path,
         description: "",
         markdownText: `Installed version ${version}`,
         rawText: `Installed version ${version}`,
+      }),
+      listResources: async ({ address }) => {
+        resourceReads.push(`${address.path}:v${version}`);
+        return [{ kind: "file", path: `v${version}.md` }];
       },
-      diagnostics: [],
-    }),
-    listInstalledResources: async ({ address }) => {
-      resourceReads.push(`${address.path}:v${version}`);
-      return { value: [{ kind: "file", path: `v${version}.md` }], diagnostics: [] };
     },
   });
   await parsedEnter(setup!);
@@ -321,50 +323,51 @@ test("Back after a remote update restores Resources with current payloads and a 
   const mutations: unknown[] = [];
   const resources: number[] = [];
   const reads = await mount(144, 40, snapshot, {
-    get: async () => ({ value: snapshot, diagnostics: [] }),
-    checkUpdate: async ({ source }) => ({
-      value: {
-        source,
-        kind: "github",
-        exactRevision: revision,
-        baseline: "reader-baseline",
-        changed: [{ path: address.path, name: "guide", description: "" }],
-        unchanged: [],
-        removed: [],
-        added: [],
+    workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
+    installed: {
+      checkUpdate: async ({ source }) => ({
+        value: {
+          source,
+          kind: "github",
+          exactRevision: revision,
+          baseline: "reader-baseline",
+          changed: [{ path: address.path, name: "guide", description: "" }],
+          unchanged: [],
+          removed: [],
+          added: [],
+        },
+        diagnostics: [],
+      }),
+      update: async (request) => {
+        mutations.push(request);
+        version = 1;
+        snapshot = {
+          ...snapshot,
+          installedSkills: snapshot.installedSkills.map((skill) => ({
+            ...skill,
+            owner: { ...skill.owner, relevantRemoteRevision: revision },
+          })),
+        };
+        return { value: undefined, diagnostics: [] };
       },
-      diagnostics: [],
-    }),
-    update: async (request) => {
-      mutations.push(request);
-      version = 1;
-      snapshot = {
-        ...snapshot,
-        installedSkills: snapshot.installedSkills.map((skill) => ({
-          ...skill,
-          owner: { ...skill.owner, relevantRemoteRevision: revision },
-        })),
-      };
-      return { value: undefined, diagnostics: [] };
-    },
-    loadInstalled: async ({ address }) => ({
-      value: {
+      load: async ({ address }) => ({
         address,
         name: address.path,
         description: "",
         markdownText: `Installed version ${version}`,
         rawText: `Installed version ${version}`,
+      }),
+      listResources: async () => {
+        resources.push(version);
+        return [{ kind: "file", path: `v${version}.txt` }];
       },
-      diagnostics: [],
-    }),
-    listInstalledResources: async () => {
-      resources.push(version);
-      return { value: [{ kind: "file", path: `v${version}.txt` }], diagnostics: [] };
+      read: async ({ path }) => ({
+        kind: "text",
+        path,
+        format: "text",
+        text: "Old resource content",
+      }),
     },
-    readInstalled: async ({ path }) => ({
-      value: { kind: "text", path, format: "text", text: "Old resource content" },
-      diagnostics: [],
-    }),
   });
   await parsedEnter(setup!);
   await openReaderTab(setup!, 1);
@@ -408,7 +411,7 @@ test("Collection dispatch uses only current B or explicitly checked A/C, includi
     file: "/workspace/skill-cli/skill-cli.jsonc",
     pointer: "/collections/target",
   };
-  const projection: ManagementProjection = {
+  const projection: WorkspaceView = {
     ...base,
     configs: base.configs.map((config) =>
       config.level === "project"
@@ -436,9 +439,9 @@ test("Collection dispatch uses only current B or explicitly checked A/C, includi
   const previews: unknown[] = [];
   const changes: unknown[] = [];
   await mount(144, 40, projection, {
-    configuration: {
-      ...defaultCore.configuration!,
-      previewMembershipBatch: async (request, options) => {
+    collections: {
+      ...defaultCore.collections!,
+      previewMemberEdit: async (request, options) => {
         previews.push(request.additions.map((item) => item.address));
         void options;
         return {
@@ -456,9 +459,12 @@ test("Collection dispatch uses only current B or explicitly checked A/C, includi
           diagnostics: [],
         };
       },
-      change: async (request) => {
+      editMembers: async (request) => {
         changes.push(request);
-        return { value: { level: "project", changed: true }, diagnostics: [] };
+        return {
+          value: { level: "project", file: "skill-cli.jsonc", changed: true },
+          diagnostics: [],
+        };
       },
     },
   });
@@ -608,10 +614,15 @@ test.each([
         })),
       },
       {
-        loadInstalled: async ({ address }) => ({
-          value: { address, name: address.path, description: "", markdownText: "", rawText: "" },
-          diagnostics: [],
-        }),
+        installed: {
+          load: async ({ address }) => ({
+            address,
+            name: address.path,
+            description: "",
+            markdownText: "",
+            rawText: "",
+          }),
+        },
       },
     );
     await parsedEnter(setup!);

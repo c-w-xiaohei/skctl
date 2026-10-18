@@ -1,4 +1,4 @@
-import type { ManagementProjection, ResourceDescriptor } from "@skill-cli/core";
+import type { WorkspaceView, ResourceDescriptor } from "@skill-cli/core";
 import { directOwner, workspaceProjection } from "./direct-source.fixture";
 
 export const readerAddress = { source: "team-main", path: "guide" };
@@ -7,10 +7,10 @@ export const sourceFilteredAddress = { source: "team-main", path: "review" };
 export const otherSourceFilteredAddress = { source: "other", path: "review" };
 
 const installedSkill = (
-  address: ManagementProjection["installedSkills"][number]["address"],
+  address: WorkspaceView["installedSkills"][number]["address"],
   name: string,
   description: string,
-): ManagementProjection["installedSkills"][number] => ({
+): WorkspaceView["installedSkills"][number] => ({
   address,
   name,
   description,
@@ -35,7 +35,7 @@ const installedSkill = (
   problems: [],
 });
 
-export const readerProjection = (): ManagementProjection => ({
+export const readerProjection = (): WorkspaceView => ({
   ...workspaceProjection(),
   installedSkills: [
     installedSkill(readerAddress, "guide", "A rich Installed Skill"),
@@ -64,7 +64,7 @@ export const readerProjection = (): ManagementProjection => ({
   ),
 });
 
-export const sourceFilteredReaderProjection = (): ManagementProjection => {
+export const sourceFilteredReaderProjection = (): WorkspaceView => {
   const projection = readerProjection();
   return {
     ...projection,

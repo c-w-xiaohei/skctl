@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ManagementProjection, SkillAddress } from "@skill-cli/core";
+import type { WorkspaceView, SkillAddress } from "@skill-cli/core";
 import {
   actionIntent,
   installedSkillContext,
@@ -40,7 +40,7 @@ function collectionTargetProjection(
     { source: "team-main", path: "b" },
     { source: "team-main", path: "c" },
   ],
-): ManagementProjection {
+): WorkspaceView {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("Expected a complete test projection");
   return {
@@ -59,7 +59,7 @@ function collectionTargetProjection(
         },
       ],
     },
-    installedSkills: addresses.map((address): ManagementProjection["installedSkills"][number] => ({
+    installedSkills: addresses.map((address): WorkspaceView["installedSkills"][number] => ({
       address,
       name: address.path,
       description: `Skill ${address.path}`,
@@ -257,7 +257,7 @@ test("K6 structural Collection targets do not confuse slash-colliding addresses"
 test("K7 Unassigned eligibility excludes assigned cursor memory but preserves checked targets", () => {
   const base = collectionTargetProjection();
   const b = base.installedSkills[1]!;
-  const projection: ManagementProjection = {
+  const projection: WorkspaceView = {
     ...base,
     installedSkills: base.installedSkills.map((skill) =>
       skill === b
@@ -298,7 +298,7 @@ test("K7 Problems eligibility follows the selected visible diagnostic's exact In
   const base = collectionTargetProjection();
   const a = base.installedSkills[0]!.address;
   const b = base.installedSkills[1]!.address;
-  const projection: ManagementProjection = {
+  const projection: WorkspaceView = {
     ...base,
     diagnostics: [
       {
@@ -346,7 +346,7 @@ test("explicit semantic Skill detail may own a filtered object, but not an unins
 test("Collection chooser eligibility preserves repository-derived destinations and rejects unavailable views", () => {
   const base = collectionTargetProjection();
   if (base.effective.status !== "complete") throw new Error("Expected a complete test projection");
-  const projection: ManagementProjection = {
+  const projection: WorkspaceView = {
     ...base,
     effective: {
       ...base.effective,
@@ -382,7 +382,7 @@ test("Collection chooser eligibility preserves repository-derived destinations a
     expect(skillCollectionTargets(id, "workspace", emptyCollections, owners.facts).reason).toBe(
       "No direct or repository-derived Collection is available for these targets",
     );
-    const unavailable: ManagementProjection = {
+    const unavailable: WorkspaceView = {
       ...projection,
       effective: {
         status: "unavailable",
@@ -774,7 +774,7 @@ test("Collection actions retain read-only update access while edits use direct o
 test("Config Collection actions retain their direct owner wording and Use eligibility", () => {
   const owner = { ...directOwner, pointer: "/collections/team" };
   const base = collectionTargetProjection();
-  const projection: ManagementProjection = {
+  const projection: WorkspaceView = {
     ...base,
     configs: base.configs.map((config) =>
       config.level === "project"

@@ -1,4 +1,4 @@
-import type { ManagementCapability, ManagementProjection } from "@skill-cli/core";
+import type { InstalledCapability, WorkspaceView } from "@skill-cli/core";
 import type { SkillAddress } from "@skill-cli/core";
 import {
   InputRenderable,
@@ -76,7 +76,7 @@ export interface WorkspacePageProps {
   readonly overlay?: () => boolean;
   readonly mode: LayoutMode;
   readonly narrowLevel: NarrowLevel;
-  readonly projection: () => ManagementProjection | undefined;
+  readonly projection: () => WorkspaceView | undefined;
   readonly focusRegistry?: FocusRegistry;
   /** App owns deferred focus across page transitions; the page only requests a region. */
   readonly onRequestFocus?: (owner: FocusOwner) => void;
@@ -157,7 +157,7 @@ export interface WorkspacePageProps {
   readonly onUpdatesStopChecking?: () => void;
   readonly onUpdatesRetry?: () => void;
   readonly onUpdatesOpenSkill?: (address: UpdateAddress, tab?: "skill" | "details") => void;
-  readonly previewUpdate?: ManagementCapability["previewUpdate"];
+  readonly previewUpdate?: InstalledCapability["previewUpdate"];
   readonly onUpdatesOpenSource?: (source: string) => void;
   readonly onSourceUpdatesDetails?: (source: string) => void;
   readonly sourceUpdates?: () =>

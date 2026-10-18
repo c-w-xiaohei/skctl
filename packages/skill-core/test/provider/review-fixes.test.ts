@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { openGitHubSource, resolveGitHubApi } from "../../src/internal/source-github";
-import { runProviderChild, openGitSource, resolveGitRef } from "../../src/internal/source-git";
+import { openGitHubSource, resolveGitHubApi } from "../../src/source/github";
+import { runProviderChild, openGitSource, resolveGitRef } from "../../src/source/git";
 import { networkFixture } from "./network-fixture";
-import { discoverSnapshotSkills } from "../../src/internal/sources";
-import { createSourceOperation } from "../../src/internal/source-network";
+import { discoverSnapshotSkills } from "../../src/source/snapshot";
+import { createSourceOperation } from "../../src/source/network";
 import { createExecutableFixture } from "../executable-fixture";
 
 const commit = "a".repeat(40),

@@ -107,9 +107,11 @@ test("RENDER first Space marks the focused Installed Skill without an additional
     () => (
       <App
         core={directSourceCore(projection, {
-          loadInstalled: async () => {
-            loads++;
-            throw new Error("Space must not load content");
+          installed: {
+            load: async () => {
+              loads++;
+              throw new Error("Space must not load content");
+            },
           },
         })}
         exit={() => {}}

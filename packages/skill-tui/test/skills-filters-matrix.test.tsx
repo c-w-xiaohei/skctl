@@ -1,15 +1,13 @@
 import { expect, test } from "bun:test";
 import { InputRenderable, SelectRenderable, TextBufferRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { Diagnostic, ManagementProjection } from "@skill-cli/core";
+import type { Diagnostic, WorkspaceView } from "@skill-cli/core";
 import { skillAddressKey } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 
-function filterProjection(
-  agentStatus: "available" | "unavailable" = "available",
-): ManagementProjection {
+function filterProjection(agentStatus: "available" | "unavailable" = "available"): WorkspaceView {
   const base = readerProjection();
   const [guide, reference] = base.installedSkills;
   const contributedSource = {

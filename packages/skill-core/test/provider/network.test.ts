@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { openGitSource, resolveGitRef, runProviderChild } from "../../src/internal/source-git";
-import { createSourceOperation } from "../../src/internal/source-network";
+import { openGitSource, resolveGitRef, runProviderChild } from "../../src/source/git";
+import { createSourceOperation } from "../../src/source/network";
 import { networkFixture, tlsFixture } from "./network-fixture";
 
 const provenance = {
@@ -103,7 +103,7 @@ test("real Bun HTTPS target via HTTP and HTTPS proxy trusts fixture CA and rejec
     const script = join(fixture.root, "client.ts");
     await writeFile(
       script,
-      `import { createSourceOperation, sourceFetch } from '${join(import.meta.dir, "../../src/internal/source-network.ts")}';
+      `import { createSourceOperation, sourceFetch } from '${join(import.meta.dir, "../../src/source/network.ts")}';
 const op = createSourceOperation({ source: 'tls', proxy: process.env.PROXY, budgetMs: 1500 });
 try { const response = await sourceFetch(op)(process.env.TARGET ?? 'https://target.invalid/content'); console.log(await response.text()); }
 catch (error) { op.throwIfAborted('TLS'); console.error(String(error)); process.exitCode = 7; }

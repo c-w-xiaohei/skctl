@@ -244,24 +244,27 @@ test("Source Inspector exposes Check Updates directly and leaving its workbench 
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          checkUpdate: async (request) => {
-            observationCalls.push(request);
-            return {
-              value: {
-                source: request.source,
-                kind: "github",
-                exactRevision: "ux-update-review",
-                changed: [{ path: "guide", name: "guide", description: "Changed guide" }],
-                added: [],
-                removed: [],
-                unchanged: [],
-              },
-              diagnostics: [],
-            };
-          },
-          update: async (request) => {
-            updateCalls.push(request);
-            return { value: undefined, diagnostics: [] };
+          installed: {
+            checkUpdate: async (request) => {
+              observationCalls.push(request);
+              return {
+                value: {
+                  source: request.source,
+                  kind: "github",
+                  exactRevision: "ux-update-review",
+                  changed: [{ path: "guide", name: "guide", description: "Changed guide" }],
+                  added: [],
+                  removed: [],
+                  unchanged: [],
+                  baseline: "baseline:test",
+                },
+                diagnostics: [],
+              };
+            },
+            update: async (request) => {
+              updateCalls.push(request);
+              return { value: undefined, diagnostics: [] };
+            },
           },
         })}
         exit={() => {}}

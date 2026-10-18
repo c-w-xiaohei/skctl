@@ -192,30 +192,31 @@ for (const viewport of [
       () => (
         <App
           core={directSourceCore(canonicalManagementProjection(), {
-            loadInstalled: async ({ address }) => {
-              contentLoads.push(address.path);
-              return {
-                value: {
+            installed: {
+              load: async ({ address }) => {
+                contentLoads.push(address.path);
+                return {
                   address,
                   name: address.path,
                   description: longDescription,
                   rawText: `Installed body ${address.path}`,
                   markdownText: `# ${address.path}\n\nInstalled body ${address.path}`,
-                },
-                diagnostics: [],
-              };
+                };
+              },
+              install: async () => {
+                installs++;
+                throw new Error("browsing Agent access must not install");
+              },
+              update: async () => {
+                mutations.push("update");
+                throw new Error("direct reading must not update");
+              },
             },
-            install: async () => {
-              installs++;
-              throw new Error("browsing Agent access must not install");
-            },
-            discover: async () => {
-              mutations.push("discover");
-              throw new Error("direct reading must not acquire Source content");
-            },
-            update: async () => {
-              mutations.push("update");
-              throw new Error("direct reading must not update");
+            sources: {
+              discover: async () => {
+                mutations.push("discover");
+                throw new Error("direct reading must not acquire Source content");
+              },
             },
           })}
           exit={() => {}}
@@ -313,16 +314,18 @@ test("RENDER Agent access after scrolling distinguishes a row press from its exa
     () => (
       <App
         core={directSourceCore(scrolledDisclosureProjection(), {
-          loadInstalled: async () => {
-            contentLoads++;
-            throw new Error("content must remain unloaded");
-          },
-          checkUpdate: async () => {
-            throw new Error("browsing Agent access must not check updates");
-          },
-          install: async () => {
-            installs++;
-            throw new Error("browsing Agent access must not install");
+          installed: {
+            load: async () => {
+              contentLoads++;
+              throw new Error("content must remain unloaded");
+            },
+            checkUpdate: async () => {
+              throw new Error("browsing Agent access must not check updates");
+            },
+            install: async () => {
+              installs++;
+              throw new Error("browsing Agent access must not install");
+            },
           },
         })}
         exit={() => {}}

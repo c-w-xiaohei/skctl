@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
-import type { ManagementProjection, UpdateObservation } from "@skill-cli/core";
+import type { WorkspaceView, UpdateObservation } from "@skill-cli/core";
 import {
   InputRenderable,
   ScrollBoxRenderable,
@@ -49,7 +49,7 @@ async function renderApp(
   }
 }
 
-function sourceFixture(count: number): ManagementProjection {
+function sourceFixture(count: number): WorkspaceView {
   const base = workspaceProjection({ includeContribution: false });
   const sources = Array.from({ length: count }, (_, index) => ({
     ...base.effective.sources[0]!,
@@ -76,7 +76,7 @@ function sourceFixture(count: number): ManagementProjection {
   };
 }
 
-function collectionFixture(): ManagementProjection {
+function collectionFixture(): WorkspaceView {
   const projection = sourceFixture(2);
   if (projection.effective.status !== "complete") throw new Error("Expected complete projection");
   return {
@@ -118,27 +118,29 @@ function observation(source: string, paths: readonly string[]): UpdateObservatio
 }
 
 // Only external Core inputs/calls are fixtures; App owns drafts, routes and tasks.
-function updateCore(projection: ManagementProjection) {
+function updateCore(projection: WorkspaceView) {
   const checks: string[] = [];
   const completed: string[] = [];
   const updates: unknown[] = [];
   const reads: unknown[] = [];
   const core = directSourceCore(projection, {
-    checkUpdate: async ({ source }) => {
-      checks.push(source);
-      const paths = projection.installedSkills
-        .filter((skill) => skill.address.source === source)
-        .map((skill) => skill.address.path);
-      completed.push(source);
-      return { value: observation(source, paths), diagnostics: [] };
-    },
-    update: async (request) => {
-      updates.push(request);
-      return { value: undefined, diagnostics: [] };
-    },
-    loadInstalled: async (request) => {
-      reads.push(request);
-      throw new Error("Updates navigation must not read installed Skill content");
+    installed: {
+      checkUpdate: async ({ source }) => {
+        checks.push(source);
+        const paths = projection.installedSkills
+          .filter((skill) => skill.address.source === source)
+          .map((skill) => skill.address.path);
+        completed.push(source);
+        return { value: observation(source, paths), diagnostics: [] };
+      },
+      update: async (request) => {
+        updates.push(request);
+        return { value: undefined, diagnostics: [] };
+      },
+      load: async (request) => {
+        reads.push(request);
+        throw new Error("Updates navigation must not read installed Skill content");
+      },
     },
   });
   return { core, checks, completed, updates, reads };
@@ -231,18 +233,20 @@ test.each([12, 2])(
     const completed: string[] = [];
     const reads: unknown[] = [];
     const core = directSourceCore(projection, {
-      checkUpdate: async ({ source }) => {
-        checks.push(source);
-        try {
-          if (source === "source-12") throw new Error(longFailure);
-          return { value: observation(source, []), diagnostics: [] };
-        } finally {
-          completed.push(source);
-        }
-      },
-      loadInstalled: async (request) => {
-        reads.push(request);
-        throw new Error("Opening Updates must not read installed content");
+      installed: {
+        checkUpdate: async ({ source }) => {
+          checks.push(source);
+          try {
+            if (source === "source-12") throw new Error(longFailure);
+            return { value: observation(source, []), diagnostics: [] };
+          } finally {
+            completed.push(source);
+          }
+        },
+        load: async (request) => {
+          reads.push(request);
+          throw new Error("Opening Updates must not read installed content");
+        },
       },
     });
     const mounted = await renderApp(core, { width: 80, height: 16 });

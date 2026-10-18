@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMain } from "../../../skill-cli/src/main";
 import { createSkillCliCore } from "../../src/create-core";
-import { StateCoordinator } from "../../src/internal/state";
+import { StateCoordinator } from "../../src/storage/state";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-reference-"));

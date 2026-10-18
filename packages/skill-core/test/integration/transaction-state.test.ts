@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createSkillCliCore } from "../../src/create-core";
-import { StateCoordinator } from "../../src/internal/state";
+import { StateCoordinator } from "../../src/storage/state";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-transaction-"));
@@ -32,9 +32,9 @@ async function snapshot(root: string) {
   };
 }
 const registerTeamSource =
-  'configuration.change({ type: "source.register", level: "project", id: "team", binding: { kind: "local", path: "./skills", root: "" } })';
-const installReview = 'management.install({ source: "team", paths: ["review"] })';
-const uninstallReview = 'management.uninstall({ source: "team", paths: ["review"] })';
+  'sources.register({ level: "project", id: "team", binding: { kind: "local", path: "./skills", root: "" } })';
+const installReview = 'installed.install({ source: "team", paths: ["review"] })';
+const uninstallReview = 'installed.uninstall({ source: "team", paths: ["review"] })';
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 async function expectTransactionCrash(value: Fixture, operation: string, hook: string) {
   const entry = join(import.meta.dir, "../../src/create-core.ts");
@@ -71,7 +71,7 @@ async function expectTransactionCrash(value: Fixture, operation: string, hook: s
   expect(exit).toBe(97);
 }
 async function childGuardCrash(state: string, hook = "lock-critical-enter") {
-  const entry = join(import.meta.dir, "../../src/internal/state.ts");
+  const entry = join(import.meta.dir, "../../src/storage/state.ts");
   const script = `import { StateCoordinator } from ${JSON.stringify(entry)}; await new StateCoordinator(${JSON.stringify(state)}).withLock(async () => undefined);`;
   const child = Bun.spawn({
     cmd: [process.execPath, "--eval", script],
@@ -375,14 +375,11 @@ test("SCH-001/SCH-002 compose Local and immutable cached Remote Config Sources u
     const cache = join(value.state, "configs", digest, "config.jsonc");
     const before = await readFile(cache, "utf8");
     await expect(
-      createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).configuration.change(
-        {
-          type: "source.register",
-          level: "project",
-          id: "remote-config/remote",
-          binding: { kind: "local", path: "./skills", root: "" },
-        },
-      ),
+      createSkillCliCore({ cwd: value.project, userConfigPath: value.global }).sources.register({
+        level: "project",
+        id: "remote-config/remote",
+        binding: { kind: "local", path: "./skills", root: "" },
+      }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     expect(await readFile(cache, "utf8")).toBe(before);
   } finally {
@@ -456,7 +453,7 @@ test("TX-005 reader waits behind a publisher barrier and captures one coherent p
   const output = join(value.root, "reader.json");
   try {
     const entry = join(import.meta.dir, "../../src/create-core.ts");
-    const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({ cwd: ${JSON.stringify(value.project)} }).configuration.change({ type: "source.register", level: "project", id: "team", binding: { kind: "local", path: "./skills", root: "" } });`;
+    const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({ cwd: ${JSON.stringify(value.project)} }).sources.register({ level: "project", id: "team", binding: { kind: "local", path: "./skills", root: "" } });`;
     const publisher = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
       env: {
@@ -568,7 +565,7 @@ test("CFG-001/ST-002 Remote Config adoption publishes cache before pointer and r
       join(value.project, "skill-cli.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    const entry = join(import.meta.dir, "../../src/internal/state.ts");
+    const entry = join(import.meta.dir, "../../src/storage/state.ts");
     const script = `import { StateCoordinator } from ${JSON.stringify(entry)}; await new StateCoordinator(${JSON.stringify(value.state)}).publishRemoteConfig("remote", "${"c".repeat(40)}", new Uint8Array(${JSON.stringify([...bytes])}));`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
@@ -607,7 +604,7 @@ test("CFG-001 immutable Config cache crash never publishes an adoption pointer",
   const bytes = Buffer.from("{}\n");
   const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
   try {
-    const entry = join(import.meta.dir, "../../src/internal/state.ts");
+    const entry = join(import.meta.dir, "../../src/storage/state.ts");
     const script = `import { StateCoordinator } from ${JSON.stringify(entry)}; await new StateCoordinator(${JSON.stringify(value.state)}).publishRemoteConfig("remote", "${"d".repeat(40)}", new Uint8Array(${JSON.stringify([...bytes])}));`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
@@ -647,7 +644,7 @@ test("CFG-001 state-pointer crash rolls an adopted cache forward for an offline 
       join(value.project, "skill-cli.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    const entry = join(import.meta.dir, "../../src/internal/state.ts");
+    const entry = join(import.meta.dir, "../../src/storage/state.ts");
     const script = `import { StateCoordinator } from ${JSON.stringify(entry)}; await new StateCoordinator(${JSON.stringify(value.state)}).publishRemoteConfig("remote", "${"e".repeat(40)}", new Uint8Array(${JSON.stringify([...bytes])}));`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],

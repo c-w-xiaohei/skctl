@@ -124,9 +124,11 @@ test("RENDER Skill inspector uses named commands, one cue, and defers content lo
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async (request) => {
-            loads.push(request);
-            return { value: readerContent, diagnostics: [] };
+          installed: {
+            load: async (request) => {
+              loads.push(request);
+              return readerContent;
+            },
           },
         })}
         exit={() => {}}
@@ -173,9 +175,11 @@ test("RENDER Source Installed Skills command retains its exact filtered drill-in
     () => (
       <App
         core={directSourceCore(sourceFilteredReaderProjection(), {
-          loadInstalled: async (request) => {
-            loads.push(request);
-            return { value: readerContent, diagnostics: [] };
+          installed: {
+            load: async (request) => {
+              loads.push(request);
+              return readerContent;
+            },
           },
         })}
         exit={() => {}}

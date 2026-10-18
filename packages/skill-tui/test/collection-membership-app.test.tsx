@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection, MembershipBatchImpact, OperationResult } from "@skill-cli/core";
+import type { WorkspaceView, MembershipBatchImpact, OperationResult } from "@skill-cli/core";
 import { App } from "../src/app";
 import { CollectionsPage } from "../src/collections-page";
 import { createCollectionsState } from "../src/collections/state";
@@ -39,7 +39,7 @@ const collectionOwner = {
   pointer: "/collections/team",
 };
 
-function membershipProjection(): ManagementProjection {
+function membershipProjection(): WorkspaceView {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
   return {
@@ -118,22 +118,22 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
         return result(projection);
       },
     },
-    content: {
-      ...base.content,
-      loadInstalled: async () => {
+    installed: {
+      ...base.installed,
+      load: async () => {
         loads++;
-        return result({
+        return {
           address: { source: "team/main", path: "guide" },
           name: "guide",
           description: "Guide",
           rawText: "# Guide",
           markdownText: "# Guide",
-        });
+        };
       },
     },
-    configuration: {
-      ...base.configuration,
-      previewMembershipBatch: async (request: {
+    collections: {
+      ...base.collections,
+      previewMemberEdit: async (request: {
         readonly level: "global" | "project" | "local";
         readonly collection: string;
         readonly additions: readonly {
@@ -162,9 +162,9 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
         };
         return result(impact);
       },
-      change: async (change: Parameters<typeof base.configuration.change>[0]) => {
-        changes.push(change);
-        return result({ level: "project" as const, changed: true });
+      editMembers: async (request: Parameters<typeof base.collections.editMembers>[0]) => {
+        changes.push(request);
+        return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
       },
     },
   };
@@ -242,7 +242,6 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
     await setup.waitFor(() => changes.length === 1);
     expect(changes).toEqual([
       {
-        type: "collection.members.change",
         level: "project",
         collection: "team",
         additions: [
@@ -313,11 +312,11 @@ test("repository-derived Add Membership creates its fixed ID then opens an owned
     workspace: {
       get: async () => result(++refreshes === 1 ? repository : created),
     },
-    configuration: {
-      ...base.configuration,
-      change: async (change: Parameters<typeof base.configuration.change>[0]) => {
-        changes.push(change);
-        return result({ level: "project" as const, changed: true });
+    collections: {
+      ...base.collections,
+      create: async (request: Parameters<typeof base.collections.create>[0]) => {
+        changes.push(request);
+        return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
       },
     },
   };
@@ -348,7 +347,7 @@ test("repository-derived Add Membership creates its fixed ID then opens an owned
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-name-0",
     );
-    expect(changes).toEqual([{ type: "collection.create", level: "project", collection: "team" }]);
+    expect(changes).toEqual([{ level: "project", collection: "team" }]);
     await setup.waitForFrame((frame) => frame.includes("Add to team"));
   } finally {
     setup.renderer.destroy();
@@ -356,14 +355,19 @@ test("repository-derived Add Membership creates its fixed ID then opens an owned
 });
 
 test("Workspace Collection create selects a level, blocks duplicate submit, and reselects after refresh", async () => {
-  const writing =
-    deferred<OperationResult<{ readonly level: "global"; readonly changed: boolean }>>();
+  const writing = deferred<
+    OperationResult<{
+      readonly level: "global";
+      readonly file: string;
+      readonly changed: boolean;
+    }>
+  >();
   const changes: unknown[] = [];
   let refreshes = 0;
   const projection = workspaceProjection();
   if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
   const effective = projection.effective;
-  const created: ManagementProjection = {
+  const created: WorkspaceView = {
     ...projection,
     effective: {
       ...effective,
@@ -395,10 +399,10 @@ test("Workspace Collection create selects a level, blocks duplicate submit, and 
         return result(created);
       },
     },
-    configuration: {
-      ...base.configuration,
-      change: (change: Parameters<typeof base.configuration.change>[0]) => {
-        changes.push(change);
+    collections: {
+      ...base.collections,
+      create: (request: Parameters<typeof base.collections.create>[0]) => {
+        changes.push(request);
         return writing.promise;
       },
     },
@@ -428,9 +432,9 @@ test("Workspace Collection create selects a level, blocks duplicate submit, and 
     await setup.mockInput.typeText("team");
     await enterLive(setup, "collection-create-submit");
     await parsedEnter(setup);
-    expect(changes).toEqual([{ type: "collection.create", level: "global", collection: "team" }]);
+    expect(changes).toEqual([{ level: "global", collection: "team" }]);
     expect(changes).toHaveLength(1);
-    writing.resolve(result({ level: "global", changed: true }));
+    writing.resolve(result({ level: "global", file: "skill-cli.jsonc", changed: true }));
     await setup.waitForFrame((frame) => frame.includes("team"));
     expect(refreshes).toBe(2);
   } finally {

@@ -1,7 +1,7 @@
 import type {
   CollectionView,
   ConfigDeclarationOwner,
-  ManagementProjection,
+  WorkspaceView,
   MemberOriginPath,
 } from "@skill-cli/core";
 import type { CollectionRelationRow } from "./relationship-inspector";
@@ -20,7 +20,7 @@ const relationKey = (
 
 export const collectionRelationRows = (
   collectionId: string,
-  projection: ManagementProjection,
+  projection: WorkspaceView,
 ): readonly CollectionRelationRow[] => {
   const effective = projection.effective;
   if (effective.status !== "complete") return [];

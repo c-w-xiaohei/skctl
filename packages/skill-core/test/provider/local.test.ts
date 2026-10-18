@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as localModule from "../../src/internal/source-local";
-import { openLocalSource } from "../../src/internal/source-local";
+import * as localModule from "../../src/source/local";
+import { openLocalSource } from "../../src/source/local";
 
 test("Local snapshots expose deterministic entries", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-local-"));

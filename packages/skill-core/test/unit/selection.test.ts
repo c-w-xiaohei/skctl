@@ -3,8 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { readWorkspace } from "../../src/internal/config";
-import { resolveCollectionUse, resolveCollections } from "../../src/collections";
+import { readWorkspace } from "../../src/workspace/capture";
+import { resolveCollectionUse, resolveCollections } from "../../src/collection/graph";
 
 test("rejects legacy declarations rather than importing or shadowing them", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-selection-"));
@@ -29,8 +29,13 @@ test("rejects legacy declarations rather than importing or shadowing them", asyn
 
 test("requires a nonempty, fully installed explicit Collection Use", () => {
   const resolved = resolveCollections(
-    { engineering: { members: { review: { source: "local", path: "review" } } } },
-    new Set([{ source: "local", path: "review" }]),
+    [
+      {
+        id: "engineering",
+        declaration: { members: { review: { source: "local", path: "review" } } },
+      },
+    ],
+    [{ source: "local", path: "review", name: "review" }],
   );
   expect(resolveCollectionUse(resolved, [])).toMatchObject({ complete: false });
   expect(resolveCollectionUse(resolved, ["missing"])).toMatchObject({ complete: false });

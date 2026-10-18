@@ -1,5 +1,5 @@
 import type { BaseRenderable } from "@opentui/core";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import type { ActionRecord } from "../actions";
 import type { CollectionFilterDimension } from "../collections-filter";
 import type { FocusRegistry, FocusTarget } from "../focus";
@@ -12,7 +12,7 @@ export interface CollectionsPageProps {
   readonly collections: CollectionsReadonly;
   readonly mode: LayoutMode;
   readonly surface: "browser" | "detail";
-  readonly projection: () => ManagementProjection | undefined;
+  readonly projection: () => WorkspaceView | undefined;
   readonly active?: boolean;
   readonly focusRegistry?: FocusRegistry;
   readonly onWorkAreaTarget?: (target: FocusTarget & Pick<BaseRenderable, "once" | "off">) => void;

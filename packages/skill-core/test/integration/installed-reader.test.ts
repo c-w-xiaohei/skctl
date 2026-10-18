@@ -3,9 +3,9 @@ import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
-import { StateCoordinator } from "../../src/internal/state";
-import { setAcquisitionTrapForTest } from "../../src/internal/sources";
-import { setContentHookForTest } from "../../src/content";
+import { StateCoordinator } from "../../src/storage/state";
+import { setAcquisitionTrapForTest } from "../../src/source/snapshot";
+import { setContentHookForTest } from "../../src/content/operations";
 
 test("READ-001/005/006 reads undisclosed installed content structurally and classifies non-text", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-reader-"));
@@ -18,24 +18,20 @@ test("READ-001/005/006 reads undisclosed installed content structurally and clas
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\nbody\n");
     await writeFile(join(skill, "data.bin"), Buffer.from([0, 1, 2]));
     const core = createSkillCliCore({ cwd: root });
-    await core.configuration.change({
-      type: "source.register",
+    await core.sources.register({
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await core.management.install({ source: "local", paths: ["review"] });
+    await core.installed.install({ source: "local", paths: ["review"] });
     expect(
-      (await core.content.loadInstalled({ address: { source: "local", path: "review" } })).value
-        .markdownText,
+      (await core.installed.load({ address: { source: "local", path: "review" } })).markdownText,
     ).toBe("body\n");
     expect(
-      (
-        await core.content.readInstalled({
-          address: { source: "local", path: "review" },
-          path: "data.bin",
-        })
-      ).value,
+      await core.installed.read({
+        address: { source: "local", path: "review" },
+        path: "data.bin",
+      }),
     ).toMatchObject({
       kind: "not-text",
       reason: "binary",
@@ -59,7 +55,7 @@ test("READ-001/003 structural load ignores disclosure and owner health but valid
     await new StateCoordinator(state).installLocal("missing", "skill", skill);
     const core = createSkillCliCore({ cwd: root });
     expect(
-      (await core.content.loadInstalled({ address: { source: "missing", path: "skill" } })).value,
+      await core.installed.load({ address: { source: "missing", path: "skill" } }),
     ).toMatchObject({ name: "live", markdownText: "body\n" });
     expect((await core.workspace.get()).value.installedSkills[0]).toMatchObject({
       owner: { health: "missing" },
@@ -67,11 +63,11 @@ test("READ-001/003 structural load ignores disclosure and owner health but valid
     });
     await writeFile(join(skill, "SKILL.md"), "---\nname: [broken\n---\nbody\n");
     await expect(
-      core.content.loadInstalled({ address: { source: "missing", path: "skill" } }),
+      core.installed.load({ address: { source: "missing", path: "skill" } }),
     ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
     await writeFile(join(skill, "SKILL.md"), Buffer.alloc(1_048_577, "x"));
     await expect(
-      core.content.loadInstalled({ address: { source: "missing", path: "skill" } }),
+      core.installed.load({ address: { source: "missing", path: "skill" } }),
     ).rejects.toMatchObject({ code: "TEXT_TOO_LARGE" });
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
@@ -113,8 +109,7 @@ test("READ-002/003/009 Remote structural reads use only an intact Snapshot despi
     }) as unknown as typeof fetch;
     const core = createSkillCliCore({ cwd: root });
     expect(
-      (await core.content.loadInstalled({ address: { source: "drifted", path: "skill" } })).value
-        .name,
+      (await core.installed.load({ address: { source: "drifted", path: "skill" } })).name,
     ).toBe("remote");
     expect(await readdir(join(state, "uses"))).toEqual([]);
     expect("run" in core.content).toBe(true);
@@ -142,65 +137,57 @@ test("READ-004/005/006/011 structural resources are live, deterministic, bounded
     await new StateCoordinator(state).installLocal("local", "tree", skill);
     const core = createSkillCliCore({ cwd: root });
     expect(
-      (
-        await core.content.listInstalledResources({ address: { source: "local", path: "tree" } })
-      ).value.map((item) => item.path),
+      (await core.installed.listResources({ address: { source: "local", path: "tree" } })).map(
+        (item) => item.path,
+      ),
     ).toEqual(["a.txt", "nested", "nested/z.md"]);
     expect(
-      (
-        await core.content.readInstalled({
-          address: { source: "local", path: "tree" },
-          path: "nested/z.md",
-        })
-      ).value,
+      await core.installed.read({
+        address: { source: "local", path: "tree" },
+        path: "nested/z.md",
+      }),
     ).toMatchObject({ kind: "text", format: "markdown", text: "# z" });
     await writeFile(join(skill, "later.txt"), "later");
     expect(
-      (
-        await core.content.listInstalledResources({ address: { source: "local", path: "tree" } })
-      ).value.map((item) => item.path),
+      (await core.installed.listResources({ address: { source: "local", path: "tree" } })).map(
+        (item) => item.path,
+      ),
     ).toContain("later.txt");
     await writeFile(join(skill, "large.txt"), Buffer.alloc(1_048_577));
     expect(
-      (
-        await core.content.readInstalled({
-          address: { source: "local", path: "tree" },
-          path: "large.txt",
-        })
-      ).value,
+      await core.installed.read({
+        address: { source: "local", path: "tree" },
+        path: "large.txt",
+      }),
     ).toMatchObject({ kind: "not-text", reason: "too-large", metadata: { size: 1_048_577 } });
     await writeFile(join(skill, "invalid.txt"), Buffer.from([0xc3, 0x28]));
     expect(
-      (
-        await core.content.readInstalled({
-          address: { source: "local", path: "tree" },
-          path: "invalid.txt",
-        })
-      ).value,
+      await core.installed.read({
+        address: { source: "local", path: "tree" },
+        path: "invalid.txt",
+      }),
     ).toMatchObject({ kind: "not-text", reason: "binary" });
     setContentHookForTest(async () => {
       await writeFile(join(skill, "a.txt"), Buffer.alloc(1_048_577, "x"));
     });
     await expect(
-      core.content.readInstalled({ address: { source: "local", path: "tree" }, path: "a.txt" }),
+      core.installed.read({ address: { source: "local", path: "tree" }, path: "a.txt" }),
     ).rejects.toMatchObject({ code: "TEXT_TOO_LARGE" });
     setContentHookForTest();
     for (const path of ["../SKILL.md", "/etc/passwd", "nested\\z.md", "bad\0name"])
       await expect(
-        core.content.readInstalled({ address: { source: "local", path: "tree" }, path }),
+        core.installed.read({ address: { source: "local", path: "tree" }, path }),
       ).rejects.toMatchObject({ code: "INVALID_RESOURCE_PATH" });
     await symlink("a.txt", join(skill, "link"));
     await expect(
-      core.content.listInstalledResources({ address: { source: "local", path: "tree" } }),
+      core.installed.listResources({ address: { source: "local", path: "tree" } }),
     ).rejects.toMatchObject({ code: "UNSUPPORTED_ENTRY" });
     await expect(
-      core.content.readInstalled({ address: { source: "local", path: "tree" }, path: "link" }),
+      core.installed.read({ address: { source: "local", path: "tree" }, path: "link" }),
     ).resolves.toMatchObject({
-      value: {
-        kind: "not-text",
-        reason: "unsupported",
-        metadata: { path: "link", kind: "symlink" },
-      },
+      kind: "not-text",
+      reason: "unsupported",
+      metadata: { path: "link", kind: "symlink" },
     });
     await rm(join(skill, "link"));
     let deep = skill;
@@ -209,7 +196,7 @@ test("READ-004/005/006/011 structural resources are live, deterministic, bounded
       await mkdir(deep);
     }
     await expect(
-      core.content.listInstalledResources({ address: { source: "local", path: "tree" } }),
+      core.installed.listResources({ address: { source: "local", path: "tree" } }),
     ).rejects.toMatchObject({ code: "TEXT_TOO_LARGE" });
   } finally {
     setContentHookForTest();
@@ -255,7 +242,7 @@ test("READ-008/010 cancels protected Remote traversal and releases it for later 
       }
     });
     const core = createSkillCliCore({ cwd: root });
-    const read = core.content.readInstalled(
+    const read = core.installed.read(
       { address: { source: "remote", path: "skill" }, path: "note.txt" },
       { signal: controller.signal },
     );
@@ -298,7 +285,7 @@ test("READ-007 structural Remote reads reject a missing or corrupt Snapshot with
     });
     await rm(join(state, "snapshots", digest), { recursive: true, force: true });
     await expect(
-      createSkillCliCore({ cwd: root }).content.loadInstalled({
+      createSkillCliCore({ cwd: root }).installed.load({
         address: { source: "remote", path: "skill" },
       }),
     ).rejects.toMatchObject({ code: "PROVIDER_INTEGRITY_FAILED" });

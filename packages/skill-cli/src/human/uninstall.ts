@@ -8,7 +8,7 @@ export function uninstallCommand(parent: Command, { core, stdout }: CommandConte
       "Remove installed Skill materializations while preserving their Source declarations.",
     )
     .action(async (source, paths, _flags, action) => {
-      await core(action).management.uninstall({ source, paths });
+      await core(action).installed.uninstall({ source, paths });
       stdout.write(`Uninstalled ${paths.length} skills from source "${source}".\n`);
     });
 }

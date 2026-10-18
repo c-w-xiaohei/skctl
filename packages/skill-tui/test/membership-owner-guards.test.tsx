@@ -72,11 +72,11 @@ for (const fault of [
     });
     const requests: unknown[] = [];
     let writes = 0;
-    core.configuration.change = async () => {
+    core.collections.removeMember = async () => {
       writes++;
       throw new Error("Guard must not write");
     };
-    core.configuration.previewMembershipBatch = async (request) => {
+    core.collections.previewMemberEdit = async (request) => {
       requests.push(request);
       const declaration = collection.declared[0]!;
       const receipt: MembershipBatchImpact = {

@@ -77,7 +77,7 @@ test("Reader pointer tabs retain monochrome cues and Find/Raw tools own reversib
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />

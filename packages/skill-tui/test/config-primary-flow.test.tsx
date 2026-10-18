@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { App } from "../src/app";
 import { createConfigState } from "../src/config/state";
 import { directOwner, directSourceCore, workspaceProjection } from "./direct-source.fixture";
@@ -23,7 +23,7 @@ async function expectFocus(setup: Setup, id: string, source: string) {
   }
 }
 
-function projection(): ManagementProjection {
+function projection(): WorkspaceView {
   const base = workspaceProjection({ includeContribution: false });
   const owner = { ...directOwner, pointer: "/agents/opencode" };
   return {

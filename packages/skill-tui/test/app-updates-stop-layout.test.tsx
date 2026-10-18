@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
-import type { ManagementProjection, UpdateObservation } from "@skill-cli/core";
+import type { WorkspaceView, UpdateObservation } from "@skill-cli/core";
 import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -74,7 +74,7 @@ test("App Updates keeps Source results above actions after Stop removes the acti
     owner: { source: otherSource.id, health: "healthy" as const },
     source: otherSource,
   };
-  const projection: ManagementProjection = {
+  const projection: WorkspaceView = {
     ...base,
     installedSkills: [...readerProjection().installedSkills, otherInstalledSkill],
     effective: { ...base.effective, sources: [base.effective.sources[0]!, otherSource] },
@@ -86,6 +86,7 @@ test("App Updates keeps Source results above actions after Stop removes the acti
   const observation = (source: string, path: string): UpdateObservation => ({
     source,
     kind: "github",
+    baseline: "baseline:test",
     exactRevision: revision,
     changed: [{ path, name: path, description: `Changed ${path}` }],
     added: [],
@@ -93,27 +94,29 @@ test("App Updates keeps Source results above actions after Stop removes the acti
     unchanged: [],
   });
   const core = directSourceCore(projection, {
-    checkUpdate: async ({ source }) => {
-      checks.push(source);
-      const result = {
-        value: observation(source, source === "team-main" ? "guide" : "other"),
-        diagnostics: [],
-      };
-      completedChecks.push(source);
-      return result;
-    },
-    update: (request, options) => {
-      updates.push(request);
-      return new Promise((_, reject) =>
-        options?.signal?.addEventListener(
-          "abort",
-          () => {
-            updateAborts++;
-            reject(new Error("stopped"));
-          },
-          { once: true },
-        ),
-      );
+    installed: {
+      checkUpdate: async ({ source }) => {
+        checks.push(source);
+        const result = {
+          value: observation(source, source === "team-main" ? "guide" : "other"),
+          diagnostics: [],
+        };
+        completedChecks.push(source);
+        return result;
+      },
+      update: (request, options) => {
+        updates.push(request);
+        return new Promise((_, reject) =>
+          options?.signal?.addEventListener(
+            "abort",
+            () => {
+              updateAborts++;
+              reject(new Error("stopped"));
+            },
+            { once: true },
+          ),
+        );
+      },
     },
   });
 

@@ -45,19 +45,21 @@ test("READ-012 finds literal case-sensitive non-overlapping matches with source 
 
 test("STATE-014/015 replaces only the Reader lane and suppresses stale content failures", async () => {
   let firstAbort = 0;
-  const second = deferred<Awaited<ReturnType<TuiCore["content"]["loadInstalled"]>>>();
+  const second = deferred<Awaited<ReturnType<TuiCore["installed"]["load"]>>>();
   const core = directSourceCore(workspaceProjection(), {
-    loadInstalled: (request, options) =>
-      request.address.path === "first"
-        ? new Promise((_, reject) =>
-            options?.signal?.addEventListener("abort", () => {
-              firstAbort++;
-              reject(new SkillCliError("CANCELLED", "first cancelled"));
-            }),
-          )
-        : second.promise,
+    installed: {
+      load: (request, options) =>
+        request.address.path === "first"
+          ? new Promise((_, reject) =>
+              options?.signal?.addEventListener("abort", () => {
+                firstAbort++;
+                reject(new SkillCliError("CANCELLED", "first cancelled"));
+              }),
+            )
+          : second.promise,
+    },
   });
-  const owner = createReaderOwner(core.content);
+  const owner = createReaderOwner(core.installed);
   const observed = observeReader(owner);
   const firstAddress = { ...address, path: "first" };
   const secondAddress = { ...address, path: "second" };
@@ -110,23 +112,25 @@ test("Reader cache, epochs, and stale guards keep colliding display shorthands i
 
 test("STATE-014/015 keeps concurrent SKILL.md content and resource-list transports independent", async () => {
   const calls: unknown[] = [];
-  const content = deferred<Awaited<ReturnType<TuiCore["content"]["loadInstalled"]>>>();
-  const resources = deferred<Awaited<ReturnType<TuiCore["content"]["listInstalledResources"]>>>();
+  const content = deferred<Awaited<ReturnType<TuiCore["installed"]["load"]>>>();
+  const resources = deferred<Awaited<ReturnType<TuiCore["installed"]["listResources"]>>>();
   let contentSignal: AbortSignal | undefined;
   let resourceSignal: AbortSignal | undefined;
   const core = directSourceCore(workspaceProjection(), {
-    loadInstalled: (request, options) => {
-      calls.push({ type: "content", request });
-      contentSignal = options?.signal;
-      return content.promise;
-    },
-    listInstalledResources: (request, options) => {
-      calls.push({ type: "resources", request });
-      resourceSignal = options?.signal;
-      return resources.promise;
+    installed: {
+      load: (request, options) => {
+        calls.push({ type: "content", request });
+        contentSignal = options?.signal;
+        return content.promise;
+      },
+      listResources: (request, options) => {
+        calls.push({ type: "resources", request });
+        resourceSignal = options?.signal;
+        return resources.promise;
+      },
     },
   });
-  const owner = createReaderOwner(core.content);
+  const owner = createReaderOwner(core.installed);
   owner.select(address);
   const loading = owner.load(address);
   const listing = owner.list(address);
@@ -136,7 +140,7 @@ test("STATE-014/015 keeps concurrent SKILL.md content and resource-list transpor
   ]);
   expect(contentSignal?.aborted).toBe(false);
   expect(resourceSignal?.aborted).toBe(false);
-  resources.resolve({ value: [{ path: "docs", kind: "directory" }], diagnostics: [] });
+  resources.resolve([{ path: "docs", kind: "directory" }]);
   await listing;
   expect(contentSignal?.aborted).toBe(false);
   expect(owner.current()).toMatchObject({
@@ -162,30 +166,34 @@ test("STATE-014 replaces resource list and read requests in the Reader lane with
   let readAborts = 0;
   let discoveryAborts = 0;
   const core = directSourceCore(workspaceProjection(), {
-    listInstalledResources: (_request, options) =>
-      new Promise((_, reject) =>
-        options?.signal?.addEventListener("abort", () => {
-          listAborts++;
-          reject(new SkillCliError("CANCELLED", "list cancelled"));
-        }),
-      ),
-    readInstalled: (_request, options) =>
-      new Promise((_, reject) =>
-        options?.signal?.addEventListener("abort", () => {
-          readAborts++;
-          reject(new SkillCliError("CANCELLED", "read cancelled"));
-        }),
-      ),
-    discover: (_request, options) =>
-      new Promise((_, reject) =>
-        options?.signal?.addEventListener("abort", () => {
-          discoveryAborts++;
-          reject(new SkillCliError("CANCELLED", "discovery cancelled"));
-        }),
-      ),
+    installed: {
+      listResources: (_request, options) =>
+        new Promise((_, reject) =>
+          options?.signal?.addEventListener("abort", () => {
+            listAborts++;
+            reject(new SkillCliError("CANCELLED", "list cancelled"));
+          }),
+        ),
+      read: (_request, options) =>
+        new Promise((_, reject) =>
+          options?.signal?.addEventListener("abort", () => {
+            readAborts++;
+            reject(new SkillCliError("CANCELLED", "read cancelled"));
+          }),
+        ),
+    },
+    sources: {
+      discover: (_request, options) =>
+        new Promise((_, reject) =>
+          options?.signal?.addEventListener("abort", () => {
+            discoveryAborts++;
+            reject(new SkillCliError("CANCELLED", "discovery cancelled"));
+          }),
+        ),
+    },
   });
   const effects = testEffects(core);
-  const owner = createReaderOwner(core.content);
+  const owner = createReaderOwner(core.installed);
   owner.select(address);
   const source = effects.discover({ kind: "source-discovery", source: "team-main" });
   const list = owner.list(address);
@@ -205,23 +213,27 @@ test("STATE-014 selecting a Reader target aborts only the prior Reader request w
   let readerAborts = 0;
   let sourceAborts = 0;
   const core = directSourceCore(workspaceProjection(), {
-    loadInstalled: (_request, options) =>
-      new Promise((_, reject) =>
-        options?.signal?.addEventListener("abort", () => {
-          readerAborts++;
-          reject(new SkillCliError("CANCELLED", "reader cancelled"));
-        }),
-      ),
-    discover: (_request, options) =>
-      new Promise((_, reject) =>
-        options?.signal?.addEventListener("abort", () => {
-          sourceAborts++;
-          reject(new SkillCliError("CANCELLED", "source cancelled"));
-        }),
-      ),
+    installed: {
+      load: (_request, options) =>
+        new Promise((_, reject) =>
+          options?.signal?.addEventListener("abort", () => {
+            readerAborts++;
+            reject(new SkillCliError("CANCELLED", "reader cancelled"));
+          }),
+        ),
+    },
+    sources: {
+      discover: (_request, options) =>
+        new Promise((_, reject) =>
+          options?.signal?.addEventListener("abort", () => {
+            sourceAborts++;
+            reject(new SkillCliError("CANCELLED", "source cancelled"));
+          }),
+        ),
+    },
   });
   const effects = testEffects(core);
-  const owner = createReaderOwner(core.content);
+  const owner = createReaderOwner(core.installed);
   owner.select({ ...address, path: "first" });
   const source = effects.discover({ kind: "source-discovery", source: "team-main" });
   const first = owner.load({ ...address, path: "first" });
@@ -242,10 +254,7 @@ test("STATE-015 stale resource list failure cannot replace a newer resource read
   owner.select(address);
   const list = owner.list(address);
   const read = owner.read(address, "guide.md");
-  reads[0]!.resolve({
-    value: { kind: "text", path: "guide.md", text: "current", format: "text" },
-    diagnostics: [],
-  });
+  reads[0]!.resolve({ kind: "text", path: "guide.md", text: "current", format: "text" });
   await read;
   const state = owner.current();
   lists[0]!.reject(new SkillCliError("RESOURCE_NOT_FOUND", "stale list"));
@@ -262,21 +271,20 @@ test.each(["resources", "resource"] as const)(
     const { owner, lists, reads } = pendingReader();
     owner.select(address);
     const observed = observeReader(owner);
-    const warning = { code: "INTERNAL", severity: "warning" as const, message: "old warning" };
     const old = request === "resources" ? owner.list(address) : owner.read(address, "guide.md");
     const current = request === "resources" ? owner.read(address, "guide.md") : owner.list(address);
     const oldCall = request === "resources" ? lists[0]! : reads[0]!;
     const currentCall = request === "resources" ? reads[0]! : lists[0]!;
     expect([oldCall.signal?.aborted, currentCall.signal?.aborted]).toEqual([true, false]);
-    const settleList = () =>
-      lists[0]!.resolve({ value: [{ path: "old.md", kind: "file" }], diagnostics: [warning] });
+    const settleList = () => lists[0]!.resolve([{ path: "old.md", kind: "file" }]);
     const settleRead = () =>
-      reads[0]!.resolve({
-        value: { kind: "text", path: "guide.md", text: "old", format: "text" },
-        diagnostics: [warning],
-      });
+      reads[0]!.resolve({ kind: "text", path: "guide.md", text: "old", format: "text" });
     (request === "resources" ? settleList : settleRead)();
-    expect(await old).toMatchObject({ diagnostics: [warning] });
+    expect(await old).toEqual(
+      request === "resources"
+        ? [{ path: "old.md", kind: "file" }]
+        : { kind: "text", path: "guide.md", text: "old", format: "text" },
+    );
     expect(owner.current()).toMatchObject({ resourceLoading: true, resources: [] });
     expect(owner.current()?.resource).toBeUndefined();
     expect(owner.current()?.error).toBeUndefined();
@@ -284,36 +292,42 @@ test.each(["resources", "resource"] as const)(
     owner.dispose();
     expect(currentCall.signal?.aborted).toBe(true);
     (request === "resources" ? settleRead : settleList)();
-    expect(await current).toMatchObject({ diagnostics: [warning] });
+    expect(await current).toEqual(
+      request === "resources"
+        ? { kind: "text", path: "guide.md", text: "old", format: "text" }
+        : [{ path: "old.md", kind: "file" }],
+    );
     expect(observed.values).toHaveLength(count);
     observed.dispose();
   },
 );
 
 test.each(["resources", "resource"] as const)(
-  "Reader %s preserves success diagnostics, failure conversion, and cancellation silence",
+  "Reader %s preserves direct success values, failure conversion, and cancellation silence",
   async (request) => {
-    const warning = { code: "INTERNAL", severity: "warning" as const, message: "read warning" };
     let error: unknown;
     const core = directSourceCore(workspaceProjection(), {
-      listInstalledResources: async () => {
-        if (error) throw error;
-        return { value: [{ path: "guide.md", kind: "file" }], diagnostics: [warning] };
-      },
-      readInstalled: async () => {
-        if (error) throw error;
-        return {
-          value: { kind: "text", path: "guide.md", text: "current", format: "text" },
-          diagnostics: [warning],
-        };
+      installed: {
+        listResources: async () => {
+          if (error) throw error;
+          return [{ path: "guide.md", kind: "file" }];
+        },
+        read: async () => {
+          if (error) throw error;
+          return { kind: "text", path: "guide.md", text: "current", format: "text" };
+        },
       },
     });
-    const owner = createReaderOwner(core.content);
+    const owner = createReaderOwner(core.installed);
     owner.select(address);
     const observed = observeReader(owner);
     const run = () =>
       request === "resources" ? owner.list(address) : owner.read(address, "guide.md");
-    expect(await run()).toMatchObject({ diagnostics: [warning] });
+    expect(await run()).toEqual(
+      request === "resources"
+        ? [{ path: "guide.md", kind: "file" }]
+        : { kind: "text", path: "guide.md", text: "current", format: "text" },
+    );
     expect(
       observed.values.slice(1).map((value) => ({
         loading: value.resourceLoading,
@@ -322,7 +336,6 @@ test.each(["resources", "resource"] as const)(
     ).toEqual([
       { loading: true, error: undefined },
       { loading: false, error: undefined },
-      { loading: false, error: warning },
     ]);
     if (request === "resources") expect(owner.current()?.resourcesLoaded).toBe(true);
     else expect(owner.current()?.resource?.path).toBe("guide.md");
@@ -338,90 +351,11 @@ test.each(["resources", "resource"] as const)(
     expect(await run()).toBeUndefined();
     expect(observed.values).toHaveLength(count + 1);
     expect(owner.current()).toMatchObject({ resourceLoading: true, error: undefined });
+    const canceledCount = observed.values.length;
     owner.dispose();
     expect(await run()).toBeUndefined();
-    expect(observed.values).toHaveLength(count + 1);
+    expect(observed.values).toHaveLength(canceledCount);
     observed.dispose();
-  },
-);
-
-test.each(["content", "resource"] as const)(
-  "Reader %s diagnostics re-check the reducer epoch after synchronous callback reentry",
-  async (request) => {
-    const diagnostics = [
-      { code: "INTERNAL", severity: "warning" as const, message: "first" },
-      { code: "INTERNAL", severity: "warning" as const, message: "second" },
-    ];
-    let signal: AbortSignal | undefined;
-    const core = directSourceCore(workspaceProjection(), {
-      loadInstalled: async (_request, options) => {
-        signal = options?.signal;
-        return { ...installedContent(address, "settled prose"), diagnostics };
-      },
-      readInstalled: async (_request, options) => {
-        signal = options?.signal;
-        return {
-          value: { kind: "text", path: "guide.md", text: "settled body", format: "text" },
-          diagnostics,
-        };
-      },
-    });
-    const acceptedFailures: unknown[] = [];
-    let owner!: ReturnType<typeof createReaderOwner>;
-    owner = createReaderOwner(core.content, () => acceptedFailures.push(owner.current()?.error));
-    owner.select(address);
-    let reentered = false;
-    const observed = observeReader(owner, (value) => {
-      if (value.error === diagnostics[0] && !reentered) {
-        reentered = true;
-        if (request === "content") owner.cancelContent();
-        else owner.abandonResource();
-      }
-    });
-    const returned =
-      request === "content" ? await owner.load(address) : await owner.read(address, "guide.md");
-    // Initial, start, settle, first diagnostic, and the synchronous retirement write.
-    expect(
-      observed.values.map((value) => ({
-        loading: request === "content" ? value.loading : value.resourceLoading,
-        error: value.error?.message,
-      })),
-    ).toEqual([
-      { loading: undefined, error: undefined },
-      { loading: true, error: undefined },
-      { loading: false, error: undefined },
-      { loading: false, error: "first" },
-      { loading: false, error: "first" },
-    ]);
-    expect(observed.values.filter((value) => value.error === diagnostics[1])).toEqual([]);
-    expect(signal?.aborted).toBe(request === "content");
-    expect(returned).toEqual(
-      request === "content"
-        ? undefined
-        : {
-            value: { kind: "text", path: "guide.md", text: "settled body", format: "text" },
-            diagnostics,
-          },
-    );
-    if (request === "content") {
-      expect(owner.current()).toMatchObject({ loading: false, text: "settled prose" });
-      expect(acceptedFailures).toEqual([]);
-    } else {
-      expect(owner.current()).toMatchObject({
-        resourceLevel: "list",
-        resourceLoading: false,
-        resource: { path: "guide.md", text: "settled body" },
-      });
-      expect(acceptedFailures).toEqual([diagnostics[0]]);
-    }
-    expect(owner.current()?.error).toEqual(diagnostics[0]);
-    // Retirement must also leave a fresh request reloadable, not just hide the second error.
-    observed.dispose();
-    const retried =
-      request === "content" ? await owner.load(address) : await owner.read(address, "guide.md");
-    expect(retried).toMatchObject({ diagnostics });
-    expect(owner.current()?.error).toEqual(diagnostics[1]);
-    owner.dispose();
   },
 );
 
@@ -429,16 +363,20 @@ function pendingContentReads() {
   const calls: {
     readonly address: ReaderAddress;
     readonly signal?: AbortSignal;
-    readonly resolve: (value: Awaited<ReturnType<TuiCore["content"]["loadInstalled"]>>) => void;
+    readonly resolve: (value: Awaited<ReturnType<TuiCore["installed"]["load"]>>) => void;
     readonly reject: (error: unknown) => void;
   }[] = [];
-  const loadInstalled: TuiCore["content"]["loadInstalled"] = (request, options) =>
+  const load: TuiCore["installed"]["load"] = (request, options) =>
     new Promise((resolve, reject) => {
-      calls.push({ address: request.address, signal: options?.signal, resolve, reject });
+      calls.push({
+        address: request.address,
+        signal: options?.signal,
+        resolve: (value) => resolve(value),
+        reject,
+      });
     });
-  const owner = createReaderOwner(
-    directSourceCore(workspaceProjection(), { loadInstalled }).content,
-  );
+  const core = directSourceCore(workspaceProjection(), { installed: { load } });
+  const owner = createReaderOwner(core.installed);
   return { owner, calls };
 }
 
@@ -459,10 +397,7 @@ test("rapid A-B-A clears canceled caches and ignores late canceled successes and
   calls[2]!.resolve(installedContent(a, "current A"));
   await secondA;
   const count = observed.values.length;
-  calls[0]!.resolve({
-    ...installedContent(a, "old A"),
-    diagnostics: [{ code: "INTERNAL", severity: "warning", message: "old A warning" }],
-  });
+  calls[0]!.resolve(installedContent(a, "old A"));
   calls[1]!.resolve(installedContent(b, "canceled B"));
   expect(await firstA).toBeUndefined();
   expect(await firstB).toBeUndefined();
@@ -520,24 +455,28 @@ test("Core content cancellation without a replacement remains reloadable", async
 });
 
 test("explicit content navigation cancellation does not cancel a pending Source operation", async () => {
-  const pending = deferred<Awaited<ReturnType<TuiCore["content"]["loadInstalled"]>>>();
+  const pending = deferred<Awaited<ReturnType<TuiCore["installed"]["load"]>>>();
   let contentSignal: AbortSignal | undefined;
   let sourceSignal: AbortSignal | undefined;
   const core = directSourceCore(workspaceProjection(), {
-    loadInstalled: (_request, options) => {
-      contentSignal = options?.signal;
-      return pending.promise;
+    installed: {
+      load: (_request, options) => {
+        contentSignal = options?.signal;
+        return pending.promise;
+      },
     },
-    discover: (_request, options) =>
-      new Promise((_, reject) => {
-        sourceSignal = options?.signal;
-        sourceSignal?.addEventListener("abort", () =>
-          reject(new SkillCliError("CANCELLED", "source canceled on teardown")),
-        );
-      }),
+    sources: {
+      discover: (_request, options) =>
+        new Promise((_, reject) => {
+          sourceSignal = options?.signal;
+          sourceSignal?.addEventListener("abort", () =>
+            reject(new SkillCliError("CANCELLED", "source canceled on teardown")),
+          );
+        }),
+    },
   });
   const effects = testEffects(core);
-  const owner = createReaderOwner(core.content);
+  const owner = createReaderOwner(core.installed);
   owner.select(address);
   const source = effects.discover({ kind: "source-discovery", source: "team-main" });
   const read = owner.load(address);
@@ -645,14 +584,15 @@ test("Reader dispose suppresses late content and resource writes without changin
   const count = observed.values.length;
   expect(loads[0]!.signal?.aborted).toBe(true);
   expect(reads[0]!.signal?.aborted).toBe(true);
-  const warning = { code: "INTERNAL", severity: "warning" as const, message: "late" };
-  loads[0]!.resolve({ ...installedContent(address, "late prose"), diagnostics: [warning] });
-  reads[0]!.resolve({
-    value: { kind: "text", path: "guide.md", text: "late body", format: "text" },
-    diagnostics: [warning],
-  });
+  loads[0]!.resolve(installedContent(address, "late prose"));
+  reads[0]!.resolve({ kind: "text", path: "guide.md", text: "late body", format: "text" });
   expect(await content).toBeUndefined();
-  expect(await resource).toMatchObject({ value: { text: "late body" }, diagnostics: [warning] });
+  expect(await resource).toEqual({
+    kind: "text",
+    path: "guide.md",
+    text: "late body",
+    format: "text",
+  });
   expect(observed.values).toHaveLength(count);
   expect(owner.current()).toMatchObject({ loading: false, resourceLoading: true });
   expect(owner.current()?.text).toBeUndefined();
@@ -686,16 +626,13 @@ test("resource list start retains successful body while body start clears it and
   const { owner, lists, reads } = pendingReader();
   owner.select(address);
   const body = owner.read(address, "guide.md");
-  reads[0]!.resolve({
-    value: { kind: "text", path: "guide.md", text: "cached body", format: "text" },
-    diagnostics: [],
-  });
+  reads[0]!.resolve({ kind: "text", path: "guide.md", text: "cached body", format: "text" });
   await body;
   const cached = owner.current()?.resource;
   const list = owner.list(address);
   expect(owner.current()).toMatchObject({ resourceLevel: "list", resourceLoading: true });
   expect(owner.current()?.resource).toBe(cached);
-  lists[0]!.resolve({ value: [], diagnostics: [] });
+  lists[0]!.resolve([]);
   await list;
   expect(owner.current()).toMatchObject({
     resources: [],
@@ -710,10 +647,7 @@ test("resource list start retains successful body while body start clears it and
     resourceLoading: true,
   });
   expect(owner.current()?.resource).toBeUndefined();
-  reads[1]!.resolve({
-    value: { kind: "text", path: "next.md", text: "next body", format: "text" },
-    diagnostics: [],
-  });
+  reads[1]!.resolve({ kind: "text", path: "next.md", text: "next body", format: "text" });
   await next;
   owner.dispose();
 });

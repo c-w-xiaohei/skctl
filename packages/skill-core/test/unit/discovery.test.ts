@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { discoverLocalSkills } from "../../src/internal/domain";
+import { discoverLocalSkills } from "../../src/source/discovery";
 
 test("discovers deterministic skill roots and stops below a valid root", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-discovery-"));

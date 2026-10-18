@@ -72,8 +72,7 @@ test("RENDER Reader names one Installed Skill and retains exact ownership across
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-          listInstalledResources: async () => ({ value: [], diagnostics: [] }),
+          installed: { load: async () => readerContent, listResources: async () => [] },
         })}
         exit={() => {}}
       />
@@ -131,18 +130,17 @@ test("RENDER Reader retains full structural identity and native Markdown/raw wra
         core={directSourceCore(
           { ...projection, installedSkills: [longSkill] },
           {
-            loadInstalled: async (request) => {
-              reads.push(request.address);
-              return {
-                value: {
+            installed: {
+              load: async (request) => {
+                reads.push(request.address);
+                return {
                   ...readerContent,
                   address,
                   name: longSkill.name,
                   markdownText: `# Guide\n\n${longProse}`,
                   rawText: longProse,
-                },
-                diagnostics: [],
-              };
+                };
+              },
             },
           },
         )}

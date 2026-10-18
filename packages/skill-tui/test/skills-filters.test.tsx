@@ -18,7 +18,7 @@ test("RENDER Skills browser owns slash query and updates its local result count"
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />
@@ -55,24 +55,26 @@ test("RENDER filtering selected A reconciles Reader and Details Actions to visib
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async ({ address }) => {
-            loads.push(address.path);
-            return { value: { ...readerContent, address, name: address.path }, diagnostics: [] };
-          },
-          checkUpdate: async ({ source }) => {
-            checks.push(source);
-            return {
-              value: {
-                source,
-                kind: "github",
-                exactRevision: "a".repeat(40),
-                changed: [{ path: "reference", name: "reference", description: "reference" }],
-                added: [],
-                removed: [],
-                unchanged: [],
-              },
-              diagnostics: [],
-            };
+          installed: {
+            load: async ({ address }) => {
+              loads.push(address.path);
+              return { ...readerContent, address, name: address.path };
+            },
+            checkUpdate: async ({ source }) => {
+              checks.push(source);
+              return {
+                value: {
+                  source,
+                  kind: "github",
+                  exactRevision: "a".repeat(40),
+                  changed: [{ path: "reference", name: "reference", description: "reference" }],
+                  added: [],
+                  removed: [],
+                  unchanged: [],
+                },
+                diagnostics: [],
+              };
+            },
           },
         })}
         exit={() => {}}

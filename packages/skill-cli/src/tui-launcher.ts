@@ -70,12 +70,11 @@ export async function superviseTui(
   });
   try {
     const status = await child.exited;
-    return status !== 0 || !child.signalCode
-      ? status
-      : 128 +
-          (typeof child.signalCode === "number"
-            ? child.signalCode
-            : (osConstants.signals[child.signalCode] ?? 1));
+    const signalCode: NodeJS.Signals | number | null = child.signalCode;
+    if (status !== 0 || !signalCode) return status;
+    const signalNumber =
+      typeof signalCode === "number" ? signalCode : (osConstants.signals[signalCode] ?? 1);
+    return 128 + signalNumber;
   } finally {
     live = false;
     for (const { signal, handler } of handlers) signals.removeListener(signal, handler);

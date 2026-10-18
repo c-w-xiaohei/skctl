@@ -61,18 +61,17 @@ async function clickPart(setup: Setup, key: string, part: "name" | "disclosure",
 
 function readingCore(childSkillCount = 0, reads: string[] = []) {
   return directSourceCore(projection(childSkillCount), {
-    loadInstalled: async ({ address }) => {
-      reads.push(`${address.source}/${address.path}`);
-      return {
-        value: {
+    installed: {
+      load: async ({ address }) => {
+        reads.push(`${address.source}/${address.path}`);
+        return {
           address,
           name: address.path,
           description: "",
           rawText: "Installed guide body",
           markdownText: "# Guide\n\nInstalled guide body",
-        },
-        diagnostics: [],
-      };
+        };
+      },
     },
   });
 }

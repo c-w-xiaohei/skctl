@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import {
   SkillCliError,
   type DiscoveryObservation,
-  type ManagementProjection,
+  type WorkspaceView,
   type UpdateObservation,
 } from "@skill-cli/core";
 import { createUpdateController } from "../src/updates/controller";
@@ -14,6 +14,7 @@ import { workspaceProjection } from "./direct-source.fixture";
 const observation = (source: string, paths: string[], exactRevision = "a".repeat(40)) => ({
   source,
   kind: "github" as const,
+  baseline: `baseline:${source}`,
   exactRevision,
   changed: paths.map((path) => ({ path, name: path, description: path })),
   added: [],
@@ -34,8 +35,8 @@ for (const kind of ["github", "local"] as const) {
     const requests: unknown[] = [];
     const effects = testEffects({
       ...core,
-      management: {
-        ...core.management,
+      installed: {
+        ...core.installed,
         checkUpdate: async () => ({ value: captured, diagnostics: [] }),
         update: async (request) => {
           requests.push(request);
@@ -73,14 +74,14 @@ for (const kind of ["github", "local"] as const) {
   });
 }
 
-test("UPDATES submission remains compatible when Core omits the optional baseline", async () => {
+test("UPDATES submission forwards Core's required installed-comparison baseline", async () => {
   const snapshot = projection();
   const core = directSourceCore(snapshot);
   const requests: unknown[] = [];
   const effects = testEffects({
     ...core,
-    management: {
-      ...core.management,
+    installed: {
+      ...core.installed,
       checkUpdate: async () => ({ value: observation("team-main", ["guide"]), diagnostics: [] }),
       update: async (request) => {
         requests.push(request);
@@ -96,7 +97,7 @@ test("UPDATES submission remains compatible when Core omits the optional baselin
     paths: ["guide"],
     exactRevision: "a".repeat(40),
   });
-  expect(requests[0]).not.toHaveProperty("expectedBaseline");
+  expect(requests[0]).toHaveProperty("expectedBaseline", "baseline:team-main");
   effects.teardown();
 });
 
@@ -105,30 +106,34 @@ test("MGMT-007/008 canonical Source submission updates only selected changed roo
   const calls: unknown[] = [];
   let unrelatedMutations = 0;
   const core = directSourceCore(snapshot, {
-    checkUpdate: async () => ({
-      value: {
-        ...observation("team-main", ["guide", "reference"], "observed-commit"),
-        added: [{ path: "new", name: "new", description: "New" }],
-        removed: [{ path: "old", name: "old", description: "Removed" }],
-        unchanged: [{ path: "same", name: "same", description: "Unchanged" }],
+    installed: {
+      checkUpdate: async () => ({
+        value: {
+          ...observation("team-main", ["guide", "reference"], "observed-commit"),
+          added: [{ path: "new", name: "new", description: "New" }],
+          removed: [{ path: "old", name: "old", description: "Removed" }],
+          unchanged: [{ path: "same", name: "same", description: "Unchanged" }],
+        },
+        diagnostics: [],
+      }),
+      install: async () => {
+        unrelatedMutations++;
+        throw new Error("Updates must not install roots");
       },
-      diagnostics: [],
-    }),
-    install: async () => {
-      unrelatedMutations++;
-      throw new Error("Updates must not install roots");
+      uninstall: async () => {
+        unrelatedMutations++;
+        throw new Error("Updates must retain removed roots");
+      },
+      update: async (request) => {
+        calls.push(request);
+        return { value: undefined, diagnostics: [] };
+      },
     },
-    uninstall: async () => {
-      unrelatedMutations++;
-      throw new Error("Updates must retain removed roots");
-    },
-    removeSource: async () => {
-      unrelatedMutations++;
-      throw new Error("Updates must retain the Source");
-    },
-    update: async (request) => {
-      calls.push(request);
-      return { value: undefined, diagnostics: [] };
+    sources: {
+      remove: async () => {
+        unrelatedMutations++;
+        throw new Error("Updates must retain the Source");
+      },
     },
   });
   const effects = testEffects(core);
@@ -149,7 +154,12 @@ test("MGMT-007/008 canonical Source submission updates only selected changed roo
     ]),
   ).toBe(false);
   expect(calls).toEqual([
-    { source: "team-main", paths: ["guide"], exactRevision: "observed-commit" },
+    {
+      source: "team-main",
+      paths: ["guide"],
+      exactRevision: "observed-commit",
+      expectedBaseline: "baseline:team-main",
+    },
   ]);
   expect(effects.updateRun()?.results.map((result) => result.status)).toEqual([
     "updated",
@@ -161,7 +171,7 @@ test("MGMT-007/008 canonical Source submission updates only selected changed roo
   effects.teardown();
 });
 
-function projection(sources = ["team-main"], paths = ["guide"]): ManagementProjection {
+function projection(sources = ["team-main"], paths = ["guide"]): WorkspaceView {
   const base = workspaceProjection({ includeContribution: false });
   return {
     ...base,
@@ -208,7 +218,7 @@ test("UPDATES controller stops a read-only check without publishing its late res
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: initial, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: ({ source }, options) => {
           checks.push(source);
           signal = options?.signal;
@@ -247,7 +257,7 @@ test("UPDATES controller blocks stale public scope before update and never submi
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: stale, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
         update: async () => {
           updates++;
@@ -265,7 +275,7 @@ test("UPDATES controller blocks stale public scope before update and never submi
   const second = createUpdateController(
     {
       workspace: { get: async () => ({ value: initial, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
         update: async () => {
           updates++;
@@ -287,7 +297,7 @@ test("UPDATES failed rechecks revoke old observations without blocking another S
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: initial, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: async ({ source }) => {
           if (source === "first" && ++firstChecks === 2) throw new Error("upstream unavailable");
           return { value: observation(source, ["guide"]), diagnostics: [] };
@@ -313,7 +323,14 @@ test("UPDATES failed rechecks revoke old observations without blocking another S
   expect(updates).toEqual([]);
   expect(await controller.submit([{ source: "first", path: "guide" }])).toBe(true);
   expect(firstChecks).toBe(3);
-  expect(updates).toEqual([{ source: "first", paths: ["guide"], exactRevision: "a".repeat(40) }]);
+  expect(updates).toEqual([
+    {
+      source: "first",
+      paths: ["guide"],
+      exactRevision: "a".repeat(40),
+      expectedBaseline: "baseline:first",
+    },
+  ]);
   expect(state.group("first")).toMatchObject({ status: "succeeded", committed: true });
 });
 
@@ -333,7 +350,7 @@ test.each(["before-check", "after-check"] as const)(
     };
     const checks: string[] = [];
     const updates: unknown[] = [];
-    const published: ManagementProjection[] = [];
+    const published: WorkspaceView[] = [];
     let reads = 0;
     const controller = createUpdateController(
       {
@@ -343,7 +360,7 @@ test.each(["before-check", "after-check"] as const)(
             diagnostics: [],
           }),
         },
-        management: {
+        installed: {
           checkUpdate: async ({ source }) => {
             checks.push(source);
             return { value: observation(source, ["guide"]), diagnostics: [] };
@@ -361,7 +378,12 @@ test.each(["before-check", "after-check"] as const)(
     expect(await controller.submit()).toBe(false);
     expect(checks).toEqual(timing === "before-check" ? ["second"] : ["first", "second"]);
     expect(updates).toEqual([
-      { source: "second", paths: ["guide"], exactRevision: "a".repeat(40) },
+      {
+        source: "second",
+        paths: ["guide"],
+        exactRevision: "a".repeat(40),
+        expectedBaseline: "baseline:second",
+      },
     ]);
     expect(state.group("first")?.status).toBe("failed");
     expect(state.group("first")?.error).toContain("installed revision changed");
@@ -387,7 +409,7 @@ test("UPDATES controller teardown never publishes a late fulfilled update", asyn
   const started = deferred<void>();
   let signal: AbortSignal | undefined;
   let reads = 0;
-  const published: ManagementProjection[] = [];
+  const published: WorkspaceView[] = [];
   const controller = createUpdateController(
     {
       workspace: {
@@ -396,7 +418,7 @@ test("UPDATES controller teardown never publishes a late fulfilled update", asyn
           return { value: initial, diagnostics: [] };
         },
       },
-      management: {
+      installed: {
         checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
         update: (_request, options) => {
           signal = options?.signal;
@@ -434,8 +456,8 @@ test("UPDATES effects own one persistent same-scope draft and do not check autom
   const core = directSourceCore(snapshot);
   const effects = testEffects({
     ...core,
-    management: {
-      ...core.management,
+    installed: {
+      ...core.installed,
       checkUpdate: async () => {
         checks++;
         return { value: observation("first", ["guide"]), diagnostics: [] };
@@ -462,9 +484,12 @@ test("UPDATES effects checks stay background and a late cancelled result cannot 
   let signal: AbortSignal | undefined;
   const effects = testEffects({
     ...core,
-    management: {
-      ...core.management,
+    installed: {
+      ...core.installed,
       checkUpdate: () => check.promise,
+    },
+    sources: {
+      ...core.sources,
       discover: (_request, options) => {
         signal = options?.signal;
         return discovery.promise;
@@ -507,8 +532,8 @@ test("UPDATES effects do not revive cached changed work after an update attempt 
   const effects = testEffects({
     ...core,
     workspace: { get: async () => ({ value: original, diagnostics: [] }) },
-    management: {
-      ...core.management,
+    installed: {
+      ...core.installed,
       checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
       update: async () => {
         updates++;
@@ -537,8 +562,8 @@ test("UPDATES effects submit only an explicit current-group subset and preserve 
   const effects = testEffects({
     ...core,
     workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    management: {
-      ...core.management,
+    installed: {
+      ...core.installed,
       checkUpdate: async ({ source }) => ({
         value: observation(
           source,
@@ -569,6 +594,7 @@ test("UPDATES effects submit only an explicit current-group subset and preserve 
       source: "first",
       paths: ["guide", "reference"],
       exactRevision: "a".repeat(40),
+      expectedBaseline: "baseline:first",
     },
   ]);
   expect(state.selected()).toEqual([
@@ -588,7 +614,7 @@ test("UPDATES controller rejects requested addresses outside the bounded draft w
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
         update: async () => {
           updates++;
@@ -609,8 +635,8 @@ test("UPDATES effects evict only attempted source cache after an ambiguous faile
   const effects = testEffects({
     ...core,
     workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    management: {
-      ...core.management,
+    installed: {
+      ...core.installed,
       checkUpdate: async ({ source }) => ({
         value: observation(source, ["guide"]),
         diagnostics: [],
@@ -640,9 +666,12 @@ test("UPDATES effects retain cache when a valid subset is refused before foregro
   const effects = testEffects({
     ...core,
     workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    management: {
-      ...core.management,
+    installed: {
+      ...core.installed,
       checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
+    },
+    sources: {
+      ...core.sources,
       discover: () => competing.promise,
     },
   });
@@ -710,8 +739,8 @@ test("UPDATES Effects invalidate another retained scope after an actual source s
   const effects = testEffects({
     ...core,
     workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    management: {
-      ...core.management,
+    installed: {
+      ...core.installed,
       checkUpdate: async () => ({ value: observation("first", ["guide"]), diagnostics: [] }),
       update: async () => ({ value: undefined, diagnostics: [] }),
     },
@@ -743,8 +772,8 @@ test("UPDATES submit keeps its initiating workspace targets while baseline reval
   const effects = testEffects({
     ...core,
     workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-    management: {
-      ...core.management,
+    installed: {
+      ...core.installed,
       checkUpdate: async ({ source }) => ({
         value: {
           ...(source === "first" ? observation(source, ["guide"]) : observation(source, [])),
@@ -752,7 +781,7 @@ test("UPDATES submit keeps its initiating workspace targets while baseline reval
         },
         diagnostics: [],
       }),
-      getUpdateBaseline: async () => {
+      updateBaseline: async () => {
         if (++baselineCalls === 3) {
           markBaselineStarted();
           await baselineHeld;

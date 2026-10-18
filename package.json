@@ -1,9 +1,6 @@
 {
   "name": "skill-cli-workspace",
   "private": true,
-  "engines": {
-    "bun": ">=1.4.3"
-  },
   "workspaces": [
     "packages/skill-core",
     "packages/skill-cli",
@@ -45,5 +42,8 @@
   "overrides": {
     "@opentui/core": "0.5.14",
     "@opentui/solid": "0.5.14"
+  },
+  "engines": {
+    "bun": ">=1.4.3"
   }
 }

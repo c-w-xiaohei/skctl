@@ -88,9 +88,11 @@ test("Reader action and selector relationship return from the exposure Tree to t
     () => (
       <App
         core={directSourceCore(projection, {
-          loadInstalled: async () => {
-            contentReads++;
-            return { value: readerContent, diagnostics: [] };
+          installed: {
+            load: async () => {
+              contentReads++;
+              return readerContent;
+            },
           },
         })}
         exit={() => {}}

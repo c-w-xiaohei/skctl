@@ -38,10 +38,10 @@ test("Agent preserves multi-line metadata and raw content, forwards exit status 
       userConfigPath: join(config, "skill-cli/config.jsonc"),
     });
     expect(
-      (await core.management.discover({ source: "local" })).value.candidates[0]!.description,
+      (await core.sources.discover({ source: "local" })).value.candidates[0]!.description,
     ).toBe("Use for code review.");
-    await core.management.install({ source: "local", paths: ["review"] });
-    expect((await core.content.load({ selector: "engineering:review" })).value).toMatchObject({
+    await core.installed.install({ source: "local", paths: ["review"] });
+    expect(await core.content.load({ selector: "engineering:review" })).toMatchObject({
       name: "review",
       description: "Use for code review.",
       text,

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
-import { decodeStrictText, SkillCliError } from "../../src/internal/domain";
+import { decodeStrictText } from "../../src/content/text";
+import { SkillCliError } from "../../src/shared";
 
 test("decodes UTF-8 strictly at the exact one MiB boundary", () => {
   expect(decodeStrictText(new Uint8Array(1_048_576).fill(65))).toHaveLength(1_048_576);

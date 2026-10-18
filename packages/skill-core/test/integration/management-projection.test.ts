@@ -3,9 +3,9 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
-import { setConfigReadHookForTest } from "../../src/internal/config";
-import { setAcquisitionTrapForTest } from "../../src/internal/sources";
-import { setSemanticStateReadHookForTest, StateCoordinator } from "../../src/internal/state";
+import { setConfigReadHookForTest } from "../../src/config/document";
+import { setAcquisitionTrapForTest } from "../../src/source/snapshot";
+import { setSemanticStateReadHookForTest, StateCoordinator } from "../../src/storage/state";
 import { exposureHierarchy } from "../../../skill-tui/src/collections/state";
 
 test("PROJ-001 resolves an exact nearest Config project root", async () => {
@@ -308,7 +308,7 @@ test("PROJ-012/013/014/015/018 reports complete effective projection, Installed 
         use: ["exposed"],
       }),
     );
-    const { StateCoordinator } = await import("../../src/internal/state");
+    const { StateCoordinator } = await import("../../src/storage/state");
     await new StateCoordinator(state).installLocal("source", "review", skill);
     const projection = (
       await createSkillCliCore({ cwd: root, userConfigPath: global }).workspace.get()
@@ -648,8 +648,7 @@ test("PROJ-016/017 excludes a drifted Local owner from Agent disclosure and sele
       code: "CONFIG_CONFLICT",
     });
     expect(
-      (await core.content.loadInstalled({ address: { source: "source", path: "review" } })).value
-        .markdownText,
+      (await core.installed.load({ address: { source: "source", path: "review" } })).markdownText,
     ).toContain("body");
     await writeFile(
       join(root, "skill-cli.jsonc"),

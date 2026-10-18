@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { PluginInput } from "@opencode-ai/plugin";
 import plugin from "../src/index.ts";
@@ -17,7 +16,9 @@ afterEach(async () => {
 });
 
 async function fixture(catalog: string) {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-adapter-test-"));
+  const parent = join(import.meta.dir, "../../../tmp");
+  await mkdir(parent, { recursive: true });
+  const root = await mkdtemp(join(parent, "skill-cli-adapter-test-"));
   roots.push(root);
   const catalogPath = join(root, "catalog.json");
   await writeFile(catalogPath, catalog);
@@ -73,7 +74,9 @@ describe("OpenCode plugin", () => {
   test.each(["missing CLI", "nonzero CLI with hostile output"])(
     "both hooks fail open and report only once for %s",
     async (failure) => {
-      const root = await mkdtemp(join(tmpdir(), "skill-cli-adapter-test-"));
+      const parent = join(import.meta.dir, "../../../tmp");
+      await mkdir(parent, { recursive: true });
+      const root = await mkdtemp(join(parent, "skill-cli-adapter-test-"));
       roots.push(root);
       if (failure === "nonzero CLI with hostile output") {
         const stderr = `secret-token=very-secret\\000\\001\\037\\177😀${"x".repeat(2048)}`;

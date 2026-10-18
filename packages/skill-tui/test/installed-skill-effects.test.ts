@@ -12,9 +12,11 @@ test("Rebind rejects absolute and traversal replacement paths before previewing 
   let previews = 0;
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
-      previewRebind: async () => {
-        previews++;
-        throw new Error("must not call Core");
+      installed: {
+        previewRebind: async () => {
+          previews++;
+          throw new Error("must not call Core");
+        },
       },
     }),
   );
@@ -41,17 +43,19 @@ test("Rebind rejects absolute and traversal replacement paths before previewing 
 test("Rebind rejects a stale preview whose structural request no longer matches", async () => {
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
-      previewRebind: async () => ({
-        value: {
-          kind: "rebind",
-          address,
-          owner: "replacement",
-          ownerPath: "different/root",
-          proof: "proven",
-          allowed: true,
-        },
-        diagnostics: [],
-      }),
+      installed: {
+        previewRebind: async () => ({
+          value: {
+            kind: "rebind",
+            address,
+            owner: "replacement",
+            ownerPath: "different/root",
+            proof: "proven",
+            allowed: true,
+          },
+          diagnostics: [],
+        }),
+      },
     }),
   );
 
@@ -73,18 +77,20 @@ test("Rebind rejects a stale preview whose structural request no longer matches"
 test("Uninstall rejects a stale preview whose installed structural address differs", async () => {
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
-      previewUninstall: async () => ({
-        value: {
-          kind: "uninstall",
-          installed: [{ source: "team-main", path: "other" }],
-          directMemberships: [],
-          disappearingSelectors: [],
-          retainedSelectors: [],
-          blockers: [],
-          allowed: true,
-        },
-        diagnostics: [],
-      }),
+      installed: {
+        previewUninstall: async () => ({
+          value: {
+            kind: "uninstall",
+            installed: [{ source: "team-main", path: "other" }],
+            directMemberships: [],
+            disappearingSelectors: [],
+            retainedSelectors: [],
+            blockers: [],
+            allowed: true,
+          },
+          diagnostics: [],
+        }),
+      },
     }),
   );
 
@@ -101,14 +107,16 @@ test("Installed Skill execution is duplicate-safe and cancellation settles the c
   let executions = 0;
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
-      uninstall: async (_request, options) =>
-        new Promise((_, reject) => {
-          executions++;
-          options?.signal?.addEventListener("abort", () => {
-            aborts++;
-            reject(new SkillCliError("CANCELLED", "uninstall cancelled"));
-          });
-        }),
+      installed: {
+        uninstall: async (_request, options) =>
+          new Promise((_, reject) => {
+            executions++;
+            options?.signal?.addEventListener("abort", () => {
+              aborts++;
+              reject(new SkillCliError("CANCELLED", "uninstall cancelled"));
+            });
+          }),
+      },
     }),
   );
   const review = await effects.reviewInstalled({ kind: "uninstall", address });
@@ -130,18 +138,20 @@ test("Rebind settles only after the one coherent refresh succeeds", async () => 
   const rebound = workspaceProjection({ includeDirect: false, includeContribution: false });
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
-      get: async () => ({ value: rebound, diagnostics: [] }),
-      previewRebind: async () => ({
-        value: {
-          kind: "rebind",
-          address,
-          owner: "replacement",
-          ownerPath: "alternate/guide",
-          proof: "proven",
-          allowed: true,
-        },
-        diagnostics: [],
-      }),
+      workspace: { get: async () => ({ value: rebound, diagnostics: [] }) },
+      installed: {
+        previewRebind: async () => ({
+          value: {
+            kind: "rebind",
+            address,
+            owner: "replacement",
+            ownerPath: "alternate/guide",
+            proof: "proven",
+            allowed: true,
+          },
+          diagnostics: [],
+        }),
+      },
     }),
   );
   const review = await effects.reviewInstalled({
@@ -165,20 +175,22 @@ test("Rebind preview retry repeats one exact structural request after a failure"
   };
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
-      previewRebind: async (value) => {
-        calls.push(value);
-        if (attempt++ === 0) throw new SkillCliError("PROVIDER_UNAVAILABLE", "offline");
-        return {
-          value: {
-            kind: "rebind",
-            address,
-            owner: "replacement",
-            ownerPath: "alternate/guide",
-            proof: "proven",
-            allowed: true,
-          },
-          diagnostics: [],
-        };
+      installed: {
+        previewRebind: async (value) => {
+          calls.push(value);
+          if (attempt++ === 0) throw new SkillCliError("PROVIDER_UNAVAILABLE", "offline");
+          return {
+            value: {
+              kind: "rebind",
+              address,
+              owner: "replacement",
+              ownerPath: "alternate/guide",
+              proof: "proven",
+              allowed: true,
+            },
+            diagnostics: [],
+          };
+        },
       },
     }),
   );
@@ -208,10 +220,12 @@ test("Cancelled Installed Skill preview suppresses a late successful review", as
   }) => void;
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
-      previewUninstall: async () =>
-        new Promise((resolvePreview) => {
-          resolve = resolvePreview;
-        }),
+      installed: {
+        previewUninstall: async () =>
+          new Promise((resolvePreview) => {
+            resolve = resolvePreview;
+          }),
+      },
     }),
   );
   const pending = effects.reviewInstalled({ kind: "uninstall", address });

@@ -8,7 +8,7 @@ import {
   type BaseRenderable,
 } from "@opentui/core";
 import { createSignal, Show } from "solid-js";
-import type { ManagementCapability } from "@skill-cli/core";
+import type { InstalledCapability } from "@skill-cli/core";
 import { createFocusRegistry } from "../src/focus";
 import { SourceUpdatesPage, UpdatesPage } from "../src/updates/page";
 import { buildUpdateScope, createUpdatesState } from "../src/updates/model";
@@ -168,7 +168,7 @@ test("RENDER Source native cursor, hidden draft, read-only preview and remount r
   state.observe(observation);
   const registry = createFocusRegistry();
   const submitted: unknown[] = [];
-  const previews: Parameters<ManagementCapability["previewUpdate"]>[0][] = [];
+  const previews: Parameters<InstalledCapability["previewUpdate"]>[0][] = [];
   const [mounted, setMounted] = createSignal(true);
   const [query, setQuery] = createSignal("");
   const [filter, setFilter] = createSignal<"all" | "updates">("all");

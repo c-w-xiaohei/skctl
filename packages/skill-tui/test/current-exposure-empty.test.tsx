@@ -432,14 +432,13 @@ test("RENDER focused unmanaged recovery opens the existing Managed OpenCode revi
 
 test("RENDER App context controls traverse Config review from Cancel to Confirm and execute once", async () => {
   let changes = 0;
-  const initial = directSourceCore(workspaceProjection());
   const core = directSourceCore(workspaceProjection(), {
-    configuration: {
-      ...initial.configuration,
-      change: async () => {
-        changes++;
-        return { value: { level: "project" as const, changed: true }, diagnostics: [] };
-      },
+    setManagedOpenCode: async () => {
+      changes++;
+      return {
+        value: { level: "project" as const, file: "skill-cli.jsonc", changed: true },
+        diagnostics: [],
+      };
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -471,16 +470,15 @@ test("RENDER App context controls traverse Config review from Cancel to Confirm 
 
 test("RENDER successful Managed OpenCode recovery refreshes into the empty Collection Use repair", async () => {
   let current = workspaceProjection();
-  const initialCore = directSourceCore(current);
   const core = directSourceCore(current, {
-    get: async () => ({ value: current, diagnostics: [] }),
-    configuration: {
-      ...initialCore.configuration,
-      change: async () => {
-        current = noUseProjection();
-        return { value: { level: "project" as const, changed: true }, diagnostics: [] };
-      },
+    setManagedOpenCode: async () => {
+      current = noUseProjection();
+      return {
+        value: { level: "project" as const, file: "skill-cli.jsonc", changed: true },
+        diagnostics: [],
+      };
     },
+    workspace: { get: async () => ({ value: current, diagnostics: [] }) },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 120,

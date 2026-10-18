@@ -9,7 +9,7 @@ import {
   type SelectOption,
 } from "@opentui/core";
 import { TabsTabRenderable } from "@tuiparts/core/tabs";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -75,7 +75,7 @@ function interactionState(setup: ReaderSetup, view?: SkillsView) {
   };
 }
 
-function projection(): ManagementProjection {
+function projection(): WorkspaceView {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("Expected complete Reader fixture");
   const owner = {
@@ -176,47 +176,48 @@ async function mount(width = 80) {
       () => (
         <App
           core={directSourceCore(snapshot, {
-            get: () => tracked("workspace.get", { value: snapshot, diagnostics: [] }),
-            loadInstalled: ({ address }) => {
-              reads.push(addressKey(address));
-              return tracked(`loadInstalled:${addressKey(address)}`, {
-                value: {
+            workspace: {
+              get: () => tracked("workspace.get", { value: snapshot, diagnostics: [] }),
+            },
+            installed: {
+              load: ({ address }) => {
+                reads.push(addressKey(address));
+                return tracked(`load:${addressKey(address)}`, {
                   address,
                   name: address.path,
                   description: `FI2 ${address.path}`,
                   markdownText: `# Prose ${address.path}\n\nFI2 installed ${address.path}`,
                   rawText: `RAW-FI2-${address.path}\n\nInstalled raw instructions`,
-                },
-                diagnostics: [],
-              });
-            },
-            listInstalledResources: () =>
-              tracked("listInstalledResources", { value: [], diagnostics: [] }),
-            checkUpdate: ({ source }) => {
-              checks.push(source);
-              return tracked(`checkUpdate:${source}`, {
-                value: {
-                  source,
-                  kind: "github" as const,
-                  changed: [],
-                  added: [],
-                  removed: [],
-                  unchanged: [],
-                },
-                diagnostics: [],
-              });
-            },
-            update: () => {
-              writes.push("update");
-              return tracked("update", { value: undefined, diagnostics: [] });
-            },
-            install: () => {
-              writes.push("install");
-              return tracked("install", { value: [], diagnostics: [] });
-            },
-            uninstall: () => {
-              writes.push("uninstall");
-              return tracked("uninstall", { value: undefined, diagnostics: [] });
+                });
+              },
+              listResources: () => tracked("listResources", []),
+              checkUpdate: ({ source }) => {
+                checks.push(source);
+                return tracked(`checkUpdate:${source}`, {
+                  value: {
+                    source,
+                    kind: "github" as const,
+                    baseline: "baseline:test",
+                    changed: [],
+                    added: [],
+                    removed: [],
+                    unchanged: [],
+                  },
+                  diagnostics: [],
+                });
+              },
+              update: () => {
+                writes.push("update");
+                return tracked("update", { value: undefined, diagnostics: [] });
+              },
+              install: () => {
+                writes.push("install");
+                return tracked("install", { value: [], diagnostics: [] });
+              },
+              uninstall: () => {
+                writes.push("uninstall");
+                return tracked("uninstall", { value: undefined, diagnostics: [] });
+              },
             },
           })}
           exit={() => {}}

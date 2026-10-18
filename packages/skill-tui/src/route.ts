@@ -1,5 +1,5 @@
 import { batch, createSignal, type Accessor } from "solid-js";
-import type { ConfigDeclarationOwner, ManagementProjection } from "@skill-cli/core";
+import type { ConfigDeclarationOwner, WorkspaceView } from "@skill-cli/core";
 import {
   validSections,
   type ConfigSection,
@@ -482,7 +482,7 @@ export function createRoute(
       return result;
     });
 
-  const available = (frame: NavigationFrame, projection: ManagementProjection) => {
+  const available = (frame: NavigationFrame, projection: WorkspaceView) => {
     if (frame.object === undefined) return true;
     if (typeof frame.object !== "string") {
       const address = frame.object;
@@ -592,7 +592,7 @@ export function createRoute(
         return;
       apply(target, [...snapshot().stack, snapshot().current], landing);
     },
-    revalidate(projection: ManagementProjection) {
+    revalidate(projection: WorkspaceView) {
       setSnapshot((current) => {
         const nextCurrent = available(current.current, projection)
           ? current.current

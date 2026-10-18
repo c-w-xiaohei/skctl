@@ -100,9 +100,11 @@ test("RENDER Agent access Reference full text is adjacent and scrollable; global
     () => (
       <App
         core={directSourceCore(projection(), {
-          loadInstalled: async () => {
-            contentLoads++;
-            throw new Error("Agent access browsing must not read SKILL.md");
+          installed: {
+            load: async () => {
+              contentLoads++;
+              throw new Error("Agent access browsing must not read SKILL.md");
+            },
           },
         })}
         exit={() => {}}
@@ -159,9 +161,11 @@ test("RENDER Agent access Reference Enter stays in the tree and optional Details
     () => (
       <App
         core={directSourceCore(projection(), {
-          loadInstalled: async () => {
-            contentLoads++;
-            throw new Error("Agent access browsing must not read SKILL.md");
+          installed: {
+            load: async () => {
+              contentLoads++;
+              throw new Error("Agent access browsing must not read SKILL.md");
+            },
           },
         })}
         exit={() => {}}
@@ -200,50 +204,49 @@ test("RENDER Agent access Reference Enter stays in the tree and optional Details
 test("RENDER Agent access Reader Update submits only its current Skill despite other changed Source paths", async () => {
   let snapshot = skillProjection();
   const revision = "d".repeat(40);
-  const updates: Parameters<TuiCore["management"]["update"]>[0][] = [];
+  const updates: Parameters<TuiCore["installed"]["update"]>[0][] = [];
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(snapshot, {
-          get: async () => ({ value: snapshot, diagnostics: [] }),
-          loadInstalled: async ({ address }) => ({
-            value: {
+          workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
+          installed: {
+            load: async ({ address }) => ({
               address,
               name: address.path,
               description: "",
               rawText: `Body ${address.path}`,
               markdownText: `# ${address.path}\n\nBody ${address.path}`,
+            }),
+            checkUpdate: async ({ source }) => ({
+              value: {
+                source,
+                kind: "github",
+                exactRevision: revision,
+                baseline: "agent-reader-baseline",
+                changed: snapshot.installedSkills.map((skill) => ({
+                  path: skill.address.path,
+                  name: skill.name,
+                  description: "",
+                })),
+                unchanged: [],
+                removed: [],
+                added: [],
+              },
+              diagnostics: [],
+            }),
+            update: async (request) => {
+              updates.push(request);
+              snapshot = {
+                ...snapshot,
+                installedSkills: snapshot.installedSkills.map((skill) =>
+                  request.paths.includes(skill.address.path)
+                    ? { ...skill, owner: { ...skill.owner, relevantRemoteRevision: revision } }
+                    : skill,
+                ),
+              };
+              return { value: undefined, diagnostics: [] };
             },
-            diagnostics: [],
-          }),
-          checkUpdate: async ({ source }) => ({
-            value: {
-              source,
-              kind: "github",
-              exactRevision: revision,
-              baseline: "agent-reader-baseline",
-              changed: snapshot.installedSkills.map((skill) => ({
-                path: skill.address.path,
-                name: skill.name,
-                description: "",
-              })),
-              unchanged: [],
-              removed: [],
-              added: [],
-            },
-            diagnostics: [],
-          }),
-          update: async (request) => {
-            updates.push(request);
-            snapshot = {
-              ...snapshot,
-              installedSkills: snapshot.installedSkills.map((skill) =>
-                request.paths.includes(skill.address.path)
-                  ? { ...skill, owner: { ...skill.owner, relevantRemoteRevision: revision } }
-                  : skill,
-              ),
-            };
-            return { value: undefined, diagnostics: [] };
           },
         })}
         exit={() => {}}
@@ -312,49 +315,21 @@ async function selectTreeName(setup: Setup, key: string) {
 
 test("RENDER Agent access Reader Details targets current B while global batch Actions retains checked A/C", async () => {
   const previews: { source: string; paths: readonly string[] }[] = [];
-  const batches: Parameters<TuiCore["configuration"]["previewMembershipBatch"]>[0][] = [];
+  const batches: Parameters<TuiCore["collections"]["previewMemberEdit"]>[0][] = [];
   let mutations = 0;
-  const configuration = directSourceCore(skillProjection()).configuration;
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(skillProjection(), {
-          loadInstalled: async ({ address }) => ({
-            value: {
-              address,
-              name: address.path,
-              description: "",
-              rawText: `Body ${address.path}`,
-              markdownText: `# ${address.path}\n\nBody ${address.path}`,
-            },
-            diagnostics: [],
-          }),
-          previewUninstall: async (request) => {
-            previews.push(request);
-            return {
-              value: {
-                kind: "uninstall",
-                installed: request.paths.map((path) => ({ source: request.source, path })),
-                directMemberships: [],
-                disappearingSelectors: [],
-                retainedSelectors: [],
-                blockers: [],
-                allowed: true,
-              },
-              diagnostics: [],
-            };
-          },
-          uninstall: async () => {
-            mutations++;
-            return { value: undefined, diagnostics: [] };
-          },
-          configuration: {
-            ...configuration,
-            change: async () => {
+          collections: {
+            editMembers: async () => {
               mutations++;
-              return { value: { level: "project", changed: true }, diagnostics: [] };
+              return {
+                value: { level: "project", file: "skill-cli.jsonc", changed: true },
+                diagnostics: [],
+              };
             },
-            previewMembershipBatch: async (request) => {
+            previewMemberEdit: async (request) => {
               batches.push(request);
               return {
                 value: {
@@ -370,6 +345,34 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
                 },
                 diagnostics: [],
               };
+            },
+          },
+          installed: {
+            load: async ({ address }) => ({
+              address,
+              name: address.path,
+              description: "",
+              rawText: `Body ${address.path}`,
+              markdownText: `# ${address.path}\n\nBody ${address.path}`,
+            }),
+            previewUninstall: async (request) => {
+              previews.push(request);
+              return {
+                value: {
+                  kind: "uninstall",
+                  installed: request.paths.map((path) => ({ source: request.source, path })),
+                  directMemberships: [],
+                  disappearingSelectors: [],
+                  retainedSelectors: [],
+                  blockers: [],
+                  allowed: true,
+                },
+                diagnostics: [],
+              };
+            },
+            uninstall: async () => {
+              mutations++;
+              return { value: undefined, diagnostics: [] };
             },
           },
         })}
@@ -481,7 +484,7 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
 });
 
 test("RENDER Agent access late A content cannot replace selected B or B's Reader action target", async () => {
-  type LoadResult = Awaited<ReturnType<TuiCore["content"]["loadInstalled"]>>;
+  type LoadResult = Awaited<ReturnType<TuiCore["installed"]["load"]>>;
   let resolveFirst!: (result: LoadResult) => void;
   const first = new Promise<LoadResult>((resolve) => {
     resolveFirst = resolve;
@@ -491,31 +494,27 @@ test("RENDER Agent access late A content cannot replace selected B or B's Reader
     () => (
       <App
         core={directSourceCore(skillProjection(), {
-          loadInstalled: async ({ address }) => {
-            reads.push(address.path);
-            if (address.path === "guide") {
-              if (reads.filter((path) => path === "guide").length === 1) return first;
-              return {
-                value: {
+          installed: {
+            load: async ({ address }) => {
+              reads.push(address.path);
+              if (address.path === "guide") {
+                if (reads.filter((path) => path === "guide").length === 1) return first;
+                return {
                   address,
                   name: address.path,
                   description: "",
                   rawText: "Fresh A instructions",
                   markdownText: "# A\n\nFresh A instructions",
-                },
-                diagnostics: [],
-              };
-            }
-            return {
-              value: {
+                };
+              }
+              return {
                 address,
                 name: address.path,
                 description: "",
                 rawText: "Current B instructions",
                 markdownText: "# B\n\nCurrent B instructions",
-              },
-              diagnostics: [],
-            };
+              };
+            },
           },
         })}
         exit={() => {}}
@@ -532,14 +531,11 @@ test("RENDER Agent access late A content cannot replace selected B or B's Reader
     await setup.waitFor(() => reads.length === 2);
     await waitForBody(setup, "Current B instructions");
     resolveFirst({
-      value: {
-        address: { source: "team-main", path: "guide" },
-        name: "guide",
-        description: "",
-        rawText: "Late A instructions",
-        markdownText: "# A\n\nLate A instructions",
-      },
-      diagnostics: [],
+      address: { source: "team-main", path: "guide" },
+      name: "guide",
+      description: "",
+      rawText: "Late A instructions",
+      markdownText: "# A\n\nLate A instructions",
     });
     await setup.flush();
     await settleHighlighting(setup.renderer.root);

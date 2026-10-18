@@ -143,18 +143,17 @@ test("default disclosure is guided and selection reads directly in a stable Read
     () => (
       <App
         core={directSourceCore(projection(), {
-          loadInstalled: async ({ address }) => {
-            reads.push(address.path);
-            return {
-              value: {
+          installed: {
+            load: async ({ address }) => {
+              reads.push(address.path);
+              return {
                 address,
                 name: address.path,
                 description: "",
                 markdownText: `# ${address.path}\n\nBody: ${address.path}`,
                 rawText: `Body: ${address.path}`,
-              },
-              diagnostics: [],
-            };
+              };
+            },
           },
         })}
         exit={() => {}}

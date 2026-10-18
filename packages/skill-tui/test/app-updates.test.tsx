@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
-import type { ManagementProjection, UpdateObservation } from "@skill-cli/core";
+import type { WorkspaceView, UpdateObservation } from "@skill-cli/core";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
@@ -16,6 +16,7 @@ const addresses = {
 const observation = (source: string, changed: readonly string[]): UpdateObservation => ({
   source,
   kind: "github",
+  baseline: "baseline:test",
   exactRevision: revision,
   changed: changed.map((path) => ({ path, name: path, description: `${path} description` })),
   added: [],
@@ -23,7 +24,7 @@ const observation = (source: string, changed: readonly string[]): UpdateObservat
   unchanged: [],
 });
 
-function updatesProjection(): ManagementProjection {
+function updatesProjection(): WorkspaceView {
   const base = workspaceProjection({ includeContribution: false });
   const secondSource = { ...base.effective.sources[0]!, id: addresses.second.source };
   return {
@@ -58,7 +59,7 @@ function updatesProjection(): ManagementProjection {
   };
 }
 
-function collectionScopeProjection(): ManagementProjection {
+function collectionScopeProjection(): WorkspaceView {
   const projection = updatesProjection();
   if (projection.effective.status !== "complete")
     throw new Error("Collection scope fixture requires a complete effective projection");
@@ -146,32 +147,34 @@ test("RED App Updates opens manually without automatic checks, then submits only
   const updates: unknown[] = [];
   let contentLoads = 0;
   const core = directSourceCore(current, {
-    get: async () => ({ value: current, diagnostics: [] }),
-    checkUpdate: async ({ source }) => {
-      checks.push(source);
-      return {
-        value: observation(source, source === addresses.first.source ? ["guide"] : ["other"]),
-        diagnostics: [],
-      };
-    },
-    update: async (request) => {
-      updates.push(request);
-      current = {
-        ...current,
-        installedSkills: current.installedSkills.map((skill) =>
-          skill.address.source === request.source && request.paths.includes(skill.address.path)
-            ? {
-                ...skill,
-                owner: { ...skill.owner, relevantRemoteRevision: request.exactRevision },
-              }
-            : skill,
-        ),
-      };
-      return { value: undefined, diagnostics: [] };
-    },
-    loadInstalled: async () => {
-      contentLoads++;
-      throw new Error("Updates must not load installed content");
+    workspace: { get: async () => ({ value: current, diagnostics: [] }) },
+    installed: {
+      checkUpdate: async ({ source }) => {
+        checks.push(source);
+        return {
+          value: observation(source, source === addresses.first.source ? ["guide"] : ["other"]),
+          diagnostics: [],
+        };
+      },
+      update: async (request) => {
+        updates.push(request);
+        current = {
+          ...current,
+          installedSkills: current.installedSkills.map((skill) =>
+            skill.address.source === request.source && request.paths.includes(skill.address.path)
+              ? {
+                  ...skill,
+                  owner: { ...skill.owner, relevantRemoteRevision: request.exactRevision },
+                }
+              : skill,
+          ),
+        };
+        return { value: undefined, diagnostics: [] };
+      },
+      load: async () => {
+        contentLoads++;
+        throw new Error("Updates must not load installed content");
+      },
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -207,17 +210,19 @@ test("RED App Updates source, Collection, and Skill entries retain structural sc
   let destroyed = false;
   let setup!: Awaited<ReturnType<typeof testRender>>;
   const core = directSourceCore(projection, {
-    checkUpdate: ({ source }, options) => {
-      checks.push(source);
-      return new Promise((_, reject) =>
-        options?.signal?.addEventListener("abort", () => {
-          aborts++;
-          reject(new Error("cancelled"));
-        }),
-      );
-    },
-    loadInstalled: async () => {
-      throw new Error("Updates entry must not load content");
+    installed: {
+      checkUpdate: ({ source }, options) => {
+        checks.push(source);
+        return new Promise((_, reject) =>
+          options?.signal?.addEventListener("abort", () => {
+            aborts++;
+            reject(new Error("cancelled"));
+          }),
+        );
+      },
+      load: async () => {
+        throw new Error("Updates entry must not load content");
+      },
     },
   });
   setup = await testRender(
@@ -268,15 +273,17 @@ test("RED App Updates Collection and Skill actions enter their exact visible str
   const projection = collectionScopeProjection();
   const checks: string[] = [];
   const core = directSourceCore(projection, {
-    checkUpdate: async ({ source }) => {
-      checks.push(source);
-      return {
-        value: observation(source, source === addresses.first.source ? ["guide"] : ["other"]),
-        diagnostics: [],
-      };
-    },
-    loadInstalled: async () => {
-      throw new Error("Scope entry must not read SKILL.md");
+    installed: {
+      checkUpdate: async ({ source }) => {
+        checks.push(source);
+        return {
+          value: observation(source, source === addresses.first.source ? ["guide"] : ["other"]),
+          diagnostics: [],
+        };
+      },
+      load: async () => {
+        throw new Error("Scope entry must not read SKILL.md");
+      },
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {

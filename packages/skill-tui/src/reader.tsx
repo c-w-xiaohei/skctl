@@ -27,7 +27,7 @@ import type {
   LayoutMode,
   ReaderState,
 } from "./types";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { findLiteralMatches, rawLineForMarkdownMatch, skillAddressKey } from "./types";
 import type { FocusRegistry, FocusTarget } from "./focus";
 import { isPlainNavKey, type NavKey } from "./navigation";
@@ -87,7 +87,7 @@ function NativeMarkdown(props: { readonly content: () => string }) {
 
 export function Reader(props: {
   readonly reader: () => ReaderState;
-  readonly projection: () => ManagementProjection | undefined;
+  readonly projection: () => WorkspaceView | undefined;
   readonly focusRegistry?: FocusRegistry;
   readonly skill?: InstalledSkill;
   readonly mode: LayoutMode;

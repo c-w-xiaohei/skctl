@@ -5,7 +5,7 @@ import { ButtonRenderable } from "@tuiparts/core/button";
 import { testRender } from "@opentui/solid";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { CollectionView, ManagementProjection } from "@skill-cli/core";
+import type { CollectionView, WorkspaceView } from "@skill-cli/core";
 import { App } from "../src/app";
 import { theme } from "../src/ui/theme";
 import {
@@ -77,7 +77,7 @@ function expectSearchControlsBounded(setup: Awaited<ReturnType<typeof testRender
   }
 }
 
-function denseProjection(): ManagementProjection {
+function denseProjection(): WorkspaceView {
   const projection = collectionsSourcesProjection();
   if (projection.effective.status !== "complete") throw new Error("Expected complete fixture");
   const owner = projection.configs.find((config) => config.level === "project")!.direct
@@ -163,7 +163,7 @@ function denseProjection(): ManagementProjection {
 async function mount(width: number, height: number) {
   const projection = denseProjection();
   const core = directSourceCore(projection);
-  core.configuration.change = async () => {
+  core.collections.addMember = async () => {
     throw new Error("The navigator layout must not mutate configuration");
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });

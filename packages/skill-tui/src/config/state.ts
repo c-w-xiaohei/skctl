@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import type { ConfigLevelView, ManagementProjection } from "@skill-cli/core";
+import type { ConfigLevelView, WorkspaceView } from "@skill-cli/core";
 import { validSections, type ConfigSection, type Destination } from "../types";
 
 type ConfigDestination = Exclude<Destination, "workspace">;
@@ -26,7 +26,7 @@ const initial = (): ConfigSnapshot => ({
 });
 
 const valuesFor = (
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   destination: ConfigDestination,
   section: ConfigSection,
 ): readonly string[] => {
@@ -42,7 +42,7 @@ const valuesFor = (
 };
 
 export const configIntegrationRows = (
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   config: ConfigLevelView | undefined,
 ) => {
   if (!config) return [];
@@ -180,7 +180,7 @@ export function createConfigState() {
         integrationCatalogSelection: undefined,
       }));
     },
-    reconcile(previous: ManagementProjection | undefined, current: ManagementProjection) {
+    reconcile(previous: WorkspaceView | undefined, current: WorkspaceView) {
       setSnapshots((snapshots) => {
         let changed = false;
         const next = { ...snapshots };

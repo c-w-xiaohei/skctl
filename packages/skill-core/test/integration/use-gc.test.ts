@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StateCoordinator } from "../../src/internal/state";
+import { StateCoordinator } from "../../src/storage/state";
 import { createSkillCliCore } from "../../src/create-core";
-import { bindingDigest, canonicalRemoteOrigin } from "../../src/internal/domain";
+import { bindingDigest, canonicalRemoteOrigin } from "../../src/source/identity";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-use-"));
@@ -114,7 +114,7 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
     delete process.env.SKILL_CLI_STATE_DIR;
     const entry = join(import.meta.dir, "../../src/create-core.ts");
     const readScript = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(global)}}).content.read({selector:"c:s",path:"SKILL.md"});`;
-    const gcScript = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(global)}}).management.gc();`;
+    const gcScript = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(global)}}).gc();`;
     const reader = Bun.spawn({
       cmd: [process.execPath, "--eval", readScript],
       env: {
@@ -161,17 +161,16 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
       true,
     );
     process.env.SKILL_CLI_STATE_DIR = state;
-    await createSkillCliCore({ cwd: root, userConfigPath: global }).configuration.change({
-      type: "collection.member.remove",
+    await createSkillCliCore({ cwd: root, userConfigPath: global }).collections.removeMember({
       level: "project",
       collection: "c",
       name: "s",
     });
-    await createSkillCliCore({ cwd: root, userConfigPath: global }).management.uninstall({
+    await createSkillCliCore({ cwd: root, userConfigPath: global }).installed.uninstall({
       source: "remote",
       paths: ["skill"],
     });
-    await createSkillCliCore({ cwd: root, userConfigPath: global }).management.gc();
+    await createSkillCliCore({ cwd: root, userConfigPath: global }).gc();
     expect(await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).exists()).toBe(
       false,
     );
@@ -214,7 +213,7 @@ test("GC-003 public collection crash retains a recorded tombstone until a later 
     await new StateCoordinator(state).publishSnapshot(digest, source);
     delete process.env.SKILL_CLI_STATE_DIR;
     const entry = join(import.meta.dir, "../../src/create-core.ts");
-    const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)}}).management.gc();`;
+    const script = `import { createSkillCliCore } from ${JSON.stringify(entry)}; await createSkillCliCore({cwd:${JSON.stringify(root)}}).gc();`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
       env: { ...process.env, SKILL_CLI_STATE_DIR: state, SKILL_CLI_TEST_CRASH_AT: "trash-moved" },
@@ -232,7 +231,7 @@ test("GC-003 public collection crash retains a recorded tombstone until a later 
     ).toBe(97);
     expect((await readdir(join(state, "trash"))).length).toBe(1);
     process.env.SKILL_CLI_STATE_DIR = state;
-    await core.management.gc();
+    await core.gc();
     expect((await readdir(join(state, "trash")).catch(() => [])).length).toBe(0);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;

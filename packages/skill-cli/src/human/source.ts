@@ -22,8 +22,7 @@ export function sourceCommand(parent: Command, { core, stdout }: CommandContext)
         throw new SkillCliError("INVALID_ARGUMENT", "Source kind must be local, git, or github");
       if (kind !== "local" && flags.ref === undefined)
         throw new SkillCliError("INVALID_ARGUMENT", "Remote Source requires --ref");
-      const { value } = await core(action).configuration.change({
-        type: "source.register",
+      const { value } = await core(action).sources.register({
         level: scope(flags)!,
         id,
         binding: sourceBinding(kind, origin, flags),
@@ -33,8 +32,8 @@ export function sourceCommand(parent: Command, { core, stdout }: CommandContext)
   scopeOptions(source.command("remove <id>"), false)
     .description("Remove a directly declared Source at one scope when it owns no installed Skills.")
     .action(async (id, flags, action) => {
-      const selectedScope = scope(flags, undefined);
-      await core(action).management.removeSource({ source: id, level: selectedScope });
+      const selectedScope = scope(flags, null);
+      await core(action).sources.remove({ source: id, level: selectedScope });
       stdout.write(
         `Removed source "${id}"${selectedScope ? ` from ${selectedScope} scope` : ""}.\n`,
       );
@@ -44,7 +43,7 @@ export function sourceCommand(parent: Command, { core, stdout }: CommandContext)
     .description("Observe candidate Skill Roots at the tracked revision without installing them.")
     .option("--json")
     .action(async (id, flags, action) => {
-      const { value } = await core(action).management.discover({ source: id });
+      const { value } = await core(action).sources.discover({ source: id });
       stdout.write(
         formatObservation(value, !!flags.json, [
           ...(value.exactRevision ? [`revision ${value.exactRevision}`] : []),

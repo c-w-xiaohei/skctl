@@ -8,8 +8,9 @@ import { createSkillCliCore } from "../../src/create-core";
 import {
   setManagementPublicationHookForTest,
   setManagementUpdateCheckHookForTest,
-} from "../../src/management";
-import { StateCoordinator, type PrivateState } from "../../src/internal/state";
+} from "../../src/installed/update";
+import { StateCoordinator } from "../../src/storage/state";
+import type { PrivateState } from "../../src/storage/schema";
 import { createExecutableFixture } from "../executable-fixture";
 
 const sourceRoot = "library/skills";
@@ -39,13 +40,12 @@ async function localReviewFixture() {
       );
       await writeFile(join(boundary, path, "resource.txt"), `Original ${path} resource\n`);
     }
-    await core.configuration.change({
-      type: "source.register",
+    await core.sources.register({
       level: "project",
       id: "local-review",
       binding: { kind: "local", path: "./origin", root: "library/skills" },
     });
-    await core.management.install({ source: "local-review", paths: ["one"] });
+    await core.installed.install({ source: "local-review", paths: ["one"] });
     return { root, localOrigin, boundary, stateFile, core, cleanup };
   } catch (error) {
     await cleanup();
@@ -165,14 +165,13 @@ exec ${quote(realGit)} "$@"
       userConfigPath: join(root, "user.jsonc"),
       sourceTransport: (url) => (url === origin ? pathToFileURL(bare).href : undefined),
     });
-    await core.configuration.change({
-      type: "source.register",
+    await core.sources.register({
       level: "project",
       id: "remote",
       binding: { kind: "git", origin, root: sourceRoot, ref },
     });
     async function install(paths = [reviewPath]) {
-      await core.management.install({ source: "remote", paths, exactRevision: first });
+      await core.installed.install({ source: "remote", paths, exactRevision: first });
     }
     async function clearTrace() {
       await writeFile(trace, "");
@@ -219,7 +218,7 @@ for (const legacy of [false, true]) {
         );
       }
       const installedRevision = await value.commit("batch installed Roots");
-      await value.core.management.install({
+      await value.core.installed.install({
         source: "remote",
         paths,
         exactRevision: installedRevision,
@@ -267,7 +266,7 @@ for (const legacy of [false, true]) {
       const excluded = (await value.git("rev-parse", ...excludedSpecs)).split("\n");
       const before = await readFile(value.stateFile);
       await value.clearTrace();
-      const observation = (await value.core.management.checkUpdate({ source: "remote" })).value;
+      const observation = (await value.core.installed.checkUpdate({ source: "remote" })).value;
       expect(observation.exactRevision).toBe(targetRevision);
       expect(observation.added).toEqual([]);
       expect(observation.changed.map((item) => item.path).sort()).toEqual([...changedPaths].sort());
@@ -284,7 +283,7 @@ for (const legacy of [false, true]) {
       ).toHaveLength(legacy ? 2 : 1);
       expect(checkCommands.filter((line) => line.includes("ls-tree"))).toHaveLength(legacy ? 2 : 1);
       await value.clearTrace();
-      await value.core.management.update({
+      await value.core.installed.update({
         source: "remote",
         paths: selectedPaths,
         exactRevision: targetRevision,
@@ -333,13 +332,12 @@ test("W3 nested Remote install persists the actual full Root tree, not Source/re
 test("W3 empty boundary Root persists full Origin coordinates and checks with metadata only at same C", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "boundary",
       binding: { kind: "git", origin, root: `${sourceRoot}/${reviewPath}`, ref: "main" },
     });
-    await value.core.management.install({
+    await value.core.installed.install({
       source: "boundary",
       paths: [""],
       exactRevision: value.first,
@@ -354,7 +352,7 @@ test("W3 empty boundary Root persists full Origin coordinates and checks with me
     });
     await value.clearTrace();
     expect(
-      (await value.core.management.checkUpdate({ source: "boundary" })).value.unchanged,
+      (await value.core.installed.checkUpdate({ source: "boundary" })).value.unchanged,
     ).toHaveLength(1);
     const trace = await readFile(value.trace, "utf8");
     expect(trace.split("\n").filter((line) => line.includes("ls-remote"))).toHaveLength(1);
@@ -371,19 +369,18 @@ test("W3 empty boundary Root persists full Origin coordinates and checks with me
 test("W3 fully qualified branch ref checks without ls-remote", async () => {
   const value = await fixture("refs/heads/main");
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "qualified",
       binding: { kind: "git", origin, root: sourceRoot, ref: "refs/heads/main" },
     });
-    await value.core.management.install({
+    await value.core.installed.install({
       source: "qualified",
       paths: [reviewPath],
       exactRevision: value.first,
     });
     await value.clearTrace();
-    const result = await value.core.management.checkUpdate({ source: "qualified" });
+    const result = await value.core.installed.checkUpdate({ source: "qualified" });
     expect(result.value.unchanged).toEqual([expect.objectContaining({ path: reviewPath })]);
     const trace = await readFile(value.trace, "utf8");
     expect(trace.split("\n").filter((line) => line.includes("ls-remote"))).toHaveLength(0);
@@ -405,13 +402,13 @@ test("W3 unchanged child tree is removed when a malformed ordinary ancestor shad
     expect(await value.git("rev-parse", `${revision}:${sourceRoot}/${reviewPath}`)).toBe(
       await value.git("rev-parse", `${value.first}:${sourceRoot}/${reviewPath}`),
     );
-    const observation = await value.core.management.checkUpdate({ source: "remote" });
+    const observation = await value.core.installed.checkUpdate({ source: "remote" });
     expect(observation.value).toMatchObject({
       changed: [],
       unchanged: [],
       removed: [{ path: reviewPath }],
     });
-    await value.core.management.update({
+    await value.core.installed.update({
       source: "remote",
       paths: [],
       remove: [reviewPath],
@@ -439,7 +436,7 @@ test("W3 unresolved and unavailable old revisions fail without content fallback"
       await writeFile(value.stateFile, JSON.stringify({ ...state, version: 2, installed }));
       const before = await readFile(value.stateFile, "utf8");
       await value.clearTrace();
-      await expect(value.core.management.checkUpdate({ source: "remote" })).rejects.toMatchObject({
+      await expect(value.core.installed.checkUpdate({ source: "remote" })).rejects.toMatchObject({
         code: "PINNED_COMMIT_UNAVAILABLE",
       });
       expect(await readFile(value.stateFile, "utf8")).toBe(before);
@@ -463,13 +460,13 @@ test("W3 invalid selections and obsolete explicit baselines reject before remote
     for (const paths of [["other"], [reviewPath, reviewPath], ["../escape"], ["group//review"]]) {
       await value.clearTrace();
       await expect(
-        value.core.management.update({ source: "remote", paths, exactRevision: value.first }),
+        value.core.installed.update({ source: "remote", paths, exactRevision: value.first }),
       ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
       expect(await readFile(value.trace, "utf8")).toBe("");
     }
     await value.clearTrace();
     await expect(
-      value.core.management.update({
+      value.core.installed.update({
         source: "remote",
         paths: [reviewPath],
         remove: [reviewPath],
@@ -477,7 +474,7 @@ test("W3 invalid selections and obsolete explicit baselines reject before remote
       }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     await expect(
-      value.core.management.update({
+      value.core.installed.update({
         source: "remote",
         paths: [reviewPath],
         exactRevision: value.first,
@@ -497,12 +494,12 @@ test("W3 supplied and omitted baselines reject Source-owned installation changes
       await value.install([reviewPath, "other"]);
       await value.put(`${reviewPath}/scripts/run.sh`, "changed selected content\n");
       const revision = await value.commit("reviewed update");
-      const baseline = (await value.core.management.getUpdateBaseline({ source: "remote" })).value;
+      const baseline = (await value.core.installed.updateBaseline({ source: "remote" })).value;
       setManagementPublicationHookForTest(() =>
-        value.core.management.uninstall({ source: "remote", paths: ["other"] }).then(() => {}),
+        value.core.installed.uninstall({ source: "remote", paths: ["other"] }).then(() => {}),
       );
       await expect(
-        value.core.management.update({
+        value.core.installed.update({
           source: "remote",
           paths: [reviewPath],
           exactRevision: revision,
@@ -527,7 +524,7 @@ test("W3 normal check is installed-only and compares resource and executable-mod
     await writeFile(join(value.work, "README.md"), "unrelated repository edit\n");
     const unrelated = await value.commit("unrelated commit");
     await value.clearTrace();
-    const observation = await value.core.management.checkUpdate({ source: "remote" });
+    const observation = await value.core.installed.checkUpdate({ source: "remote" });
     expect(observation.value).toMatchObject({
       exactRevision: unrelated,
       added: [],
@@ -556,17 +553,17 @@ test("W3 normal check is installed-only and compares resource and executable-mod
         .filter((line) => line.includes(" init --bare ")),
     ).toHaveLength(1);
     await value.commit("resource-only change");
-    expect((await value.core.management.checkUpdate({ source: "remote" })).value.changed).toEqual([
+    expect((await value.core.installed.checkUpdate({ source: "remote" })).value.changed).toEqual([
       expect.objectContaining({ path: reviewPath }),
     ]);
-    await value.core.management.update({
+    await value.core.installed.update({
       source: "remote",
       paths: [reviewPath],
       exactRevision: await value.git("rev-parse", "HEAD"),
     });
     await chmod(join(value.work, sourceRoot, reviewPath, "scripts/run.sh"), 0o755);
     await value.commit("executable-mode-only change");
-    expect((await value.core.management.checkUpdate({ source: "remote" })).value.changed).toEqual([
+    expect((await value.core.installed.checkUpdate({ source: "remote" })).value.changed).toEqual([
       expect.objectContaining({ path: reviewPath }),
     ]);
   } finally {
@@ -584,7 +581,7 @@ test("W3 selected update ignores unselected invalid resources and retains indepe
     const selected = await value.commit("selected metadata and unselected unsafe resource");
     const unsafeBlob = await value.git("rev-parse", `${selected}:${sourceRoot}/other/unsafe`);
     await value.clearTrace();
-    await value.core.management.update({
+    await value.core.installed.update({
       source: "remote",
       paths: [reviewPath],
       exactRevision: selected,
@@ -612,7 +609,7 @@ test("W3 same-commit shortcut rejoins final binding guard and present-valid remo
     await value.install();
     const before = await readFile(value.stateFile, "utf8");
     await expect(
-      value.core.management.update({
+      value.core.installed.update({
         source: "remote",
         paths: [],
         remove: [reviewPath],
@@ -623,7 +620,7 @@ test("W3 same-commit shortcut rejoins final binding guard and present-valid remo
     setManagementUpdateCheckHookForTest(() =>
       writeFile(join(value.root, "skill-cli.jsonc"), "{}\n"),
     );
-    await expect(value.core.management.checkUpdate({ source: "remote" })).rejects.toMatchObject({
+    await expect(value.core.installed.checkUpdate({ source: "remote" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(await readFile(value.stateFile, "utf8")).toBe(before);
@@ -651,7 +648,7 @@ test("W3 legacy missing-tree recovery uses retrievable old metadata without rewr
     await writeFile(join(value.work, "README.md"), "new unrelated commit\n");
     const revision = await value.commit("legacy comparison target");
     await value.clearTrace();
-    expect((await value.core.management.checkUpdate({ source: "remote" })).value).toMatchObject({
+    expect((await value.core.installed.checkUpdate({ source: "remote" })).value).toMatchObject({
       changed: [],
       removed: [],
       added: [],
@@ -680,36 +677,35 @@ test("W3 Local checks target installed Roots, tolerate malformed status, and gua
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: First\n---\n");
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     const core = createSkillCliCore({ cwd: root, userConfigPath: join(root, "user.jsonc") });
-    await core.configuration.change({
-      type: "source.register",
+    await core.sources.register({
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await core.management.install({ source: "local", paths: [reviewPath] });
+    await core.installed.install({ source: "local", paths: [reviewPath] });
     await writeFile(join(unrelated, "SKILL.md"), "---\nname: other\ndescription: Unrelated\n---\n");
     await chmod(unrelated, 0);
-    expect((await core.management.checkUpdate({ source: "local" })).value).toMatchObject({
+    expect((await core.installed.checkUpdate({ source: "local" })).value).toMatchObject({
       added: [],
       unchanged: [{ path: reviewPath }],
     });
     await writeFile(join(skill, "SKILL.md"), "malformed own marker\n");
     await chmod(skill, 0);
-    await expect(core.management.checkUpdate({ source: "local" })).rejects.toThrow();
+    await expect(core.installed.checkUpdate({ source: "local" })).rejects.toThrow();
     await chmod(skill, 0o700);
-    expect((await core.management.checkUpdate({ source: "local" })).value.removed).toEqual([
+    expect((await core.installed.checkUpdate({ source: "local" })).value.removed).toEqual([
       expect.objectContaining({ path: reviewPath }),
     ]);
     setManagementPublicationHookForTest(() =>
       writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Revived\n---\n"),
     );
     await expect(
-      core.management.update({ source: "local", paths: [], remove: [reviewPath] }),
+      core.installed.update({ source: "local", paths: [], remove: [reviewPath] }),
     ).rejects.toMatchObject({ code: "TRANSACTION_CONFLICT" });
     expect((await core.workspace.get()).value.installedSkills).toHaveLength(1);
     setManagementPublicationHookForTest();
     await writeFile(join(root, "skills", "group", "SKILL.md"), "malformed ancestor\n");
-    expect((await core.management.checkUpdate({ source: "local" })).value.removed).toHaveLength(1);
+    expect((await core.installed.checkUpdate({ source: "local" })).value.removed).toHaveLength(1);
   } finally {
     setManagementPublicationHookForTest();
     if (saved === undefined) delete process.env.SKILL_CLI_STATE_DIR;
@@ -723,7 +719,7 @@ test("W3 empty Installed Source checks have no remote work but still rejoin the 
   const value = await fixture();
   try {
     await value.clearTrace();
-    expect((await value.core.management.checkUpdate({ source: "remote" })).value).toMatchObject({
+    expect((await value.core.installed.checkUpdate({ source: "remote" })).value).toMatchObject({
       changed: [],
       removed: [],
       unchanged: [],
@@ -733,7 +729,7 @@ test("W3 empty Installed Source checks have no remote work but still rejoin the 
     setManagementUpdateCheckHookForTest(() =>
       writeFile(join(value.root, "skill-cli.jsonc"), "{}\n"),
     );
-    await expect(value.core.management.checkUpdate({ source: "remote" })).rejects.toMatchObject({
+    await expect(value.core.installed.checkUpdate({ source: "remote" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
   } finally {
@@ -745,13 +741,8 @@ test("W3 malformed own metadata is changed, cannot be removed, and fails update 
   const value = await fixture();
   try {
     await value.install();
-    await value.core.configuration.change({
-      type: "collection.create",
-      level: "project",
-      collection: "team",
-    });
-    await value.core.configuration.change({
-      type: "collection.member.set",
+    await value.core.collections.create({ level: "project", collection: "team" });
+    await value.core.collections.addMember({
       level: "project",
       collection: "team",
       name: "review",
@@ -760,19 +751,19 @@ test("W3 malformed own metadata is changed, cannot be removed, and fails update 
     await value.put(`${reviewPath}/SKILL.md`, "malformed own marker\n");
     const revision = await value.commit("malformed root");
     const before = await readFile(value.stateFile, "utf8");
-    expect((await value.core.management.checkUpdate({ source: "remote" })).value).toMatchObject({
+    expect((await value.core.installed.checkUpdate({ source: "remote" })).value).toMatchObject({
       changed: [{ path: reviewPath }],
       removed: [],
     });
     await expect(
-      value.core.management.update({
+      value.core.installed.update({
         source: "remote",
         paths: [reviewPath],
         exactRevision: revision,
       }),
     ).rejects.toThrow();
     await expect(
-      value.core.management.update({
+      value.core.installed.update({
         source: "remote",
         paths: [],
         remove: [reviewPath],
@@ -791,7 +782,7 @@ test("W3 Remote reinstall preserves first-install name and target metadata valid
     await value.install();
     await value.put(`${reviewPath}/SKILL.md`, "---\nname: other\ndescription: Reinstalled\n---\n");
     const revision = await value.commit("renamed root");
-    await value.core.management.install({
+    await value.core.installed.install({
       source: "remote",
       paths: [reviewPath],
       exactRevision: revision,
@@ -830,7 +821,7 @@ test("W3 legacy old-revision transport failure fails instead of authorizing dige
       ),
     );
     await value.clearTrace();
-    await expect(value.core.management.checkUpdate({ source: "remote" })).rejects.toMatchObject({
+    await expect(value.core.installed.checkUpdate({ source: "remote" })).rejects.toMatchObject({
       code: "PROVIDER_UNAVAILABLE",
     });
     expect(await readFile(value.stateFile, "utf8")).toBe(before);
@@ -857,7 +848,7 @@ test("W3 persisted comparison evidence with contradictory full Origin identity f
     }));
     await writeFile(value.stateFile, JSON.stringify({ ...state, installed }));
     await value.clearTrace();
-    await expect(value.core.management.checkUpdate({ source: "remote" })).rejects.toMatchObject({
+    await expect(value.core.installed.checkUpdate({ source: "remote" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(await readFile(value.trace, "utf8")).toBe("");
@@ -912,9 +903,9 @@ test("W3 genuine tree change with normalized equal Snapshot digest still advance
     const revision = await inputGit("empty tree change\n", "commit-tree", tree, "-p", value.first);
     await value.git("push", "origin", `${revision}:main`);
     expect(
-      (await value.core.management.checkUpdate({ source: "remote" })).value.changed,
+      (await value.core.installed.checkUpdate({ source: "remote" })).value.changed,
     ).toHaveLength(1);
-    await value.core.management.update({
+    await value.core.installed.update({
       source: "remote",
       paths: [reviewPath],
       exactRevision: revision,
@@ -940,8 +931,7 @@ test("W3 effective repository name collisions use retained installed metadata wi
       userConfigPath: join(value.root, "user.jsonc"),
       sourceTransport: () => pathToFileURL(value.bare).href,
     });
-    await core.configuration.change({
-      type: "source.register",
+    await core.sources.register({
       level: "project",
       id: "repository",
       binding: {
@@ -951,7 +941,7 @@ test("W3 effective repository name collisions use retained installed metadata wi
         ref: "main",
       },
     });
-    await core.management.install({
+    await core.installed.install({
       source: "repository",
       paths: [reviewPath, "other"],
       exactRevision: value.first,
@@ -961,7 +951,7 @@ test("W3 effective repository name collisions use retained installed metadata wi
       "---\nname: other\ndescription: Renamed but stable\n---\n",
     );
     const renamed = await value.commit("target name differs from stable entry");
-    await core.management.install({
+    await core.installed.install({
       source: "repository",
       paths: [reviewPath],
       exactRevision: renamed,
@@ -974,7 +964,7 @@ test("W3 effective repository name collisions use retained installed metadata wi
     const before = await readFile(value.stateFile, "utf8");
     await value.clearTrace();
     await expect(
-      core.management.install({ source: "repository", paths: ["new"], exactRevision: conflicting }),
+      core.installed.install({ source: "repository", paths: ["new"], exactRevision: conflicting }),
     ).rejects.toMatchObject({ code: "EXPOSURE_CONFLICT" });
     expect(await readFile(value.stateFile, "utf8")).toBe(before);
     expect(await readFile(value.wants, "utf8")).not.toContain(
@@ -1001,10 +991,10 @@ for (const operation of ["check", "install", "update"] as const) {
       readSpy.mockClear();
       const pending =
         operation === "check"
-          ? value.core.management.checkUpdate({ source: "local-review" })
+          ? value.core.installed.checkUpdate({ source: "local-review" })
           : operation === "install"
-            ? value.core.management.install({ source: "local-review", paths: ["one"] })
-            : value.core.management.update({ source: "local-review", paths: ["one"] });
+            ? value.core.installed.install({ source: "local-review", paths: ["one"] })
+            : value.core.installed.update({ source: "local-review", paths: ["one"] });
       const outcome = await pending.then(
         () => ({ code: "UNEXPECTED_SUCCESS" }),
         (error) => error,
@@ -1037,19 +1027,19 @@ test("W3 M1 Local prefix validation keeps marker shadowing inside the Source bou
       "another outside-boundary marker\n",
     );
     expect(
-      (await value.core.management.checkUpdate({ source: "local-review" })).value,
+      (await value.core.installed.checkUpdate({ source: "local-review" })).value,
     ).toMatchObject({
       changed: [],
       removed: [],
       unchanged: [{ path: "one" }],
     });
-    await value.core.management.install({ source: "local-review", paths: ["two"] });
+    await value.core.installed.install({ source: "local-review", paths: ["two"] });
     expect((await value.core.workspace.get()).value.effective.sources[0]?.origin).toBe(
       value.localOrigin,
     );
     await writeFile(join(value.boundary, "SKILL.md"), "malformed ordinary boundary marker\n");
     expect(
-      (await value.core.management.checkUpdate({ source: "local-review" })).value.removed,
+      (await value.core.installed.checkUpdate({ source: "local-review" })).value.removed,
     ).toHaveLength(2);
     const installed = JSON.parse(await readFile(value.stateFile, "utf8")).installed;
     expect(installed[0]).toEqual(JSON.parse(before).installed[0]);
@@ -1085,7 +1075,7 @@ for (const changed of ["resource", "marker"] as const) {
     );
     try {
       const before = await readFile(value.stateFile, "utf8");
-      const outcome = await value.core.management
+      const outcome = await value.core.installed
         .install({ source: "local-review", paths: ["one", "two"] })
         .then(
           () => ({ code: "UNEXPECTED_SUCCESS" }),
@@ -1125,7 +1115,7 @@ test("W3 M2 Local metadata read and its full digest must describe the same marke
   );
   try {
     const before = await readFile(value.stateFile, "utf8");
-    const outcome = await value.core.management
+    const outcome = await value.core.installed
       .install({ source: "local-review", paths: ["one"] })
       .then(
         () => ({ code: "UNEXPECTED_SUCCESS" }),

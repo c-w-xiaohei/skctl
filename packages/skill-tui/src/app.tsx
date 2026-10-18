@@ -19,7 +19,7 @@ import {
 import type {
   ConfigSourceObservation,
   ConfigSourceImpact,
-  ManagementProjection,
+  WorkspaceView,
   SkillCliCore,
 } from "@skill-cli/core";
 import type { SkillAddress } from "@skill-cli/core";
@@ -202,12 +202,12 @@ const configBindingLine = (binding: ConfigSourceImpact["binding"]) =>
   `${binding.kind} ${binding.kind === "local" ? binding.path : binding.origin} ${binding.root}`;
 
 type CollectionReview = import("./effects").CollectionReview;
-type CollectionDraft = Extract<
-  import("./effects").CollectionIntent,
-  {
-    readonly kind: "collection-import" | "reference" | "link-change" | "collection-use";
-  }
->;
+type CollectionDraft =
+  | Extract<import("./effects").CollectionIntent, { readonly kind: "collection-import" }>
+  | Extract<import("./effects").CollectionIntent, { readonly kind: "reference-add" }>
+  | Extract<import("./effects").CollectionIntent, { readonly kind: "reference-remove" }>
+  | Extract<import("./effects").CollectionIntent, { readonly kind: "link-change" }>
+  | Extract<import("./effects").CollectionIntent, { readonly kind: "collection-use" }>;
 
 type AppOverlayPayload =
   | { readonly family: "source-removal"; readonly review?: SourceRemovalReview }
@@ -287,6 +287,7 @@ type AppOverlayPayload =
   | {
       readonly family: "collection-draft";
       readonly draft: CollectionDraft;
+      readonly expectedOwner?: import("@skill-cli/core").ConfigDeclarationOwner;
       readonly useCurrent?: string;
     }
   | {
@@ -315,7 +316,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   const [overlaySession, setOverlaySession] = createSignal(createOverlaySession());
   const overlayKind = () => overlaySession().kind;
   const [transition, setTransition] = createSignal<string | undefined>();
-  const readerOwner = createReaderOwner(props.core.content, () => {
+  const readerOwner = createReaderOwner(props.core.installed, () => {
     if (physicalFocusOwner() === "reader-resource-content") requestFocus("reader-resource-content");
   });
   const reader = readerOwner.current;
@@ -533,7 +534,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
     }
     focus.request(target);
   };
-  const sourceInspectorFocus = (source: ManagementProjection["effective"]["sources"][number]) => {
+  const sourceInspectorFocus = (source: WorkspaceView["effective"]["sources"][number]) => {
     // The destination's registry may not be mounted yet. Request its primary
     // action by identity, never a relationship hidden behind Actions.
     const snapshot = projection.workspace();
@@ -765,15 +766,54 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
   };
   const collectionReferenceDraft = () => {
     const draft = collectionDraft();
-    return draft?.kind === "reference" ? draft : undefined;
+    if (draft?.kind === "reference-add")
+      return {
+        level: draft.level,
+        expectedOwner: collectionDraftPayload()?.expectedOwner,
+        collection: draft.collection,
+        name: draft.name,
+        target: draft.target,
+        description: draft.description,
+        remove: false,
+      };
+    if (draft?.kind === "reference-remove")
+      return {
+        level: draft.level,
+        expectedOwner: collectionDraftPayload()?.expectedOwner,
+        collection: draft.collection,
+        name: draft.name,
+        target: draft.expected?.collection ?? "",
+        description: draft.expected?.description ?? "",
+        remove: true,
+      };
+    return undefined;
   };
   const collectionLinkDraft = () => {
     const draft = collectionDraft();
-    return draft?.kind === "link-change" ? draft : undefined;
+    return draft?.kind === "link-change"
+      ? { ...draft, expectedOwner: collectionDraftPayload()?.expectedOwner }
+      : undefined;
   };
   const collectionUseDraft = () => {
     const draft = collectionDraft();
     return draft?.kind === "collection-use" ? draft : undefined;
+  };
+  const enclosingCollectionOwner = (
+    collectionId: string,
+    relationshipOwner: import("@skill-cli/core").ConfigDeclarationOwner,
+  ) => {
+    const effective = projection.workspace()?.effective;
+    if (effective?.status !== "complete" || relationshipOwner.contribution) return undefined;
+    const collection = effective.collectionsView.find((item) => item.id === collectionId);
+    const candidates =
+      collection?.declared.filter(
+        (owner) =>
+          !owner.contribution &&
+          owner.level === relationshipOwner.level &&
+          owner.file === relationshipOwner.file &&
+          owner.namespace === relationshipOwner.namespace,
+      ) ?? [];
+    return candidates.length === 1 ? candidates[0] : undefined;
   };
   const availableUseCollections = createMemo(() => {
     const effective = projection.workspace()?.effective;
@@ -1407,7 +1447,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               }
             : id === "add-reference"
               ? {
-                  kind: "reference",
+                  kind: "reference-add",
                   level: owner.level,
                   collection,
                   name: "",
@@ -3315,7 +3355,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                           openReaderSkill(address, tab ?? "skill")
                         }
                         previewUpdate={(request, options) =>
-                          props.core.management.previewUpdate(request, options)
+                          props.core.installed.previewUpdate(request, options)
                         }
                         onFirstSkill={() => void dispatchAction("add-source")}
                         onDetail={() => {
@@ -3756,23 +3796,36 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                             intent.kind === "collection-reference" &&
                             !intent.owner.contribution
                           ) {
+                            const expectedOwner = enclosingCollectionOwner(
+                              intent.collection,
+                              intent.owner,
+                            );
+                            if (!expectedOwner) return;
                             openSession("form", {
                               family: "collection-draft",
+                              expectedOwner,
                               draft: {
-                                kind: "reference",
+                                kind: "reference-remove",
                                 level: intent.owner.level,
                                 collection: intent.collection,
                                 name: intent.name,
-                                target: intent.target,
-                                description: intent.description,
-                                remove: true,
+                                expected: {
+                                  collection: intent.target,
+                                  description: intent.description,
+                                },
                               },
                             });
                             return;
                           }
                           if (intent.kind === "collection-link" && !intent.owner.contribution) {
+                            const expectedOwner = enclosingCollectionOwner(
+                              intent.collection,
+                              intent.owner,
+                            );
+                            if (!expectedOwner) return;
                             openSession("form", {
                               family: "collection-draft",
+                              expectedOwner,
                               draft: {
                                 kind: "link-change",
                                 level: intent.owner.level,
@@ -4499,10 +4552,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                   const begun = beginSession(overlaySession().revision, "executing");
                   void effects
                     .registerSource({
-                      type:
-                        registration.kind === "source"
-                          ? "source.register"
-                          : "config-source.register",
+                      kind: registration.kind,
                       level: value.level,
                       id: value.id,
                       binding: value.binding,
@@ -4554,11 +4604,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               {(draft) => (
                 <ReferenceOverlay
                   level={draft().level}
+                  expectedOwner={draft().expectedOwner}
                   collection={draft().collection}
                   name={draft().name}
                   target={draft().target}
                   description={draft().description}
-                  remove={draft().remove ?? false}
+                  remove={draft().remove}
                   pending={overlaySession().phase === "preview"}
                   error={operation.problem()}
                   onCancel={closeOverlay}
@@ -4570,6 +4621,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
               {(draft) => (
                 <LinkChangeOverlay
                   level={draft().level}
+                  expectedOwner={draft().expectedOwner}
                   collection={draft().collection}
                   target={draft().target}
                   linked={draft().linked}

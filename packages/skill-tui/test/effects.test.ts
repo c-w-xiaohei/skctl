@@ -11,17 +11,17 @@ import {
 
 test("cancelled preview releases its lane, revokes earlier reviews and cannot publish over a replacement", async () => {
   type Preview = Awaited<
-    ReturnType<ReturnType<typeof directSourceCore>["management"]["previewSourceRemoval"]>
+    ReturnType<ReturnType<typeof directSourceCore>["sources"]["previewRemoval"]>
   >;
   let resolvePreview: ((value: Preview) => void) | undefined;
   let calls = 0;
   const core = directSourceCore(workspaceProjection());
-  const impact = await core.management.previewSourceRemoval({ source: "team-main" });
+  const impact = await core.sources.previewRemoval({ source: "team-main" });
   const effects = testEffects({
     ...core,
-    management: {
-      ...core.management,
-      previewSourceRemoval: async () => {
+    sources: {
+      ...core.sources,
+      previewRemoval: async () => {
         if (++calls === 2)
           return new Promise<Preview>((resolve) => {
             resolvePreview = resolve;
@@ -44,13 +44,13 @@ test("cancelled preview releases its lane, revokes earlier reviews and cannot pu
 
 test("teardown suppresses late foreground preview publication and releases pending identity", async () => {
   const core = directSourceCore(workspaceProjection());
-  const impact = await core.management.previewSourceRemoval({ source: "team-main" });
+  const impact = await core.sources.previewRemoval({ source: "team-main" });
   let resolvePreview: ((value: typeof impact) => void) | undefined;
   const effects = testEffects({
     ...core,
-    management: {
-      ...core.management,
-      previewSourceRemoval: () =>
+    sources: {
+      ...core.sources,
+      previewRemoval: () =>
         new Promise((resolve) => {
           resolvePreview = resolve;
         }),
@@ -80,10 +80,12 @@ test("refresh applies only the current initial projection after a replacement re
   const accepted = workspaceProjection();
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
-      get: (options) =>
-        new Promise((resolve) => {
-          requests.push({ resolve, signal: options?.signal });
-        }),
+      workspace: {
+        get: (options) =>
+          new Promise((resolve) => {
+            requests.push({ resolve, signal: options?.signal });
+          }),
+      },
     }),
     operation,
     projection.outcomes,
@@ -108,8 +110,10 @@ test("refresh failure reports stale diagnostics without applying a snapshot", as
   const { projection, operation } = testProjection();
   const effects = createTuiEffects(
     directSourceCore(workspaceProjection(), {
-      get: async () => {
-        throw new SkillCliError("PROVIDER_UNAVAILABLE", "offline");
+      workspace: {
+        get: async () => {
+          throw new SkillCliError("PROVIDER_UNAVAILABLE", "offline");
+        },
       },
     }),
     operation,
@@ -126,25 +130,31 @@ test("refresh failure reports stale diagnostics without applying a snapshot", as
 test("MGMT-006 discovers once and installs selected observed paths at the exact revision before one refresh", async () => {
   const calls: unknown[] = [];
   const core = directSourceCore(workspaceProjection(), {
-    discover: async (request) => {
-      calls.push(["discover", request]);
-      return {
-        value: {
-          source: "team-main",
-          kind: "github",
-          exactRevision: "reviewed-commit",
-          candidates: [{ path: "review", name: "review", description: "Review code" }],
-        },
-        diagnostics: [],
-      };
+    sources: {
+      discover: async (request) => {
+        calls.push(["discover", request]);
+        return {
+          value: {
+            source: "team-main",
+            kind: "github",
+            exactRevision: "reviewed-commit",
+            candidates: [{ path: "review", name: "review", description: "Review code" }],
+          },
+          diagnostics: [],
+        };
+      },
     },
-    install: async (request) => {
-      calls.push(["install", request]);
-      return { value: [], diagnostics: [] };
+    installed: {
+      install: async (request) => {
+        calls.push(["install", request]);
+        return { value: [], diagnostics: [] };
+      },
     },
-    get: async () => {
-      calls.push(["workspace"]);
-      return { value: workspaceProjection(), diagnostics: [] };
+    workspace: {
+      get: async () => {
+        calls.push(["workspace"]);
+        return { value: workspaceProjection(), diagnostics: [] };
+      },
     },
   });
   const effects = testEffects(core);
@@ -172,23 +182,25 @@ test("Installed Skill Rebind passes the explicit replacement root through previe
   const calls: unknown[] = [];
   const effects = testEffects(
     directSourceCore(workspaceProjection(), {
-      previewRebind: async (request) => {
-        calls.push(["preview", request]);
-        return {
-          value: {
-            kind: "rebind",
-            address: { source: "team-main", path: "guide" },
-            owner: "replacement",
-            ownerPath: "alternate/guide",
-            proof: "proven",
-            allowed: true,
-          },
-          diagnostics: [],
-        };
-      },
-      rebind: async (request) => {
-        calls.push(["rebind", request]);
-        return { value: undefined, diagnostics: [] };
+      installed: {
+        previewRebind: async (request) => {
+          calls.push(["preview", request]);
+          return {
+            value: {
+              kind: "rebind",
+              address: { source: "team-main", path: "guide" },
+              owner: "replacement",
+              ownerPath: "alternate/guide",
+              proof: "proven",
+              allowed: true,
+            },
+            diagnostics: [],
+          };
+        },
+        rebind: async (request) => {
+          calls.push(["rebind", request]);
+          return { value: undefined, diagnostics: [] };
+        },
       },
     }),
   );
@@ -214,31 +226,35 @@ test("Installed Skill Rebind passes the explicit replacement root through previe
 test("STATE-013/018 previews once, consumes review once, removes once, and refreshes once", async () => {
   const calls: string[] = [];
   const core = directSourceCore(workspaceProjection(), {
-    previewSourceRemoval: async () => {
-      calls.push("preview");
-      return {
-        value: {
-          kind: "source-removal",
-          source: "team-main",
-          owner: directOwner,
-          installed: [],
-          repairs: [],
-          blockers: [],
-          allowed: true,
-        },
-        diagnostics: [],
-      };
+    sources: {
+      previewRemoval: async () => {
+        calls.push("preview");
+        return {
+          value: {
+            kind: "source-removal",
+            source: "team-main",
+            owner: directOwner,
+            installed: [],
+            repairs: [],
+            blockers: [],
+            allowed: true,
+          },
+          diagnostics: [],
+        };
+      },
+      remove: async () => {
+        calls.push("remove");
+        return { value: undefined, diagnostics: [] };
+      },
     },
-    removeSource: async () => {
-      calls.push("remove");
-      return { value: undefined, diagnostics: [] };
-    },
-    get: async () => {
-      calls.push("workspace");
-      return {
-        value: workspaceProjection({ includeDirect: false }),
-        diagnostics: [],
-      };
+    workspace: {
+      get: async () => {
+        calls.push("workspace");
+        return {
+          value: workspaceProjection({ includeDirect: false }),
+          diagnostics: [],
+        };
+      },
     },
   });
   const effects = testEffects(core);
@@ -259,13 +275,15 @@ test("STATE-013/018 previews once, consumes review once, removes once, and refre
 test("STATE-016/017 preview cancellation and exact failure remain local without execution", async () => {
   let aborted = 0;
   const core = directSourceCore(workspaceProjection(), {
-    previewSourceRemoval: async (_request, options) =>
-      new Promise((_, reject) => {
-        options?.signal?.addEventListener("abort", () => {
-          aborted++;
-          reject(new SkillCliError("CANCELLED", "cancelled"));
-        });
-      }),
+    sources: {
+      previewRemoval: async (_request, options) =>
+        new Promise((_, reject) => {
+          options?.signal?.addEventListener("abort", () => {
+            aborted++;
+            reject(new SkillCliError("CANCELLED", "cancelled"));
+          });
+        }),
+    },
   });
   const effects = testEffects(core);
   const pending = effects.review({
@@ -282,31 +300,33 @@ test("STATE-016/017 preview cancellation and exact failure remain local without 
 test("MGMT-003 never executes a blocked impact", async () => {
   let removed = false;
   const core = directSourceCore(workspaceProjection(), {
-    previewSourceRemoval: async () => ({
-      value: {
-        kind: "source-removal",
-        source: "team-main",
-        owner: directOwner,
-        installed: [{ source: "team-main", path: "review" }],
-        repairs: [
-          {
-            address: { source: "team-main", path: "review" },
-            actions: ["rebind", "uninstall"],
-          },
-        ],
-        blockers: [
-          {
-            reason: "installed",
-            address: { source: "team-main", path: "review" },
-          },
-        ],
-        allowed: false,
+    sources: {
+      previewRemoval: async () => ({
+        value: {
+          kind: "source-removal",
+          source: "team-main",
+          owner: directOwner,
+          installed: [{ source: "team-main", path: "review" }],
+          repairs: [
+            {
+              address: { source: "team-main", path: "review" },
+              actions: ["rebind", "uninstall"],
+            },
+          ],
+          blockers: [
+            {
+              reason: "installed",
+              address: { source: "team-main", path: "review" },
+            },
+          ],
+          allowed: false,
+        },
+        diagnostics: [],
+      }),
+      remove: async () => {
+        removed = true;
+        return { value: undefined, diagnostics: [] };
       },
-      diagnostics: [],
-    }),
-    removeSource: async () => {
-      removed = true;
-      return { value: undefined, diagnostics: [] };
     },
   });
   const effects = testEffects(core);
@@ -322,10 +342,12 @@ test("MGMT-003 never executes a blocked impact", async () => {
 test("STATE-017 preserves failed review and permits a retry with the exact error", async () => {
   let attempts = 0;
   const core = directSourceCore(workspaceProjection(), {
-    removeSource: async () => {
-      attempts++;
-      if (attempts === 1) throw new SkillCliError("WRITE_FAILED", "disk full");
-      return { value: undefined, diagnostics: [] };
+    sources: {
+      remove: async () => {
+        attempts++;
+        if (attempts === 1) throw new SkillCliError("WRITE_FAILED", "disk full");
+        return { value: undefined, diagnostics: [] };
+      },
     },
   });
   const effects = testEffects(core);
@@ -347,15 +369,17 @@ test("STATE-017 preserves failed review and permits a retry with the exact error
 test("STATE-016 cancelled execution preserves review and permits a retry", async () => {
   let attempts = 0;
   const core = directSourceCore(workspaceProjection(), {
-    removeSource: async (_request, options) => {
-      attempts++;
-      if (attempts === 1)
-        return new Promise((_, reject) =>
-          options?.signal?.addEventListener("abort", () =>
-            reject(new SkillCliError("CANCELLED", "cancelled by user")),
-          ),
-        );
-      return { value: undefined, diagnostics: [] };
+    sources: {
+      remove: async (_request, options) => {
+        attempts++;
+        if (attempts === 1)
+          return new Promise((_, reject) =>
+            options?.signal?.addEventListener("abort", () =>
+              reject(new SkillCliError("CANCELLED", "cancelled by user")),
+            ),
+          );
+        return { value: undefined, diagnostics: [] };
+      },
     },
   });
   const effects = testEffects(core);
@@ -378,17 +402,19 @@ test("STATE-016 cancelled execution preserves review and permits a retry", async
 
 test("STATE-023 rejects a preview with a missing or mismatched owner", async () => {
   const core = directSourceCore(workspaceProjection(), {
-    previewSourceRemoval: async () => ({
-      value: {
-        kind: "source-removal",
-        source: "team-main",
-        installed: [],
-        repairs: [],
-        blockers: [],
-        allowed: true,
-      },
-      diagnostics: [],
-    }),
+    sources: {
+      previewRemoval: async () => ({
+        value: {
+          kind: "source-removal",
+          source: "team-main",
+          installed: [],
+          repairs: [],
+          blockers: [],
+          allowed: true,
+        },
+        diagnostics: [],
+      }),
+    },
   });
   const effects = testEffects(core);
   const review = await effects.review({
@@ -417,11 +443,13 @@ test("STATE-016 observation success after abort wins while its request remains c
     | undefined;
   let aborted = 0;
   const core = directSourceCore(workspaceProjection(), {
-    discover: (_request, options) =>
-      new Promise((resolve) => {
-        resolveDiscovery = resolve;
-        options?.signal?.addEventListener("abort", () => aborted++);
-      }),
+    sources: {
+      discover: (_request, options) =>
+        new Promise((resolve) => {
+          resolveDiscovery = resolve;
+          options?.signal?.addEventListener("abort", () => aborted++);
+        }),
+    },
   });
   const effects = testEffects(core);
   const pending = effects.discover({
@@ -440,12 +468,14 @@ test("STATE-016 observation success after abort wins while its request remains c
 
 test("STATE-016 observation cancellation settles with Core's exact CANCELLED diagnostic", async () => {
   const core = directSourceCore(workspaceProjection(), {
-    discover: (_request, options) =>
-      new Promise((_, reject) =>
-        options?.signal?.addEventListener("abort", () =>
-          reject(new SkillCliError("CANCELLED", "provider stopped")),
+    sources: {
+      discover: (_request, options) =>
+        new Promise((_, reject) =>
+          options?.signal?.addEventListener("abort", () =>
+            reject(new SkillCliError("CANCELLED", "provider stopped")),
+          ),
         ),
-      ),
+    },
   });
   const effects = testEffects(core);
   const pending = effects.discover({ kind: "source-discovery", source: "team-main" });
@@ -461,17 +491,21 @@ test("STATE-016 observation cancellation settles with Core's exact CANCELLED dia
 test("STATE-013/017 source apply rejects fabricated reviews and preserves a real review for retry", async () => {
   let installs = 0;
   const core = directSourceCore(workspaceProjection(), {
-    discover: async () => ({
-      value: {
-        source: "team-main",
-        kind: "github",
-        candidates: [{ path: "review", name: "review", description: "Review" }],
+    sources: {
+      discover: async () => ({
+        value: {
+          source: "team-main",
+          kind: "github",
+          candidates: [{ path: "review", name: "review", description: "Review" }],
+        },
+        diagnostics: [],
+      }),
+    },
+    installed: {
+      install: async () => {
+        installs++;
+        throw new SkillCliError("WRITE_FAILED", "disk full");
       },
-      diagnostics: [],
-    }),
-    install: async () => {
-      installs++;
-      throw new SkillCliError("WRITE_FAILED", "disk full");
     },
   });
   const effects = testEffects(core);
@@ -490,14 +524,16 @@ test("STATE-017 mismatched observation retains the operation surface for a retry
   let attempts = 0;
   const effects = testEffects(
     directSourceCore(workspaceProjection(), {
-      discover: async () => ({
-        value: {
-          source: ++attempts === 1 ? "other" : "team-main",
-          kind: "github",
-          candidates: [],
-        },
-        diagnostics: [],
-      }),
+      sources: {
+        discover: async () => ({
+          value: {
+            source: ++attempts === 1 ? "other" : "team-main",
+            kind: "github",
+            candidates: [],
+          },
+          diagnostics: [],
+        }),
+      },
     }),
   );
   expect(await effects.discover({ kind: "source-discovery", source: "team-main" })).toBeUndefined();
@@ -517,18 +553,22 @@ test("STATE-016/018 successful install after abort wins and refresh failure rema
     | undefined;
   const effects = testEffects(
     directSourceCore(workspaceProjection(), {
-      discover: async () => ({
-        value: {
-          source: "team-main",
-          kind: "github",
-          exactRevision: "pinned",
-          candidates: [{ path: "review", name: "review", description: "Review" }],
+      sources: {
+        discover: async () => ({
+          value: {
+            source: "team-main",
+            kind: "github",
+            exactRevision: "pinned",
+            candidates: [{ path: "review", name: "review", description: "Review" }],
+          },
+          diagnostics: [],
+        }),
+      },
+      installed: { install: async () => new Promise((resolve) => (resolveInstall = resolve)) },
+      workspace: {
+        get: async () => {
+          throw new SkillCliError("PROVIDER_UNAVAILABLE", "refresh unavailable");
         },
-        diagnostics: [],
-      }),
-      install: async () => new Promise((resolve) => (resolveInstall = resolve)),
-      get: async () => {
-        throw new SkillCliError("PROVIDER_UNAVAILABLE", "refresh unavailable");
       },
     }),
   );
@@ -546,31 +586,37 @@ test("STATE-016/018 cancelled install retains its observed review and retries wi
   let refreshes = 0;
   const effects = testEffects(
     directSourceCore(workspaceProjection(), {
-      discover: async () => {
-        discovers++;
-        return {
-          value: {
-            source: "team-main",
-            kind: "github",
-            exactRevision: "reviewed",
-            candidates: [{ path: "review", name: "review", description: "Review" }],
-          },
-          diagnostics: [],
-        };
+      sources: {
+        discover: async () => {
+          discovers++;
+          return {
+            value: {
+              source: "team-main",
+              kind: "github",
+              exactRevision: "reviewed",
+              candidates: [{ path: "review", name: "review", description: "Review" }],
+            },
+            diagnostics: [],
+          };
+        },
       },
-      install: (_request, options) => {
-        installs++;
-        if (installs === 1)
-          return new Promise((_, reject) =>
-            options?.signal?.addEventListener("abort", () =>
-              reject(new SkillCliError("CANCELLED", "install cancelled")),
-            ),
-          );
-        return Promise.resolve({ value: [], diagnostics: [] });
+      installed: {
+        install: (_request, options) => {
+          installs++;
+          if (installs === 1)
+            return new Promise((_, reject) =>
+              options?.signal?.addEventListener("abort", () =>
+                reject(new SkillCliError("CANCELLED", "install cancelled")),
+              ),
+            );
+          return Promise.resolve({ value: [], diagnostics: [] });
+        },
       },
-      get: async () => {
-        refreshes++;
-        return { value: workspaceProjection(), diagnostics: [] };
+      workspace: {
+        get: async () => {
+          refreshes++;
+          return { value: workspaceProjection(), diagnostics: [] };
+        },
       },
     }),
   );

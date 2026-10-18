@@ -55,17 +55,15 @@ test("arrow-first browser selection enters Details, reads, cycles panes, and ret
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async (request) => {
-            loads.push(request.address.path);
-            return {
-              value:
-                request.address.path === readerSecondAddress.path
-                  ? readerSecondContent
-                  : readerContent,
-              diagnostics: [],
-            };
+          installed: {
+            load: async (request) => {
+              loads.push(request.address.path);
+              return request.address.path === readerSecondAddress.path
+                ? readerSecondContent
+                : readerContent;
+            },
+            listResources: async () => readerResources,
           },
-          listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
         })}
         exit={() => {}}
       />
@@ -160,24 +158,27 @@ test("update workbench arrows preserve selection and Escape leaves without apply
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          checkUpdate: async (request) => {
-            observations.push(request);
-            return {
-              value: {
-                source: request.source,
-                kind: "github",
-                exactRevision: "arrow-review",
-                changed: [{ path: "guide", name: "guide", description: "Changed guide" }],
-                added: [],
-                removed: [],
-                unchanged: [],
-              },
-              diagnostics: [],
-            };
-          },
-          update: async (request) => {
-            updates.push(request);
-            return { value: undefined, diagnostics: [] };
+          installed: {
+            checkUpdate: async (request) => {
+              observations.push(request);
+              return {
+                value: {
+                  source: request.source,
+                  kind: "github",
+                  exactRevision: "arrow-review",
+                  changed: [{ path: "guide", name: "guide", description: "Changed guide" }],
+                  added: [],
+                  removed: [],
+                  unchanged: [],
+                  baseline: "baseline:test",
+                },
+                diagnostics: [],
+              };
+            },
+            update: async (request) => {
+              updates.push(request);
+              return { value: undefined, diagnostics: [] };
+            },
           },
         })}
         exit={() => {}}

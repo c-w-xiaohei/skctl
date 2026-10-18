@@ -122,19 +122,18 @@ test("Problems opens the exact Installed Skill inspector without loading its Rea
     () => (
       <App
         core={directSourceCore(projection, {
-          loadInstalled: async ({ address: requested }) => {
-            loads++;
-            loadedAddresses.push(requested);
-            return {
-              value: {
+          installed: {
+            load: async ({ address: requested }) => {
+              loads++;
+              loadedAddresses.push(requested);
+              return {
                 address: requested,
                 name: requested.path,
                 description: "compatibility fixture",
                 rawText: "# compatibility fixture",
                 markdownText: "# compatibility fixture",
-              },
-              diagnostics: [],
-            };
+              };
+            },
           },
         })}
         exit={() => {}}

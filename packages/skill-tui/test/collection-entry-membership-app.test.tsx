@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { readFile } from "node:fs/promises";
-import type { ManagementProjection, MembershipBatchImpact, OperationResult } from "@skill-cli/core";
+import type { WorkspaceView, MembershipBatchImpact, OperationResult } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, parsedEnter, parsedEscape } from "./reader-test-controls";
@@ -40,7 +40,7 @@ type Origin =
       readonly slot?: number;
     };
 
-function projection(origins: readonly Origin[]): ManagementProjection {
+function projection(origins: readonly Origin[]): WorkspaceView {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
   return {
@@ -225,17 +225,17 @@ test("RENDER Collection Entry Space selection is isolated from Relations and con
   );
   const core = {
     ...base,
-    content: {
-      ...base.content,
-      loadInstalled: async (request: Parameters<typeof base.content.loadInstalled>[0]) => {
+    installed: {
+      ...base.installed,
+      load: async (request: Parameters<typeof base.installed.load>[0]) => {
         loads++;
-        return result({
+        return {
           address: request.address,
           name: request.address.path,
           description: "",
           rawText: "",
           markdownText: "",
-        });
+        };
       },
     },
   };
@@ -344,13 +344,13 @@ test("RENDER Membership Enter opens a non-destructive origin inspector", async (
   const sourceCore = directSourceCore(base);
   const core = {
     ...sourceCore,
-    configuration: {
-      ...sourceCore.configuration,
-      previewMembershipBatch: async (
-        ...args: Parameters<typeof sourceCore.configuration.previewMembershipBatch>
+    collections: {
+      ...sourceCore.collections,
+      previewMemberEdit: async (
+        ...args: Parameters<typeof sourceCore.collections.previewMemberEdit>
       ) => {
         previews++;
-        return sourceCore.configuration.previewMembershipBatch(...args);
+        return sourceCore.collections.previewMemberEdit(...args);
       },
     },
   };
@@ -433,10 +433,10 @@ test("RENDER cancelling direct Membership removal retains the inspector origin a
   const base = directSourceCore(initial);
   const core = {
     ...base,
-    configuration: {
-      ...base.configuration,
-      previewMembershipBatch: async (
-        request: Parameters<typeof base.configuration.previewMembershipBatch>[0],
+    collections: {
+      ...base.collections,
+      previewMemberEdit: async (
+        request: Parameters<typeof base.collections.previewMemberEdit>[0],
       ) => {
         previews.push(request);
         return result({
@@ -447,9 +447,9 @@ test("RENDER cancelling direct Membership removal retains the inspector origin a
           },
         });
       },
-      change: async (change: Parameters<typeof base.configuration.change>[0]) => {
-        changes.push(change);
-        return result({ level: "project" as const, changed: true });
+      editMembers: async (request: Parameters<typeof base.collections.editMembers>[0]) => {
+        changes.push(request);
+        return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
       },
     },
   };
@@ -507,8 +507,13 @@ test("RENDER same-owner Collection Entry removals preview and change once, then 
     },
   ]);
   const refreshed = projection([]);
-  const writing =
-    deferred<OperationResult<{ readonly level: "project"; readonly changed: boolean }>>();
+  const writing = deferred<
+    OperationResult<{
+      readonly level: "project";
+      readonly file: string;
+      readonly changed: boolean;
+    }>
+  >();
   const previews: unknown[] = [];
   const changes: unknown[] = [];
   let refreshes = 0;
@@ -518,16 +523,16 @@ test("RENDER same-owner Collection Entry removals preview and change once, then 
     workspace: {
       get: async () => result(++refreshes === 1 ? initial : refreshed),
     },
-    configuration: {
-      ...base.configuration,
-      previewMembershipBatch: async (
-        request: Parameters<typeof base.configuration.previewMembershipBatch>[0],
+    collections: {
+      ...base.collections,
+      previewMemberEdit: async (
+        request: Parameters<typeof base.collections.previewMemberEdit>[0],
       ) => {
         previews.push(request);
         return result(batchImpact(request));
       },
-      change: (change: Parameters<typeof base.configuration.change>[0]) => {
-        changes.push(change);
+      editMembers: (request: Parameters<typeof base.collections.editMembers>[0]) => {
+        changes.push(request);
         return writing.promise;
       },
     },
@@ -567,9 +572,9 @@ test("RENDER same-owner Collection Entry removals preview and change once, then 
     await setup.waitFor(() => changes.length === 1);
     expect(changes).toEqual([
       {
-        type: "collection.members.change",
         level: "project",
         collection: "team",
+        expectedOwner: owner(undefined, "/collections/team"),
         additions: [],
         removals: [
           {
@@ -584,7 +589,7 @@ test("RENDER same-owner Collection Entry removals preview and change once, then 
         reviewedAffected: [],
       },
     ]);
-    writing.resolve(result({ level: "project", changed: true }));
+    writing.resolve(result({ level: "project", file: "skill-cli.jsonc", changed: true }));
     await setup.waitFor(() => refreshes === 2);
     await setup.waitFor(() => !setup.renderer.root.findDescendantById("collection-batch-pane"));
     expect(previews).toHaveLength(1);
@@ -616,17 +621,17 @@ test("RENDER mixed direct and linked Entry origins removes only the direct origi
     workspace: {
       get: async () => result(++refreshes === 1 ? initial : refreshed),
     },
-    configuration: {
-      ...base.configuration,
-      previewMembershipBatch: async (
-        request: Parameters<typeof base.configuration.previewMembershipBatch>[0],
+    collections: {
+      ...base.collections,
+      previewMemberEdit: async (
+        request: Parameters<typeof base.collections.previewMemberEdit>[0],
       ) => {
         previews.push(request);
         return result(batchImpact(request));
       },
-      change: async (change: Parameters<typeof base.configuration.change>[0]) => {
-        changes.push(change);
-        return result({ level: "project" as const, changed: true });
+      editMembers: async (request: Parameters<typeof base.collections.editMembers>[0]) => {
+        changes.push(request);
+        return result({ level: "project" as const, file: "skill-cli.jsonc", changed: true });
       },
     },
   };
@@ -692,10 +697,13 @@ test("RENDER multi-owner removal opens a no-write task and Escape preserves Entr
   let changes = 0;
   const core = {
     ...base,
-    configuration: {
-      ...base.configuration,
-      previewMembershipBatch: async () => (previews++, result({} as MembershipBatchImpact)),
-      change: async () => (changes++, result({ level: "project" as const, changed: false })),
+    collections: {
+      ...base.collections,
+      previewMemberEdit: async () => (previews++, result({} as MembershipBatchImpact)),
+      editMembers: async () => (
+        changes++,
+        result({ level: "project" as const, file: "skill-cli.jsonc", changed: false })
+      ),
     },
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -736,10 +744,13 @@ test("RENDER linked-only Entry removal is Cancel-only and retains selection", as
   let changes = 0;
   const core = {
     ...base,
-    configuration: {
-      ...base.configuration,
-      previewMembershipBatch: async () => (previews++, result({} as MembershipBatchImpact)),
-      change: async () => (changes++, result({ level: "project" as const, changed: false })),
+    collections: {
+      ...base.collections,
+      previewMemberEdit: async () => (previews++, result({} as MembershipBatchImpact)),
+      editMembers: async () => (
+        changes++,
+        result({ level: "project" as const, file: "skill-cli.jsonc", changed: false })
+      ),
     },
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {

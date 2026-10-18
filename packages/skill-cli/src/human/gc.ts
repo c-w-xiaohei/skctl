@@ -6,7 +6,7 @@ export function gcCommand(parent: Command, { core, stdout }: CommandContext) {
     .command("gc")
     .description("Permanently delete unreferenced cache material.")
     .action(async (_flags, action) => {
-      await core(action).management.gc();
+      await core(action).gc();
       stdout.write("Garbage-collected unreferenced cache data.\n");
     });
 }

@@ -12,7 +12,7 @@ export function downloadCommand(parent: Command, { cwd, core, stdout }: CommandC
     .requiredOption("--output <host-path>", "Destination file")
     .option("--force", "Replace an existing regular file, never a symlink", false)
     .action(async (selector, path, flags, action) => {
-      const { value } = await core(action).content.download({
+      const value = await core(action).content.download({
         selector,
         path,
         output: resolve(cwd, flags.output),

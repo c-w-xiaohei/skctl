@@ -63,7 +63,7 @@ test("Reader owner allocates epochs per structural address and request kind", as
   expect(owner.cached(alpha)?.text).toBe("old");
   expect(owner.current()?.resourceLoading).toBe(true);
   expect(loads[0]!.signal?.aborted).toBe(false);
-  lists[0]!.resolve({ value: [], diagnostics: [] });
+  lists[0]!.resolve([]);
   await resources;
   owner.dispose();
 });
@@ -83,10 +83,7 @@ test("Reader owner rejects a stale inactive failure without changing the active 
   expect(notices).toBe(0);
   expect(owner.current()).toMatchObject({ address: beta, selectedResource: "b.md" });
   expect(owner.cached(alpha)?.error).toBeUndefined();
-  reads[1]!.resolve({
-    value: { kind: "text", path: "b.md", text: "beta", format: "text" },
-    diagnostics: [],
-  });
+  reads[1]!.resolve({ kind: "text", path: "b.md", text: "beta", format: "text" });
   await current;
   owner.dispose();
 });
@@ -105,10 +102,7 @@ test("Reader owner accepts a current inactive failure only in that cached reader
   expect(notices).toBe(0);
   expect(owner.current()).toMatchObject({ address: beta, selectedResource: "b.md" });
   expect(owner.cached(alpha)?.error?.message).toBe("alpha failed");
-  reads[1]!.resolve({
-    value: { kind: "text", path: "b.md", text: "beta", format: "text" },
-    diagnostics: [],
-  });
+  reads[1]!.resolve({ kind: "text", path: "b.md", text: "beta", format: "text" });
   await betaRead;
   owner.dispose();
 });
@@ -182,19 +176,15 @@ test("installed-content invalidation preserves reading state and rejects both ol
   expect(reads[0]!.signal?.aborted).toBe(false);
   loads[0]!.resolve({
     ...installedContent(alpha, "late old content"),
-    diagnostics: [{ code: "INTERNAL", severity: "warning", message: "late failure" }],
   });
-  lists[0]!.resolve({ value: [{ path: "old", kind: "directory" }], diagnostics: [] });
-  reads[0]!.resolve({
-    value: { kind: "text", path: "notes.md", text: "late notes", format: "text" },
-    diagnostics: [],
-  });
+  lists[0]!.resolve([{ path: "old", kind: "directory" }]);
+  reads[0]!.resolve({ kind: "text", path: "notes.md", text: "late notes", format: "text" });
   await Promise.all([content, list, resource]);
   expect(owner.cached(alpha)).toBe(invalidated);
   const staleList = owner.list(alpha);
   owner.invalidate(alpha);
   const withoutList = owner.cached(alpha);
-  lists[1]!.resolve({ value: [{ path: "late-list.md", kind: "file" }], diagnostics: [] });
+  lists[1]!.resolve([{ path: "late-list.md", kind: "file" }]);
   await staleList;
   expect(owner.cached(alpha)).toBe(withoutList);
   owner.invalidate();
@@ -294,18 +284,15 @@ test("route restoration retains updated payloads, current failure, and pending r
   const content = owner.load(alpha);
   loads[0]!.resolve({
     ...installedContent(alpha, "updated body"),
-    value: { ...installedContent(alpha, "updated body").value, rawText: "updated raw" },
+    rawText: "updated raw",
   });
   await content;
   const resources = owner.list(alpha);
-  lists[0]!.resolve({ value: [{ path: "current.md", kind: "file" }], diagnostics: [] });
+  lists[0]!.resolve([{ path: "current.md", kind: "file" }]);
   await resources;
   const resource = owner.read(alpha, "current.md");
   const pending = owner.load(alpha);
-  reads[0]!.resolve({
-    value: { kind: "text", path: "current.md", text: "current notes", format: "text" },
-    diagnostics: [{ code: "INTERNAL", severity: "warning", message: "current warning" }],
-  });
+  reads[0]!.resolve({ kind: "text", path: "current.md", text: "current notes", format: "text" });
   await resource;
   owner.select(beta);
   const current = owner.cached(alpha)!;
@@ -370,10 +357,7 @@ test("route restoration keeps a resource content view only when the current reso
   const { owner, reads } = pendingReader();
   owner.select(alpha);
   const request = owner.read(alpha, "notes.md");
-  reads[0]!.resolve({
-    value: { kind: "text", path: "notes.md", text: "updated notes", format: "text" },
-    diagnostics: [],
-  });
+  reads[0]!.resolve({ kind: "text", path: "notes.md", text: "updated notes", format: "text" });
   await request;
   owner.restore(capturedReader());
   expect(owner.current()).toMatchObject({

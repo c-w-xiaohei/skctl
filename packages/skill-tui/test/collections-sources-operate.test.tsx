@@ -7,7 +7,7 @@ import {
   SelectRenderable,
   TextRenderable,
 } from "@opentui/core";
-import type { ManagementProjection, SkillAddress } from "@skill-cli/core";
+import type { WorkspaceView, SkillAddress } from "@skill-cli/core";
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -26,7 +26,7 @@ import {
 async function mount(
   width: number,
   height: number,
-  projection: ManagementProjection = collectionsSourcesProjection(),
+  projection: WorkspaceView = collectionsSourcesProjection(),
 ) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/collections-sources-");
@@ -40,51 +40,52 @@ async function mount(
     throw new Error("Browsing must not acquire or mutate Skills");
   };
   const core = directSourceCore(projection, {
-    discover: unexpected,
-    install: unexpected,
-    update: unexpected,
-    removeSource: unexpected,
-    loadInstalled: async ({ address }) => {
-      reads.push(address);
-      const skill = projection.installedSkills.find(
-        (skill) => skill.address.source === address.source && skill.address.path === address.path,
-      )!;
-      const text = `# ${skill.name}\n\nInstalled ${address.source}/${address.path}`;
-      return {
-        value: {
+    sources: { discover: unexpected, remove: unexpected },
+    installed: {
+      install: unexpected,
+      update: unexpected,
+      load: async ({ address }) => {
+        reads.push(address);
+        const skill = projection.installedSkills.find(
+          (skill) => skill.address.source === address.source && skill.address.path === address.path,
+        )!;
+        const text = `# ${skill.name}\n\nInstalled ${address.source}/${address.path}`;
+        return {
           address,
           name: skill.name,
           description: skill.description,
           rawText: text,
           markdownText: text,
-        },
-        diagnostics: [],
-      };
-    },
-    checkUpdate: async ({ source }) => {
-      checks.push(source);
-      return {
-        value: {
-          source,
-          kind: "github",
-          exactRevision: "a".repeat(40),
-          baseline: "operate-baseline",
-          changed: [],
-          removed: [],
-          added: [],
-          unchanged: projection.installedSkills
-            .filter((skill) => skill.address.source === source)
-            .map((skill) => ({
-              path: skill.address.path,
-              name: skill.name,
-              description: skill.description,
-            })),
-        },
-        diagnostics: [],
-      };
+        };
+      },
+      checkUpdate: async ({ source }) => {
+        checks.push(source);
+        return {
+          value: {
+            source,
+            kind: "github",
+            exactRevision: "a".repeat(40),
+            baseline: "operate-baseline",
+            changed: [],
+            removed: [],
+            added: [],
+            unchanged: projection.installedSkills
+              .filter((skill) => skill.address.source === source)
+              .map((skill) => ({
+                path: skill.address.path,
+                name: skill.name,
+                description: skill.description,
+              })),
+          },
+          diagnostics: [],
+        };
+      },
     },
   });
-  core.configuration.change = unexpected;
+  core.collections.create = unexpected;
+  core.collections.addMember = unexpected;
+  core.collections.removeMember = unexpected;
+  core.collections.editMembers = unexpected;
   const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
   const initialSources = new Set(projection.installedSkills.map((skill) => skill.address.source));
   if (projection.effective.status === "complete" && initialSources.size)

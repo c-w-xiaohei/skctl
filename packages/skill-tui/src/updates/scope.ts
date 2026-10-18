@@ -1,4 +1,4 @@
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 
 export interface UpdateAddress {
   readonly source: string;
@@ -30,10 +30,7 @@ export interface UpdateObservedSkill {
 
 const key = (address: UpdateAddress) => `${address.source}\u0000${address.path}`;
 
-export function deriveUpdateScope(
-  projection: ManagementProjection,
-  entry: UpdateScopeEntry,
-): UpdateScope {
+export function deriveUpdateScope(projection: WorkspaceView, entry: UpdateScopeEntry): UpdateScope {
   const installed = new Map(projection.installedSkills.map((skill) => [key(skill.address), skill]));
   const installedAddresses = () => [...installed.values()].map((skill) => skill.address);
   if (entry.kind === "workspace")
@@ -93,7 +90,7 @@ function complete(
   addresses: readonly UpdateAddress[],
   includesReferences: boolean,
   unavailableReason?: string,
-  projection?: ManagementProjection,
+  projection?: WorkspaceView,
 ): UpdateScope {
   const selected = new Set(addresses.map(key));
   const sources = new Map(

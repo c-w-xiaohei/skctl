@@ -9,7 +9,7 @@ import {
 } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import type { ManagementCapability, ManagementProjection, UpdatePreview } from "@skill-cli/core";
+import type { InstalledCapability, WorkspaceView, UpdatePreview } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
@@ -31,8 +31,8 @@ const readyPreview: UpdatePreview = {
 };
 
 async function mount(
-  previewUpdate: ManagementCapability["previewUpdate"],
-  checkUpdate: ManagementCapability["checkUpdate"] = async ({ source }) => ({
+  previewUpdate: InstalledCapability["previewUpdate"],
+  checkUpdate: InstalledCapability["checkUpdate"] = async ({ source }) => ({
     value: {
       source,
       kind: "github",
@@ -50,7 +50,7 @@ async function mount(
     readonly width?: number;
     readonly skillPaths?: readonly string[];
     readonly otherSource?: boolean;
-    readonly update?: ManagementCapability["update"];
+    readonly update?: InstalledCapability["update"];
   } = {},
 ) {
   const prior = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
@@ -61,7 +61,7 @@ async function mount(
   const sources = options.otherSource
     ? [...base.effective.sources, { ...base.effective.sources[0]!, id: "other" }]
     : base.effective.sources;
-  const projection: ManagementProjection = {
+  const projection: WorkspaceView = {
     ...base,
     effective: { ...base.effective, sources },
     installedSkills: sources.flatMap((source) =>
@@ -81,7 +81,7 @@ async function mount(
   };
   const checks: string[] = [];
   let workspaceReads = 0;
-  const updates: Parameters<ManagementCapability["update"]>[0][] = [];
+  const updates: Parameters<InstalledCapability["update"]>[0][] = [];
   const updateSignals: (AbortSignal | undefined)[] = [];
   let setup: Awaited<ReturnType<typeof testRender>> | undefined;
   const dispose = async () => {
@@ -95,23 +95,26 @@ async function mount(
       () => (
         <App
           core={directSourceCore(projection, {
-            get: async () => {
-              workspaceReads++;
-              return { value: projection, diagnostics: [] };
+            workspace: {
+              get: async () => {
+                workspaceReads++;
+                return { value: projection, diagnostics: [] };
+              },
             },
-            checkUpdate: async (request, options) => {
-              checks.push(request.source);
-              return checkUpdate(request, options);
-            },
-            previewUpdate,
-            update: async (request, context) => {
-              updates.push(request);
-              updateSignals.push(context?.signal);
-              if (options.update) return options.update(request, context);
-              throw new Error("This return scenario must not submit an update");
-            },
-            loadInstalled: async () => {
-              throw new Error("Updates preview must not load installed content");
+            installed: {
+              checkUpdate: async (request, options) => {
+                checks.push(request.source);
+                return checkUpdate(request, options);
+              },
+              update: async (request, context) => {
+                updates.push(request);
+                updateSignals.push(context?.signal);
+                if (options.update) return options.update(request, context);
+                throw new Error("This return scenario must not submit an update");
+              },
+              load: async () => {
+                throw new Error("Updates preview must not load installed content");
+              },
             },
           })}
           exit={() => {}}
@@ -161,8 +164,8 @@ async function mount(
 
 test("RED shared Back closes a preview exactly once: aborts its read, ignores its late reply, and restores the source draft", async () => {
   const signals: AbortSignal[] = [];
-  const requests: Parameters<ManagementCapability["previewUpdate"]>[0][] = [];
-  const replies: ((value: Awaited<ReturnType<ManagementCapability["previewUpdate"]>>) => void)[] =
+  const requests: Parameters<InstalledCapability["previewUpdate"]>[0][] = [];
+  const replies: ((value: Awaited<ReturnType<InstalledCapability["previewUpdate"]>>) => void)[] =
     [];
   const mounted = await mount(async (request, options) => {
     requests.push(request);

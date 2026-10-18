@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  type InstalledMaterialization,
   resolveStateRoot,
   setCoordinatorHookForTest,
   StateCoordinator,
-} from "../../src/internal/state";
+} from "../../src/storage/state";
+import type { InstalledMaterialization } from "../../src/storage/schema";
 
 const legacyLocal = {
   kind: "local" as const,
@@ -95,6 +95,16 @@ test("state accepts only exact Local and Remote materialization facts", async ()
       new StateCoordinator(root).withLock(async () => new StateCoordinator(root).read()),
     ).resolves.toEqual(valid);
     for (const mutation of [
+      { ...valid, generation: 0.5 },
+      { ...valid, extra: true },
+      { ...valid, installed: [{ ...valid.installed[1], adoptedRevision: undefined }] },
+      { ...valid, installed: [{ ...valid.installed[0], source: "e\u0301" }] },
+      { ...valid, installed: [{ ...valid.installed[0], path: "" }] },
+      { ...valid, configs: { "": { commit: "e".repeat(40), digest: "f".repeat(64) } } },
+      {
+        ...valid,
+        configs: { upstream: { commit: "e".repeat(40), digest: "f".repeat(64), extra: true } },
+      },
       { ...valid, installed: [{ ...valid.installed[0], selectors: ["x:y"] }] },
       { ...valid, installed: [{ ...valid.installed[0], bindingDigest: undefined }] },
       { ...valid, installed: [{ ...valid.installed[1], root: "/must-not-be-remote" }] },
@@ -286,6 +296,25 @@ test("v3 persists exact Root tree evidence and retains literal legacy records wi
       }),
     );
     await expect(coordinator.read()).resolves.toMatchObject({ version: 3 });
+    const unresolved = { ...remote, adoptedRevision: undefined, revisionStatus: "unresolved" };
+    await writeFile(
+      file,
+      JSON.stringify({ version: 2, generation: 0, installed: [unresolved], configs: {} }),
+    );
+    await expect(coordinator.read()).resolves.toMatchObject({
+      version: 2,
+      installed: [{ revisionStatus: "unresolved" }],
+    });
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        generation: 0,
+        installed: [{ ...unresolved, identityEvidence: undefined }],
+        configs: {},
+      }),
+    );
+    await expect(coordinator.read()).rejects.toMatchObject({ code: "CONFIG_INVALID" });
     for (const bad of [
       { ...remote, treeIdentity: { ...treeIdentity, objectFormat: "sha256" } },
       { ...remote, treeIdentity: { ...treeIdentity, objectId: "D".repeat(40) } },

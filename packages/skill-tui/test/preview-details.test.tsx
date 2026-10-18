@@ -63,18 +63,17 @@ test("All Skills selection keeps a persistent Reader, loads its exact address, a
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async ({ address }) => {
-              reads.push(`${address.source}/${address.path}`);
-              return {
-                value: {
+            installed: {
+              load: async ({ address }) => {
+                reads.push(`${address.source}/${address.path}`);
+                return {
                   address,
                   name: address.path,
                   description: "Loaded from the selected address",
                   rawText: `Body ${address.path}`,
                   markdownText: `# ${address.path}\n\nBody ${address.path}`,
-                },
-                diagnostics: [],
-              };
+                };
+              },
             },
           })}
           exit={() => {}}

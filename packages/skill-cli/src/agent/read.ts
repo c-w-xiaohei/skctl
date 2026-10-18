@@ -11,6 +11,6 @@ export function readCommand(parent: Command, { core, stdout }: CommandContext) {
     .addArgument(new Argument("<selector>", "Skill selector").argParser(skillSelector))
     .argument("<root-relative-path>")
     .action(async (selector, path, _flags, action) => {
-      stdout.write((await core(action).content.read({ selector, path })).value.text);
+      stdout.write((await core(action).content.read({ selector, path })).text);
     });
 }

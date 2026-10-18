@@ -19,7 +19,7 @@ test("compact Reader Find/Raw/Next have distinct keyboard and pointer targets, t
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />

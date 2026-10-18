@@ -23,17 +23,21 @@ test("RENDER empty Source details return restores the selected Source and list v
             effective: { ...projection.effective, sources },
           },
           {
-            discover: async ({ source }) => {
-              acquisitions.push(source);
-              throw new Error("Source navigation must not discover Skills");
+            sources: {
+              discover: async ({ source }) => {
+                acquisitions.push(source);
+                throw new Error("Source navigation must not discover Skills");
+              },
             },
-            install: async ({ source }) => {
-              mutations.push(`install:${source}`);
-              throw new Error("Source navigation must not install Skills");
-            },
-            update: async ({ source }) => {
-              mutations.push(`update:${source}`);
-              throw new Error("Source navigation must not update Skills");
+            installed: {
+              install: async ({ source }) => {
+                mutations.push(`install:${source}`);
+                throw new Error("Source navigation must not install Skills");
+              },
+              update: async ({ source }) => {
+                mutations.push(`update:${source}`);
+                throw new Error("Source navigation must not update Skills");
+              },
             },
           },
         )}

@@ -47,7 +47,7 @@ async function mount(width = 144, height = 40) {
             ...projection,
             installedSkills: [{ ...source, description }, ...projection.installedSkills.slice(1)],
           },
-          { loadInstalled: async () => ({ value: readerContent, diagnostics: [] }) },
+          { installed: { load: async () => readerContent } },
         )}
         exit={() => {}}
       />

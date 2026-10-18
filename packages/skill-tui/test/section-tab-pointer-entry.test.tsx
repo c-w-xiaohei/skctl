@@ -78,7 +78,7 @@ test.each(["global", "project", "local"] as const)(
   async (level) => {
     const core = directSourceCore(collectionsSourcesProjection());
     let writes = 0;
-    core.configuration.change = async () => {
+    core.collections.addMember = async () => {
       writes++;
       throw new Error("Tab selection must not write");
     };

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 
@@ -47,7 +47,7 @@ async function enter(setup: Setup) {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function exposureProjection(): ManagementProjection {
+function exposureProjection(): WorkspaceView {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
   const owner = {

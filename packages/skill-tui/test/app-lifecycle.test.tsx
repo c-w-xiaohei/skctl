@@ -59,16 +59,15 @@ test("RENDER initial Workspace projection applies once and defers reader focus u
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          get: (options) =>
-            new Promise((resolve) => {
-              loads += 1;
-              initialSignal = options?.signal;
-              resolveWorkspace = resolve;
-            }),
-          loadInstalled: async () => ({
-            value: readerContent,
-            diagnostics: [],
-          }),
+          workspace: {
+            get: (options) =>
+              new Promise((resolve) => {
+                loads += 1;
+                initialSignal = options?.signal;
+                resolveWorkspace = resolve;
+              }),
+          },
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />
@@ -102,11 +101,13 @@ test("RENDER App aborts its unresolved initial Workspace request when unmounted"
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          get: (options) =>
-            new Promise(() => {
-              loads += 1;
-              initialSignal = options?.signal;
-            }),
+          workspace: {
+            get: (options) =>
+              new Promise(() => {
+                loads += 1;
+                initialSignal = options?.signal;
+              }),
+          },
         })}
         exit={() => {}}
       />
@@ -129,13 +130,12 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async (request) => ({
-              value:
+            installed: {
+              load: async (request) =>
                 request.address.path === readerSecondAddress.path
                   ? readerSecondContent
                   : readerContent,
-              diagnostics: [],
-            }),
+            },
           })}
           exit={() => {}}
         />
@@ -209,10 +209,7 @@ test("RENDER App ignores a queued browser owner while Reader remains the narrow 
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({
-            value: readerContent,
-            diagnostics: [],
-          }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />
@@ -247,10 +244,7 @@ test("RENDER App teardown rejects a queued focus reconciliation", async () => {
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({
-            value: readerContent,
-            diagnostics: [],
-          }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />
@@ -375,9 +369,7 @@ test("RENDER Problems Installed Skill drill-in replaces its browser with the Ins
   const setup = await testRender(
     () => (
       <App
-        core={directSourceCore(projection, {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-        })}
+        core={directSourceCore(projection, { installed: { load: async () => readerContent } })}
         exit={() => {}}
       />
     ),
@@ -441,9 +433,7 @@ test("RENDER Problems diagnostic query keeps its structural Inspector Skill and 
     const setup = await testRender(
       () => (
         <App
-          core={directSourceCore(projection, {
-            loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-          })}
+          core={directSourceCore(projection, { installed: { load: async () => readerContent } })}
           exit={() => {}}
         />
       ),

@@ -1,4 +1,4 @@
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { skillAddressKey } from "@skill-cli/core";
 import type { ExposurePath, ExposurePathSegment } from "./state";
 
@@ -25,7 +25,7 @@ interface TreeRowBase {
   readonly missingReason?: string;
 }
 
-type SkillHealth = ManagementProjection["installedSkills"][number]["owner"]["health"];
+type SkillHealth = WorkspaceView["installedSkills"][number]["owner"]["health"];
 
 export type AgentAccessTreeRow =
   | (TreeRowBase & {
@@ -62,10 +62,7 @@ export const exposureTreePathKey = (path: ExposurePath): string =>
   JSON.stringify(path.segments.map((segment) => [segment.collection, segment.reference]));
 
 /** Validates one durable expanded branch without materialising unrelated graph paths. */
-export const isAgentAccessPathValid = (
-  projection: ManagementProjection,
-  path: ExposurePath,
-): boolean => {
+export const isAgentAccessPathValid = (projection: WorkspaceView, path: ExposurePath): boolean => {
   if (projection.effective.status !== "complete" || !path.segments.length) return false;
   const views = new Map(projection.effective.collectionsView.map((view) => [view.id, view]));
   let current = path.segments[0]!.collection;
@@ -100,7 +97,7 @@ const unavailable = (reason: string): AgentAccessTree => ({
  * collapsed; each expanded branch adds one immediate layer. No content reads or management calls.
  */
 export function deriveAgentAccessTree(
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   expanded: Readonly<Record<string, boolean>> = {},
 ): AgentAccessTree {
   if (!projection) return unavailable("Workspace projection is not available");

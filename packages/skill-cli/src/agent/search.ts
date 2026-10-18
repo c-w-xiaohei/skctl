@@ -20,15 +20,13 @@ export function searchCommand(parent: Command, { core, stdout }: CommandContext)
     .action(async (query, flags, action) => {
       const { value } = await core(action).catalog.search({
         query,
-        limit: flags.limit + 1,
+        limit: flags.limit,
         collection: flags.in,
       });
       stdout.write(
         `${JSON.stringify({
-          results: value.results
-            .slice(0, flags.limit)
-            .map(({ selector, name, description }) => ({ selector, name, description })),
-          ...(value.results.length > flags.limit ? { truncated: true } : {}),
+          results: value.results,
+          ...(value.truncated ? { truncated: true } : {}),
         })}\n`,
       );
     });

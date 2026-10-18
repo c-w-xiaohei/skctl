@@ -8,7 +8,7 @@ import {
   SkillCliError,
   type CollectionView,
   type ConfigSourceImpact,
-  type ManagementProjection,
+  type WorkspaceView,
   type OperationResult,
   type SourceBindingView,
 } from "@skill-cli/core";
@@ -139,10 +139,10 @@ const collections: CollectionView[] = [
   },
 ];
 const useOwner = owner("/use/0");
-let projection: ManagementProjection = {
+let projection: WorkspaceView = {
   project: { root: "/virtual/project", resolution: "explicit" },
   configs: (["global", "project", "local"] as const).map(
-    (level): ManagementProjection["configs"][number] => ({
+    (level): WorkspaceView["configs"][number] => ({
       level,
       file: { status: "valid", file: owner("", level).file },
       direct: {
@@ -243,7 +243,7 @@ let projection: ManagementProjection = {
       source: "team-main",
       path: `sample-${String(index).padStart(2, "0")}`,
     })),
-  ].map((address, index): ManagementProjection["installedSkills"][number] => ({
+  ].map((address, index): WorkspaceView["installedSkills"][number] => ({
     address,
     name: index < 2 ? "guide" : address.path,
     description: index === 1 ? "Same name, different source" : `Fixture Skill ${index}`,
@@ -305,8 +305,8 @@ const emptyDelta: ConfigSourceImpact["delta"] = {
 };
 const core: TuiCore = {
   workspace: { get: async () => result(structuredClone(projection)) },
-  content: {
-    loadInstalled: async ({ address }) => {
+  installed: {
+    load: async ({ address }) => {
       const markdownText =
         `# ${address.source} / ${address.path}\n\nneedle first\n\n` +
         Array.from(
@@ -314,34 +314,33 @@ const core: TuiCore = {
           (_, index) => `Line ${index}: ${index % 8 === 0 ? "needle" : "content"}\n`,
         ).join("\n") +
         "\n```ts\nconst needle = true;\n```\n";
-      return result({
+      return {
         address,
         name: address.path,
         description: "Fixture content",
         rawText: `---\ntitle: ${address.path}\n---\n${markdownText}`,
         markdownText,
-      });
+      };
     },
-    listInstalledResources: async () =>
-      result([
-        { path: "docs", kind: "directory" },
-        { path: "docs/guide.md", kind: "file", size: 100 },
-        { path: "notes.txt", kind: "file", size: 50 },
-        { path: "blob.bin", kind: "file", size: 8 },
-        { path: "image.png", kind: "file", size: 64 },
-        { path: "large.txt", kind: "file", size: 30_000_000 },
-        { path: "link", kind: "symlink" },
-        { path: "submodule", kind: "gitlink", gitlinkCommit: "a".repeat(40) },
-      ]),
-    readInstalled: async ({ path }) =>
+    listResources: async () => [
+      { path: "docs", kind: "directory" },
+      { path: "docs/guide.md", kind: "file", size: 100 },
+      { path: "notes.txt", kind: "file", size: 50 },
+      { path: "blob.bin", kind: "file", size: 8 },
+      { path: "image.png", kind: "file", size: 64 },
+      { path: "large.txt", kind: "file", size: 30_000_000 },
+      { path: "link", kind: "symlink" },
+      { path: "submodule", kind: "gitlink", gitlinkCommit: "a".repeat(40) },
+    ],
+    read: async ({ path }) =>
       path.endsWith(".md") || path === "notes.txt"
-        ? result({
+        ? {
             kind: "text" as const,
             path,
             format: path.endsWith(".md") ? ("markdown" as const) : ("text" as const),
             text: `# ${path}\n\nresource needle\n\n${"Long content\n".repeat(60)}`,
-          })
-        : result({
+          }
+        : {
             kind: "not-text" as const,
             path,
             reason:
@@ -359,40 +358,7 @@ const core: TuiCore = {
                     ? ("gitlink" as const)
                     : ("file" as const),
             },
-          }),
-  },
-  management: {
-    previewSourceRemoval: async ({ source }) =>
-      result({
-        kind: "source-removal",
-        source,
-        owner: owner(`/sources/${source}`),
-        installed: [],
-        repairs: [],
-        blockers: [],
-        allowed: true,
-      }),
-    removeSource: unsupported,
-    discover: async ({ source }) =>
-      result({
-        source,
-        kind: "github",
-        exactRevision: "a".repeat(40),
-        candidates: [{ path: "new-guide", name: "new-guide", description: "Discoverable fixture" }],
-      }),
-    install: unsupported,
-    // A real changed candidate makes the selection/review path reachable; update itself remains forbidden.
-    checkUpdate: async ({ source }) =>
-      result({
-        source,
-        kind: "github",
-        exactRevision: "b".repeat(40),
-        changed: [{ path: "guide", name: "guide", description: "Fixture update available" }],
-        added: [],
-        removed: [],
-        unchanged: [],
-      }),
-    update: unsupported,
+          },
     previewUninstall: async ({ source, paths }) =>
       result({
         kind: "uninstall",
@@ -422,14 +388,53 @@ const core: TuiCore = {
         allowed: true,
       }),
     rebind: unsupported,
-    observeConfig: async ({ id }) =>
+    install: unsupported,
+    checkUpdate: async ({ source }) =>
+      result({
+        source,
+        kind: "github",
+        baseline: "fixture-update-baseline",
+        exactRevision: "b".repeat(40),
+        changed: [{ path: "guide", name: "guide", description: "Fixture update available" }],
+        added: [],
+        removed: [],
+        unchanged: [],
+      }),
+    previewUpdate: unsupported,
+    updateBaseline: async () => result("fixture-update-baseline"),
+    update: unsupported,
+  },
+  sources: {
+    register: unsupported,
+    previewRemoval: async ({ source }) =>
+      result({
+        kind: "source-removal",
+        source,
+        owner: owner(`/sources/${source}`),
+        installed: [],
+        repairs: [],
+        blockers: [],
+        allowed: true,
+      }),
+    remove: unsupported,
+    discover: async ({ source }) =>
+      result({
+        source,
+        kind: "github",
+        exactRevision: "a".repeat(40),
+        candidates: [{ path: "new-guide", name: "new-guide", description: "Discoverable fixture" }],
+      }),
+  },
+  configSources: {
+    register: unsupported,
+    observe: async ({ id }) =>
       result({
         id,
         kind: "github",
         exactRevision: "a".repeat(40),
         contributions: { sources: [], collections: [] },
       }),
-    previewAdoptConfig: async ({ id, exactRevision, observation }) => {
+    previewAdoption: async ({ id, exactRevision, observation }) => {
       const source = projection.configs
         .flatMap((config) => config.direct.configSources)
         .find((item) => item.id === id);
@@ -449,23 +454,25 @@ const core: TuiCore = {
         allowed: true,
       });
     },
-    adoptConfig: unsupported,
-    previewForgetConfig: unsupported,
-    forgetConfig: unsupported,
-    previewRemoveConfig: unsupported,
-    removeConfig: unsupported,
+    adopt: unsupported,
+    previewForget: unsupported,
+    forget: unsupported,
+    previewRemoval: unsupported,
+    remove: unsupported,
   },
-  configuration: {
-    change: async (change) => {
-      if (change.type !== "agent.managed.set") return unsupported();
-      if (projection.effective.status !== "complete") return unsupported();
-      projection = {
-        ...projection,
-        effective: { ...projection.effective, managed: change.managed },
-      };
-      return result({ level: change.level, changed: true });
-    },
-    previewMembershipBatch: async (request) =>
+  collections: {
+    create: unsupported,
+    remove: unsupported,
+    addMember: unsupported,
+    removeMember: unsupported,
+    editMembers: unsupported,
+    importMembers: unsupported,
+    addReference: unsupported,
+    removeReference: unsupported,
+    setLink: unsupported,
+    previewAddMember: unsupported,
+    previewRemoveMember: unsupported,
+    previewMemberEdit: async (request) =>
       result({
         kind: "membership-batch",
         collection: request.collection,
@@ -477,10 +484,8 @@ const core: TuiCore = {
         effectful: true,
         allowed: true,
       }),
-    previewAddToCollection: unsupported,
-    previewMembershipRemoval: unsupported,
-    previewImport: unsupported,
-    previewReference: async (request) =>
+    previewImportMembers: unsupported,
+    previewAddReference: async (request) =>
       result({
         kind: "reference",
         collection: request.collection,
@@ -491,7 +496,8 @@ const core: TuiCore = {
         exposure: [],
         allowed: true,
       }),
-    previewLinkChange: async (request) =>
+    previewRemoveReference: unsupported,
+    previewSetLink: async (request) =>
       result({
         kind: "link-change",
         collection: request.collection,
@@ -503,8 +509,21 @@ const core: TuiCore = {
         blockers: [],
         allowed: true,
       }),
-    previewCollectionUse: unsupported,
-    previewCollectionRemoval: unsupported,
+    previewRemoval: unsupported,
+  },
+  use: {
+    set: unsupported,
+    add: unsupported,
+    remove: unsupported,
+    previewSet: unsupported,
+  },
+  setManagedOpenCode: async ({ level, managed }) => {
+    if (projection.effective.status !== "complete") return unsupported();
+    projection = {
+      ...projection,
+      effective: { ...projection.effective, managed },
+    };
+    return result({ level, file: owner("", level).file, changed: true });
   },
 };
 // Installed effects are intercepted before mounting. No pass-through to a real Core.
@@ -574,9 +593,13 @@ function traced<T extends object>(family: string, port: T): T {
 // Deliberately does not honor AbortSignal: late completion probes App's stale-request guards.
 const isolated: TuiCore = {
   workspace: traced("workspace", core.workspace),
-  content: traced("content", core.content),
-  management: traced("management", core.management),
-  configuration: traced("configuration", core.configuration),
+  sources: traced("sources", core.sources),
+  installed: traced("installed", core.installed),
+  configSources: traced("configSources", core.configSources),
+  collections: traced("collections", core.collections),
+  use: traced("use", core.use),
+  setManagedOpenCode: traced("core", { setManagedOpenCode: core.setManagedOpenCode })
+    .setManagedOpenCode,
 };
 const renderer = await createCliRenderer({
   screenMode: "alternate-screen",

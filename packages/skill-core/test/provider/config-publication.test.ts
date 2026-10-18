@@ -3,8 +3,8 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
-import { StateCoordinator } from "../../src/internal/state";
-import { setManagementPublicationHookForTest } from "../../src/management";
+import { StateCoordinator } from "../../src/storage/state";
+import { setManagementPublicationHookForTest } from "../../src/installed/update";
 import { createExecutableFixture } from "../executable-fixture";
 
 function assertPublicConfigImpact(value: unknown) {
@@ -74,13 +74,13 @@ test("MGMT-023 adopts the observed exact Remote Config commit after the tracked 
       userConfigPath: global,
       sourceTransport: () => remote,
     });
-    const observation = await core.management.observeConfig({ id: "remote" });
+    const observation = await core.configSources.observe({ id: "remote" });
     await writeFile(join(remote, "config.jsonc"), "{}\n");
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "move after observation");
-    await core.management.adoptConfig({
+    await core.configSources.adopt({
       id: "remote",
-      exactRevision: observation.value.exactRevision,
+      exactRevision: observation.value.exactRevision!,
     });
     const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
     expect(await readFile(join(state, "configs", digest, "config.jsonc"))).toEqual(bytes);
@@ -91,10 +91,10 @@ test("MGMT-023 adopts the observed exact Remote Config commit after the tracked 
     expect(workspace.installedSkills).toEqual([]);
     expect(workspace.configs.flatMap((config) => config.direct.collectionUse)).toEqual([]);
     expect(workspace.configs.flatMap((config) => config.direct.integrations)).toEqual([]);
-    await core.management.gc();
+    await core.gc();
     expect(await Bun.file(join(state, "configs", digest, "config.jsonc")).exists()).toBe(true);
-    await core.management.forgetConfig({ id: "remote" });
-    await core.management.gc();
+    await core.configSources.forget({ id: "remote" });
+    await core.gc();
     expect(await Bun.file(join(state, "configs", digest, "config.jsonc")).exists()).toBe(false);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
@@ -151,7 +151,7 @@ test("MGMT contains adopted reusable Config bindings that escape their remote ho
       sourceTransport: () => remote,
     });
     await expect(
-      core.management.previewAdoptConfig({ id: "shared", exactRevision: revision }),
+      core.configSources.previewAdoption({ id: "shared", exactRevision: revision }),
     ).rejects.toMatchObject({
       code: "CONFIG_INVALID",
       message: "Remote Config Source escapes its repository",
@@ -209,17 +209,17 @@ test("MGMT-029 Config Source Adopt rejects a declaration changed after preview w
     setManagementPublicationHookForTest(() =>
       writeFile(join(root, "skill-cli.jsonc"), changedBytes),
     );
-    const observation = await core.management.observeConfig({ id: "remote" });
+    const observation = await core.configSources.observe({ id: "remote" });
     expect(
       (
-        await core.management.previewAdoptConfig({
+        await core.configSources.previewAdoption({
           id: "remote",
           exactRevision: observation.value.exactRevision!,
         })
       ).value.allowed,
     ).toBe(true);
     await expect(
-      core.management.adoptConfig({ id: "remote", exactRevision: observation.value.exactRevision }),
+      core.configSources.adopt({ id: "remote", exactRevision: observation.value.exactRevision! }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
@@ -231,9 +231,9 @@ test("MGMT-029 Config Source Adopt rejects a declaration changed after preview w
       join(root, "skill-cli.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    await core.management.adoptConfig({
+    await core.configSources.adopt({
       id: "remote",
-      exactRevision: observation.value.exactRevision,
+      exactRevision: observation.value.exactRevision!,
     });
     expect(await Bun.file(join(state, "state.json")).text()).toContain(
       observation.value.exactRevision!,
@@ -264,12 +264,12 @@ test("Config adoption cancellation before publication preserves state and cache"
     );
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = createSkillCliCore({ cwd: root, sourceTransport: () => remote });
-    const observation = await core.management.observeConfig({ id: "remote" });
+    const observation = await core.configSources.observe({ id: "remote" });
     const controller = new AbortController();
     setManagementPublicationHookForTest(() => controller.abort());
     await expect(
-      core.management.adoptConfig(
-        { id: "remote", exactRevision: observation.value.exactRevision },
+      core.configSources.adopt(
+        { id: "remote", exactRevision: observation.value.exactRevision! },
         { signal: controller.signal },
       ),
     ).rejects.toMatchObject({ code: "CANCELLED" });
@@ -324,7 +324,7 @@ exec /usr/bin/git "$@"
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
     process.env.SKILL_CLI_STATE_DIR = state;
-    pending = createSkillCliCore({ cwd: root }).management.observeConfig(
+    pending = createSkillCliCore({ cwd: root }).configSources.observe(
       { id: "remote" },
       { signal: controller.signal },
     );
@@ -371,10 +371,10 @@ test("MGMT-024 and MGMT-025 reject Config Source lifecycle changes that orphan a
     );
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = createSkillCliCore({ cwd: root, sourceTransport: () => remote });
-    const observation = await core.management.observeConfig({ id: "remote" });
-    await core.management.adoptConfig({
+    const observation = await core.configSources.observe({ id: "remote" });
+    await core.configSources.adopt({
       id: "remote",
-      exactRevision: observation.value.exactRevision,
+      exactRevision: observation.value.exactRevision!,
     });
     const before = await Bun.file(join(state, "state.json")).text();
     const parsed = JSON.parse(before);
@@ -393,16 +393,16 @@ test("MGMT-024 and MGMT-025 reject Config Source lifecycle changes that orphan a
     ];
     parsed.generation += 1;
     await writeFile(join(state, "state.json"), JSON.stringify(parsed));
-    await expect(core.management.forgetConfig({ id: "remote" })).rejects.toMatchObject({
+    await expect(core.configSources.forget({ id: "remote" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).toContain('"remote"');
     await writeFile(join(remote, "config.jsonc"), "{}\n");
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "remove owner");
-    const changed = await core.management.observeConfig({ id: "remote" });
+    const changed = await core.configSources.observe({ id: "remote" });
     await expect(
-      core.management.adoptConfig({ id: "remote", exactRevision: changed.value.exactRevision }),
+      core.configSources.adopt({ id: "remote", exactRevision: changed.value.exactRevision! }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
@@ -427,8 +427,8 @@ test("MGMT-025 and MGMT-031 keep declaration removal management-owned for Local 
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = createSkillCliCore({ cwd: root });
     const previews = await Promise.all([
-      core.management.previewForgetConfig({ id: "module" }),
-      core.management.previewRemoveConfig({ id: "module" }),
+      core.configSources.previewForget({ id: "module" }),
+      core.configSources.previewRemoval({ id: "module" }),
     ]);
     for (const preview of previews) {
       expect(preview.value).toMatchObject({
@@ -438,7 +438,7 @@ test("MGMT-025 and MGMT-031 keep declaration removal management-owned for Local 
       });
       expect(JSON.stringify(preview.value)).not.toContain("digest");
     }
-    await core.management.removeConfig({ id: "module" });
+    await core.configSources.remove({ id: "module" });
     expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).not.toContain('"module"');
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
@@ -471,21 +471,21 @@ test("MGMT-024 previews exact Forget consequences while retaining the declaratio
     );
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = createSkillCliCore({ cwd: root, sourceTransport: () => remote });
-    const observed = await core.management.observeConfig({ id: "remote" });
+    const observed = await core.configSources.observe({ id: "remote" });
     if (!observed.value.exactRevision)
       throw new Error("Remote observation must include an exact revision");
-    const before = await core.management.previewForgetConfig({ id: "remote" });
+    const before = await core.configSources.previewForget({ id: "remote" });
     expect(before.value).toMatchObject({
       declarationRetained: true,
       contributions: { sources: [], collections: [] },
       allowed: true,
     });
-    const adopt = await core.management.previewAdoptConfig({
+    const adopt = await core.configSources.previewAdoption({
       id: "remote",
-      exactRevision: observed.value.exactRevision,
+      exactRevision: observed.value.exactRevision!,
     });
     expect(adopt.value).toMatchObject({
-      exactRevision: observed.value.exactRevision,
+      exactRevision: observed.value.exactRevision!,
       binding: { kind: "git", origin: "https://example.test/config", root: "", ref: "main" },
       contributions: {
         sources: [{ id: "remote/shared", owner: { pointer: "/sources/shared" } }],
@@ -494,11 +494,11 @@ test("MGMT-024 previews exact Forget consequences while retaining the declaratio
       delta: { addedSources: [{ id: "remote/shared" }], addedCollections: [{ id: "remote/team" }] },
     });
     assertPublicConfigImpact(adopt.value);
-    await core.management.adoptConfig({
+    await core.configSources.adopt({
       id: "remote",
-      exactRevision: observed.value.exactRevision,
+      exactRevision: observed.value.exactRevision!,
     });
-    const forget = await core.management.previewForgetConfig({ id: "remote" });
+    const forget = await core.configSources.previewForget({ id: "remote" });
     expect(forget.value).toMatchObject({
       currentAppliedCommit: observed.value.exactRevision,
       declarationRetained: true,
@@ -508,7 +508,7 @@ test("MGMT-024 previews exact Forget consequences while retaining the declaratio
       },
     });
     assertPublicConfigImpact(forget.value);
-    assertPublicConfigImpact((await core.management.previewRemoveConfig({ id: "remote" })).value);
+    assertPublicConfigImpact((await core.configSources.previewRemoval({ id: "remote" })).value);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });
@@ -535,16 +535,16 @@ test("MGMT-025 removes an adopted Remote Config declaration and state atomically
     );
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = createSkillCliCore({ cwd: root, sourceTransport: () => remote });
-    const observed = await core.management.observeConfig({ id: "remote" });
-    await core.management.adoptConfig({
+    const observed = await core.configSources.observe({ id: "remote" });
+    await core.configSources.adopt({
       id: "remote",
-      exactRevision: observed.value.exactRevision,
+      exactRevision: observed.value.exactRevision!,
     });
-    expect((await core.management.previewRemoveConfig({ id: "remote" })).value).toMatchObject({
+    expect((await core.configSources.previewRemoval({ id: "remote" })).value).toMatchObject({
       declarationRetained: false,
       allowed: true,
     });
-    await core.management.removeConfig({ id: "remote" });
+    await core.configSources.remove({ id: "remote" });
     expect(await readFile(host, "utf8")).not.toContain('"remote"');
     expect(await Bun.file(join(state, "state.json")).text()).not.toContain('"remote"');
   } finally {
@@ -572,21 +572,21 @@ test("MGMT-034 rejects tampered foreign or unavailable Config observations witho
     );
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = createSkillCliCore({ cwd: root, sourceTransport: () => remote });
-    const observed = (await core.management.observeConfig({ id: "remote" })).value;
+    const observed = (await core.configSources.observe({ id: "remote" })).value;
     for (const observation of [
       { ...observed, id: "foreign" },
       { ...observed, exactRevision: "f".repeat(40) },
       { ...observed, contributions: { sources: [], collections: [] } },
     ])
       await expect(
-        core.management.adoptConfig({
+        core.configSources.adopt({
           id: "remote",
-          exactRevision: observed.exactRevision,
+          exactRevision: observed.exactRevision!,
           observation,
         }),
       ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     await expect(
-      core.management.adoptConfig({ id: "remote", exactRevision: "f".repeat(40) }),
+      core.configSources.adopt({ id: "remote", exactRevision: "f".repeat(40) }),
     ).rejects.toMatchObject({ code: "PINNED_COMMIT_UNAVAILABLE" });
     expect(await Bun.file(join(state, "state.json")).exists()).toBe(false);
     expect(await Bun.file(join(state, "configs")).exists()).toBe(false);
@@ -608,16 +608,16 @@ test("MGMT-029 declaration removal rejects stale host bytes and leaves execution
     await writeFile(join(root, "skill-cli.jsonc"), host);
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = createSkillCliCore({ cwd: root });
-    await core.management.previewRemoveConfig({ id: "module" });
+    await core.configSources.previewRemoval({ id: "module" });
     setManagementPublicationHookForTest(() => writeFile(join(root, "skill-cli.jsonc"), "{}\n"));
-    await expect(core.management.removeConfig({ id: "module" })).rejects.toMatchObject({
+    await expect(core.configSources.remove({ id: "module" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).toBe("{}\n");
     expect(await Bun.file(join(state, "state.json")).exists()).toBe(false);
     setManagementPublicationHookForTest();
     await writeFile(join(root, "skill-cli.jsonc"), host);
-    await core.management.removeConfig({ id: "module" });
+    await core.configSources.remove({ id: "module" });
     expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).not.toContain('"module"');
   } finally {
     setManagementPublicationHookForTest();
@@ -668,12 +668,7 @@ test("MGMT-022 registers Local Git and GitHub Config Sources at exact G/P/L host
       },
     ];
     for (const item of cases)
-      await core.configuration.change({
-        type: "config-source.register",
-        level: item.level,
-        id: item.id,
-        binding: item.binding,
-      });
+      await core.configSources.register({ level: item.level, id: item.id, binding: item.binding });
     const workspace = (await core.workspace.get()).value;
     for (const item of cases) {
       expect(JSON.parse(await readFile(item.file, "utf8")).configSources[item.id]).toEqual(
@@ -739,8 +734,8 @@ test("MGMT-023 observes and previews Remote Config contributions at their Global
         userConfigPath: global,
         sourceTransport: () => remote,
       });
-      const observed = await core.management.observeConfig({ id });
-      const preview = await core.management.previewAdoptConfig({
+      const observed = await core.configSources.observe({ id });
+      const preview = await core.configSources.previewAdoption({
         id,
         exactRevision: observed.value.exactRevision!,
       });
@@ -792,8 +787,8 @@ test("MGMT-023 re-adoption compares current immutable contributions with the pro
     );
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = createSkillCliCore({ cwd: root, sourceTransport: () => remote });
-    const first = await core.management.observeConfig({ id: "remote" });
-    await core.management.adoptConfig({ id: "remote", exactRevision: first.value.exactRevision! });
+    const first = await core.configSources.observe({ id: "remote" });
+    await core.configSources.adopt({ id: "remote", exactRevision: first.value.exactRevision! });
     const stateBefore = await readFile(join(state, "state.json"), "utf8");
     await writeFile(
       join(remote, "config.jsonc"),
@@ -810,8 +805,8 @@ test("MGMT-023 re-adoption compares current immutable contributions with the pro
     );
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "second");
-    const second = await core.management.observeConfig({ id: "remote" });
-    const preview = await core.management.previewAdoptConfig({
+    const second = await core.configSources.observe({ id: "remote" });
+    const preview = await core.configSources.previewAdoption({
       id: "remote",
       exactRevision: second.value.exactRevision!,
     });
@@ -828,7 +823,7 @@ test("MGMT-023 re-adoption compares current immutable contributions with the pro
       },
     });
     expect(await readFile(join(state, "state.json"), "utf8")).toBe(stateBefore);
-    const equal = await core.management.previewAdoptConfig({
+    const equal = await core.configSources.previewAdoption({
       id: "remote",
       exactRevision: first.value.exactRevision!,
     });
@@ -873,22 +868,22 @@ test("MGMT-029 Forget uses current dependency facts, rejects a new blocker uncha
     await writeFile(host, JSON.stringify(declaration));
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = createSkillCliCore({ cwd: root, sourceTransport: () => remote });
-    const observed = await core.management.observeConfig({ id: "remote" });
-    await core.management.adoptConfig({
+    const observed = await core.configSources.observe({ id: "remote" });
+    await core.configSources.adopt({
       id: "remote",
-      exactRevision: observed.value.exactRevision,
+      exactRevision: observed.value.exactRevision!,
     });
-    expect((await core.management.previewForgetConfig({ id: "remote" })).value.allowed).toBe(true);
+    expect((await core.configSources.previewForget({ id: "remote" })).value.allowed).toBe(true);
     await writeFile(host, JSON.stringify({ ...declaration, use: ["remote/shared"] }));
     const executionBytes = await readFile(host, "utf8");
     const stateBytes = await readFile(join(state, "state.json"), "utf8");
-    await expect(core.management.forgetConfig({ id: "remote" })).rejects.toMatchObject({
+    await expect(core.configSources.forget({ id: "remote" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(await readFile(host, "utf8")).toBe(executionBytes);
     expect(await readFile(join(state, "state.json"), "utf8")).toBe(stateBytes);
     await writeFile(host, JSON.stringify(declaration));
-    await core.management.forgetConfig({ id: "remote" });
+    await core.configSources.forget({ id: "remote" });
     expect(await Bun.file(join(state, "state.json")).text()).not.toContain('"remote"');
     expect(await readFile(host, "utf8")).toContain('"remote"');
   } finally {

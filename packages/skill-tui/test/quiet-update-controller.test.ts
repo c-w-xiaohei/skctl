@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { SkillCliError, type ManagementProjection, type UpdateObservation } from "@skill-cli/core";
+import { SkillCliError, type WorkspaceView, type UpdateObservation } from "@skill-cli/core";
 import { createUpdateController } from "../src/updates/controller";
 import { buildUpdateScope, createUpdatesState } from "../src/updates/model";
 import { directSourceCore, testEffects, workspaceProjection } from "./direct-source.fixture";
 
 function fixture(sources = ["team-main"], paths = ["first", "second"]) {
   const base = workspaceProjection({ includeContribution: false });
-  const snapshot: ManagementProjection = {
+  const snapshot: WorkspaceView = {
     ...base,
     effective: {
       ...base.effective,
@@ -56,7 +56,7 @@ test("quiet updates start with no selection, check missing Sources and submit ex
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: async ({ source }) => {
           order.push(`check:${source}`);
           return { value: observation(source), diagnostics: [] };
@@ -97,7 +97,7 @@ test("single-item update neither requires selection nor consumes a different sel
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: async () => ({ value: observation("team-main"), diagnostics: [] }),
         update: async (request) => {
           calls.push(request);
@@ -127,7 +127,7 @@ test("a failed Source does not block others, and partial completion is not retur
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: async ({ source }) => {
           if (source === "broken") throw new Error("Cannot reach Source");
           return { value: observation(source), diagnostics: [] };
@@ -158,7 +158,7 @@ test("unrelated current selection cannot retarget a request while its check awai
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: () => pending.promise,
         update: async (request) => {
           calls.push(request);
@@ -185,7 +185,7 @@ test("Stop during checking prevents mutation and keeps not-run targets for expli
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: () => pending.promise,
         update: async () => {
           calls++;
@@ -214,7 +214,7 @@ test.each(["fulfilled", "rejected"] as const)(
     const controller = createUpdateController(
       {
         workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-        management: {
+        installed: {
           checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
           update: ({ source }) => {
             calls.push(source);
@@ -251,7 +251,7 @@ test("a fulfilled Source stays committed when the next mutation is unknown and n
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
         update: async ({ source }) => {
           calls.push(source);
@@ -286,18 +286,22 @@ test("Effects retain a committed refresh-failure receipt across restoring a drif
   let updates = 0;
   const effects = testEffects(
     directSourceCore(snapshot, {
-      get: async () => {
-        if (++reads === 3) throw new Error("refresh unavailable");
-        return { value: snapshot, diagnostics: [] };
+      workspace: {
+        get: async () => {
+          if (++reads === 3) throw new Error("refresh unavailable");
+          return { value: snapshot, diagnostics: [] };
+        },
       },
-      checkUpdate: async ({ source }) => {
-        checks++;
-        return { value: observation(source), diagnostics: [] };
-      },
-      update: async () => {
-        expect(reads).toBe(2);
-        updates++;
-        return { value: undefined, diagnostics: [] };
+      installed: {
+        checkUpdate: async ({ source }) => {
+          checks++;
+          return { value: observation(source), diagnostics: [] };
+        },
+        update: async () => {
+          expect(reads).toBe(2);
+          updates++;
+          return { value: undefined, diagnostics: [] };
+        },
       },
     }),
   );
@@ -348,7 +352,7 @@ test("Core's explicit pre-publication rejection is failed, not unknown; the atom
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: async () => ({ value: observation("team-main"), diagnostics: [] }),
         update: async () => {
           throw new SkillCliError(
@@ -387,7 +391,7 @@ test("an INVALID_ARGUMENT code without Core's no-publication evidence remains un
   const controller = createUpdateController(
     {
       workspace: { get: async () => ({ value: snapshot, diagnostics: [] }) },
-      management: {
+      installed: {
         checkUpdate: async () => ({ value: observation("team-main"), diagnostics: [] }),
         update: async () => {
           throw new SkillCliError("INVALID_ARGUMENT", "Unspecified rejected mutation");
@@ -420,7 +424,7 @@ test("requests outside a bounded Skill scope and ownership drift are rejected be
           diagnostics: [],
         }),
       },
-      management: {
+      installed: {
         checkUpdate: async () => ({ value: observation("team-main"), diagnostics: [] }),
         update: async () => {
           calls++;
@@ -440,20 +444,22 @@ test("Effects reuse a fresh baseline-valid check without a Review owner", async 
   let checks = 0;
   const requests: unknown[] = [];
   const core = directSourceCore(snapshot, {
-    checkUpdate: async ({ source }) => {
-      checks++;
-      return { value: observation(source), diagnostics: [] };
-    },
-    update: async (request) => {
-      requests.push(request);
-      return { value: undefined, diagnostics: [] };
+    installed: {
+      checkUpdate: async ({ source }) => {
+        checks++;
+        return { value: observation(source), diagnostics: [] };
+      },
+      update: async (request) => {
+        requests.push(request);
+        return { value: undefined, diagnostics: [] };
+      },
     },
   });
   const effects = testEffects({
     ...core,
-    management: {
-      ...core.management,
-      getUpdateBaseline: async ({ source }) => ({ value: `baseline:${source}`, diagnostics: [] }),
+    installed: {
+      ...core.installed,
+      updateBaseline: async ({ source }) => ({ value: `baseline:${source}`, diagnostics: [] }),
     },
   });
   try {
@@ -479,12 +485,14 @@ test.each(["fulfilled", "rejected"] as const)(
     const calls: string[] = [];
     const effects = testEffects(
       directSourceCore(snapshot, {
-        checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
-        update: (request, options) => {
-          calls.push(request.source);
-          signal = options?.signal;
-          started.resolve();
-          return pending.promise;
+        installed: {
+          checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
+          update: (request, options) => {
+            calls.push(request.source);
+            signal = options?.signal;
+            started.resolve();
+            return pending.promise;
+          },
         },
       }),
     );
@@ -559,14 +567,16 @@ test("explicit continuation uses the task's not-run targets, not the currently d
   const calls: string[] = [];
   const effects = testEffects(
     directSourceCore(snapshot, {
-      checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
-      update: ({ source }) => {
-        calls.push(source);
-        if (source === "first-source") {
-          started.resolve();
-          return pending.promise;
-        }
-        return Promise.resolve({ value: undefined, diagnostics: [] });
+      installed: {
+        checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
+        update: ({ source }) => {
+          calls.push(source);
+          if (source === "first-source") {
+            started.resolve();
+            return pending.promise;
+          }
+          return Promise.resolve({ value: undefined, diagnostics: [] });
+        },
       },
     }),
   );
@@ -598,15 +608,19 @@ test("App teardown aborts the process task and ignores a late fulfilled provider
   let reads = 0;
   const effects = testEffects(
     directSourceCore(snapshot, {
-      get: async () => {
-        reads++;
-        return { value: snapshot, diagnostics: [] };
+      workspace: {
+        get: async () => {
+          reads++;
+          return { value: snapshot, diagnostics: [] };
+        },
       },
-      checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
-      update: (_request, options) => {
-        signal = options?.signal;
-        started.resolve();
-        return pending.promise;
+      installed: {
+        checkUpdate: async ({ source }) => ({ value: observation(source), diagnostics: [] }),
+        update: (_request, options) => {
+          signal = options?.signal;
+          started.resolve();
+          return pending.promise;
+        },
       },
     }),
   );
@@ -632,16 +646,18 @@ test("stopping read-only checks during an update does not cancel the mutation or
   let updateSignal: AbortSignal | undefined;
   const effects = testEffects(
     directSourceCore(snapshot, {
-      checkUpdate: ({ source }) => {
-        checks.push(source);
-        return checks.length === 1
-          ? checking.promise
-          : Promise.resolve({ value: observation(source), diagnostics: [] });
-      },
-      update: (_request, options) => {
-        updateSignal = options?.signal;
-        started.resolve();
-        return updating.promise;
+      installed: {
+        checkUpdate: ({ source }) => {
+          checks.push(source);
+          return checks.length === 1
+            ? checking.promise
+            : Promise.resolve({ value: observation(source), diagnostics: [] });
+        },
+        update: (_request, options) => {
+          updateSignal = options?.signal;
+          started.resolve();
+          return updating.promise;
+        },
       },
     }),
   );

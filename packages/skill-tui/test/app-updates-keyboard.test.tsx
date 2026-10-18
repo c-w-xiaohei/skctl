@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
-import type { ManagementProjection, UpdateObservation } from "@skill-cli/core";
+import type { WorkspaceView, UpdateObservation } from "@skill-cli/core";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
@@ -51,7 +51,7 @@ test("App keyboard navigation reaches Updates commands and active Stop without f
     owner: { source: otherSource.id, health: "healthy" as const },
     source: otherSource,
   };
-  const projection: ManagementProjection = {
+  const projection: WorkspaceView = {
     ...base,
     // Supply actual installed members for both Sources: Updates scope discovery
     // intentionally excludes declared Sources with no installed Skills.
@@ -64,26 +64,29 @@ test("App keyboard navigation reaches Updates commands and active Stop without f
   let aborts = 0;
   const checks: string[] = [];
   const core = directSourceCore(projection, {
-    checkUpdate: ({ source }, options) => {
-      checks.push(source);
-      if (source === base.effective.sources[0]!.id) {
-        const observation: UpdateObservation = {
-          source,
-          kind: "github",
-          exactRevision: "b".repeat(40),
-          changed: [{ path: "guide", name: "guide", description: "Updated guide" }],
-          added: [],
-          removed: [],
-          unchanged: [],
-        };
-        return Promise.resolve({ value: observation, diagnostics: [] });
-      }
-      return new Promise((_, reject) =>
-        options?.signal?.addEventListener("abort", () => {
-          aborts++;
-          reject(new Error(`cancelled ${source}`));
-        }),
-      );
+    installed: {
+      checkUpdate: ({ source }, options) => {
+        checks.push(source);
+        if (source === base.effective.sources[0]!.id) {
+          const observation: UpdateObservation = {
+            source,
+            kind: "github",
+            baseline: "baseline:test",
+            exactRevision: "b".repeat(40),
+            changed: [{ path: "guide", name: "guide", description: "Updated guide" }],
+            added: [],
+            removed: [],
+            unchanged: [],
+          };
+          return Promise.resolve({ value: observation, diagnostics: [] });
+        }
+        return new Promise((_, reject) =>
+          options?.signal?.addEventListener("abort", () => {
+            aborts++;
+            reject(new Error(`cancelled ${source}`));
+          }),
+        );
+      },
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {

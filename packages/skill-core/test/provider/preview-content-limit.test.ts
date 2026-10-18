@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { openGitHubSource } from "../../src/internal/source-github";
+import { openGitHubSource } from "../../src/source/github";
 
 test("bounded GitHub preview reads reject oversized metadata before requesting a blob and constrain cached bytes", async () => {
   const commit = "a".repeat(40),

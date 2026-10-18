@@ -185,8 +185,7 @@ async function fixture(changed: boolean) {
     sourceTransport: (url) => (url === "https://github.com/acme/skills.git" ? bare : undefined),
     githubApiBaseUrl: `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
   });
-  await core.configuration.change({
-    type: "source.register",
+  await core.sources.register({
     level: "project",
     id: "github",
     binding: {
@@ -196,8 +195,8 @@ async function fixture(changed: boolean) {
       ref: "main",
     },
   });
-  await core.management.install({ source: "github", paths: ["chosen"], exactRevision: old });
-  await core.management.install({ source: "github", paths: ["other"], exactRevision: current });
+  await core.installed.install({ source: "github", paths: ["chosen"], exactRevision: old });
+  await core.installed.install({ source: "github", paths: ["other"], exactRevision: current });
   const state = JSON.parse(await readFile(stateFile, "utf8"));
   state.version = 2;
   for (const item of state.installed) delete item.treeIdentity;
@@ -244,7 +243,7 @@ test("GitHub unavailable legacy O fails check without content fallback; update c
     try {
       value.setOld("missing");
       const before = await readFile(value.stateFile);
-      await expect(value.core.management.checkUpdate({ source: "github" })).rejects.toMatchObject({
+      await expect(value.core.installed.checkUpdate({ source: "github" })).rejects.toMatchObject({
         code: "PINNED_COMMIT_UNAVAILABLE",
       });
       expect(await readFile(value.stateFile)).toEqual(before);
@@ -255,7 +254,7 @@ test("GitHub unavailable legacy O fails check without content fallback; update c
       if (changed) {
         value.requests.length = 0;
         const oldState = JSON.parse(before.toString());
-        await value.core.management.update({
+        await value.core.installed.update({
           source: "github",
           paths: ["chosen"],
           exactRevision: value.current,
@@ -295,7 +294,7 @@ test("old O 404 is not recovery evidence when fresh exact C repository-access pr
     value.setOld("missing");
     value.disappearOnOldMissing();
     const before = await readFile(value.stateFile);
-    await expect(value.core.management.checkUpdate({ source: "github" })).rejects.toMatchObject({
+    await expect(value.core.installed.checkUpdate({ source: "github" })).rejects.toMatchObject({
       code: "SOURCE_NOT_FOUND",
     });
     expect(value.requests.some((path) => path.includes("/git/blobs/"))).toBe(false);
@@ -307,7 +306,7 @@ test("old O 404 is not recovery evidence when fresh exact C repository-access pr
     value.setCurrentUnavailable();
     value.requests.length = 0;
     await expect(
-      value.core.management.update({
+      value.core.installed.update({
         source: "github",
         paths: ["chosen"],
         exactRevision: value.current,
@@ -337,7 +336,7 @@ test("GitHub legacy O auth/socket/body/integrity and current C missing never aut
       const before = await readFile(value.stateFile);
       value.setOld(outcome);
       value.requests.length = 0;
-      await expect(value.core.management.checkUpdate({ source: "github" })).rejects.toMatchObject({
+      await expect(value.core.installed.checkUpdate({ source: "github" })).rejects.toMatchObject({
         code,
       });
       expect(value.requests).toContain(`/repos/acme/skills/commits/${value.old}`);
@@ -348,7 +347,7 @@ test("GitHub legacy O auth/socket/body/integrity and current C missing never aut
 
       value.requests.length = 0;
       await expect(
-        value.core.management.update({
+        value.core.installed.update({
           source: "github",
           paths: ["chosen"],
           exactRevision: value.current,
@@ -369,11 +368,11 @@ test("GitHub legacy O auth/socket/body/integrity and current C missing never aut
     value.setOld("missing");
     value.setCurrentUnavailable();
     value.requests.length = 0;
-    await expect(value.core.management.checkUpdate({ source: "github" })).rejects.toMatchObject({
+    await expect(value.core.installed.checkUpdate({ source: "github" })).rejects.toMatchObject({
       code: "SOURCE_NOT_FOUND",
     });
     await expect(
-      value.core.management.update({
+      value.core.installed.update({
         source: "github",
         paths: ["chosen"],
         exactRevision: value.current,
@@ -392,7 +391,7 @@ test("I1R1 old O HTTP404 already classified as integrity never enters missing-ev
   try {
     value.setOld("missing-integrity");
     const before = await readFile(value.stateFile);
-    await expect(value.core.management.checkUpdate({ source: "github" })).rejects.toMatchObject({
+    await expect(value.core.installed.checkUpdate({ source: "github" })).rejects.toMatchObject({
       code: "PROVIDER_INTEGRITY_FAILED",
     });
     expect(value.requests).toContain(`/repos/acme/skills/commits/${value.old}`);
@@ -403,7 +402,7 @@ test("I1R1 old O HTTP404 already classified as integrity never enters missing-ev
     expect(await readFile(value.stateFile)).toEqual(before);
 
     value.requests.length = 0;
-    await value.core.management.update({
+    await value.core.installed.update({
       source: "github",
       paths: ["chosen"],
       exactRevision: value.current,

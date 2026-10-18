@@ -78,16 +78,15 @@ async function mount(width: number, height: number) {
     () => (
       <App
         core={directSourceCore(fixture(), {
-          loadInstalled: async ({ address }) => ({
-            value: {
+          installed: {
+            load: async ({ address }) => ({
               address,
               name: address.path,
               description: "Guide",
               rawText: "# Guide\n\nUsage instructions.",
               markdownText: "# Guide\n\nUsage instructions.",
-            },
-            diagnostics: [],
-          }),
+            }),
+          },
         })}
         exit={() => {}}
       />

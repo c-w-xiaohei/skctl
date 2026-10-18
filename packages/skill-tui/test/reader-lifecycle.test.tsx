@@ -33,14 +33,13 @@ async function boot() {
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async (request) => ({
-            value:
+          installed: {
+            load: async (request) =>
               request.address.path === readerSecondAddress.path
                 ? readerSecondContent
                 : readerContent,
-            diagnostics: [],
-          }),
-          listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
+            listResources: async () => readerResources,
+          },
         })}
         exit={() => {}}
       />

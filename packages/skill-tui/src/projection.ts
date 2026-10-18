@@ -1,5 +1,5 @@
 import { batch, createSignal, type Accessor } from "solid-js";
-import type { Diagnostic, ManagementProjection } from "@skill-cli/core";
+import type { Diagnostic, WorkspaceView } from "@skill-cli/core";
 import { projectionOwnerExists } from "./types";
 import type { OperationState } from "./operation-state";
 import type { WorkspaceState } from "./workspace/state";
@@ -8,12 +8,12 @@ import type { ConfigState } from "./config/state";
 
 export interface ProjectionOutcomes {
   readonly loading: () => void;
-  readonly applyProjection: (snapshot: ManagementProjection) => void;
+  readonly applyProjection: (snapshot: WorkspaceView) => void;
   readonly failed: (diagnostic: Diagnostic) => void;
 }
 
 export interface Projection {
-  readonly workspace: Accessor<ManagementProjection | undefined>;
+  readonly workspace: Accessor<WorkspaceView | undefined>;
   readonly refresh: Accessor<"idle" | "loading" | "stale">;
   readonly diagnostic: Accessor<Diagnostic | undefined>;
   readonly outcomes: ProjectionOutcomes;
@@ -26,13 +26,13 @@ export function createProjection(
     readonly collections: CollectionsState;
     readonly config: ConfigState;
   },
-  revalidateRoute: (snapshot: ManagementProjection) => void = () => {},
+  revalidateRoute: (snapshot: WorkspaceView) => void = () => {},
 ): Projection {
-  const [workspace, setWorkspace] = createSignal<ManagementProjection>();
+  const [workspace, setWorkspace] = createSignal<WorkspaceView>();
   const [refresh, setRefresh] = createSignal<"idle" | "loading" | "stale">("idle");
   const [diagnostic, setDiagnostic] = createSignal<Diagnostic>();
 
-  const applyProjection = (snapshot: ManagementProjection) => {
+  const applyProjection = (snapshot: WorkspaceView) => {
     batch(() => {
       const previous = workspace();
       setWorkspace(snapshot);

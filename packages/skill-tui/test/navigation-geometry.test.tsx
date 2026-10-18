@@ -84,32 +84,33 @@ test.each([
       () => (
         <App
           core={directSourceCore(projection, {
-            get: async () => {
-              await loading;
-              return { value: projection, diagnostics: [] };
+            workspace: {
+              get: async () => {
+                await loading;
+                return { value: projection, diagnostics: [] };
+              },
             },
-            checkUpdate: async (_request, options) => {
-              checks++;
-              checkStarted();
-              signal = options?.signal;
-              await new Promise<void>((_resolve, reject) => {
-                const abort = () =>
-                  reject(Object.assign(new Error("cancelled"), { code: "CANCELLED" }));
-                if (signal?.aborted) abort();
-                else signal?.addEventListener("abort", abort, { once: true });
-              });
-              throw new Error("Only cancellation settles this check");
-            },
-            loadInstalled: async ({ address }) => ({
-              value: {
+            installed: {
+              checkUpdate: async (_request, options) => {
+                checks++;
+                checkStarted();
+                signal = options?.signal;
+                await new Promise<void>((_resolve, reject) => {
+                  const abort = () =>
+                    reject(Object.assign(new Error("cancelled"), { code: "CANCELLED" }));
+                  if (signal?.aborted) abort();
+                  else signal?.addEventListener("abort", abort, { once: true });
+                });
+                throw new Error("Only cancellation settles this check");
+              },
+              load: async ({ address }) => ({
                 address,
                 name: address.path,
                 description: "Navigation geometry fixture",
                 rawText: "# Installed instructions\n\nRead without moving navigation.",
                 markdownText: "# Installed instructions\n\nRead without moving navigation.",
-              },
-              diagnostics: [],
-            }),
+              }),
+            },
           })}
           exit={() => {}}
         />
@@ -234,16 +235,15 @@ test.each([144, 80])(
       () => (
         <App
           core={directSourceCore(collectionsSourcesProjection(), {
-            loadInstalled: async ({ address }) => ({
-              value: {
+            installed: {
+              load: async ({ address }) => ({
                 address,
                 name: address.path,
                 description: "Installed object",
                 rawText: "Exact installed object",
                 markdownText: "Exact installed object",
-              },
-              diagnostics: [],
-            }),
+              }),
+            },
           })}
           exit={() => {}}
         />

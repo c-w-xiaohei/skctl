@@ -191,6 +191,7 @@ export function CollectionImportOverlay(props: {
 
 export function ReferenceOverlay(props: {
   readonly level: "global" | "project" | "local";
+  readonly expectedOwner?: import("@skill-cli/core").ConfigDeclarationOwner;
   readonly collection: string;
   readonly name: string;
   readonly target: string;
@@ -199,7 +200,10 @@ export function ReferenceOverlay(props: {
   readonly pending: boolean;
   readonly error?: { readonly code: string; readonly message: string };
   readonly onPreview: (
-    intent: Extract<CollectionReview["intent"], { readonly kind: "reference" }>,
+    intent: Extract<
+      CollectionReview["intent"],
+      { readonly kind: "reference-add" | "reference-remove" }
+    >,
   ) => void;
   readonly onCancel: () => void;
 }) {
@@ -264,17 +268,29 @@ export function ReferenceOverlay(props: {
                 ? "Wait for the current review to settle"
                 : "Enter a reference name and target",
             )}
-            execute={() =>
-              props.onPreview({
-                kind: "reference",
+            execute={() => {
+              const shared = {
                 level: props.level,
                 collection: props.collection,
                 name: name().trim(),
-                target: target().trim(),
-                description: description().trim(),
-                remove: props.remove,
-              })
-            }
+              };
+              props.onPreview(
+                props.remove
+                  ? {
+                      kind: "reference-remove",
+                      ...shared,
+                      ...(props.expectedOwner ? { expectedOwner: props.expectedOwner } : {}),
+                      expected: { collection: target().trim(), description: description().trim() },
+                    }
+                  : {
+                      kind: "reference-add",
+                      ...shared,
+                      ...(props.expectedOwner ? { expectedOwner: props.expectedOwner } : {}),
+                      target: target().trim(),
+                      description: description().trim(),
+                    },
+              );
+            }}
           />
         </box>
       </ModalBody>
@@ -284,6 +300,7 @@ export function ReferenceOverlay(props: {
 
 export function LinkChangeOverlay(props: {
   readonly level: "global" | "project" | "local";
+  readonly expectedOwner?: import("@skill-cli/core").ConfigDeclarationOwner;
   readonly collection: string;
   readonly target: string;
   readonly linked: boolean;
@@ -335,6 +352,7 @@ export function LinkChangeOverlay(props: {
               props.onPreview({
                 kind: "link-change",
                 level: props.level,
+                ...(props.expectedOwner ? { expectedOwner: props.expectedOwner } : {}),
                 collection: props.collection,
                 target: target().trim(),
                 linked: props.linked,

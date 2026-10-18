@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openGitSource, resolveGitRef, runProviderChild } from "../../src/internal/source-git";
-import { createSourceOperation } from "../../src/internal/source-network";
-import { openGitHubSource } from "../../src/internal/source-github";
+import { openGitSource, resolveGitRef, runProviderChild } from "../../src/source/git";
+import { createSourceOperation } from "../../src/source/network";
+import { openGitHubSource } from "../../src/source/github";
 import { createExecutableFixture } from "../executable-fixture";
 
 const provenance = {

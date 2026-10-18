@@ -9,8 +9,7 @@ export function managedCommand(parent: Command, { core, stdout }: CommandContext
   scopeOptions(managed.command("set"))
     .description("Enable the managed OpenCode catalog at one configuration level.")
     .action(async (flags, action) => {
-      const { value } = await core(action).configuration.change({
-        type: "agent.managed.set",
+      const { value } = await core(action).setManagedOpenCode({
         level: scope(flags)!,
         managed: true,
       });
@@ -19,8 +18,7 @@ export function managedCommand(parent: Command, { core, stdout }: CommandContext
   scopeOptions(managed.command("unset"))
     .description("Disable the managed OpenCode catalog at one configuration level.")
     .action(async (flags, action) => {
-      const { value } = await core(action).configuration.change({
-        type: "agent.managed.set",
+      const { value } = await core(action).setManagedOpenCode({
         level: scope(flags)!,
         managed: false,
       });

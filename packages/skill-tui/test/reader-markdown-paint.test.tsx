@@ -17,9 +17,11 @@ test("RENDER Reader mounts a paintable content surface", async () => {
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async (request) => {
-            reads.push(request);
-            return { value: readerContent, diagnostics: [] };
+          installed: {
+            load: async (request) => {
+              reads.push(request);
+              return readerContent;
+            },
           },
         })}
         exit={() => {}}

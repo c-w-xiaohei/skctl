@@ -10,6 +10,6 @@ export function loadCommand(parent: Command, { core, stdout }: CommandContext) {
       new Argument("<selector>", "Skill selector, not a collection ID").argParser(skillSelector),
     )
     .action(async (selector, _flags, action) => {
-      stdout.write((await core(action).content.load({ selector })).value.text);
+      stdout.write((await core(action).content.load({ selector })).text);
     });
 }

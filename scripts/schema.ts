@@ -1,4 +1,4 @@
-import { schemaJson } from "../packages/skill-core/src/internal/config";
+import { schemaJson } from "../packages/skill-core/src/config/document";
 
 const path = "packages/skill-core/schema/skill-cli.schema.json";
 const mode = process.argv[2];

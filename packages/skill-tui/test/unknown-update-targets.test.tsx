@@ -1,10 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
-import {
-  SkillCliError,
-  type ManagementCapability,
-  type ManagementProjection,
-} from "@skill-cli/core";
+import { SkillCliError, type InstalledCapability, type WorkspaceView } from "@skill-cli/core";
 import { SelectRenderable, TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { ButtonRenderable } from "@tuiparts/core/button";
@@ -34,7 +30,7 @@ function fixture(
 ) {
   return createRoot((dispose) => {
     const base = workspaceProjection({ includeContribution: false });
-    const projection: ManagementProjection = {
+    const projection: WorkspaceView = {
       ...base,
       installedSkills: paths.map((path) => ({
         address: { source, path },
@@ -51,7 +47,7 @@ function fixture(
     };
     const state = createUpdatesState(buildUpdateScope(projection, { kind: "workspace" }));
     const checks: string[] = [];
-    const updates: Parameters<ManagementCapability["update"]>[0][] = [];
+    const updates: Parameters<InstalledCapability["update"]>[0][] = [];
     const controller = createUpdateController(
       {
         workspace: {
@@ -70,7 +66,7 @@ function fixture(
             diagnostics: [],
           }),
         },
-        management: {
+        installed: {
           checkUpdate: async ({ source }) => {
             checks.push(source);
             if (failure === "check") throw new Error("Source unavailable");

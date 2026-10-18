@@ -1,17 +1,28 @@
-import {
-  SkillCliError,
-  type ContentCapability,
-  type Diagnostic,
-  type OperationResult,
-} from "@skill-cli/core";
+import { SkillCliError, type Diagnostic } from "@skill-cli/core";
 import { createSignal, untrack } from "solid-js";
 import { skillAddressKey, type ReaderState } from "../types";
 
 export type ReaderAddress = { readonly source: string; readonly path: string };
-type ReaderContent = Pick<
-  ContentCapability,
-  "loadInstalled" | "listInstalledResources" | "readInstalled"
->;
+type ReaderContent = {
+  load(
+    request: { readonly address: ReaderAddress },
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<{
+    readonly address: ReaderAddress;
+    readonly name: string;
+    readonly description: string;
+    readonly rawText: string;
+    readonly markdownText: string;
+  }>;
+  listResources(
+    request: { readonly address: ReaderAddress },
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<readonly import("@skill-cli/core").ResourceDescriptor[]>;
+  read(
+    request: { readonly address: ReaderAddress; readonly path: string },
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<import("@skill-cli/core").InstalledResourceResult>;
+};
 type Lane = "content" | "resource";
 interface ReaderCache {
   readonly activeKey?: string;
@@ -121,19 +132,15 @@ export function createReaderOwner(
     contentRequest = request;
     const active = () => !closed && contentRequest === request && !controller.signal.aborted;
     try {
-      const result = await content.loadInstalled({ address }, { signal: controller.signal });
+      const value = await content.load({ address }, { signal: controller.signal });
       if (!active()) return undefined;
       accept(address, "content", epoch, {
-        text: result.value.markdownText,
-        rawText: result.value.rawText,
+        text: value.markdownText,
+        rawText: value.rawText,
         loading: false,
         error: undefined,
       });
-      for (const item of result.diagnostics) {
-        if (!active()) return undefined;
-        failure(address, "content", epoch, item);
-      }
-      return result;
+      return value;
     } catch (error) {
       if (active()) {
         if (cancelled(error)) retireContent(address, epoch);
@@ -148,7 +155,7 @@ export function createReaderOwner(
   const resource = async <T>(
     address: ReaderAddress,
     initial: Partial<ReaderState>,
-    read: (signal: AbortSignal) => Promise<OperationResult<T>>,
+    read: (signal: AbortSignal) => Promise<T>,
     settled: (value: T) => Partial<ReaderState>,
   ) => {
     if (closed) return undefined;
@@ -161,16 +168,15 @@ export function createReaderOwner(
       error: undefined,
     });
     try {
-      const result = await read(controller.signal);
+      const value = await read(controller.signal);
       if (!closed) {
         accept(address, "resource", epoch, {
-          ...settled(result.value),
+          ...settled(value),
           resourceLoading: false,
           error: undefined,
         });
-        for (const item of result.diagnostics) failure(address, "resource", epoch, item);
       }
-      return result;
+      return value;
     } catch (error) {
       if (!closed && !cancelled(error)) failure(address, "resource", epoch, diagnostic(error));
       return undefined;
@@ -275,14 +281,14 @@ export function createReaderOwner(
       resource(
         address,
         { resourceLevel: "list" },
-        (signal) => content.listInstalledResources({ address }, { signal }),
+        (signal) => content.listResources({ address }, { signal }),
         (resources) => ({ resources, resourcesLoaded: true }),
       ),
     read: (address: ReaderAddress, path: string) =>
       resource(
         address,
         { selectedResource: path, resource: undefined, resourceLevel: "content" },
-        (signal) => content.readInstalled({ address, path }, { signal }),
+        (signal) => content.read({ address, path }, { signal }),
         (value) => ({ selectedResource: value.path, resource: value, resourceLevel: "content" }),
       ),
     cancelContent,

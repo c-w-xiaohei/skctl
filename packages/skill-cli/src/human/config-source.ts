@@ -32,8 +32,7 @@ export function configSourceCommand(parent: Command, { core, stdout }: CommandCo
         );
       if (kind !== "local" && flags.ref === undefined)
         throw new SkillCliError("INVALID_ARGUMENT", "Remote Config Source requires --ref");
-      const { value } = await core(action).configuration.change({
-        type: "config-source.register",
+      const { value } = await core(action).configSources.register({
         level: scope(flags)!,
         id,
         binding: sourceBinding(kind, origin, flags),
@@ -43,8 +42,8 @@ export function configSourceCommand(parent: Command, { core, stdout }: CommandCo
   scopeOptions(configs.command("remove <id>"), false)
     .description("Remove a directly declared Config Source at one scope.")
     .action(async (id, flags, action) => {
-      const selectedScope = scope(flags, undefined);
-      await core(action).management.removeConfig({ id, level: selectedScope });
+      const selectedScope = scope(flags, null);
+      await core(action).configSources.remove({ id, level: selectedScope });
       stdout.write(
         `Removed config source "${id}"${selectedScope ? ` from ${selectedScope} scope` : ""}.\n`,
       );
@@ -53,7 +52,7 @@ export function configSourceCommand(parent: Command, { core, stdout }: CommandCo
     .command("observe <id>")
     .option("--json")
     .action(async (id, flags, action) => {
-      const { value } = await core(action).management.observeConfig({ id });
+      const { value } = await core(action).configSources.observe({ id });
       stdout.write(
         formatObservation(value, !!flags.json, [
           ...(value.exactRevision ? [`revision ${value.exactRevision}`] : []),
@@ -66,13 +65,13 @@ export function configSourceCommand(parent: Command, { core, stdout }: CommandCo
     });
   configs
     .command("adopt <id>")
-    .option("--revision <revision>", "Exact remote commit to adopt.", revision)
+    .requiredOption("--revision <revision>", "Exact remote commit to adopt.", revision)
     .action(async (id, flags, action) => {
-      await core(action).management.adoptConfig({ id, exactRevision: flags.revision });
+      await core(action).configSources.adopt({ id, exactRevision: flags.revision });
       stdout.write(`Adopted config source "${id}".\n`);
     });
   configs.command("forget <id>").action(async (id, _flags, action) => {
-    await core(action).management.forgetConfig({ id });
+    await core(action).configSources.forget({ id });
     stdout.write(`Forgot adopted config source "${id}".\n`);
   });
 }

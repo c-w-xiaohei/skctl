@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { SourceBindingView } from "../../src/api";
-import { inspectRemoteRoots } from "../../src/internal/sources";
-import { createSourceOperation } from "../../src/internal/source-network";
-import type { RunGit } from "../../src/internal/source-git";
-import { openGitRef, openGitSource, resolveGitRef } from "../../src/internal/source-git";
-import { openGitHubSource } from "../../src/internal/source-github";
+import type { SourceBindingView } from "../../src/source/types";
+import { inspectRemoteRoots } from "../../src/source/snapshot";
+import { createSourceOperation } from "../../src/source/network";
+import type { RunGit } from "../../src/source/git";
+import { openGitRef, openGitSource, resolveGitRef } from "../../src/source/git";
+import { openGitHubSource } from "../../src/source/github";
 import { createExecutableFixture } from "../executable-fixture";
 import { networkFixture } from "./network-fixture";
 

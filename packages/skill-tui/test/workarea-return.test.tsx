@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { ButtonRenderable } from "@tuiparts/core/button";
 import { SelectRenderable, type BaseRenderable } from "@opentui/core";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { testRender } from "@opentui/solid";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -25,7 +25,7 @@ const descendants = (node: BaseRenderable): BaseRenderable[] => [
 async function mount(
   width = 100,
   height = 24,
-  projection: ManagementProjection = collectionsSourcesProjection(),
+  projection: WorkspaceView = collectionsSourcesProjection(),
 ) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/workarea-return-");

@@ -16,9 +16,11 @@ test("RENDER App follows the renderer theme and loads the initial Workspace once
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          get: async () => {
-            loads += 1;
-            return { value: workspaceProjection(), diagnostics: [] };
+          workspace: {
+            get: async () => {
+              loads += 1;
+              return { value: workspaceProjection(), diagnostics: [] };
+            },
           },
         })}
         exit={() => {}}

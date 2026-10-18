@@ -88,24 +88,24 @@ async function openResources(setup: Setup) {
 test.serial(
   "RENDER Resources lists paths with selected structural information, pending and empty states",
   async () => {
-    let resolveList:
-      | ((value: { value: typeof readerResources; diagnostics: [] }) => void)
-      | undefined;
+    let resolveList: ((value: typeof readerResources) => void) | undefined;
     const calls: unknown[] = [];
     let listSignal: AbortSignal | undefined;
     const setup = await testRender(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-            listInstalledResources: (request, options) => {
-              calls.push(request);
-              listSignal = options?.signal;
-              if (calls.length > 1)
-                throw new Error("Pending Resources entry started a second list request");
-              return new Promise((resolve) => {
-                resolveList = resolve;
-              });
+            installed: {
+              load: async () => readerContent,
+              listResources: (request, options) => {
+                calls.push(request);
+                listSignal = options?.signal;
+                if (calls.length > 1)
+                  throw new Error("Pending Resources entry started a second list request");
+                return new Promise((resolve) => {
+                  resolveList = resolve;
+                });
+              },
             },
           })}
           exit={() => {}}
@@ -122,7 +122,7 @@ test.serial(
       expect(calls).toEqual([{ address: readerAddress }]);
       expect(listSignal?.aborted).toBe(false);
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-resources-status");
-      resolveList!({ value: readerResources, diagnostics: [] });
+      resolveList!(readerResources);
       await setup.waitForFrame((frame) => frame.includes("docs/") && frame.includes("bin/run"));
       const browser = await resourceBrowser(setup);
       expect(calls).toEqual([{ address: readerAddress }]);
@@ -157,8 +157,7 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-            listInstalledResources: async () => ({ value: [], diagnostics: [] }),
+            installed: { load: async () => readerContent, listResources: async () => [] },
           })}
           exit={() => {}}
         />
@@ -183,42 +182,32 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-            listInstalledResources: async () => ({
-              value: [...readerResources, { path: "guide", kind: "file" }],
-              diagnostics: [],
-            }),
-            readInstalled: async (request) => {
-              calls.push(request);
-              if (request.path === "docs/guide.md" || request.path === "guide")
-                return {
-                  value: {
+            installed: {
+              load: async () => readerContent,
+              listResources: async () => [...readerResources, { path: "guide", kind: "file" }],
+              read: async (request) => {
+                calls.push(request);
+                if (request.path === "docs/guide.md" || request.path === "guide")
+                  return {
                     kind: "text",
                     path: request.path,
                     text: "# Resource heading",
                     format: "markdown",
-                  },
-                  diagnostics: [],
-                };
-              if (request.path === "bin/run")
-                return {
-                  value: {
+                  };
+                if (request.path === "bin/run")
+                  return {
                     kind: "text",
                     path: request.path,
                     text: "#!/bin/sh\necho hi",
                     format: "text",
-                  },
-                  diagnostics: [],
-                };
-              return {
-                value: {
+                  };
+                return {
                   kind: "not-text",
                   path: request.path,
                   reason: "binary",
                   metadata: { path: request.path, kind: "file", size: 8 },
-                },
-                diagnostics: [],
-              };
+                };
+              },
             },
           })}
           exit={() => {}}
@@ -269,25 +258,24 @@ test.serial(
   async () => {
     let attempts = 0;
     let resolveRetry:
-      | ((value: {
-          value: { kind: "text"; path: string; text: string; format: "text" };
-          diagnostics: [];
-        }) => void)
+      | ((value: { kind: "text"; path: string; text: string; format: "text" }) => void)
       | undefined;
     const calls: unknown[] = [];
     const setup = await testRender(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-            listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
-            readInstalled: async (request) => {
-              calls.push(request);
-              attempts++;
-              if (attempts === 1) throw new SkillCliError("RESOURCE_NOT_FOUND", "resource moved");
-              return new Promise((resolve) => {
-                resolveRetry = resolve;
-              });
+            installed: {
+              load: async () => readerContent,
+              listResources: async () => readerResources,
+              read: async (request) => {
+                calls.push(request);
+                attempts++;
+                if (attempts === 1) throw new SkillCliError("RESOURCE_NOT_FOUND", "resource moved");
+                return new Promise((resolve) => {
+                  resolveRetry = resolve;
+                });
+              },
             },
           })}
           exit={() => {}}
@@ -310,15 +298,7 @@ test.serial(
       ]);
       expect(setup.renderer.root.findDescendantById("resource-content")).toBeDefined();
       await setup.waitForFrame((frame) => frame.includes("Loading resource content"));
-      resolveRetry!({
-        value: {
-          kind: "text",
-          path: "docs/guide.md",
-          text: "recovered",
-          format: "text",
-        },
-        diagnostics: [],
-      });
+      resolveRetry!({ kind: "text", path: "docs/guide.md", text: "recovered", format: "text" });
       await setup.waitForFrame((frame) => frame.includes("recovered"));
       expect(calls).toEqual([
         { address: readerAddress, path: "docs/guide.md" },
@@ -348,16 +328,18 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-            listInstalledResources: async (request) => {
-              calls.push(request);
-              attempts++;
-              if (attempts === 1) throw new SkillCliError("RESOURCE_NOT_FOUND", "list moved");
-              return { value: readerResources, diagnostics: [] };
-            },
-            readInstalled: async (request) => {
-              reads.push(request);
-              throw new Error("list retry must not read content");
+            installed: {
+              load: async () => readerContent,
+              listResources: async (request) => {
+                calls.push(request);
+                attempts++;
+                if (attempts === 1) throw new SkillCliError("RESOURCE_NOT_FOUND", "list moved");
+                return readerResources;
+              },
+              read: async (request) => {
+                reads.push(request);
+                throw new Error("list retry must not read content");
+              },
             },
           })}
           exit={() => {}}
@@ -396,30 +378,26 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-            listInstalledResources: async () => ({ value: resources, diagnostics: [] }),
-            readInstalled: async (request) => {
-              reads.push(request);
-              const descriptor = resources.find((resource) => resource.path === request.path)!;
-              if (descriptor.kind !== "file")
-                return {
-                  value: {
+            installed: {
+              load: async () => readerContent,
+              listResources: async () => resources,
+              read: async (request) => {
+                reads.push(request);
+                const descriptor = resources.find((resource) => resource.path === request.path)!;
+                if (descriptor.kind !== "file")
+                  return {
                     kind: "not-text" as const,
                     path: request.path,
                     reason: "unsupported" as const,
                     metadata: descriptor,
-                  },
-                  diagnostics: [],
-                };
-              return {
-                value: {
+                  };
+                return {
                   kind: "text" as const,
                   path: request.path,
                   text: "plain text",
                   format: "text" as const,
-                },
-                diagnostics: [],
-              };
+                };
+              },
             },
           })}
           exit={() => {}}
@@ -463,31 +441,27 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-            listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
-            readInstalled: async (request) => {
-              reads.push(request);
-              if (request.path === "docs/guide.md")
-                return {
-                  value: {
+            installed: {
+              load: async () => readerContent,
+              listResources: async () => readerResources,
+              read: async (request) => {
+                reads.push(request);
+                if (request.path === "docs/guide.md")
+                  return {
                     kind: "text" as const,
                     path: request.path,
                     text: "old resource",
                     format: "text" as const,
-                  },
-                  diagnostics: [],
-                };
-              if (reads.length === 2)
-                throw new SkillCliError("RESOURCE_NOT_FOUND", "new resource moved");
-              return {
-                value: {
+                  };
+                if (reads.length === 2)
+                  throw new SkillCliError("RESOURCE_NOT_FOUND", "new resource moved");
+                return {
                   kind: "text" as const,
                   path: request.path,
                   text: "retried",
                   format: "text" as const,
-                },
-                diagnostics: [],
-              };
+                };
+              },
             },
           })}
           exit={() => {}}
@@ -533,8 +507,8 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async (request) => ({
-              value:
+            installed: {
+              load: async (request) =>
                 request.address.path === "reference"
                   ? {
                       ...readerContent,
@@ -543,23 +517,19 @@ test.serial(
                       markdownText: "# Reference",
                     }
                   : readerContent,
-              diagnostics: [],
-            }),
-            listInstalledResources: async (request) => {
-              lists.push(request);
-              return { value: [{ path: "guide", kind: "file" }], diagnostics: [] };
-            },
-            readInstalled: async (request) => {
-              reads.push(request);
-              return {
-                value: {
+              listResources: async (request) => {
+                lists.push(request);
+                return [{ path: "guide", kind: "file" }];
+              },
+              read: async (request) => {
+                reads.push(request);
+                return {
                   kind: "text" as const,
                   path: request.path,
                   text: `# ${request.address.path} resource`,
                   format: "markdown" as const,
-                },
-                diagnostics: [],
-              };
+                };
+              },
             },
           })}
           exit={() => {}}

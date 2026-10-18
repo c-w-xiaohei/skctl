@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { compareRoots } from "../../src/updates";
-import type { InstalledMaterialization } from "../../src/internal/state";
+import { compareRoots } from "../../src/installed/update";
+import type { InstalledMaterialization } from "../../src/storage/schema";
 
 const tree = (digit: string) => ({ objectFormat: "sha1" as const, objectId: digit.repeat(40) });
 const installed = (path: string): InstalledMaterialization => ({

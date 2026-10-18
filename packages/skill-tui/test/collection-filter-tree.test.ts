@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { CollectionView, ManagementProjection } from "@skill-cli/core";
+import type { CollectionView, WorkspaceView } from "@skill-cli/core";
 import {
   collectionFilterPathAncestors,
   collectionFilterPathKey,
@@ -23,7 +23,7 @@ const view = (id: string, references: readonly string[] = []): CollectionView =>
   })),
   links: [],
 });
-function projection(collectionViews: readonly CollectionView[]): ManagementProjection {
+function projection(collectionViews: readonly CollectionView[]): WorkspaceView {
   const base = readerProjection();
   return {
     ...base,
@@ -38,7 +38,7 @@ function projection(collectionViews: readonly CollectionView[]): ManagementProje
     },
   };
 }
-const rows = (source: ManagementProjection, expanded: Readonly<Record<string, boolean>> = {}) => {
+const rows = (source: WorkspaceView, expanded: Readonly<Record<string, boolean>> = {}) => {
   const tree = deriveCollectionFilterTree(source, expanded);
   if (tree.status !== "available") throw new Error(tree.reason);
   return tree.rows;

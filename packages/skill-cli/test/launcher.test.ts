@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { constants as osConstants } from "node:os";
 import { join } from "node:path";
 import { installedTuiCandidates, resolveInstalledTui, superviseTui } from "../src/tui-launcher";
 import { runMain } from "../src/main";
@@ -102,14 +103,17 @@ test("supervision forwards termination, awaits child status and removes listener
     ),
   ).toBe(143);
   expect(
-    await superviseTui({ exited: Promise.resolve(0), signalCode: 35, kill: () => {} }, signals),
-  ).toBe(163);
+    await superviseTui(
+      { exited: Promise.resolve(0), signalCode: "SIGUSR2", kill: () => {} },
+      signals,
+    ),
+  ).toBe(128 + osConstants.signals.SIGUSR2);
   expect(
-    await superviseTui({ exited: Promise.resolve(7), signalCode: 35, kill: () => {} }, signals),
+    await superviseTui(
+      { exited: Promise.resolve(7), signalCode: "SIGUSR2", kill: () => {} },
+      signals,
+    ),
   ).toBe(7);
-  expect(
-    await superviseTui({ exited: Promise.resolve(0), signalCode: 0, kill: () => {} }, signals),
-  ).toBe(0);
   expect(
     await superviseTui({ exited: Promise.resolve(0), signalCode: null, kill: () => {} }, signals),
   ).toBe(0);

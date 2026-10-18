@@ -27,14 +27,17 @@ const guideManageId = `collection-relationships-row-guide%3A0:action-${encodeURI
 async function mount(width = 144, height = 40, projection = collectionsSourcesProjection()) {
   const previews: unknown[] = [];
   const core = directSourceCore(projection);
-  const preview = core.configuration.previewMembershipBatch;
-  core.configuration.previewMembershipBatch = async (request, options) => {
+  const preview = core.collections.previewMemberEdit;
+  core.collections.previewMemberEdit = async (request, options) => {
     previews.push(request);
     return preview(request, options);
   };
-  core.configuration.change = async () => {
-    throw new Error("Unconfirmed collection actions must not write configuration");
-  };
+  core.collections.addMember =
+    core.collections.removeMember =
+    core.collections.editMembers =
+      async () => {
+        throw new Error("Unconfirmed collection actions must not write configuration");
+      };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width,
     height,

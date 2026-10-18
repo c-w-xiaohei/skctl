@@ -114,32 +114,27 @@ test("RENDER Installed Skill pointer opens its exact Inspector before explicitly
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async (request) => {
-            loads.push(request.address.path);
-            return {
-              value:
-                request.address.path === readerSecondAddress.path
-                  ? {
-                      address: readerSecondAddress,
-                      name: "reference",
-                      description: "custom",
-                      rawText: "",
-                      markdownText: "",
-                    }
-                  : readerContent,
-              diagnostics: [],
-            };
-          },
-          listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
-          readInstalled: async (request) => ({
-            value: {
+          installed: {
+            load: async (request) => {
+              loads.push(request.address.path);
+              return request.address.path === readerSecondAddress.path
+                ? {
+                    address: readerSecondAddress,
+                    name: "reference",
+                    description: "custom",
+                    rawText: "",
+                    markdownText: "",
+                  }
+                : readerContent;
+            },
+            listResources: async () => readerResources,
+            read: async (request) => ({
               kind: "text" as const,
               path: request.path,
               text: "resource body",
               format: "text" as const,
-            },
-            diagnostics: [],
-          }),
+            }),
+          },
         })}
         exit={() => {}}
       />

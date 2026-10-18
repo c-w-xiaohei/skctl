@@ -5,7 +5,7 @@ import { App } from "../src/app";
 import {
   SkillCliError,
   type CollectionView,
-  type ManagementProjection,
+  type WorkspaceView,
   type MembershipBatchImpact,
 } from "@skill-cli/core";
 import { directOwner, directSourceCore, workspaceProjection } from "./direct-source.fixture";
@@ -18,7 +18,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function remoteConfigProjection(): ManagementProjection {
+function remoteConfigProjection(): WorkspaceView {
   const base = workspaceProjection();
   return {
     ...base,
@@ -368,9 +368,9 @@ test("RENDER stale Import preview completion cannot replace a newer same-kind Co
       <App
         core={{
           ...base,
-          configuration: {
-            ...base.configuration,
-            previewImport: async (request) => {
+          collections: {
+            ...base.collections,
+            previewImportMembers: async (request) => {
               requests.push(request);
               return previewA.promise.then((value) => {
                 consumedA++;
@@ -460,9 +460,9 @@ test("RENDER stale Membership add preview completion cannot replace a newer same
       <App
         core={{
           ...base,
-          configuration: {
-            ...base.configuration,
-            previewMembershipBatch: async (request) => {
+          collections: {
+            ...base.collections,
+            previewMemberEdit: async (request) => {
               requests.push(request);
               return requests.length === 1
                 ? previewA.promise.then((value) => {
@@ -563,13 +563,13 @@ test("RENDER cancelled Membership draft ignores a late preview without changing 
       <App
         core={{
           ...base,
-          configuration: {
-            ...base.configuration,
-            previewMembershipBatch: async () => preview.promise,
-            change: async (change) => {
-              changes.push(change);
+          collections: {
+            ...base.collections,
+            previewMemberEdit: async () => preview.promise,
+            editMembers: async (request) => {
+              changes.push(request);
               return {
-                value: { level: "project" as const, changed: true },
+                value: { level: "project" as const, file: "skill-cli.jsonc", changed: true },
                 diagnostics: [],
               };
             },
@@ -650,9 +650,9 @@ test("RENDER stale Membership removal preview completion cannot replace a newer 
       <App
         core={{
           ...base,
-          configuration: {
-            ...base.configuration,
-            previewMembershipBatch: async (request) => {
+          collections: {
+            ...base.collections,
+            previewMemberEdit: async (request) => {
               requests.push(request);
               return requests.length === 1
                 ? previewA.promise.then((value) => {
@@ -811,9 +811,9 @@ test("RENDER stale Collection removal preview completion cannot replace a newer 
       <App
         core={{
           ...base,
-          configuration: {
-            ...base.configuration,
-            previewCollectionRemoval: async (request) => {
+          collections: {
+            ...base.collections,
+            previewRemoval: async (request) => {
               requests.push(request);
               return requests.length === 1
                 ? previewA.promise.then((value) => {
@@ -973,18 +973,17 @@ test("RENDER zero-owned Source exposes its named Installed Skills command and re
     () => (
       <App
         core={directSourceCore(workspaceProjection({ includeDirect: false }), {
-          loadInstalled: async (request) => {
-            loads++;
-            return {
-              value: {
+          installed: {
+            load: async (request) => {
+              loads++;
+              return {
                 address: request.address,
                 name: request.address.path,
                 description: "",
                 rawText: "",
                 markdownText: "",
-              },
-              diagnostics: [],
-            };
+              };
+            },
           },
         })}
         exit={() => {}}
@@ -1043,25 +1042,29 @@ test("RENDER Add Skills selects observed eligible roots, disables installed root
     () => (
       <App
         core={directSourceCore(projection, {
-          discover: async (request) => ({
-            value: {
-              source: request.source,
-              kind: "github",
-              exactRevision: "reviewed",
-              candidates: [
-                {
-                  path: "installed",
-                  name: "installed",
-                  description: "Already here",
-                },
-                { path: "new", name: "new", description: "Install me" },
-              ],
+          sources: {
+            discover: async (request) => ({
+              value: {
+                source: request.source,
+                kind: "github",
+                exactRevision: "reviewed",
+                candidates: [
+                  {
+                    path: "installed",
+                    name: "installed",
+                    description: "Already here",
+                  },
+                  { path: "new", name: "new", description: "Install me" },
+                ],
+              },
+              diagnostics: [],
+            }),
+          },
+          installed: {
+            install: async (request) => {
+              calls.push(request);
+              return { value: [], diagnostics: [] };
             },
-            diagnostics: [],
-          }),
-          install: async (request) => {
-            calls.push(request);
-            return { value: [], diagnostics: [] };
           },
         })}
         exit={() => {}}
@@ -1104,10 +1107,12 @@ test("RENDER Source observation Cancel waits for an abort-ignoring provider and 
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          discover: () =>
-            new Promise((resolve) => {
-              resolveDiscovery = resolve;
-            }),
+          sources: {
+            discover: () =>
+              new Promise((resolve) => {
+                resolveDiscovery = resolve;
+              }),
+          },
         })}
         exit={() => {}}
       />
@@ -1165,13 +1170,15 @@ test("RENDER retry observation Cancel retains cancellation ownership until its l
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          discover: () => {
-            attempts++;
-            if (attempts === 1)
-              return Promise.reject(new SkillCliError("PROVIDER_UNAVAILABLE", "offline"));
-            return new Promise((resolve) => {
-              resolveRetry = resolve;
-            });
+          sources: {
+            discover: () => {
+              attempts++;
+              if (attempts === 1)
+                return Promise.reject(new SkillCliError("PROVIDER_UNAVAILABLE", "offline"));
+              return new Promise((resolve) => {
+                resolveRetry = resolve;
+              });
+            },
           },
         })}
         exit={() => {}}
@@ -1224,20 +1231,24 @@ test("RENDER Config observation Retry repeats observe and preview without checki
     () => (
       <App
         core={directSourceCore(remoteConfigProjection(), {
-          observeConfig: async (request) => {
-            calls.push(["observe", request]);
-            if (++observes === 1) throw new SkillCliError("PROVIDER_UNAVAILABLE", "offline");
-            const observation = configObservation("retry-commit");
-            return { ...observation, value: { ...observation.value, id: request.id } };
+          configSources: {
+            observe: async (request) => {
+              calls.push(["observe", request]);
+              if (++observes === 1) throw new SkillCliError("PROVIDER_UNAVAILABLE", "offline");
+              const observation = configObservation("retry-commit");
+              return { ...observation, value: { ...observation.value, id: request.id } };
+            },
+            previewAdoption: async (request) => {
+              calls.push(["preview", request]);
+              const impact = configImpact(request.exactRevision);
+              return { ...impact, value: { ...impact.value, id: request.id } };
+            },
           },
-          previewAdoptConfig: async (request) => {
-            calls.push(["preview", request]);
-            const impact = configImpact(request.exactRevision);
-            return { ...impact, value: { ...impact.value, id: request.id } };
-          },
-          checkUpdate: async (request) => {
-            calls.push(["check-update", request]);
-            throw new Error("Config retry must not check Source updates");
+          installed: {
+            checkUpdate: async (request) => {
+              calls.push(["check-update", request]);
+              throw new Error("Config retry must not check Source updates");
+            },
           },
         })}
         exit={() => {}}
@@ -1283,14 +1294,16 @@ test("RENDER stale Config preview completion cannot replace a newer same-kind ob
     () => (
       <App
         core={directSourceCore(remoteConfigProjection(), {
-          observeConfig: () => {
-            observes++;
-            return observes === 1
-              ? Promise.resolve(configObservation("preview-a"))
-              : observationB.promise;
+          configSources: {
+            observe: () => {
+              observes++;
+              return observes === 1
+                ? Promise.resolve(configObservation("preview-a"))
+                : observationB.promise;
+            },
+            previewAdoption: () =>
+              ++previews === 1 ? previewA.promise : Promise.resolve(configImpact("preview-b")),
           },
-          previewAdoptConfig: () =>
-            ++previews === 1 ? previewA.promise : Promise.resolve(configImpact("preview-b")),
         })}
         exit={() => {}}
       />
@@ -1334,20 +1347,22 @@ test("RENDER stale Config retry preview completion cannot mutate a newer same-ki
     () => (
       <App
         core={directSourceCore(remoteConfigProjection(), {
-          observeConfig: () => {
-            observes++;
-            if (observes === 1)
-              return Promise.reject(new SkillCliError("PROVIDER_UNAVAILABLE", "offline"));
-            if (observes === 2) return Promise.resolve(configObservation("retry-observation"));
-            return observationB.promise;
-          },
-          previewAdoptConfig: () =>
-            ++previews === 1
-              ? retryPreview.promise
-              : Promise.resolve(configImpact("current-retry")),
-          adoptConfig: async (request) => {
-            adopts.push(request);
-            return { value: undefined, diagnostics: [] };
+          configSources: {
+            observe: () => {
+              observes++;
+              if (observes === 1)
+                return Promise.reject(new SkillCliError("PROVIDER_UNAVAILABLE", "offline"));
+              if (observes === 2) return Promise.resolve(configObservation("retry-observation"));
+              return observationB.promise;
+            },
+            previewAdoption: () =>
+              ++previews === 1
+                ? retryPreview.promise
+                : Promise.resolve(configImpact("current-retry")),
+            adopt: async (request) => {
+              adopts.push(request);
+              return { value: undefined, diagnostics: [] };
+            },
           },
         })}
         exit={() => {}}
@@ -1450,12 +1465,14 @@ test("RENDER Project Source browser initializes its visual first row before cont
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          discover: async (request) => {
-            calls.push(request);
-            return {
-              value: { source: request.source, kind: "github", candidates: [] },
-              diagnostics: [],
-            };
+          sources: {
+            discover: async (request) => {
+              calls.push(request);
+              return {
+                value: { source: request.source, kind: "github", candidates: [] },
+                diagnostics: [],
+              };
+            },
           },
         })}
         exit={() => {}}
@@ -1487,21 +1504,25 @@ test("RENDER Project contributed Source installs selected observed roots at its 
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          discover: async (request) => {
-            calls.push(["discover", request]);
-            return {
-              value: {
-                source: request.source,
-                kind: "github",
-                exactRevision: "contributed-install",
-                candidates: [{ path: "review", name: "review", description: "Review" }],
-              },
-              diagnostics: [],
-            };
+          sources: {
+            discover: async (request) => {
+              calls.push(["discover", request]);
+              return {
+                value: {
+                  source: request.source,
+                  kind: "github",
+                  exactRevision: "contributed-install",
+                  candidates: [{ path: "review", name: "review", description: "Review" }],
+                },
+                diagnostics: [],
+              };
+            },
           },
-          install: async (request) => {
-            calls.push(["install", request]);
-            return { value: [], diagnostics: [] };
+          installed: {
+            install: async (request) => {
+              calls.push(["install", request]);
+              return { value: [], diagnostics: [] };
+            },
           },
         })}
         exit={() => {}}
@@ -1539,7 +1560,7 @@ test.each(["team-main", "team-config/lark"])(
   "RENDER Source %s updates selected Changed roots through its workbench",
   async (source) => {
     const base = workspaceProjection();
-    const projection: ManagementProjection = {
+    const projection: WorkspaceView = {
       ...base,
       installedSkills: ["changed", "old", "same"].map((path) => ({
         address: { source, path },
@@ -1558,30 +1579,32 @@ test.each(["team-main", "team-config/lark"])(
       () => (
         <App
           core={directSourceCore(projection, {
-            checkUpdate: async (request) => {
-              return {
-                value: {
-                  source: request.source,
-                  kind: "github",
-                  exactRevision: "d".repeat(40),
-                  baseline: "reviewed-baseline",
-                  changed: [{ path: "changed", name: "changed", description: "Changed" }],
-                  added: [{ path: "new", name: "new", description: "New" }],
-                  removed: [{ path: "old", name: "old", description: "Removed" }],
-                  unchanged: [{ path: "same", name: "same", description: "Unchanged" }],
-                },
-                diagnostics: [],
-              };
-            },
-            update: async (request) => {
-              calls.push(request);
-              return { value: undefined, diagnostics: [] };
-            },
-            install: async () => {
-              throw new Error("Updates must not install new roots");
-            },
-            uninstall: async () => {
-              throw new Error("Updates must not uninstall removed roots");
+            installed: {
+              checkUpdate: async (request) => {
+                return {
+                  value: {
+                    source: request.source,
+                    kind: "github",
+                    exactRevision: "d".repeat(40),
+                    baseline: "reviewed-baseline",
+                    changed: [{ path: "changed", name: "changed", description: "Changed" }],
+                    added: [{ path: "new", name: "new", description: "New" }],
+                    removed: [{ path: "old", name: "old", description: "Removed" }],
+                    unchanged: [{ path: "same", name: "same", description: "Unchanged" }],
+                  },
+                  diagnostics: [],
+                };
+              },
+              update: async (request) => {
+                calls.push(request);
+                return { value: undefined, diagnostics: [] };
+              },
+              install: async () => {
+                throw new Error("Updates must not install new roots");
+              },
+              uninstall: async () => {
+                throw new Error("Updates must not uninstall removed roots");
+              },
             },
           })}
           exit={() => {}}
@@ -1688,13 +1711,15 @@ test("RENDER Escape aborts a pending Add Skills observation before it opens a se
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          discover: (_request, options) =>
-            new Promise((_, reject) =>
-              options?.signal?.addEventListener("abort", () => {
-                aborts++;
-                reject(new SkillCliError("CANCELLED", "cancelled"));
-              }),
-            ),
+          sources: {
+            discover: (_request, options) =>
+              new Promise((_, reject) =>
+                options?.signal?.addEventListener("abort", () => {
+                  aborts++;
+                  reject(new SkillCliError("CANCELLED", "cancelled"));
+                }),
+              ),
+          },
         })}
         exit={() => {}}
       />
@@ -1761,28 +1786,30 @@ test("RENDER blocked impact repair select opens the exact Rebind repair form", a
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          previewSourceRemoval: async () => ({
-            value: {
-              kind: "source-removal",
-              source: "team-main",
-              owner: directOwner,
-              installed: [{ source: "team-main", path: "review" }],
-              repairs: [
-                {
-                  address: { source: "team-main", path: "review" },
-                  actions: ["rebind", "uninstall"],
-                },
-              ],
-              blockers: [
-                {
-                  reason: "installed",
-                  address: { source: "team-main", path: "review" },
-                },
-              ],
-              allowed: false,
-            },
-            diagnostics: [],
-          }),
+          sources: {
+            previewRemoval: async () => ({
+              value: {
+                kind: "source-removal",
+                source: "team-main",
+                owner: directOwner,
+                installed: [{ source: "team-main", path: "review" }],
+                repairs: [
+                  {
+                    address: { source: "team-main", path: "review" },
+                    actions: ["rebind", "uninstall"],
+                  },
+                ],
+                blockers: [
+                  {
+                    reason: "installed",
+                    address: { source: "team-main", path: "review" },
+                  },
+                ],
+                allowed: false,
+              },
+              diagnostics: [],
+            }),
+          },
         })}
         exit={() => {}}
       />
@@ -1812,33 +1839,37 @@ test("RENDER source-removal uninstall repair executes then restores the same par
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          previewSourceRemoval: async () => ({
-            value: blockedSourceRemoval(),
-            diagnostics: [],
-          }),
-          previewUninstall: async (request) => {
-            previews++;
-            return {
-              value: {
-                kind: "uninstall" as const,
-                installed: request.paths.map((path) => ({
-                  source: request.source,
-                  path,
-                })),
-                directMemberships: [],
-                disappearingSelectors: [],
-                retainedSelectors: [],
-                blockers: [],
-                allowed: true,
-              },
+          sources: {
+            previewRemoval: async () => ({
+              value: blockedSourceRemoval(),
               diagnostics: [],
-            };
+            }),
           },
-          uninstall: async () => {
-            uninstalls++;
-            return { value: undefined, diagnostics: [] };
+          installed: {
+            previewUninstall: async (request) => {
+              previews++;
+              return {
+                value: {
+                  kind: "uninstall" as const,
+                  installed: request.paths.map((path) => ({
+                    source: request.source,
+                    path,
+                  })),
+                  directMemberships: [],
+                  disappearingSelectors: [],
+                  retainedSelectors: [],
+                  blockers: [],
+                  allowed: true,
+                },
+                diagnostics: [],
+              };
+            },
+            uninstall: async () => {
+              uninstalls++;
+              return { value: undefined, diagnostics: [] };
+            },
           },
-          get: async () => ({ value: repairProjection(), diagnostics: [] }),
+          workspace: { get: async () => ({ value: repairProjection(), diagnostics: [] }) },
         })}
         exit={() => {}}
       />
@@ -1886,15 +1917,19 @@ test("RENDER dismissed repair preview ignores an abort-ignoring success and clos
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          previewSourceRemoval: async () => ({
-            value: blockedSourceRemoval(),
-            diagnostics: [],
-          }),
-          previewUninstall: (request, options) =>
-            new Promise((resolve) => {
-              resolvePreview = resolve;
-              options?.signal?.addEventListener("abort", () => aborts++);
+          sources: {
+            previewRemoval: async () => ({
+              value: blockedSourceRemoval(),
+              diagnostics: [],
             }),
+          },
+          installed: {
+            previewUninstall: (request, options) =>
+              new Promise((resolve) => {
+                resolvePreview = resolve;
+                options?.signal?.addEventListener("abort", () => aborts++);
+              }),
+          },
         })}
         exit={() => {}}
       />
@@ -1935,26 +1970,30 @@ test("RENDER source-removal rebind repair executes then restores the same parent
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          previewSourceRemoval: async () => ({
-            value: blockedSourceRemoval(),
-            diagnostics: [],
-          }),
-          previewRebind: async (request) => ({
-            value: {
-              kind: "rebind" as const,
-              address: { source: request.source, path: request.path },
-              owner: request.owner,
-              ownerPath: request.ownerPath ?? request.path,
-              proof: "proven" as const,
-              allowed: true,
-            },
-            diagnostics: [],
-          }),
-          rebind: async () => {
-            rebinds++;
-            return { value: undefined, diagnostics: [] };
+          sources: {
+            previewRemoval: async () => ({
+              value: blockedSourceRemoval(),
+              diagnostics: [],
+            }),
           },
-          get: async () => ({ value: repairProjection(), diagnostics: [] }),
+          installed: {
+            previewRebind: async (request) => ({
+              value: {
+                kind: "rebind" as const,
+                address: { source: request.source, path: request.path },
+                owner: request.owner,
+                ownerPath: request.ownerPath ?? request.path,
+                proof: "proven" as const,
+                allowed: true,
+              },
+              diagnostics: [],
+            }),
+            rebind: async () => {
+              rebinds++;
+              return { value: undefined, diagnostics: [] };
+            },
+          },
+          workspace: { get: async () => ({ value: repairProjection(), diagnostics: [] }) },
         })}
         exit={() => {}}
       />
@@ -1991,15 +2030,19 @@ test("RENDER failed repair preview returns to its source-removal parent and an e
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          previewSourceRemoval: async () => {
-            sourceReviews++;
-            return { value: blockedSourceRemoval(), diagnostics: [] };
+          sources: {
+            previewRemoval: async () => {
+              sourceReviews++;
+              return { value: blockedSourceRemoval(), diagnostics: [] };
+            },
           },
-          previewUninstall: async () => {
-            throw new SkillCliError("WRITE_FAILED", "preview failed");
+          installed: {
+            previewUninstall: async () => {
+              throw new SkillCliError("WRITE_FAILED", "preview failed");
+            },
+            uninstall: async () => ({ value: undefined, diagnostics: [] }),
           },
-          uninstall: async () => ({ value: undefined, diagnostics: [] }),
-          get: async () => ({ value: repairProjection(), diagnostics: [] }),
+          workspace: { get: async () => ({ value: repairProjection(), diagnostics: [] }) },
         })}
         exit={() => {}}
       />
@@ -2024,27 +2067,31 @@ test("RENDER failed uninstall repair restores its child review and physical Canc
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          previewSourceRemoval: async () => ({
-            value: blockedSourceRemoval(),
-            diagnostics: [],
-          }),
-          previewUninstall: async (request) => ({
-            value: {
-              kind: "uninstall" as const,
-              installed: request.paths.map((path) => ({
-                source: request.source,
-                path,
-              })),
-              directMemberships: [],
-              disappearingSelectors: [],
-              retainedSelectors: [],
-              blockers: [],
-              allowed: true,
+          sources: {
+            previewRemoval: async () => ({
+              value: blockedSourceRemoval(),
+              diagnostics: [],
+            }),
+          },
+          installed: {
+            previewUninstall: async (request) => ({
+              value: {
+                kind: "uninstall" as const,
+                installed: request.paths.map((path) => ({
+                  source: request.source,
+                  path,
+                })),
+                directMemberships: [],
+                disappearingSelectors: [],
+                retainedSelectors: [],
+                blockers: [],
+                allowed: true,
+              },
+              diagnostics: [],
+            }),
+            uninstall: async () => {
+              throw new SkillCliError("WRITE_FAILED", "repair failed");
             },
-            diagnostics: [],
-          }),
-          uninstall: async () => {
-            throw new SkillCliError("WRITE_FAILED", "repair failed");
           },
         })}
         exit={() => {}}
@@ -2076,28 +2123,32 @@ test("RENDER empty parent re-review closes after a completed uninstall repair", 
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          previewSourceRemoval: async () => {
-            sourceReviews++;
-            if (sourceReviews === 1) return { value: blockedSourceRemoval(), diagnostics: [] };
-            throw new SkillCliError("WRITE_FAILED", "parent unavailable");
-          },
-          previewUninstall: async (request) => ({
-            value: {
-              kind: "uninstall" as const,
-              installed: request.paths.map((path) => ({
-                source: request.source,
-                path,
-              })),
-              directMemberships: [],
-              disappearingSelectors: [],
-              retainedSelectors: [],
-              blockers: [],
-              allowed: true,
+          sources: {
+            previewRemoval: async () => {
+              sourceReviews++;
+              if (sourceReviews === 1) return { value: blockedSourceRemoval(), diagnostics: [] };
+              throw new SkillCliError("WRITE_FAILED", "parent unavailable");
             },
-            diagnostics: [],
-          }),
-          uninstall: async () => ({ value: undefined, diagnostics: [] }),
-          get: async () => ({ value: repairProjection(), diagnostics: [] }),
+          },
+          installed: {
+            previewUninstall: async (request) => ({
+              value: {
+                kind: "uninstall" as const,
+                installed: request.paths.map((path) => ({
+                  source: request.source,
+                  path,
+                })),
+                directMemberships: [],
+                disappearingSelectors: [],
+                retainedSelectors: [],
+                blockers: [],
+                allowed: true,
+              },
+              diagnostics: [],
+            }),
+            uninstall: async () => ({ value: undefined, diagnostics: [] }),
+          },
+          workspace: { get: async () => ({ value: repairProjection(), diagnostics: [] }) },
         })}
         exit={() => {}}
       />
@@ -2128,34 +2179,38 @@ test("RENDER physical child Cancel prevents a stale parent re-review from replac
     () => (
       <App
         core={directSourceCore(repairProjection(), {
-          previewSourceRemoval: () => {
-            sourceReviews++;
-            if (sourceReviews === 1)
-              return Promise.resolve({
-                value: blockedSourceRemoval(),
-                diagnostics: [],
+          sources: {
+            previewRemoval: () => {
+              sourceReviews++;
+              if (sourceReviews === 1)
+                return Promise.resolve({
+                  value: blockedSourceRemoval(),
+                  diagnostics: [],
+                });
+              return new Promise((resolve) => {
+                resolveRereview = () => resolve({ value: blockedSourceRemoval(), diagnostics: [] });
               });
-            return new Promise((resolve) => {
-              resolveRereview = () => resolve({ value: blockedSourceRemoval(), diagnostics: [] });
-            });
-          },
-          previewUninstall: async (request) => ({
-            value: {
-              kind: "uninstall" as const,
-              installed: request.paths.map((path) => ({
-                source: request.source,
-                path,
-              })),
-              directMemberships: [],
-              disappearingSelectors: [],
-              retainedSelectors: [],
-              blockers: [],
-              allowed: true,
             },
-            diagnostics: [],
-          }),
-          uninstall: async () => ({ value: undefined, diagnostics: [] }),
-          get: async () => ({ value: repairProjection(), diagnostics: [] }),
+          },
+          installed: {
+            previewUninstall: async (request) => ({
+              value: {
+                kind: "uninstall" as const,
+                installed: request.paths.map((path) => ({
+                  source: request.source,
+                  path,
+                })),
+                directMemberships: [],
+                disappearingSelectors: [],
+                retainedSelectors: [],
+                blockers: [],
+                allowed: true,
+              },
+              diagnostics: [],
+            }),
+            uninstall: async () => ({ value: undefined, diagnostics: [] }),
+          },
+          workspace: { get: async () => ({ value: repairProjection(), diagnostics: [] }) },
         })}
         exit={() => {}}
       />
@@ -2273,11 +2328,13 @@ test("RENDER Escape cancels a pending preview exactly once and late preview succ
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          previewSourceRemoval: (_request, options) =>
-            new Promise((resolve) => {
-              resolvePreview = resolve;
-              options?.signal?.addEventListener("abort", () => aborts++);
-            }),
+          sources: {
+            previewRemoval: (_request, options) =>
+              new Promise((resolve) => {
+                resolvePreview = resolve;
+                options?.signal?.addEventListener("abort", () => aborts++);
+              }),
+          },
         })}
         exit={() => {}}
       />
@@ -2321,9 +2378,9 @@ test("RENDER collection removal preview failure closes the session and permits r
       <App
         core={{
           ...baseCore,
-          configuration: {
-            ...baseCore.configuration,
-            previewCollectionRemoval: async () => {
+          collections: {
+            ...baseCore.collections,
+            previewRemoval: async () => {
               previews++;
               throw new Error("preview failed");
             },
@@ -2357,15 +2414,21 @@ test("RENDER allowed removal confirms once, refreshes once, and reselects the ne
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          removeSource: async () => {
-            removes++;
-            return { value: undefined, diagnostics: [] };
+          sources: {
+            remove: async () => {
+              removes++;
+              return { value: undefined, diagnostics: [] };
+            },
           },
-          get: async () => ({
-            value:
-              ++gets === 1 ? workspaceProjection() : workspaceProjection({ includeDirect: false }),
-            diagnostics: [],
-          }),
+          workspace: {
+            get: async () => ({
+              value:
+                ++gets === 1
+                  ? workspaceProjection()
+                  : workspaceProjection({ includeDirect: false }),
+              diagnostics: [],
+            }),
+          },
         })}
         exit={() => {}}
       />
@@ -2396,25 +2459,27 @@ test("RENDER preview failure closes its pending surface, retains the exact error
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          previewSourceRemoval: async () => {
-            previews++;
-            if (previews === 1) throw new SkillCliError("WRITE_FAILED", "preview disk full");
-            return {
-              value: {
-                kind: "source-removal",
-                source: "team-main",
-                owner: directOwner,
-                installed: [],
-                repairs: [],
-                blockers: [],
-                allowed: true,
-              },
-              diagnostics: [],
-            };
-          },
-          removeSource: async () => {
-            removes++;
-            return { value: undefined, diagnostics: [] };
+          sources: {
+            previewRemoval: async () => {
+              previews++;
+              if (previews === 1) throw new SkillCliError("WRITE_FAILED", "preview disk full");
+              return {
+                value: {
+                  kind: "source-removal",
+                  source: "team-main",
+                  owner: directOwner,
+                  installed: [],
+                  repairs: [],
+                  blockers: [],
+                  allowed: true,
+                },
+                diagnostics: [],
+              };
+            },
+            remove: async () => {
+              removes++;
+              return { value: undefined, diagnostics: [] };
+            },
           },
         })}
         exit={() => {}}
@@ -2446,20 +2511,23 @@ test("RENDER preview owner mismatch closes the preview, exposes TRANSACTION_CONF
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          previewSourceRemoval: async () => {
-            previews++;
-            return {
-              value: {
-                kind: "source-removal",
-                source: "team-main",
-                owner: previews === 1 ? { ...directOwner, pointer: "/sources/other" } : directOwner,
-                installed: [],
-                repairs: [],
-                blockers: [],
-                allowed: true,
-              },
-              diagnostics: [],
-            };
+          sources: {
+            previewRemoval: async () => {
+              previews++;
+              return {
+                value: {
+                  kind: "source-removal",
+                  source: "team-main",
+                  owner:
+                    previews === 1 ? { ...directOwner, pointer: "/sources/other" } : directOwner,
+                  installed: [],
+                  repairs: [],
+                  blockers: [],
+                  allowed: true,
+                },
+                diagnostics: [],
+              };
+            },
           },
         })}
         exit={() => {}}
@@ -2491,19 +2559,25 @@ test("RENDER duplicate confirm while removal is pending is inert until one refre
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          removeSource: async () =>
-            new Promise<{
-              readonly value: undefined;
-              readonly diagnostics: [];
-            }>((resolve) => {
-              removes++;
-              settleRemove = () => resolve({ value: undefined, diagnostics: [] });
+          sources: {
+            remove: async () =>
+              new Promise<{
+                readonly value: undefined;
+                readonly diagnostics: [];
+              }>((resolve) => {
+                removes++;
+                settleRemove = () => resolve({ value: undefined, diagnostics: [] });
+              }),
+          },
+          workspace: {
+            get: async () => ({
+              value:
+                ++gets === 1
+                  ? workspaceProjection()
+                  : workspaceProjection({ includeDirect: false }),
+              diagnostics: [],
             }),
-          get: async () => ({
-            value:
-              ++gets === 1 ? workspaceProjection() : workspaceProjection({ includeDirect: false }),
-            diagnostics: [],
-          }),
+          },
         })}
         exit={() => {}}
       />
@@ -2537,9 +2611,11 @@ test("RENDER Source removal execution failure restores its review and dismissal 
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          removeSource: async () => {
-            removals++;
-            throw new Error("write denied");
+          sources: {
+            remove: async () => {
+              removals++;
+              throw new Error("write denied");
+            },
           },
         })}
         exit={() => {}}
@@ -2569,22 +2645,24 @@ test("RENDER late cancelled preview cannot close a newly opened Palette", async 
     () => (
       <App
         core={directSourceCore(workspaceProjection(), {
-          previewSourceRemoval: async () =>
-            new Promise((resolve) => {
-              resolvePreview = () =>
-                resolve({
-                  value: {
-                    kind: "source-removal",
-                    source: "team-main",
-                    owner: directOwner,
-                    installed: [],
-                    repairs: [],
-                    blockers: [],
-                    allowed: true,
-                  },
-                  diagnostics: [],
-                });
-            }),
+          sources: {
+            previewRemoval: async () =>
+              new Promise((resolve) => {
+                resolvePreview = () =>
+                  resolve({
+                    value: {
+                      kind: "source-removal",
+                      source: "team-main",
+                      owner: directOwner,
+                      installed: [],
+                      repairs: [],
+                      blockers: [],
+                      allowed: true,
+                    },
+                    diagnostics: [],
+                  });
+              }),
+          },
         })}
         exit={() => {}}
       />

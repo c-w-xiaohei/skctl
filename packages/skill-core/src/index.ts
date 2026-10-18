@@ -1,4 +1,13 @@
 export { createSkillCliCore } from "./create-core";
-export * from "./api";
-export type { SkillAddress, MemberOriginPath } from "./collections";
-export { skillAddressKey, sameSkillAddress } from "./collections";
+export type { SkillCliCore } from "./api";
+export * from "./shared";
+export * from "./config/types";
+export * from "./source/types";
+export * from "./collection/types";
+export * from "./installed/types";
+export * from "./catalog/types";
+export * from "./content/types";
+export * from "./workspace/types";
+export type { SkillAddress } from "./source/schema";
+export type { MemberOriginPath } from "./collection/graph";
+export { skillAddressKey, sameSkillAddress } from "./collection/graph";

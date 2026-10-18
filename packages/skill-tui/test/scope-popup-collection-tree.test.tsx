@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
 import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
-import type { ManagementProjection, SkillAddress } from "@skill-cli/core";
+import type { WorkspaceView, SkillAddress } from "@skill-cli/core";
 import { testRender } from "@opentui/solid";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -17,7 +17,7 @@ import {
 async function mount(
   width: number,
   height: number,
-  projection: ManagementProjection = collectionsSourcesProjection(),
+  projection: WorkspaceView = collectionsSourcesProjection(),
 ) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/scope-tree-");
@@ -28,19 +28,18 @@ async function mount(
     () => (
       <App
         core={directSourceCore(projection, {
-          loadInstalled: async ({ address }) => {
-            reads.push(address);
-            const text = "# guide\n\nScoped installed instructions.";
-            return {
-              value: {
+          installed: {
+            load: async ({ address }) => {
+              reads.push(address);
+              const text = "# guide\n\nScoped installed instructions.";
+              return {
                 address,
                 name: "guide",
                 description: "Scoped instructions",
                 rawText: text,
                 markdownText: text,
-              },
-              diagnostics: [],
-            };
+              };
+            },
           },
         })}
         exit={() => {}}

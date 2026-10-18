@@ -4,7 +4,7 @@ import { DiffRenderable, ScrollBoxRenderable, SelectRenderable } from "@opentui/
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ManagementCapability, ManagementProjection, UpdatePreview } from "@skill-cli/core";
+import type { InstalledCapability, WorkspaceView, UpdatePreview } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
@@ -46,13 +46,13 @@ const preview: UpdatePreview = {
   ],
 };
 
-async function mount(width: number, height: number, hook?: ManagementCapability["previewUpdate"]) {
+async function mount(width: number, height: number, hook?: InstalledCapability["previewUpdate"]) {
   const prior = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/update-preview-");
   process.env.SKILL_TUI_UPDATE_CACHE_DIR = cache;
   const base = workspaceProjection({ includeContribution: false });
-  const projection: ManagementProjection = {
+  const projection: WorkspaceView = {
     ...base,
     installedSkills: ["guide", "other"].map((path) => ({
       address: { ...address, path },
@@ -67,36 +67,38 @@ async function mount(width: number, height: number, hook?: ManagementCapability[
       problems: [],
     })),
   };
-  const requests: Parameters<ManagementCapability["previewUpdate"]>[0][] = [];
+  const requests: Parameters<InstalledCapability["previewUpdate"]>[0][] = [];
   const mutations: unknown[] = [];
   const core = directSourceCore(projection, {
-    checkUpdate: async () => ({
-      value: {
-        source: address.source,
-        kind: "github",
-        exactRevision: revision,
-        baseline: "checked",
-        changed: projection.installedSkills.map((skill) => ({
-          path: skill.address.path,
-          name: skill.name,
-          description: skill.description,
-        })),
-        unchanged: [],
-        removed: [],
-        added: [],
+    installed: {
+      checkUpdate: async () => ({
+        value: {
+          source: address.source,
+          kind: "github",
+          exactRevision: revision,
+          baseline: "checked",
+          changed: projection.installedSkills.map((skill) => ({
+            path: skill.address.path,
+            name: skill.name,
+            description: skill.description,
+          })),
+          unchanged: [],
+          removed: [],
+          added: [],
+        },
+        diagnostics: [],
+      }),
+      previewUpdate: async (request, options) => {
+        requests.push(request);
+        return hook ? hook(request, options) : { value: preview, diagnostics: [] };
       },
-      diagnostics: [],
-    }),
-    previewUpdate: async (request, options) => {
-      requests.push(request);
-      return hook ? hook(request, options) : { value: preview, diagnostics: [] };
-    },
-    update: async (request) => {
-      mutations.push(request);
-      return { value: undefined, diagnostics: [] };
-    },
-    loadInstalled: async () => {
-      throw new Error("Updates activation must not open the installed Reader");
+      update: async (request) => {
+        mutations.push(request);
+        return { value: undefined, diagnostics: [] };
+      },
+      load: async () => {
+        throw new Error("Updates activation must not open the installed Reader");
+      },
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
@@ -230,7 +232,7 @@ test.each([
 
 test("leaving a pending preview aborts its read and a late reply cannot replace the next preview", async () => {
   const signals: AbortSignal[] = [];
-  const resolvers: ((value: Awaited<ReturnType<ManagementCapability["previewUpdate"]>>) => void)[] =
+  const resolvers: ((value: Awaited<ReturnType<InstalledCapability["previewUpdate"]>>) => void)[] =
     [];
   const mounted = await mount(80, 24, async (_request, options) => {
     signals.push(options!.signal!);

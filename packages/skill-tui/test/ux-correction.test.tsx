@@ -20,9 +20,7 @@ const emptyProjection = () =>
   workspaceProjection({ includeDirect: false, includeContribution: false });
 
 const readerCore = () =>
-  directSourceCore(readerProjection(), {
-    loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-  });
+  directSourceCore(readerProjection(), { installed: { load: async () => readerContent } });
 
 async function openWorkspaceSection(
   setup: Awaited<ReturnType<typeof testRender>>,

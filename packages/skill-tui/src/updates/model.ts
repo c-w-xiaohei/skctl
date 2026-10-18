@@ -1,4 +1,4 @@
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { deriveUpdateScope, type UpdateAddress, type UpdateScopeEntry } from "./scope";
 import { createUpdatesState, type UpdateIssue } from "./state";
 export { deriveUpdateScope as buildUpdateScope, createUpdatesState };
@@ -7,7 +7,7 @@ export type { UpdateAddress, UpdateScopeEntry };
 export function updateSubmission(
   scope: ReturnType<typeof deriveUpdateScope>,
   selected: readonly UpdateAddress[],
-  projection: ManagementProjection,
+  projection: WorkspaceView,
 ):
   | { readonly reason: string; readonly issue?: UpdateIssue }
   | { readonly addresses: readonly UpdateAddress[] } {

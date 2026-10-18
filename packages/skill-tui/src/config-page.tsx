@@ -6,7 +6,7 @@ import {
 } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { createMemo, createSignal, onCleanup, Show } from "solid-js";
-import type { ConfigLevelView, ManagementProjection } from "@skill-cli/core";
+import type { ConfigLevelView, WorkspaceView } from "@skill-cli/core";
 import type { ActionRecord } from "./actions";
 import type {
   CommandExecution,
@@ -74,7 +74,7 @@ export function ConfigPage(props: {
   readonly registerCommand?: CommandRegistration;
   readonly executeCommand?: CommandExecution;
   readonly handoff?: RouteHandoff;
-  readonly projection: () => ManagementProjection | undefined;
+  readonly projection: () => WorkspaceView | undefined;
   readonly focusRegistry?: FocusRegistry;
   readonly destination: Exclude<Destination, "workspace">;
   readonly actions: readonly ActionRecord[];

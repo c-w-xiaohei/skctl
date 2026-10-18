@@ -20,10 +20,7 @@ test("resource Back invalidates a deferred body completion while retaining Reade
   const content = owner.load(alpha);
   const resource = owner.read(alpha, "notes.md");
   owner.abandonResource();
-  reads[0]!.resolve({
-    value: { kind: "text", path: "notes.md", format: "markdown", text: "late body" },
-    diagnostics: [],
-  });
+  reads[0]!.resolve({ kind: "text", path: "notes.md", format: "markdown", text: "late body" });
   expect(await resource).toMatchObject({ value: { text: "late body" } });
   expect(reads[0]!.signal?.aborted).toBe(false);
   expect(owner.current()).toMatchObject({
@@ -43,7 +40,7 @@ test("resource Back invalidates a deferred body completion while retaining Reade
   expect(owner.current()?.resource).toBeUndefined();
   loads[0]!.resolve({
     ...installedContent(alpha, "current prose"),
-    value: { ...installedContent(alpha, "current prose").value, rawText: "current raw" },
+    rawText: "current raw",
   });
   await content;
   expect(owner.current()).toMatchObject({
@@ -78,16 +75,10 @@ test("only the newly allocated resource epoch can settle after abandonment", asy
   owner.abandonResource();
   const current = owner.read(alpha, "current.md");
   const state = owner.current();
-  reads[0]!.resolve({
-    value: { kind: "text", path: "old.md", format: "text", text: "old" },
-    diagnostics: [],
-  });
+  reads[0]!.resolve({ kind: "text", path: "old.md", format: "text", text: "old" });
   await abandoned;
   expect(owner.current()).toBe(state);
-  reads[1]!.resolve({
-    value: { kind: "text", path: "current.md", format: "text", text: "current" },
-    diagnostics: [],
-  });
+  reads[1]!.resolve({ kind: "text", path: "current.md", format: "text", text: "current" });
   await current;
   expect(owner.current()).toMatchObject({
     resourceLevel: "content",
@@ -104,10 +95,7 @@ test("abandonment changes only the active address and preserves a cached resourc
   const alphaRequest = owner.read(alpha, "a.txt");
   owner.select(beta);
   const betaRequest = owner.read(beta, "b.txt");
-  reads[1]!.resolve({
-    value: { kind: "text", path: "b.txt", format: "text", text: "cached beta" },
-    diagnostics: [],
-  });
+  reads[1]!.resolve({ kind: "text", path: "b.txt", format: "text", text: "cached beta" });
   await betaRequest;
   const alphaBefore = owner.cached(alpha);
   const cached = owner.current()?.resource;
@@ -116,10 +104,7 @@ test("abandonment changes only the active address and preserves a cached resourc
   expect(owner.current()?.resource).toBe(cached);
   expect(owner.current()).toMatchObject({ selectedResource: "b.txt", resourceLevel: "list" });
   // The old transport ignores abort; its address still owns the current epoch.
-  reads[0]!.resolve({
-    value: { kind: "text", path: "a.txt", format: "text", text: "current alpha" },
-    diagnostics: [],
-  });
+  reads[0]!.resolve({ kind: "text", path: "a.txt", format: "text", text: "current alpha" });
   await alphaRequest;
   expect(owner.current()).toMatchObject({ address: beta, resourceLevel: "list" });
   expect(owner.cached(alpha)?.resource).toMatchObject({ text: "current alpha" });
@@ -132,7 +117,7 @@ test("abandonment also rejects a deferred list result in the shared resource lan
   const completion = owner.list(alpha);
   owner.abandonResource();
   const state = owner.current();
-  lists[0]!.resolve({ value: [{ path: "late.md", kind: "file" }], diagnostics: [] });
+  lists[0]!.resolve([{ path: "late.md", kind: "file" }]);
   await completion;
   expect(owner.current()).toBe(state);
   expect(owner.current()).toMatchObject({ resourceLoading: false, resources: [] });

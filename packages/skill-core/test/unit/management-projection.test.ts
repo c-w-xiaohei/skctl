@@ -3,44 +3,25 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
-import { StateCoordinator } from "../../src/internal/state";
-import type { ConfigurationCapability, ManagementCapability } from "../../src/api";
+import { StateCoordinator } from "../../src/storage/state";
+import type { SourcesCapability } from "../../src/source/types";
+import type { InstalledCapability } from "../../src/installed/types";
+import type { ConfigSourcesCapability } from "../../src/config/types";
+import type { CollectionsCapability } from "../../src/collection/types";
 
 test("MGMT-029 execution requests accept no preview token generation or digest authority", () => {
   type Forbidden = "token" | "generation" | "digest";
   type Clean<T> = Extract<keyof T, Forbidden> extends never ? true : false;
   const requests: true[] = [
-    true as Clean<Parameters<ManagementCapability["removeSource"]>[0]>,
-    true as Clean<Parameters<ManagementCapability["rebind"]>[0]>,
-    true as Clean<Parameters<ManagementCapability["uninstall"]>[0]>,
-    true as Clean<Parameters<ManagementCapability["adoptConfig"]>[0]>,
-    true as Clean<Parameters<ManagementCapability["forgetConfig"]>[0]>,
-    true as Clean<Parameters<ManagementCapability["removeConfig"]>[0]>,
-    true as Clean<Parameters<ConfigurationCapability["change"]>[0]>,
+    true as Clean<Parameters<SourcesCapability["remove"]>[0]>,
+    true as Clean<Parameters<InstalledCapability["rebind"]>[0]>,
+    true as Clean<Parameters<InstalledCapability["uninstall"]>[0]>,
+    true as Clean<Parameters<ConfigSourcesCapability["adopt"]>[0]>,
+    true as Clean<Parameters<ConfigSourcesCapability["forget"]>[0]>,
+    true as Clean<Parameters<ConfigSourcesCapability["remove"]>[0]>,
+    true as Clean<Parameters<CollectionsCapability["editMembers"]>[0]>,
   ];
   expect(requests).toEqual([true, true, true, true, true, true, true]);
-});
-
-test("MGMT-031 keeps Config Source registration in Configuration and lifecycle execution in Management", () => {
-  type Change = Parameters<ConfigurationCapability["change"]>[0];
-  type ConfigLifecycleChange = Extract<
-    Change,
-    { type: "config-source.adopt" | "config-source.forget" | "config-source.remove" }
-  >;
-  const noConfigurationLifecycle: ConfigLifecycleChange extends never ? true : false = true;
-  const managementMethods: readonly (keyof ManagementCapability)[] = [
-    "observeConfig",
-    "adoptConfig",
-    "forgetConfig",
-    "removeConfig",
-  ];
-  expect(noConfigurationLifecycle).toBe(true);
-  expect(managementMethods).toEqual([
-    "observeConfig",
-    "adoptConfig",
-    "forgetConfig",
-    "removeConfig",
-  ]);
 });
 
 test("PROJ-022 contains no private state or generic management fields in a real projection", async () => {
@@ -103,9 +84,7 @@ test("PROJ-024 exposes one workspace authority and focused mutation results", as
     process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
     const core = createSkillCliCore({ cwd: root });
-    expect("installed" in core.management).toBe(false);
-    const result = await core.configuration.change({
-      type: "source.register",
+    const result = await core.sources.register({
       level: "project",
       id: "reviews",
       binding: { kind: "local", path: "./skills", root: "" },
@@ -208,10 +187,9 @@ test("PROJ-017 excludes unresolved owners from selectors without blocking struct
     await expect(core.content.load({ selector: "reviews:review" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
-    expect(
-      (await core.content.loadInstalled({ address: { source: "gone", path: "review" } })).value
-        .name,
-    ).toBe("review");
+    expect((await core.installed.load({ address: { source: "gone", path: "review" } })).name).toBe(
+      "review",
+    );
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });

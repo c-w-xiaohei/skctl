@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createContent } from "../../src/content";
-import { setAcquisitionTrapForTest } from "../../src/internal/sources";
+import { createContent } from "../../src/content/operations";
+import { setAcquisitionTrapForTest } from "../../src/source/snapshot";
 test("Agent content has no source-provider dependency", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-provider-runtime-"));
   const global = join(root, "global.jsonc");

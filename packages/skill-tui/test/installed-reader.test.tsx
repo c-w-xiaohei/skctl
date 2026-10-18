@@ -301,9 +301,11 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async (request) => {
-              loads.push(request);
-              return { value: readerContent, diagnostics: [] };
+            installed: {
+              load: async (request) => {
+                loads.push(request);
+                return readerContent;
+              },
             },
           })}
           exit={() => {}}
@@ -395,9 +397,7 @@ test.serial(
     const setup = await testRender(
       () => (
         <App
-          core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({ value: content, diagnostics: [] }),
-          })}
+          core={directSourceCore(readerProjection(), { installed: { load: async () => content } })}
           exit={() => {}}
         />
       ),
@@ -444,10 +444,7 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({
-              value: paddedReaderContent,
-              diagnostics: [],
-            }),
+            installed: { load: async () => paddedReaderContent },
           })}
           exit={() => {}}
         />
@@ -486,10 +483,7 @@ test.serial("RENDER Reader find input owns slash characters", async () => {
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({
-            value: readerContent,
-            diagnostics: [],
-          }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />
@@ -538,12 +532,11 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async (request) => {
-              loads.push(request.address.path);
-              return {
-                value: readerContentFor(request.address),
-                diagnostics: [],
-              };
+            installed: {
+              load: async (request) => {
+                loads.push(request.address.path);
+                return readerContentFor(request.address);
+              },
             },
           })}
           exit={() => {}}
@@ -641,7 +634,7 @@ test.serial(
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({ value: paddedReaderContent, diagnostics: [] }),
+            installed: { load: async () => paddedReaderContent },
           })}
           exit={() => {}}
         />
@@ -754,10 +747,7 @@ test.serial("RENDER Reader state survives destination away and return", async ()
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async (request) => ({
-            value: readerContentFor(request.address),
-            diagnostics: [],
-          }),
+          installed: { load: async (request) => readerContentFor(request.address) },
         })}
         exit={() => {}}
       />
@@ -796,10 +786,7 @@ test.serial("RENDER Reader Details Escape restores the initiating Inspector comm
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async (request) => ({
-            value: readerContentFor(request.address),
-            diagnostics: [],
-          }),
+          installed: { load: async (request) => readerContentFor(request.address) },
         })}
         exit={() => {}}
       />
@@ -823,10 +810,7 @@ test.serial("RENDER Reader state survives 120 79 43 80 120 resize sequence", asy
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async (request) => ({
-            value: readerContentFor(request.address),
-            diagnostics: [],
-          }),
+          installed: { load: async (request) => readerContentFor(request.address) },
         })}
         exit={() => {}}
       />
@@ -903,12 +887,11 @@ test.serial(
       () => (
         <App
           core={directSourceCore(projection, {
-            loadInstalled: async (request) => {
-              loads.push(request.address.path);
-              return {
-                value: readerContentFor(request.address),
-                diagnostics: [],
-              };
+            installed: {
+              load: async (request) => {
+                loads.push(request.address.path);
+                return readerContentFor(request.address);
+              },
             },
           })}
           exit={() => {}}
@@ -1017,10 +1000,7 @@ test.serial(
         () => (
           <App
             core={directSourceCore(readerProjection(), {
-              loadInstalled: async () => ({
-                value: readerContent,
-                diagnostics: [],
-              }),
+              installed: { load: async () => readerContent },
             })}
             exit={() => {}}
           />

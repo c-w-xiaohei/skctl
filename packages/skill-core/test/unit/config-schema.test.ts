@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import {
   configModuleValidator,
-  localConfigValidator,
+  validatorFor,
   schemaJson,
   userConfigValidator,
   projectConfigValidator,
-} from "../../src/internal/config";
+} from "../../src/config/document";
 
 const userProject = {
   $schema: "https://skill-cli.dev/schema.json",
@@ -22,7 +22,7 @@ describe("persisted JSONC v1 schema", () => {
       expect(userConfigValidator({ ...userProject, network: { proxy } })).toBe(true);
     expect(userConfigValidator({ network: {} })).toBe(true);
     expect(userConfigValidator({})).toBe(true);
-    for (const validator of [projectConfigValidator, localConfigValidator, configModuleValidator])
+    for (const validator of [projectConfigValidator, validatorFor("local"), configModuleValidator])
       expect(validator({ network: { proxy: "http://proxy.test:7890" } })).toBe(false);
     for (const proxy of [
       "",
@@ -60,7 +60,7 @@ describe("persisted JSONC v1 schema", () => {
     expect(userConfigValidator(userProject)).toBe(true);
     expect(projectConfigValidator(userProject)).toBe(true);
     const { agents: _agents, use: _use, ...local } = userProject;
-    expect(localConfigValidator(local)).toBe(true);
+    expect(validatorFor("local")(local)).toBe(true);
     expect(
       configModuleValidator({ collections: userProject.collections, sources: userProject.sources }),
     ).toBe(true);

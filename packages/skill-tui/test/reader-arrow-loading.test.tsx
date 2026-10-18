@@ -20,16 +20,13 @@ import {
 import type { ResourceDescriptor } from "@skill-cli/core";
 
 test("Reader arrows navigate loading and empty Resources without phantom selections", async () => {
-  let complete!: (value: { value: readonly ResourceDescriptor[]; diagnostics: [] }) => void;
-  const resources = new Promise<{ value: readonly ResourceDescriptor[]; diagnostics: [] }>(
-    (resolve) => (complete = resolve),
-  );
+  let complete!: (value: readonly ResourceDescriptor[]) => void;
+  const resources = new Promise<readonly ResourceDescriptor[]>((resolve) => (complete = resolve));
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-          listInstalledResources: async () => resources,
+          installed: { load: async () => readerContent, listResources: async () => resources },
         })}
         exit={() => {}}
       />
@@ -67,7 +64,7 @@ test("Reader arrows navigate loading and empty Resources without phantom selecti
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "reader-resources-status",
     );
-    complete({ value: [], diagnostics: [] });
+    complete([]);
     await setup.waitFor(() => setup.captureCharFrame().includes("No supporting resources"));
     setup.mockInput.pressArrow("down");
     await setup.flush();
@@ -79,28 +76,30 @@ test("Reader arrows navigate loading and empty Resources without phantom selecti
     );
     expect(setup.captureCharFrame()).toContain("Resources");
   } finally {
-    complete({ value: [], diagnostics: [] });
+    complete([]);
     setup.renderer.destroy();
   }
 });
 
 test("late resource completion cannot steal focus after returning to the list", async () => {
-  let finishRead!: (value: Awaited<ReturnType<TuiCore["content"]["readInstalled"]>>) => void;
+  let finishRead!: (value: Awaited<ReturnType<TuiCore["installed"]["read"]>>) => void;
   const requests: unknown[] = [];
   let delivered = 0;
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-          listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
-          readInstalled: async (request) => {
-            requests.push(request);
-            const result = await new Promise<
-              Awaited<ReturnType<TuiCore["content"]["readInstalled"]>>
-            >((resolve) => (finishRead = resolve));
-            delivered++;
-            return result;
+          installed: {
+            load: async () => readerContent,
+            listResources: async () => readerResources,
+            read: async (request) => {
+              requests.push(request);
+              const result = await new Promise<Awaited<ReturnType<TuiCore["installed"]["read"]>>>(
+                (resolve) => (finishRead = resolve),
+              );
+              delivered++;
+              return result;
+            },
           },
         })}
         exit={() => {}}
@@ -127,10 +126,7 @@ test("late resource completion cannot steal focus after returning to the list", 
     await setup.waitForFrame((frame) => frame.includes("Loading resource content"));
     setup.mockInput.pressArrow("left");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
-    finishRead({
-      value: { kind: "text", path: "docs/guide.md", text: "late", format: "text" },
-      diagnostics: [],
-    });
+    finishRead({ kind: "text", path: "docs/guide.md", text: "late", format: "text" });
     await setup.waitFor(() => delivered === 1);
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("resource-browser");
@@ -140,10 +136,7 @@ test("late resource completion cannot steal focus after returning to the list", 
     );
     await parsedEnter(setup);
     await setup.waitFor(() => requests.length === 2);
-    finishRead({
-      value: { kind: "text", path: "docs/guide.md", text: "current", format: "text" },
-      diagnostics: [],
-    });
+    finishRead({ kind: "text", path: "docs/guide.md", text: "current", format: "text" });
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-content");
     await setup.waitForFrame((frame) => frame.includes("current"));
     setup.mockInput.pressArrow("left");

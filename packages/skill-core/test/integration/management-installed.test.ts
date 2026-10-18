@@ -4,8 +4,8 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
-import { bindingDigest, canonicalLocalOrigin } from "../../src/internal/domain";
-import { setManagementPublicationHookForTest } from "../../src/management";
+import { bindingDigest, canonicalLocalOrigin } from "../../src/source/identity";
+import { setManagementPublicationHookForTest } from "../../src/installed/update";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-management-"));
@@ -41,48 +41,43 @@ function legacyLocal(root: string, source: string, path: string) {
 test("MGMT-006 Local discovery installs an atomic selected set without an invented revision", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "team/local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
     await expect(
-      value.core.configuration.change({
-        type: "source.register",
+      value.core.sources.register({
         level: "project",
         id: "team/local",
         binding: { kind: "local", path: "./other", root: "" },
       }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     await expect(
-      value.core.configuration.change({
-        type: "source.register",
+      value.core.sources.register({
         level: "project",
         id: "team/local",
         binding: { kind: "local", path: "./skills", root: "" },
       }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
-    const discovery = await value.core.management.discover({ source: "team/local" });
+    const discovery = await value.core.sources.discover({ source: "team/local" });
     expect(discovery.value.candidates.map((candidate) => candidate.path)).toEqual(["one", "two"]);
-    await value.core.management.install({ source: "team/local", paths: ["two", "one"] });
-    expect((await value.core.management.checkUpdate({ source: "team/local" })).value).toMatchObject(
-      {
-        source: "team/local",
-        kind: "local",
-        changed: [],
-        added: [],
-        removed: [],
-        unchanged: [
-          { path: "one", name: "review", description: "Review" },
-          { path: "two", name: "publish", description: "Publish" },
-        ],
-      },
-    );
-    await value.core.management.uninstall({ source: "team/local", paths: ["two"] });
-    await value.core.management.install({ source: "team/local", paths: ["two"] });
+    await value.core.installed.install({ source: "team/local", paths: ["two", "one"] });
+    expect((await value.core.installed.checkUpdate({ source: "team/local" })).value).toMatchObject({
+      source: "team/local",
+      kind: "local",
+      changed: [],
+      added: [],
+      removed: [],
+      unchanged: [
+        { path: "one", name: "review", description: "Review" },
+        { path: "two", name: "publish", description: "Publish" },
+      ],
+    });
+    await value.core.installed.uninstall({ source: "team/local", paths: ["two"] });
+    await value.core.installed.install({ source: "team/local", paths: ["two"] });
     expect(
-      (await value.core.management.checkUpdate({ source: "team/local" })).value.unchanged.map(
+      (await value.core.installed.checkUpdate({ source: "team/local" })).value.unchanged.map(
         (item) => item.path,
       ),
     ).toEqual(["one", "two"]);
@@ -99,14 +94,13 @@ test("MGMT-006 Local discovery installs an atomic selected set without an invent
 test("MGMT-006 rejects the whole selected Local set when one candidate is invalid", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
     await expect(
-      value.core.management.install({ source: "local", paths: ["one", "missing"] }),
+      value.core.installed.install({ source: "local", paths: ["one", "missing"] }),
     ).rejects.toMatchObject({
       code: "SKILL_NOT_FOUND",
     });
@@ -125,20 +119,18 @@ test("INS-001 permits same frontmatter names for distinct Local identities", asy
       join(value.root, "other", "review", "SKILL.md"),
       "---\nname: review\ndescription: Other\n---\n",
     );
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "second",
       binding: { kind: "local", path: "./other", root: "" },
     });
-    await value.core.management.install({ source: "first", paths: ["one"] });
-    await value.core.management.install({ source: "second", paths: ["review"] });
+    await value.core.installed.install({ source: "first", paths: ["one"] });
+    await value.core.installed.install({ source: "second", paths: ["review"] });
     expect((await value.core.workspace.get()).value.installedSkills).toHaveLength(2);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
@@ -149,21 +141,19 @@ test("INS-001 permits same frontmatter names for distinct Local identities", asy
 test("INS-001 rejects a second Source that attempts to install the same Local identity", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "second",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.management.install({ source: "first", paths: ["one"] });
+    await value.core.installed.install({ source: "first", paths: ["one"] });
     await expect(
-      value.core.management.install({ source: "second", paths: ["one"] }),
+      value.core.installed.install({ source: "second", paths: ["one"] }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
@@ -180,8 +170,7 @@ test("INS-001 rejects a second Source that attempts to install the same Local id
 test("INS-001 rejects a first install whose owner is removed after acquisition", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
@@ -190,7 +179,7 @@ test("INS-001 rejects a first install whose owner is removed after acquisition",
       await writeFile(join(value.root, "skill-cli.jsonc"), "{}\n");
     });
     await expect(
-      value.core.management.install({ source: "local", paths: ["one"] }),
+      value.core.installed.install({ source: "local", paths: ["one"] }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
@@ -205,14 +194,13 @@ test("INS-001 rejects a first install whose owner is removed after acquisition",
 test("MGMT-003 Source removal independently rejects every owned Installed address without changing state", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.management.install({ source: "local", paths: ["one", "two"] });
-    const impact = await value.core.management.previewSourceRemoval({ source: "local" });
+    await value.core.installed.install({ source: "local", paths: ["one", "two"] });
+    const impact = await value.core.sources.previewRemoval({ source: "local" });
     expect(impact.value).toMatchObject({
       allowed: false,
       installed: [
@@ -222,7 +210,7 @@ test("MGMT-003 Source removal independently rejects every owned Installed addres
       repairs: [{ actions: ["rebind", "uninstall"] }, { actions: ["rebind", "uninstall"] }],
     });
     const before = await readFile(join(value.root, "state", "state.json"), "utf8");
-    await expect(value.core.management.removeSource({ source: "local" })).rejects.toMatchObject({
+    await expect(value.core.sources.remove({ source: "local" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(await readFile(join(value.root, "state", "state.json"), "utf8")).toBe(before);
@@ -235,37 +223,35 @@ test("MGMT-003 Source removal independently rejects every owned Installed addres
 test("MGMT-005 diagnoses missing or drifted owners, keeps content readable, and limits repair to Rebind or Uninstall", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.management.install({ source: "first", paths: ["one"] });
+    await value.core.installed.install({ source: "first", paths: ["one"] });
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./other", "root": "" } } }\n',
     );
-    await expect(value.core.management.discover({ source: "first" })).rejects.toMatchObject({
+    await expect(value.core.sources.discover({ source: "first" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(
-      (await value.core.content.loadInstalled({ address: { source: "first", path: "one" } })).value
-        .name,
+      (await value.core.installed.load({ address: { source: "first", path: "one" } })).name,
     ).toBe("review");
     await writeFile(join(value.root, "skill-cli.jsonc"), "{}\n");
-    await expect(value.core.management.discover({ source: "first" })).rejects.toMatchObject({
+    await expect(value.core.sources.discover({ source: "first" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
-    await value.core.management.rebind({ source: "first", path: "one", owner: "second" });
+    await value.core.installed.rebind({ source: "first", path: "one", owner: "second" });
     expect((await value.core.workspace.get()).value.installedSkills[0]!.address.source).toBe(
       "second",
     );
-    await value.core.management.uninstall({ source: "second", paths: ["one"] });
+    await value.core.installed.uninstall({ source: "second", paths: ["one"] });
     expect((await value.core.workspace.get()).value.installedSkills).toEqual([]);
     expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toContain('"second"');
   } finally {
@@ -282,19 +268,18 @@ test("SRC-003 rebinds same canonical identity through a different binding and re
       join(value.skills, "nested", "one", "SKILL.md"),
       "---\nname: nested\ndescription: Nested\n---\n",
     );
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.management.install({ source: "first", paths: ["nested/one"] });
+    await value.core.installed.install({ source: "first", paths: ["nested/one"] });
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "nested" }, "third": { "kind": "local", "path": "./skills", "root": "other" } } }\n',
     );
     const before = await Bun.file(join(value.root, "state", "state.json")).text();
-    await value.core.management.rebind({
+    await value.core.installed.rebind({
       source: "first",
       path: "nested/one",
       owner: "second",
@@ -304,7 +289,7 @@ test("SRC-003 rebinds same canonical identity through a different binding and re
       .installed[0];
     expect(rebound).toMatchObject({ source: "second", path: "one" });
     await expect(
-      value.core.management.rebind({ source: "second", path: "one", owner: "third" }),
+      value.core.installed.rebind({ source: "second", path: "one", owner: "third" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await Bun.file(join(value.root, "state", "state.json")).text()).not.toBe(before);
     expect(
@@ -319,18 +304,17 @@ test("SRC-003 rebinds same canonical identity through a different binding and re
 test("MGMT-009 rebinds a missing legacy owner only when retained identity evidence proves the replacement", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.management.install({ source: "first", paths: ["one"] });
+    await value.core.installed.install({ source: "first", paths: ["one"] });
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
-    await value.core.management.rebind({ source: "first", path: "one", owner: "second" });
+    await value.core.installed.rebind({ source: "first", path: "one", owner: "second" });
     expect((await value.core.workspace.get()).value.installedSkills[0]!.address).toEqual({
       source: "second",
       path: "one",
@@ -344,25 +328,23 @@ test("MGMT-009 rebinds a missing legacy owner only when retained identity eviden
 test("MGMT-009 preview reports proven, distinct, and unprovable Rebind proof without private state", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "second",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.management.install({ source: "first", paths: ["one"] });
+    await value.core.installed.install({ source: "first", paths: ["one"] });
     expect(
-      (await value.core.management.previewRebind({ source: "first", path: "one", owner: "second" }))
+      (await value.core.installed.previewRebind({ source: "first", path: "one", owner: "second" }))
         .value,
     ).toMatchObject({ proof: "proven", allowed: true });
     const serialized = JSON.stringify(
-      (await value.core.management.previewRebind({ source: "first", path: "one", owner: "second" }))
+      (await value.core.installed.previewRebind({ source: "first", path: "one", owner: "second" }))
         .value,
     );
     for (const field of [
@@ -383,19 +365,18 @@ test("MGMT-009 preview reports proven, distinct, and unprovable Rebind proof wit
       "writable",
     ])
       expect(serialized).not.toContain(`"${field}"`);
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "other",
       binding: { kind: "local", path: "./other", root: "" },
     });
     expect(
-      (await value.core.management.previewRebind({ source: "first", path: "one", owner: "other" }))
+      (await value.core.installed.previewRebind({ source: "first", path: "one", owner: "other" }))
         .value,
     ).toMatchObject({ proof: "distinct", allowed: false });
     await writeFile(join(value.root, "skill-cli.jsonc"), "{}\n");
     expect(
-      (await value.core.management.previewRebind({ source: "first", path: "one", owner: "other" }))
+      (await value.core.installed.previewRebind({ source: "first", path: "one", owner: "other" }))
         .value,
     ).toMatchObject({ proof: "unprovable", allowed: false });
   } finally {
@@ -425,7 +406,7 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
     const before = await readFile(join(value.root, "state", "state.json"), "utf8");
     expect((await value.core.workspace.get()).value.installedSkills).toHaveLength(1);
     expect(await readFile(join(value.root, "state", "state.json"), "utf8")).toBe(before);
-    await value.core.management.install({ source: "first", paths: ["two"] });
+    await value.core.installed.install({ source: "first", paths: ["two"] });
     const migrated = JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"));
     expect(migrated).toMatchObject({ version: 3, generation: 5 });
     expect(migrated.installed[0]).toMatchObject({
@@ -441,7 +422,7 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "second": { "kind": "local", "path": "./skills", "root": "nested" } } }\n',
     );
-    await value.core.management.rebind({
+    await value.core.installed.rebind({
       source: "first",
       path: "nested/one",
       owner: "second",
@@ -478,7 +459,7 @@ test("MGMT-009 degrades an already-missing literal v1 owner without provider acc
         throw new Error("migration must not contact a provider");
       },
     });
-    await core.management.install({ source: "second", paths: ["two"] });
+    await core.installed.install({ source: "second", paths: ["two"] });
     const migrated = JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"));
     expect(migrated).toMatchObject({ version: 3, generation: 3 });
     expect(migrated.installed[0]).toMatchObject({
@@ -492,9 +473,9 @@ test("MGMT-009 degrades an already-missing literal v1 owner without provider acc
       path: "one",
     });
     await expect(
-      core.management.rebind({ source: "missing", path: "one", owner: "second" }),
+      core.installed.rebind({ source: "missing", path: "one", owner: "second" }),
     ).rejects.toMatchObject({ code: "REBIND_UNPROVABLE" });
-    await core.management.uninstall({ source: "missing", paths: ["one"] });
+    await core.installed.uninstall({ source: "missing", paths: ["one"] });
     expect(
       (await core.workspace.get()).value.installedSkills.map((item) => item.address),
     ).not.toContainEqual({
@@ -546,7 +527,7 @@ test("MGMT-009 derives literal v1 Remote evidence during a state-only uninstall 
         throw new Error("migration must not resolve a remote ref");
       },
     });
-    await core.management.uninstall({ source: "remote", paths: ["review"] });
+    await core.installed.uninstall({ source: "remote", paths: ["review"] });
     expect(JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"))).toEqual({
       version: 3,
       generation: 9,
@@ -562,20 +543,19 @@ test("MGMT-009 derives literal v1 Remote evidence during a state-only uninstall 
 test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner without state publication", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
+    await value.core.sources.register({
       level: "project",
       id: "first",
       binding: { kind: "local", path: "./skills", root: "" },
     });
-    await value.core.management.install({ source: "first", paths: ["one"] });
+    await value.core.installed.install({ source: "first", paths: ["one"] });
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
     const before = await Bun.file(join(value.root, "state", "state.json")).text();
     expect(
-      (await value.core.management.previewRebind({ source: "first", path: "one", owner: "second" }))
+      (await value.core.installed.previewRebind({ source: "first", path: "one", owner: "second" }))
         .value,
     ).toMatchObject({ proof: "proven", allowed: true });
     const removedOwnerBytes =
@@ -584,7 +564,7 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
       writeFile(join(value.root, "skill-cli.jsonc"), removedOwnerBytes),
     );
     await expect(
-      value.core.management.rebind({ source: "first", path: "one", owner: "second" }),
+      value.core.installed.rebind({ source: "first", path: "one", owner: "second" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await Bun.file(join(value.root, "state", "state.json")).text()).toBe(before);
     expect(await Bun.file(join(value.root, "skill-cli.jsonc")).text()).toBe(removedOwnerBytes);
@@ -593,7 +573,7 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
-    await value.core.management.rebind({ source: "first", path: "one", owner: "second" });
+    await value.core.installed.rebind({ source: "first", path: "one", owner: "second" });
     expect((await value.core.workspace.get()).value.installedSkills[0]!.address.source).toBe(
       "second",
     );
@@ -607,7 +587,7 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
 test("private snapshot fixture publication cannot forge a Remote Installed identity", async () => {
   const value = await fixture();
   try {
-    const coordinator = new (await import("../../src/internal/state")).StateCoordinator(
+    const coordinator = new (await import("../../src/storage/state")).StateCoordinator(
       join(value.root, "state"),
     );
     const digest = await coordinator.snapshotDigest(join(value.skills, "one"));
@@ -665,8 +645,7 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
         cwd: root,
         sourceTransport: (url) => (url === "https://example.test/skills.git" ? bare : undefined),
       });
-      await core.configuration.change({
-        type: "source.register",
+      await core.sources.register({
         level: "project",
         id: "remote",
         binding: {
@@ -676,7 +655,7 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
           ref: "main",
         },
       });
-      const observation = await core.management.discover({ source: "remote" });
+      const observation = await core.sources.discover({ source: "remote" });
       expect(observation.value.candidates.map((candidate) => candidate.path)).toEqual(["review"]);
       await writeFile(
         join(work, "skills", "review", "SKILL.md"),
@@ -685,7 +664,7 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
       await git(work, "add", ".");
       await git(work, "commit", "-m", "moved");
       await git(work, "push", "origin", "HEAD:main");
-      await core.management.install({
+      await core.installed.install({
         source: "remote",
         paths: ["review"],
         exactRevision: observation.value.exactRevision,
@@ -740,8 +719,7 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
       cwd: root,
       sourceTransport: () => bare,
     });
-    await core.configuration.change({
-      type: "source.register",
+    await core.sources.register({
       level: "project",
       id: "remote",
       binding: {
@@ -751,7 +729,7 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
         ref: "main",
       },
     });
-    const observed = await core.management.discover({ source: "remote" });
+    const observed = await core.sources.discover({ source: "remote" });
     for (const request of [
       { source: "remote", paths: ["foreign"], exactRevision: observed.value.exactRevision },
       {
@@ -761,7 +739,7 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
       },
       { source: "remote", paths: ["review"], exactRevision: "f".repeat(40) },
     ]) {
-      await expect(core.management.install(request)).rejects.toMatchObject({
+      await expect(core.installed.install(request)).rejects.toMatchObject({
         code: expect.stringMatching(/SKILL_NOT_FOUND|INVALID_ARGUMENT|PINNED_COMMIT_UNAVAILABLE/),
       });
       expect(await Bun.file(join(root, "state", "state.json")).exists()).toBe(false);
@@ -774,7 +752,7 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
       ),
     );
     await expect(
-      core.management.install({
+      core.installed.install({
         source: "remote",
         paths: ["review"],
         exactRevision: observed.value.exactRevision,
@@ -881,8 +859,7 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
         sourceTransport: (url) => (url === "https://github.com/acme/skills.git" ? bare : undefined),
         githubApiBaseUrl: server.url.toString(),
       });
-      await core.configuration.change({
-        type: "source.register",
+      await core.sources.register({
         level: "project",
         id: "github",
         binding: {
@@ -892,16 +869,16 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
           ref: "main",
         },
       });
-      const observation = await core.management.discover({ source: "github" });
+      const observation = await core.sources.discover({ source: "github" });
       expect(observation.value.candidates.map((candidate) => candidate.path)).toEqual(["review"]);
-      await core.management.install({
+      await core.installed.install({
         source: "github",
         paths: ["review"],
         exactRevision: observation.value.exactRevision,
       });
       const state = JSON.parse(await Bun.file(join(root, "state", "state.json")).text());
       expect(state.installed[0]).toMatchObject({ kind: "remote", adoptedRevision: revision });
-      expect((await core.management.checkUpdate({ source: "github" })).value).toMatchObject({
+      expect((await core.installed.checkUpdate({ source: "github" })).value).toMatchObject({
         source: "github",
         kind: "github",
         exactRevision: revision,

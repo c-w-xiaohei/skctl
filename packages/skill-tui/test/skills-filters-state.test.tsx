@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { InputRenderable, Renderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { skillAddressKey } from "@skill-cli/core";
 import type { TuiCore } from "../src/effects";
 import { App } from "../src/app";
@@ -17,7 +17,7 @@ import { readerContent, readerProjection } from "./installed-reader.fixture";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
-function projection(): ManagementProjection {
+function projection(): WorkspaceView {
   const base = readerProjection();
   const [guide, reference] = base.installedSkills;
   const extra = {
@@ -305,9 +305,11 @@ test("STATE-004 RENDER empty filtering clears action context and destination ret
     () => (
       <App
         core={directSourceCore(projection(), {
-          loadInstalled: async ({ address }) => {
-            loads.push(address.path);
-            return { value: readerContent, diagnostics: [] };
+          installed: {
+            load: async ({ address }) => {
+              loads.push(address.path);
+              return readerContent;
+            },
           },
         })}
         exit={() => {}}
@@ -336,11 +338,11 @@ test("STATE-004 RENDER empty filtering clears action context and destination ret
 
 const refreshedProblemsTest = async () => {
   const base = projection();
-  const initial: ManagementProjection = {
+  const initial: WorkspaceView = {
     ...base,
     installedSkills: base.installedSkills.filter((skill) => skill.address.path !== "broken"),
   };
-  const refreshed: ManagementProjection = {
+  const refreshed: WorkspaceView = {
     ...initial,
     installedSkills: initial.installedSkills.map((skill) =>
       skill.address.path === "guide"
@@ -359,7 +361,7 @@ const refreshedProblemsTest = async () => {
           : skill,
     ),
   };
-  let current: ManagementProjection = {
+  let current: WorkspaceView = {
     ...initial,
     installedSkills: initial.installedSkills.map((skill) =>
       skill.address.path === "guide"
@@ -385,41 +387,40 @@ const refreshedProblemsTest = async () => {
     () => (
       <App
         core={directSourceCore(current, {
-          get: async () => ({ value: current, diagnostics: [] }),
-          checkUpdate: async (request) => {
-            checkedSources.push(request.source);
-            return {
-              value: {
-                source: request.source,
-                kind: "github",
-                changed: [{ path: "guide", name: "guide", description: "Refresh guide" }],
-                added: [],
-                removed: [],
-                unchanged: [],
-              },
-              diagnostics: [],
-            };
-          },
-          update: async (request) => {
-            updates.push(request);
-            current = refreshed;
-            return { value: undefined, diagnostics: [] };
-          },
-          loadInstalled: async ({ address }) => {
-            loads.push(address.path);
-            return {
-              value:
-                address.path === "reference"
-                  ? {
-                      ...readerContent,
-                      address,
-                      name: "reference",
-                      rawText: "---\ntitle: Reference\n---\n# Reference\n",
-                      markdownText: "# Reference\n",
-                    }
-                  : readerContent,
-              diagnostics: [],
-            };
+          workspace: { get: async () => ({ value: current, diagnostics: [] }) },
+          installed: {
+            checkUpdate: async (request) => {
+              checkedSources.push(request.source);
+              return {
+                value: {
+                  source: request.source,
+                  kind: "github",
+                  changed: [{ path: "guide", name: "guide", description: "Refresh guide" }],
+                  added: [],
+                  removed: [],
+                  unchanged: [],
+                  baseline: "baseline:test",
+                },
+                diagnostics: [],
+              };
+            },
+            update: async (request) => {
+              updates.push(request);
+              current = refreshed;
+              return { value: undefined, diagnostics: [] };
+            },
+            load: async ({ address }) => {
+              loads.push(address.path);
+              return address.path === "reference"
+                ? {
+                    ...readerContent,
+                    address,
+                    name: "reference",
+                    rawText: "---\ntitle: Reference\n---\n# Reference\n",
+                    markdownText: "# Reference\n",
+                  }
+                : readerContent;
+            },
           },
         })}
         exit={() => {}}
@@ -559,45 +560,52 @@ test("STATE-012 RENDER local filtering makes no workspace, provider, or manageme
     checkUpdate: 0,
     install: 0,
     update: 0,
-    removeSource: 0,
+    remove: 0,
   };
   const core: TuiCore = directSourceCore(projection(), {
-    get: async () => {
-      calls.workspace++;
-      return { value: projection(), diagnostics: [] };
+    workspace: {
+      get: async () => {
+        calls.workspace++;
+        return { value: projection(), diagnostics: [] };
+      },
     },
-    discover: async (request) => {
-      calls.discover++;
-      return {
-        value: { source: request.source, kind: "github", candidates: [] },
-        diagnostics: [],
-      };
+    sources: {
+      discover: async (request) => {
+        calls.discover++;
+        return {
+          value: { source: request.source, kind: "github", candidates: [] },
+          diagnostics: [],
+        };
+      },
+      remove: async () => {
+        calls.remove++;
+        return { value: undefined, diagnostics: [] };
+      },
     },
-    checkUpdate: async (request) => {
-      calls.checkUpdate++;
-      return {
-        value: {
-          source: request.source,
-          kind: "github",
-          changed: [],
-          added: [],
-          removed: [],
-          unchanged: [],
-        },
-        diagnostics: [],
-      };
-    },
-    install: async () => {
-      calls.install++;
-      return { value: [], diagnostics: [] };
-    },
-    update: async () => {
-      calls.update++;
-      return { value: undefined, diagnostics: [] };
-    },
-    removeSource: async () => {
-      calls.removeSource++;
-      return { value: undefined, diagnostics: [] };
+    installed: {
+      checkUpdate: async (request) => {
+        calls.checkUpdate++;
+        return {
+          value: {
+            source: request.source,
+            kind: "github",
+            changed: [],
+            added: [],
+            removed: [],
+            unchanged: [],
+            baseline: "baseline:test",
+          },
+          diagnostics: [],
+        };
+      },
+      install: async () => {
+        calls.install++;
+        return { value: [], diagnostics: [] };
+      },
+      update: async () => {
+        calls.update++;
+        return { value: undefined, diagnostics: [] };
+      },
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -619,7 +627,7 @@ test("STATE-012 RENDER local filtering makes no workspace, provider, or manageme
       checkUpdate: 0,
       install: 0,
       update: 0,
-      removeSource: 0,
+      remove: 0,
     });
   } finally {
     setup.renderer.destroy();

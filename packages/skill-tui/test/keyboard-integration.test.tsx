@@ -73,12 +73,16 @@ test("Escape leaves resource content before returning from Reader", async () => 
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-          listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
-          readInstalled: async (request) => ({
-            value: { kind: "text", path: request.path, text: "Resource body", format: "text" },
-            diagnostics: [],
-          }),
+          installed: {
+            load: async () => readerContent,
+            listResources: async () => readerResources,
+            read: async (request) => ({
+              kind: "text",
+              path: request.path,
+              text: "Resource body",
+              format: "text",
+            }),
+          },
         })}
         exit={() => {}}
       />

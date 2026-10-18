@@ -39,6 +39,7 @@ test("PERF 120 selected Skills cache scope derivations instead of reading them p
     unchanged: [],
     removed: [],
     added: [],
+    baseline: "baseline:test",
   });
   batch(() => skills.forEach((skill) => state.toggle(skill.address)));
   let guardReads = 0;

@@ -2,14 +2,14 @@ import { expect, spyOn, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readUserNetwork, capturedWorkspace, readWorkspace } from "../../src/internal/config";
+import { readUserNetwork, capturedWorkspace, readWorkspace } from "../../src/workspace/capture";
 import {
   createSourceOperation,
   sourceFetch,
   sourceChildEnv,
   sourceProxyConfigArgs,
   sourceNetworkError,
-} from "../../src/internal/source-network";
+} from "../../src/source/network";
 
 test.serial(
   "operation reads only the custom user scope, freezes it, and rejects inaccessible files",

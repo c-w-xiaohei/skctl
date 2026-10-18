@@ -1,7 +1,7 @@
 import {
   SkillCliError,
-  type ManagementCapability,
-  type ManagementProjection,
+  type InstalledCapability,
+  type WorkspaceView,
   type WorkspaceCapability,
 } from "@skill-cli/core";
 import { buildUpdateScope, updateSubmission } from "./model";
@@ -15,11 +15,11 @@ export interface UpdateForegroundLane {
 }
 export interface UpdateCore {
   readonly workspace: Pick<WorkspaceCapability, "get">;
-  readonly management: Pick<ManagementCapability, "checkUpdate" | "update">;
+  readonly installed: Pick<InstalledCapability, "checkUpdate" | "update">;
 }
 export interface UpdateControllerOptions {
   readonly foreground?: UpdateForegroundLane;
-  readonly onProjection?: (projection: ManagementProjection) => void;
+  readonly onProjection?: (projection: WorkspaceView) => void;
   readonly onSubmissionStarted?: (addresses: readonly UpdateAddress[]) => void;
   /** The session validates freshness/baseline; a missing result triggers a fresh check. */
   readonly observation?: (
@@ -105,7 +105,7 @@ export function createUpdateController(
           if (closed || task.abort.signal.aborted) return false;
           state.setStatus(source, "checking");
           try {
-            const result = await core.management.checkUpdate(
+            const result = await core.installed.checkUpdate(
               { source },
               { signal: task.abort.signal },
             );
@@ -172,7 +172,7 @@ export function createUpdateController(
             if (closed || signal.aborted) break;
             if (!cached) state.setStatus(source, "checking");
             observation =
-              cached ?? (await core.management.checkUpdate({ source }, { signal })).value;
+              cached ?? (await core.installed.checkUpdate({ source }, { signal })).value;
             if (closed || signal.aborted) break;
             if (observation.source !== source) throw new Error("Check returned a different Source");
             state.observe(observation, Date.now());
@@ -223,16 +223,14 @@ export function createUpdateController(
           patchRun({ phase: "updating", source });
           state.setStatus(source, "updating");
           try {
-            await core.management.update(
+            await core.installed.update(
               {
                 source,
                 paths: paths.map((address) => address.path),
                 ...(observation.kind === "local"
                   ? {}
                   : { exactRevision: observation.exactRevision }),
-                ...(observation.baseline !== undefined
-                  ? { expectedBaseline: observation.baseline }
-                  : {}),
+                expectedBaseline: observation.baseline,
               },
               { signal },
             );

@@ -1,4 +1,4 @@
-import type { CollectionView, ManagementProjection } from "@skill-cli/core";
+import type { CollectionView, WorkspaceView } from "@skill-cli/core";
 
 /** All Skills classification follows References, never ID prefixes or Link edges. */
 export function collectionDescendants(
@@ -99,7 +99,7 @@ const sortedReferences = (view: CollectionView): readonly CollectionView["refere
 
 /** First inventory preorder path, visiting each Collection once instead of enumerating graph paths. */
 export function findCollectionFilterPath(
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   collection: string,
 ): { readonly path: CollectionFilterPath; readonly ancestorKeys: readonly string[] } | undefined {
   if (!projection || projection.effective.status !== "complete") return undefined;
@@ -136,7 +136,7 @@ export function findCollectionFilterPath(
  * materialise Reference children. Skills belong in the middle list; members and Links add no level.
  */
 export function deriveCollectionFilterTree(
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   expanded: Readonly<Record<string, boolean>> | "all" = {},
 ): CollectionFilterTree {
   if (!projection || projection.effective.status !== "complete")

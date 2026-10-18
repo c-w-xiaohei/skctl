@@ -10,7 +10,7 @@ import {
   Show,
   type Accessor,
 } from "solid-js";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { filterDimensions } from "./types";
 import { filterSkills, filterValues } from "./skills-filter";
 import {
@@ -42,7 +42,7 @@ const plurals: Record<string, string> = {
 /** Applied conditions belong to workspace; this editor owns only facet search and cursor. */
 export function SkillsFilterPopup(props: {
   workspace: WorkspaceState;
-  projection: Accessor<ManagementProjection | undefined>;
+  projection: Accessor<WorkspaceView | undefined>;
   onClose: () => void;
 }) {
   const state = props.workspace;

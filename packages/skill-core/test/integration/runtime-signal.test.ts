@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
-import { StateCoordinator } from "../../src/internal/state";
+import { StateCoordinator } from "../../src/storage/state";
 
 test.serial(
   "content.run normalizes runtime signal numbers without changing named strings or null",
@@ -56,8 +56,8 @@ test.serial(
             { selector: "c:review", argv: [process.execPath, "--eval", "void 0"] },
             { signal: controller.signal },
           );
-          expect(result.value).toMatchObject({ selector: "c:review", signal: expected, cancelled });
-          if (!cancelled) expect(result.value.exitCode).toBe(0);
+          expect(result).toMatchObject({ selector: "c:review", signal: expected, cancelled });
+          if (!cancelled) expect(result.exitCode).toBe(0);
           expect(spawn).toHaveBeenCalledTimes(1);
           expect(await readdir(join(state, "runs"))).toEqual([]);
         } finally {
@@ -100,13 +100,13 @@ test.skipIf(process.platform !== "linux")(
         stderr: "ignore",
       });
       expect(await control.exited).toBe(163);
-      expect(control.signalCode).toBe(35);
+      expect<unknown>(control.signalCode).toBe(35);
       const core = createSkillCliCore({ cwd: root, userConfigPath: join(root, "global.jsonc") });
       const result = await core.content.run({
         selector: "c:review",
         argv: ["/bin/sh", "-c", "kill -35 $$"],
       });
-      expect(result.value).toEqual({
+      expect(result).toEqual({
         selector: "c:review",
         exitCode: 163,
         signal: "35",

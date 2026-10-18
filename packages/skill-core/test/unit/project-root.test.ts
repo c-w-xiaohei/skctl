@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resolveProjectRoot } from "../../src/internal/config";
-import { SkillCliError } from "../../src/internal/domain";
+import { resolveProjectRoot } from "../../src/config/inputs";
+import { SkillCliError } from "../../src/shared";
 
 async function git(cwd: string, ...args: string[]): Promise<void> {
   const child = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });

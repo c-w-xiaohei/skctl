@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { parsedEscape } from "./reader-test-controls";
@@ -42,7 +42,7 @@ async function openSources(setup: Setup) {
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
 }
 
-function sourcesProjection(): ManagementProjection {
+function sourcesProjection(): WorkspaceView {
   const base = workspaceProjection({ includeContribution: false });
   const sources = Array.from({ length: 14 }, (_, index) => ({
     id: `source-${index}`,

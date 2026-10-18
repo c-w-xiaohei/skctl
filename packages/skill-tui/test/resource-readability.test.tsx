@@ -44,36 +44,34 @@ async function mount(width: number, height: number) {
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async ({ address }) => ({
-            value: {
+          installed: {
+            load: async ({ address }) => ({
               address,
               name: address.path,
               description: "Guide",
               rawText: "# Guide",
               markdownText: "# Guide",
-            },
-            diagnostics: [],
-          }),
-          listInstalledResources: async () => ({ value: resources, diagnostics: [] }),
-          readInstalled: async (request) => {
-            reads.push(request.path);
-            return {
-              value: {
+            }),
+            listResources: async () => resources,
+            read: async (request) => {
+              reads.push(request.path);
+              return {
                 kind: "text",
                 path: request.path,
                 text: `# Resource heading\n\n${"Resource prose.\n\n".repeat(30)}`,
                 format: "markdown",
-              },
-              diagnostics: [],
-            };
+              };
+            },
+            update: async ({ source }) => {
+              acquisitions.push(source);
+              throw new Error("Resource browsing must not update Skills");
+            },
           },
-          discover: async ({ source }) => {
-            acquisitions.push(source);
-            throw new Error("Resource browsing must not acquire content");
-          },
-          update: async ({ source }) => {
-            acquisitions.push(source);
-            throw new Error("Resource browsing must not update Skills");
+          sources: {
+            discover: async ({ source }) => {
+              acquisitions.push(source);
+              throw new Error("Resource browsing must not acquire content");
+            },
           },
         })}
         exit={() => {}}

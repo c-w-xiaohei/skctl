@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
 import { SelectRenderable, TextBufferRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { App } from "../src/app";
 import { selectScrollOffset } from "../src/select-scroll";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { focusLive, openAllInstalledSkills, parsedEnter } from "./reader-test-controls";
 
-function projectionWithSkills(count: number): ManagementProjection {
+function projectionWithSkills(count: number): WorkspaceView {
   const projection = readerProjection();
   const template = projection.installedSkills[0]!;
   return {
@@ -40,18 +40,17 @@ test("All Installed Skills inspector follows the browser's native arrow selectio
     () => (
       <App
         core={directSourceCore(projectionWithSkills(2), {
-          loadInstalled: async ({ address }) => {
-            loads.push(address);
-            return {
-              value: {
+          installed: {
+            load: async ({ address }) => {
+              loads.push(address);
+              return {
                 address,
                 name: address.path,
                 description: `Description for ${address.path}`,
                 rawText: `# ${address.path}\n`,
                 markdownText: `# ${address.path}\n`,
-              },
-              diagnostics: [],
-            };
+              };
+            },
           },
         })}
         exit={() => {}}

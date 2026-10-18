@@ -1,40 +1,40 @@
 import {
   SkillCliError,
-  type ConfigurationCapability,
-  type ConfigChange,
+  type AddMemberRequest,
+  type AddToCollectionImpact,
+  type AddReferenceRequest,
+  type CollectionRequest,
   type ConfigDeclarationOwner,
   type ConfigLevel,
+  type ImportMembersRequest,
+  type ImportImpact,
+  type LinkChangeImpact,
+  type MembershipBatchImpact,
+  type MembershipRemovalImpact,
+  type CollectionRemovalImpact,
+  type CollectionUseImpact,
+  type ReferenceImpact,
+  type MemberEditRequest,
+  type RemoveMemberRequest,
+  type RemoveReferenceRequest,
+  type SetLinkRequest,
+  type SetUseRequest,
 } from "@skill-cli/core";
 
-type Preview<M extends keyof ConfigurationCapability> = {
-  readonly request: Parameters<ConfigurationCapability[M]>[0] & { readonly level: ConfigLevel };
-  readonly impact: Awaited<ReturnType<ConfigurationCapability[M]>>["value"];
-};
-type CollectionProtocol = {
-  "add-to-collection": {
-    readonly request: Omit<Preview<"previewAddToCollection">["request"], "name"> & {
-      readonly name?: string;
-    };
-    readonly impact: Preview<"previewAddToCollection">["impact"];
-  };
-  "membership-removal": Preview<"previewMembershipRemoval"> & {
-    readonly request: {
+export type CollectionPreviewIntent =
+  | ({ readonly kind: "add-to-collection" } & AddMemberRequest)
+  | ({
+      readonly kind: "membership-removal";
       readonly expectedAddress: { readonly source: string; readonly path: string };
-      readonly expectedOwner?: ConfigDeclarationOwner;
-    };
-  };
-  "membership-batch": Preview<"previewMembershipBatch"> & {
-    readonly request: { readonly expectedOwner?: ConfigDeclarationOwner };
-  };
-  "collection-import": Preview<"previewImport">;
-  reference: Preview<"previewReference">;
-  "link-change": Preview<"previewLinkChange">;
-  "collection-use": Preview<"previewCollectionUse">;
-  "collection-removal": Preview<"previewCollectionRemoval">;
-};
-export type CollectionPreviewIntent = {
-  [K in keyof CollectionProtocol]: CollectionProtocol[K]["request"] & { readonly kind: K };
-}[keyof CollectionProtocol];
+    } & Omit<RemoveMemberRequest, "level" | "expectedAddress"> & { readonly level?: ConfigLevel })
+  | ({ readonly kind: "membership-batch" } & MemberEditRequest)
+  | ({ readonly kind: "collection-import" } & ImportMembersRequest)
+  | ({ readonly kind: "reference-add" } & AddReferenceRequest)
+  | ({ readonly kind: "reference-remove" } & RemoveReferenceRequest)
+  | ({ readonly kind: "link-change" } & SetLinkRequest)
+  | ({ readonly kind: "collection-use" } & SetUseRequest)
+  | ({ readonly kind: "collection-removal" } & CollectionRequest);
+
 export type CollectionIntent =
   | CollectionPreviewIntent
   | {
@@ -43,17 +43,29 @@ export type CollectionIntent =
       readonly collection: string;
     };
 export type AddMembershipPreviewRequest = Extract<
-  CollectionIntent,
+  CollectionPreviewIntent,
   { readonly kind: "add-to-collection" }
 >;
+
+interface CollectionReviewMap {
+  "add-to-collection": AddToCollectionImpact;
+  "membership-removal": MembershipRemovalImpact;
+  "membership-batch": MembershipBatchImpact;
+  "collection-import": ImportImpact;
+  "reference-add": ReferenceImpact;
+  "reference-remove": ReferenceImpact;
+  "link-change": LinkChangeImpact;
+  "collection-use": CollectionUseImpact;
+  "collection-removal": CollectionRemovalImpact;
+}
 export type CollectionReview = {
-  [K in keyof CollectionProtocol]: {
+  [K in keyof CollectionReviewMap]: {
     readonly kind: K;
     readonly id: string;
-    readonly intent: CollectionProtocol[K]["request"] & { readonly kind: K };
-    readonly impact: CollectionProtocol[K]["impact"];
+    readonly intent: Extract<CollectionPreviewIntent, { readonly kind: K }>;
+    readonly impact: CollectionReviewMap[K];
   };
-}[keyof CollectionProtocol];
+}[keyof CollectionReviewMap];
 
 function matches(condition: unknown): asserts condition {
   if (!condition)
@@ -69,218 +81,183 @@ const sameAddress = (
   right: { source: string; path: string },
 ) => left.source === right.source && left.path === right.path;
 
-/** Bind one preview to its exact request and prepare its write once, never from UI display data.
- * This is a frontend protocol, not authority: Core still validates fresh declarations under its lock.
- */
+type CollectionPreviewCore = {
+  readonly collections: Pick<
+    import("./effects").TuiCore["collections"],
+    | "previewAddMember"
+    | "previewRemoveMember"
+    | "previewMemberEdit"
+    | "previewImportMembers"
+    | "previewAddReference"
+    | "previewRemoveReference"
+    | "previewSetLink"
+    | "previewRemoval"
+  >;
+  readonly use: Pick<import("./effects").TuiCore["use"], "previewSet">;
+};
 export async function previewCollection(
-  configuration: Omit<ConfigurationCapability, "change">,
+  core: CollectionPreviewCore,
   intent: CollectionPreviewIntent,
   id: string,
   signal: AbortSignal,
-): Promise<{ readonly review: CollectionReview; readonly change?: ConfigChange }> {
+): Promise<CollectionReview> {
   switch (intent.kind) {
     case "add-to-collection": {
-      const { level, collection, address, name } = intent;
-      const { value: impact } = await configuration.previewAddToCollection(
-        { level, collection, address, name: name! },
-        { signal },
-      );
+      const impact = (
+        await core.collections.previewAddMember(
+          {
+            level: intent.level,
+            collection: intent.collection,
+            name: intent.name,
+            address: intent.address,
+          },
+          { signal },
+        )
+      ).value;
       matches(
-        impact.kind === intent.kind &&
-          impact.collection === collection &&
-          sameAddress(impact.address, address),
+        impact.kind === "add-to-collection" &&
+          impact.collection === intent.collection &&
+          sameAddress(impact.address, intent.address),
       );
-      let change: ConfigChange | undefined;
       if (impact.decision.kind === "direct") {
         matches(
-          impact.intent &&
-            impact.intent.owner.level === level &&
-            sameOwner(impact.decision.owner, impact.intent.owner) &&
-            sameAddress(impact.intent.address, address) &&
-            impact.intent.stableEntryName === name,
+          impact.intent?.owner.level === intent.level &&
+            sameAddress(impact.intent.address, intent.address) &&
+            impact.intent.stableEntryName === intent.name,
         );
-        if (!impact.intent.stableEntryName)
-          throw new SkillCliError(
-            "TRANSACTION_CONFLICT",
-            "Collection preview did not provide an executable membership or next step",
-          );
-        change = {
-          type: "collection.member.set",
-          level: impact.intent.owner.level,
-          collection,
-          name: impact.intent.stableEntryName,
-          address: impact.intent.address,
-        };
       } else
         matches(
           impact.decision.kind === "repository-derived" &&
-            impact.createDirectContribution?.collection === collection,
+            impact.createDirectContribution?.collection === intent.collection,
         );
-      return { review: { kind: intent.kind, id, intent, impact }, change };
+      return { kind: intent.kind, id, intent, impact };
     }
     case "membership-removal": {
-      const { level, collection, name, expectedOwner, expectedAddress } = intent;
-      if (!expectedAddress.source || !expectedAddress.path)
-        throw new SkillCliError(
-          "INVALID_ARGUMENT",
-          "Remove Membership requires the exact expected structural address",
-        );
-      const { value: impact } = await configuration.previewMembershipRemoval(
-        { level, collection, name, ...(expectedOwner ? { expectedOwner } : {}) },
-        { signal },
-      );
+      const impact = (
+        await core.collections.previewRemoveMember(
+          {
+            collection: intent.collection,
+            name: intent.name,
+            expectedAddress: intent.expectedAddress,
+            ...(intent.level ? { level: intent.level } : {}),
+            ...(intent.expectedOwner ? { expectedOwner: intent.expectedOwner } : {}),
+          },
+          { signal },
+        )
+      ).value;
       matches(
-        impact.kind === intent.kind &&
-          impact.collection === collection &&
-          impact.name === name &&
-          impact.decision.kind === "direct" &&
-          impact.decision.owner.level === level &&
-          impact.affected.some((affected) => sameAddress(affected.address, expectedAddress)),
+        impact.kind === "membership-removal" &&
+          impact.collection === intent.collection &&
+          impact.name === intent.name &&
+          impact.affected.some((affected) => sameAddress(affected.address, intent.expectedAddress)),
       );
-      return {
-        review: { kind: intent.kind, id, intent, impact },
-        change: {
-          type: "collection.member.remove",
-          level: impact.decision.owner.level,
-          collection,
-          name,
-          expectedAddress,
-        },
-      };
+      return { kind: intent.kind, id, intent, impact };
     }
     case "membership-batch": {
-      const { level, collection, expectedOwner, additions, removals } = intent;
-      const { value: impact } = await configuration.previewMembershipBatch(
-        {
-          level,
-          collection,
-          ...(expectedOwner && removals.length ? { expectedOwner } : {}),
-          additions,
-          removals,
-        },
-        { signal },
-      );
+      const impact = (
+        await core.collections.previewMemberEdit(
+          {
+            level: intent.level,
+            collection: intent.collection,
+            additions: intent.additions,
+            removals: intent.removals,
+            ...(intent.expectedOwner ? { expectedOwner: intent.expectedOwner } : {}),
+          },
+          { signal },
+        )
+      ).value;
       matches(
-        impact.kind === intent.kind &&
-          impact.collection === collection &&
+        impact.kind === "membership-batch" &&
+          impact.collection === intent.collection &&
           impact.decision.kind === "direct" &&
-          impact.decision.owner.level === level &&
-          (!expectedOwner || sameOwner(impact.decision.owner, expectedOwner)) &&
-          JSON.stringify(impact.additions) === JSON.stringify(additions) &&
-          JSON.stringify(impact.removals) === JSON.stringify(removals),
+          impact.decision.owner.level === intent.level &&
+          (!intent.expectedOwner || sameOwner(impact.decision.owner, intent.expectedOwner)),
       );
-      return {
-        review: { kind: intent.kind, id, intent, impact },
-        change: {
-          type: "collection.members.change",
-          level: impact.decision.owner.level,
-          collection,
-          additions,
-          removals,
-          reviewedAffected: impact.affected,
-        },
-      };
+      return { kind: intent.kind, id, intent, impact };
     }
     case "collection-import": {
-      const { level, from, into } = intent;
-      const { value: impact } = await configuration.previewImport(
-        { level, from, into },
-        { signal },
-      );
+      const impact = (
+        await core.collections.previewImportMembers(
+          { level: intent.level, from: intent.from, into: intent.into },
+          { signal },
+        )
+      ).value;
       matches(
-        impact.kind === intent.kind &&
-          impact.source === from &&
-          impact.destination === into &&
-          impact.owner?.level === level,
+        impact.kind === "collection-import" &&
+          impact.source === intent.from &&
+          impact.destination === intent.into &&
+          impact.owner?.level === intent.level,
       );
-      return {
-        review: { kind: intent.kind, id, intent, impact },
-        change: { type: "collection.import", level, from, into },
-      };
+      return { kind: intent.kind, id, intent, impact };
     }
-    case "reference": {
-      const { level, collection, name, target, description, remove } = intent;
-      const { value: impact } = await configuration.previewReference(
-        { level, collection, name, target, description, remove },
-        { signal },
-      );
+    case "reference-add": {
+      const { kind: _kind, ...request } = intent;
+      const impact = (await core.collections.previewAddReference(request, { signal })).value;
       matches(
-        impact.kind === intent.kind &&
-          impact.collection === collection &&
-          impact.name === name &&
-          impact.referencedCollection === target &&
-          impact.description === description &&
-          impact.owner?.level === level,
+        impact.kind === "reference" &&
+          impact.collection === intent.collection &&
+          impact.name === intent.name &&
+          impact.referencedCollection === intent.target &&
+          impact.description === intent.description &&
+          impact.owner?.level === intent.level &&
+          (!intent.expectedOwner || sameOwner(impact.owner, intent.expectedOwner)),
       );
-      const change: ConfigChange = remove
-        ? {
-            type: "collection.reference.remove",
-            level: impact.owner.level,
-            collection,
-            name,
-            expected: { collection: target, description },
-          }
-        : {
-            type: "collection.reference.set",
-            level: impact.owner.level,
-            collection,
-            name,
-            target,
-            description,
-          };
-      return { review: { kind: intent.kind, id, intent, impact }, change };
+      return { kind: intent.kind, id, intent, impact };
+    }
+    case "reference-remove": {
+      const { kind: _kind, ...request } = intent;
+      const impact = (await core.collections.previewRemoveReference(request, { signal })).value;
+      matches(
+        impact.kind === "reference" &&
+          impact.collection === intent.collection &&
+          impact.name === intent.name &&
+          impact.referencedCollection ===
+            (intent.expected?.collection ?? impact.referencedCollection) &&
+          impact.description === (intent.expected?.description ?? impact.description) &&
+          impact.owner?.level === intent.level &&
+          (!intent.expectedOwner || sameOwner(impact.owner, intent.expectedOwner)),
+      );
+      return { kind: intent.kind, id, intent, impact };
     }
     case "link-change": {
-      const { level, collection, target, linked } = intent;
-      const { value: impact } = await configuration.previewLinkChange(
-        { level, collection, target, linked },
-        { signal },
-      );
+      const { kind: _kind, ...request } = intent;
+      const impact = (await core.collections.previewSetLink(request, { signal })).value;
       matches(
-        impact.kind === intent.kind &&
-          impact.collection === collection &&
-          impact.target === target &&
-          impact.linked === linked &&
-          impact.owner?.level === level,
+        impact.kind === "link-change" &&
+          impact.collection === intent.collection &&
+          impact.target === intent.target &&
+          impact.linked === intent.linked &&
+          impact.owner?.level === intent.level &&
+          (!intent.expectedOwner || sameOwner(impact.owner, intent.expectedOwner)),
       );
-      return {
-        review: { kind: intent.kind, id, intent, impact },
-        change: { type: "collection.link.set", level, collection, target, linked },
-      };
+      return { kind: intent.kind, id, intent, impact };
     }
     case "collection-use": {
-      const { level, collections } = intent;
-      const { value: impact } = await configuration.previewCollectionUse(
-        { level, collections },
-        { signal },
-      );
+      const impact = (
+        await core.use.previewSet(
+          { level: intent.level, collections: intent.collections },
+          { signal },
+        )
+      ).value;
       matches(
-        impact.kind === intent.kind &&
-          impact.owner.level === level &&
-          impact.newCollections.length === collections.length &&
-          impact.newCollections.every((value, index) => value === collections[index]),
+        impact.kind === "collection-use" &&
+          impact.owner.level === intent.level &&
+          impact.newCollections.length === intent.collections.length &&
+          impact.newCollections.every(
+            (value: string, index: number) => value === intent.collections[index],
+          ),
       );
-      return {
-        review: { kind: intent.kind, id, intent, impact },
-        change: { type: "use.set", level, collections },
-      };
+      return { kind: intent.kind, id, intent, impact };
     }
     case "collection-removal": {
-      const { level, collection } = intent;
-      const { value: impact } = await configuration.previewCollectionRemoval(
-        { level, collection },
-        { signal },
-      );
+      const impact = (await core.collections.previewRemoval(intent, { signal })).value;
       matches(
-        impact.kind === intent.kind &&
-          impact.owner?.level === level &&
+        impact.kind === "collection-removal" &&
+          impact.owner?.level === intent.level &&
           impact.decision?.kind === "direct" &&
-          impact.decision.owner.level === level,
+          impact.decision.owner.level === intent.level,
       );
-      return {
-        review: { kind: intent.kind, id, intent, impact },
-        change: { type: "collection.remove", level, collection },
-      };
+      return { kind: intent.kind, id, intent, impact };
     }
   }
 }

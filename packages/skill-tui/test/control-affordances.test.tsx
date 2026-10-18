@@ -246,7 +246,7 @@ test.each([
       () => (
         <App
           core={directSourceCore(readerProjection(), {
-            loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+            installed: { load: async () => readerContent },
           })}
           exit={() => {}}
         />

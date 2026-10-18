@@ -1,5 +1,5 @@
 import { batch, createMemo, createSignal } from "solid-js";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import {
   skillAddressKey,
   sameSkillAddress,
@@ -104,7 +104,7 @@ export const problemFilterDimensions = ["Severity", "Code"] as const;
 export const problemFilterValues = (rows: readonly ProblemRow[], dimension: string) =>
   [...new Set(rows.map((row) => (dimension === "Severity" ? row.severity : row.code)))].sort();
 
-export const problemRows = (projection: ManagementProjection): readonly ProblemRow[] => {
+export const problemRows = (projection: WorkspaceView): readonly ProblemRow[] => {
   const ownerKey = (owner: ConfigDeclarationOwner) =>
     `${owner.level}\u0000${owner.file}\u0000${owner.pointer}`;
   const configRoute = (owner: ConfigDeclarationOwner): ProblemRow["intent"] => {
@@ -568,7 +568,7 @@ export function createWorkspaceState(
           : { ...current, scrolls: { ...current.scrolls, [surface]: value } },
       );
     },
-    reconcile(previous: ManagementProjection | undefined, current: ManagementProjection) {
+    reconcile(previous: WorkspaceView | undefined, current: WorkspaceView) {
       let reconciledSkill: SkillAddress | undefined;
       let reconciled = false;
       batch(() =>

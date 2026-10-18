@@ -676,13 +676,12 @@ test("Reference draft traverses all inputs, including reverse Tab, and previews 
     setup.mockInput.pressEnter();
     expect(previews).toEqual([
       {
-        kind: "reference",
+        kind: "reference-add",
         level: "project",
         collection: "team",
         name: "doc",
         target: "team",
         description: "D",
-        remove: false,
       },
     ]);
   } finally {
@@ -907,22 +906,20 @@ test("Import, Reference, Link, and Use retain mounted drafts and exact retries",
     reference.setup.mockInput.pressEnter();
     expect(referencePreviews).toEqual([
       {
-        kind: "reference",
+        kind: "reference-add",
         level: "project",
         collection: "team",
         name: "n",
         target: "t",
         description: "d",
-        remove: false,
       },
       {
-        kind: "reference",
+        kind: "reference-add",
         level: "project",
         collection: "team",
         name: "n",
         target: "t",
         description: "d",
-        remove: false,
       },
     ]);
   } finally {
@@ -968,22 +965,18 @@ test("Import, Reference, Link, and Use retain mounted drafts and exact retries",
     removal.setup.mockInput.pressEnter();
     expect(removalPreviews).toEqual([
       {
-        kind: "reference",
+        kind: "reference-remove",
         level: "project",
         collection: "team",
         name: "ref",
-        target: "docs",
-        description: "old",
-        remove: true,
+        expected: { collection: "docs", description: "old" },
       },
       {
-        kind: "reference",
+        kind: "reference-remove",
         level: "project",
         collection: "team",
         name: "ref",
-        target: "docs",
-        description: "old",
-        remove: true,
+        expected: { collection: "docs", description: "old" },
       },
     ]);
   } finally {

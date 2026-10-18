@@ -1,4 +1,4 @@
-import type { ContentCapability } from "@skill-cli/core";
+import type { InstalledCapability } from "@skill-cli/core";
 import { createComputed, createRoot, untrack } from "solid-js";
 import { createReaderOwner, type ReaderAddress } from "../src/reader/state";
 import type { ReaderState } from "../src/types";
@@ -14,47 +14,46 @@ export const deferred = <T>() => {
   return { promise, resolve, reject };
 };
 export const installedContent = (address: ReaderAddress, text: string) => ({
-  value: {
-    address,
-    name: address.path,
-    description: address.path,
-    markdownText: text,
-    rawText: text,
-  },
-  diagnostics: [],
+  address,
+  name: address.path,
+  description: address.path,
+  markdownText: text,
+  rawText: text,
 });
 type ReadCall<T> = ReturnType<typeof deferred<T>> & { readonly signal?: AbortSignal };
 export function pendingReader(onAcceptedFailure?: () => void) {
-  const loads: ReadCall<Awaited<ReturnType<ContentCapability["loadInstalled"]>>>[] = [];
-  const lists: ReadCall<Awaited<ReturnType<ContentCapability["listInstalledResources"]>>>[] = [];
-  const reads: ReadCall<Awaited<ReturnType<ContentCapability["readInstalled"]>>>[] = [];
+  const loads: ReadCall<Awaited<ReturnType<InstalledCapability["load"]>>>[] = [];
+  const lists: ReadCall<Awaited<ReturnType<InstalledCapability["listResources"]>>>[] = [];
+  const reads: ReadCall<Awaited<ReturnType<InstalledCapability["read"]>>>[] = [];
   const core = directSourceCore(workspaceProjection(), {
-    loadInstalled: (_request, options) => {
-      const call = {
-        ...deferred<Awaited<ReturnType<ContentCapability["loadInstalled"]>>>(),
-        signal: options?.signal,
-      };
-      loads.push(call);
-      return call.promise;
-    },
-    listInstalledResources: (_request, options) => {
-      const call = {
-        ...deferred<Awaited<ReturnType<ContentCapability["listInstalledResources"]>>>(),
-        signal: options?.signal,
-      };
-      lists.push(call);
-      return call.promise;
-    },
-    readInstalled: (_request, options) => {
-      const call = {
-        ...deferred<Awaited<ReturnType<ContentCapability["readInstalled"]>>>(),
-        signal: options?.signal,
-      };
-      reads.push(call);
-      return call.promise;
+    installed: {
+      load: (_request, options) => {
+        const call = {
+          ...deferred<Awaited<ReturnType<InstalledCapability["load"]>>>(),
+          signal: options?.signal,
+        };
+        loads.push(call);
+        return call.promise;
+      },
+      listResources: (_request, options) => {
+        const call = {
+          ...deferred<Awaited<ReturnType<InstalledCapability["listResources"]>>>(),
+          signal: options?.signal,
+        };
+        lists.push(call);
+        return call.promise;
+      },
+      read: (_request, options) => {
+        const call = {
+          ...deferred<Awaited<ReturnType<InstalledCapability["read"]>>>(),
+          signal: options?.signal,
+        };
+        reads.push(call);
+        return call.promise;
+      },
     },
   });
-  return { owner: createReaderOwner(core.content, onAcceptedFailure), loads, lists, reads };
+  return { owner: createReaderOwner(core.installed, onAcceptedFailure), loads, lists, reads };
 }
 
 /** Observe the production signal, not a duplicate event dispatcher or test store. */

@@ -95,10 +95,7 @@ test("RENDER Sources replaces the Collection browser native target", async () =>
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({
-            value: readerContent,
-            diagnostics: [],
-          }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />
@@ -123,10 +120,7 @@ test("RENDER Workspace Sources keeps source identity primary and origin secondar
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({
-            value: readerContent,
-            diagnostics: [],
-          }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />
@@ -154,10 +148,7 @@ test("RENDER wide Workspace owns bounded Sections and Content panels", async () 
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({
-            value: readerContent,
-            diagnostics: [],
-          }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />
@@ -336,10 +327,7 @@ test("RENDER medium keeps Sections and Content without a navigation rail", async
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({
-            value: readerContent,
-            diagnostics: [],
-          }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />
@@ -555,13 +543,15 @@ test("RENDER narrow observation progress remains bounded at 79x24 and 43x30", as
       () => (
         <App
           core={directSourceCore(workspaceProjection(), {
-            discover: (_request, options) =>
-              new Promise((_, reject) =>
-                options?.signal?.addEventListener("abort", () => {
-                  aborts++;
-                  reject(new SkillCliError("CANCELLED", "cancelled"));
-                }),
-              ),
+            sources: {
+              discover: (_request, options) =>
+                new Promise((_, reject) =>
+                  options?.signal?.addEventListener("abort", () => {
+                    aborts++;
+                    reject(new SkillCliError("CANCELLED", "cancelled"));
+                  }),
+                ),
+            },
           })}
           exit={() => {}}
         />
@@ -623,28 +613,32 @@ test("RENDER narrow selection remains bounded through resize at 79x24 and 43x30"
               ],
             },
             {
-              discover: async (request) => ({
-                value: {
-                  source: request.source,
-                  kind: "github",
-                  exactRevision: "narrow",
-                  candidates: [
-                    {
-                      path: "installed",
-                      name: "installed",
-                      description: "Installed",
-                    },
-                    { path: "review", name: "review", description: "Review" },
-                  ],
-                },
-                diagnostics: [],
-              }),
-              install: (_request, options) =>
-                new Promise((_, reject) =>
-                  options?.signal?.addEventListener("abort", () =>
-                    reject(new Error("apply stopped")),
+              sources: {
+                discover: async (request) => ({
+                  value: {
+                    source: request.source,
+                    kind: "github",
+                    exactRevision: "narrow",
+                    candidates: [
+                      {
+                        path: "installed",
+                        name: "installed",
+                        description: "Installed",
+                      },
+                      { path: "review", name: "review", description: "Review" },
+                    ],
+                  },
+                  diagnostics: [],
+                }),
+              },
+              installed: {
+                install: (_request, options) =>
+                  new Promise((_, reject) =>
+                    options?.signal?.addEventListener("abort", () =>
+                      reject(new Error("apply stopped")),
+                    ),
                   ),
-                ),
+              },
             },
           )}
           exit={() => {}}

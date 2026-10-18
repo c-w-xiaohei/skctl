@@ -1,10 +1,10 @@
 import type { Command } from "commander";
-import type { ConfigurationChangeResult } from "@skill-cli/core";
+import type { UseWriteResult } from "@skill-cli/core";
 import type { CommandContext } from "../command-context";
 import { scope, scopeOptions } from "./shared";
 
-function formatUse(result: ConfigurationChangeResult) {
-  const delta = result.use!;
+function formatUse(result: UseWriteResult) {
+  const delta = result.use;
   const added = delta.after.filter((id) => !delta.before.includes(id));
   const removed = delta.before.filter((id) => !delta.after.includes(id));
   const retained = delta.after.filter((id) => delta.before.includes(id));
@@ -38,9 +38,8 @@ export function useCommand(parent: Command, { core, stdout }: CommandContext) {
       "Add one direct catalog root at one scope. Repository-derived Collections need this separately (use add <owner/repository> -g) to appear as global catalog roots.",
     )
     .action(async (collection, flags, action) => {
-      const { value } = await core(action).configuration.change({
-        type: "use.add",
-        level: scope(flags),
+      const { value } = await core(action).use.add({
+        level: scope(flags)!,
         collection,
       });
       stdout.write(formatUse(value));
@@ -48,9 +47,8 @@ export function useCommand(parent: Command, { core, stdout }: CommandContext) {
   scopeOptions(use.command("remove <id>"))
     .description("Remove one direct catalog root from one scope.")
     .action(async (collection, flags, action) => {
-      const { value } = await core(action).configuration.change({
-        type: "use.remove",
-        level: scope(flags),
+      const { value } = await core(action).use.remove({
+        level: scope(flags)!,
         collection,
       });
       stdout.write(formatUse(value));
@@ -58,9 +56,8 @@ export function useCommand(parent: Command, { core, stdout }: CommandContext) {
   scopeOptions(use.command("set <collection...>"))
     .description("Replace all direct catalog roots at one scope.")
     .action(async (collections, flags, action) => {
-      const { value } = await core(action).configuration.change({
-        type: "use.set",
-        level: scope(flags),
+      const { value } = await core(action).use.set({
+        level: scope(flags)!,
         collections,
       });
       stdout.write(formatUse(value));

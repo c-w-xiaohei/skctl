@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { App } from "../src/app";
 import { ConfigPage } from "../src/config-page";
 import { createConfigState, configDeclarationOwnerKey } from "../src/config/state";
@@ -47,7 +47,7 @@ async function openResourceContent(setup: Setup) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));
 }
 
-function configProjection(): ManagementProjection {
+function configProjection(): WorkspaceView {
   const base = workspaceProjection({ includeContribution: false });
   const integrationOwner = { ...directOwner, pointer: "/agents/opencode" };
   return {
@@ -165,22 +165,21 @@ async function openProjectConfigSource(setup: Setup) {
 
 test("RENDER Reader resource uses shared Back without a route predecessor and preserves resource-list recovery", async () => {
   let settleRead:
-    | ((value: {
-        value: { kind: "text"; path: string; format: "markdown"; text: string };
-        diagnostics: [];
-      }) => void)
+    | ((value: { kind: "text"; path: string; format: "markdown"; text: string }) => void)
     | undefined;
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-          listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
-          readInstalled: (request) =>
-            new Promise((resolve) => {
-              settleRead = resolve;
-              expect(request.path).toBe("docs/guide.md");
-            }),
+          installed: {
+            load: async () => readerContent,
+            listResources: async () => readerResources,
+            read: (request) =>
+              new Promise((resolve) => {
+                settleRead = resolve;
+                expect(request.path).toBe("docs/guide.md");
+              }),
+          },
         })}
         exit={() => {}}
       />
@@ -223,10 +222,7 @@ test("RENDER Reader resource uses shared Back without a route predecessor and pr
     await setup.waitFor(() => !setup.renderer.root.findDescendantById("resource-content"));
     const browser = setup.renderer.root.findDescendantById("resource-browser") as SelectRenderable;
     expect(browser.getSelectedOption()?.value).toBe("docs/guide.md");
-    settleRead!({
-      value: { kind: "text", path: "docs/guide.md", format: "markdown", text: "late resource" },
-      diagnostics: [],
-    });
+    settleRead!({ kind: "text", path: "docs/guide.md", format: "markdown", text: "late resource" });
     await setup.renderOnce();
     expect(!!setup.renderer.root.findDescendantById("resource-content")).toBe(false);
     expect(setup.captureCharFrame()).not.toContain("late resource");
@@ -440,7 +436,7 @@ test("RENDER Reader management groups stay inside the actual pane and keep dange
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />

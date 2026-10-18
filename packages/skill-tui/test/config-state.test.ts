@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { configDeclarationOwnerKey, createConfigState } from "../src/config/state";
 import type { ConfigSection } from "../src/types";
 import { workspaceProjection } from "./direct-source.fixture";
@@ -12,7 +12,7 @@ const sections: readonly ConfigSection[] = [
 ];
 const destinations = ["global", "project", "local"] as const;
 
-function projection(section: ConfigSection, values: readonly string[]): ManagementProjection {
+function projection(section: ConfigSection, values: readonly string[]): WorkspaceView {
   const base = workspaceProjection({ includeDirect: false, includeContribution: false });
   return {
     ...base,

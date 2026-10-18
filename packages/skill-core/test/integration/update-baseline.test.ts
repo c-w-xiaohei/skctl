@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
-import { setManagementUpdateCheckHookForTest } from "../../src/management";
+import { setManagementUpdateCheckHookForTest } from "../../src/installed/update";
 
 async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
@@ -22,22 +22,21 @@ async function fixture() {
     "---\nname: review\ndescription: First\n---\n",
   );
   const core = createSkillCliCore({ cwd: root });
-  await core.configuration.change({
-    type: "source.register",
+  await core.sources.register({
     level: "project",
     id: "local",
     binding: { kind: "local", path: "./skills", root: "" },
   });
-  await core.management.install({ source: "local", paths: ["review"] });
+  await core.installed.install({ source: "local", paths: ["review"] });
   return { root, core };
 }
 
 test("update baselines persist across Core instances and invalidate for local content or installed state", async () => {
   const value = await fixture();
   try {
-    const initial = await value.core.management.getUpdateBaseline({ source: "local" });
+    const initial = await value.core.installed.updateBaseline({ source: "local" });
     const restarted = createSkillCliCore({ cwd: value.root });
-    expect((await restarted.management.getUpdateBaseline({ source: "local" })).value).toBe(
+    expect((await restarted.installed.updateBaseline({ source: "local" })).value).toBe(
       initial.value,
     );
 
@@ -45,11 +44,11 @@ test("update baselines persist across Core instances and invalidate for local co
       join(value.root, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: Changed\n---\n",
     );
-    const afterLocalEdit = await restarted.management.getUpdateBaseline({ source: "local" });
+    const afterLocalEdit = await restarted.installed.updateBaseline({ source: "local" });
     expect(afterLocalEdit.value).not.toBe(initial.value);
 
-    await restarted.management.uninstall({ source: "local", paths: ["review"] });
-    expect((await restarted.management.getUpdateBaseline({ source: "local" })).value).not.toBe(
+    await restarted.installed.uninstall({ source: "local", paths: ["review"] });
+    expect((await restarted.installed.updateBaseline({ source: "local" })).value).not.toBe(
       afterLocalEdit.value,
     );
   } finally {
@@ -61,11 +60,11 @@ test("update baselines persist across Core instances and invalidate for local co
 test("identical bindings in isolated installation storage never share an update baseline", async () => {
   const value = await fixture();
   try {
-    const firstBaseline = await value.core.management.getUpdateBaseline({ source: "local" });
+    const firstBaseline = await value.core.installed.updateBaseline({ source: "local" });
     process.env.SKILL_CLI_STATE_DIR = join(value.root, "other-state");
     const isolated = createSkillCliCore({ cwd: value.root });
-    await isolated.management.install({ source: "local", paths: ["review"] });
-    const secondBaseline = await isolated.management.getUpdateBaseline({ source: "local" });
+    await isolated.installed.install({ source: "local", paths: ["review"] });
+    const secondBaseline = await isolated.installed.updateBaseline({ source: "local" });
     expect(secondBaseline.value).not.toBe(firstBaseline.value);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
@@ -76,18 +75,16 @@ test("identical bindings in isolated installation storage never share an update 
 test("update baseline rejects an installed source whose binding changed across restart", async () => {
   const value = await fixture();
   try {
-    const baseline = await value.core.management.getUpdateBaseline({ source: "local" });
+    const baseline = await value.core.installed.updateBaseline({ source: "local" });
     await mkdir(join(value.root, "other-skills"));
     await writeFile(
       join(value.root, "skill-cli.jsonc"),
       '{ "sources": { "local": { "kind": "local", "path": "./other-skills", "root": "" } } }\n',
     );
     const restarted = createSkillCliCore({ cwd: value.root });
-    await expect(restarted.management.getUpdateBaseline({ source: "local" })).rejects.toMatchObject(
-      {
-        code: "CONFIG_CONFLICT",
-      },
-    );
+    await expect(restarted.installed.updateBaseline({ source: "local" })).rejects.toMatchObject({
+      code: "CONFIG_CONFLICT",
+    });
     expect(baseline.value).toBeDefined();
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
@@ -122,8 +119,7 @@ test("update baseline changes after a remote skill is re-materialized across res
       cwd: root,
       sourceTransport: (url) => (url === "https://example.test/skills.git" ? bare : undefined),
     });
-    await core.configuration.change({
-      type: "source.register",
+    await core.sources.register({
       level: "project",
       id: "remote",
       binding: {
@@ -133,24 +129,24 @@ test("update baseline changes after a remote skill is re-materialized across res
         ref: "main",
       },
     });
-    const initial = await core.management.discover({ source: "remote" });
-    await core.management.install({
+    const initial = await core.sources.discover({ source: "remote" });
+    await core.installed.install({
       source: "remote",
       paths: ["review"],
       exactRevision: initial.value.exactRevision,
     });
-    const before = await core.management.getUpdateBaseline({ source: "remote" });
+    const before = await core.installed.updateBaseline({ source: "remote" });
     process.env.SKILL_CLI_STATE_DIR = join(root, "other-state");
     const isolated = createSkillCliCore({
       cwd: root,
       sourceTransport: (url) => (url === "https://example.test/skills.git" ? bare : undefined),
     });
-    await isolated.management.install({
+    await isolated.installed.install({
       source: "remote",
       paths: ["review"],
       exactRevision: initial.value.exactRevision,
     });
-    expect((await isolated.management.getUpdateBaseline({ source: "remote" })).value).not.toBe(
+    expect((await isolated.installed.updateBaseline({ source: "remote" })).value).not.toBe(
       before.value,
     );
     process.env.SKILL_CLI_STATE_DIR = join(root, "state");
@@ -163,10 +159,10 @@ test("update baseline changes after a remote skill is re-materialized across res
     await git(work, "commit", "-m", "second");
     const revision = await git(work, "rev-parse", "HEAD");
     await git(work, "push", "origin", "HEAD:main");
-    await core.management.update({ source: "remote", paths: ["review"], exactRevision: revision });
+    await core.installed.update({ source: "remote", paths: ["review"], exactRevision: revision });
 
     const restarted = createSkillCliCore({ cwd: root });
-    expect((await restarted.management.getUpdateBaseline({ source: "remote" })).value).not.toBe(
+    expect((await restarted.installed.updateBaseline({ source: "remote" })).value).not.toBe(
       before.value,
     );
   } finally {
@@ -182,27 +178,25 @@ test("checkUpdate baseline guards update at the commit lock while callers withou
       join(value.root, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: Second\n---\n",
     );
-    const observation = await value.core.management.checkUpdate({ source: "local" });
+    const observation = await value.core.installed.checkUpdate({ source: "local" });
     const baseline = observation.value.baseline;
     expect(baseline).toBeDefined();
     if (!baseline) throw new Error("checkUpdate must return an update baseline");
-    expect((await value.core.management.getUpdateBaseline({ source: "local" })).value).toBe(
-      baseline,
-    );
+    expect((await value.core.installed.updateBaseline({ source: "local" })).value).toBe(baseline);
 
     await writeFile(
       join(value.root, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: Third\n---\n",
     );
     await expect(
-      value.core.management.update({
+      value.core.installed.update({
         source: "local",
         paths: ["review"],
         expectedBaseline: baseline,
       }),
     ).rejects.toMatchObject({ code: "TRANSACTION_CONFLICT" });
 
-    await value.core.management.update({ source: "local", paths: ["review"] });
+    await value.core.installed.update({ source: "local", paths: ["review"] });
     expect((await value.core.workspace.get()).value.installedSkills[0]).toMatchObject({
       description: "Third",
     });
@@ -221,7 +215,7 @@ test("checkUpdate rejects a local change after candidate capture instead of retu
         "---\nname: review\ndescription: Unseen\n---\n",
       ),
     );
-    await expect(value.core.management.checkUpdate({ source: "local" })).rejects.toMatchObject({
+    await expect(value.core.installed.checkUpdate({ source: "local" })).rejects.toMatchObject({
       code: "TRANSACTION_CONFLICT",
     });
     expect((await value.core.workspace.get()).value.installedSkills[0]).toMatchObject({

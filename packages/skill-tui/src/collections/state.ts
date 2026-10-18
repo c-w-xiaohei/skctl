@@ -1,5 +1,5 @@
 import { batch, createSignal } from "solid-js";
-import type { ConfigDeclarationOwner, ManagementProjection } from "@skill-cli/core";
+import type { ConfigDeclarationOwner, WorkspaceView } from "@skill-cli/core";
 import { filterCollections, type CollectionFilterDimension } from "../collections-filter";
 import type { CollectionTab } from "../types";
 import { skillAddressKey, type MemberOriginPath } from "@skill-cli/core";
@@ -119,14 +119,14 @@ export const collectionMemberKey = (member: {
 const directOrDerived = (path: MemberOriginPath) =>
   path.kind === "direct" || path.kind === "repository-derived";
 
-export const unassignedSkills = (projection: ManagementProjection) =>
+export const unassignedSkills = (projection: WorkspaceView) =>
   projection.installedSkills.filter((skill) =>
     skill.collections.every((collection) =>
       collection.paths.every((path) => !directOrDerived(path)),
     ),
   );
 
-const collectionFacts = (projection: ManagementProjection, collection: string) => {
+const collectionFacts = (projection: WorkspaceView, collection: string) => {
   const skills = new Set<string>();
   let selectors = 0;
   for (const skill of projection.installedSkills) {
@@ -141,7 +141,7 @@ const collectionFacts = (projection: ManagementProjection, collection: string) =
   return { selectorCount: selectors, installedSkillCount: skills.size };
 };
 
-export const exposureHierarchy = (projection: ManagementProjection): readonly ExposureRow[] => {
+export const exposureHierarchy = (projection: WorkspaceView): readonly ExposureRow[] => {
   if (
     projection.effective.status !== "complete" ||
     !projection.effective.managed ||
@@ -192,7 +192,7 @@ export const currentExposureRows = exposureHierarchy;
 
 /** Visible native-browser rows. Roots are open to their first Reference by default. */
 export const visibleExposureRows = (
-  projection: ManagementProjection,
+  projection: WorkspaceView,
   expanded: Readonly<Record<string, boolean>> = {},
 ): readonly ExposureRow[] => {
   const rows = exposureHierarchy(projection);
@@ -384,10 +384,10 @@ export function createCollectionsState() {
         };
       });
     },
-    reconcile(previous: ManagementProjection | undefined, current: ManagementProjection) {
+    reconcile(previous: WorkspaceView | undefined, current: WorkspaceView) {
       batch(() =>
         update((state) => {
-          const values = (value: ManagementProjection | undefined) =>
+          const values = (value: WorkspaceView | undefined) =>
             value?.effective.status === "complete"
               ? filterCollections(value.effective.collectionsView, {
                   query: state.query,

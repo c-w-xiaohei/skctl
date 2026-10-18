@@ -5,7 +5,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection, readerSecondContent } from "./installed-reader.fixture";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { enterLive, live, waitForReaderBody } from "./reader-test-controls";
 
 const diagnostic = (address: { readonly source: string; readonly path: string }, code: string) => ({
@@ -21,20 +21,17 @@ async function openProblems(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("problems-browser"));
 }
 
-function problemProjection(
-  base: ManagementProjection,
-  refreshed: "reorder" | "fallback" | "empty",
-) {
+function problemProjection(base: WorkspaceView, refreshed: "reorder" | "fallback" | "empty") {
   const first = diagnostic(base.installedSkills[0]!.address, "FIRST");
   const second = diagnostic(base.installedSkills[1]!.address, "SECOND");
-  const initial: ManagementProjection = {
+  const initial: WorkspaceView = {
     ...base,
     installedSkills: [
       { ...base.installedSkills[0]!, problems: [first] },
       { ...base.installedSkills[1]!, problems: [] },
     ],
   };
-  const next: ManagementProjection =
+  const next: WorkspaceView =
     refreshed === "reorder"
       ? {
           ...base,
@@ -68,32 +65,34 @@ for (const refreshed of ["reorder", "fallback", "empty"] as const) {
       () => (
         <App
           core={directSourceCore(current, {
-            get: async () => {
-              receipt = current;
-              return { value: current, diagnostics: [] };
-            },
-            checkUpdate: async (request) => ({
-              value: {
-                source: request.source,
-                kind: "github" as const,
-                exactRevision,
-                baseline,
-                changed: [{ path: "guide", name: "guide", description: "guide" }],
-                added: [],
-                removed: [],
-                unchanged: [],
+            workspace: {
+              get: async () => {
+                receipt = current;
+                return { value: current, diagnostics: [] };
               },
-              diagnostics: [],
-            }),
-            update: async (request) => {
-              updates.push(request);
-              current = projections.next;
-              return { value: undefined, diagnostics: [] };
             },
-            loadInstalled: async ({ address }) => ({
-              value: address.path === "guide" ? readerContent : readerSecondContent,
-              diagnostics: [],
-            }),
+            installed: {
+              checkUpdate: async (request) => ({
+                value: {
+                  source: request.source,
+                  kind: "github" as const,
+                  exactRevision,
+                  baseline,
+                  changed: [{ path: "guide", name: "guide", description: "guide" }],
+                  added: [],
+                  removed: [],
+                  unchanged: [],
+                },
+                diagnostics: [],
+              }),
+              update: async (request) => {
+                updates.push(request);
+                current = projections.next;
+                return { value: undefined, diagnostics: [] };
+              },
+              load: async ({ address }) =>
+                address.path === "guide" ? readerContent : readerSecondContent,
+            },
           })}
           exit={() => {}}
         />
@@ -154,7 +153,7 @@ test("RENDER Problems routes integration diagnostics to Config Integrations", as
     pointer: "/integrations/opencode",
   };
   const base = readerProjection();
-  const current: ManagementProjection = {
+  const current: WorkspaceView = {
     ...base,
     diagnostics: [
       {
@@ -180,7 +179,7 @@ test("RENDER Problems routes integration diagnostics to Config Integrations", as
     () => (
       <App
         core={directSourceCore(current, {
-          get: async () => ({ value: current, diagnostics: [] }),
+          workspace: { get: async () => ({ value: current, diagnostics: [] }) },
         })}
         exit={() => {}}
       />

@@ -110,9 +110,12 @@ function readerApp(overrides: Parameters<typeof directSourceCore>[1] = {}) {
   return (
     <App
       core={directSourceCore(readerProjection(), {
-        loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
-        listInstalledResources: async () => ({ value: readerResources, diagnostics: [] }),
         ...overrides,
+        installed: {
+          load: async () => readerContent,
+          listResources: async () => readerResources,
+          ...overrides.installed,
+        },
       })}
       exit={() => {}}
     />
@@ -161,15 +164,14 @@ test("RENDER native text resource selection exposes file content through the ren
   const setup = await testRender(
     () =>
       readerApp({
-        readInstalled: async (request) => ({
-          value: {
+        installed: {
+          read: async (request) => ({
             kind: "text" as const,
             path: request.path,
             text: "selectable resource text",
             format: "text" as const,
-          },
-          diagnostics: [],
-        }),
+          }),
+        },
       }),
     { width: 120, height: 40 },
   );
@@ -193,15 +195,14 @@ test("RENDER native unsupported-resource selection exposes descriptor metadata",
   const setup = await testRender(
     () =>
       readerApp({
-        readInstalled: async (request) => ({
-          value: {
+        installed: {
+          read: async (request) => ({
             kind: "not-text" as const,
             path: request.path,
             reason: "binary",
             metadata: { path: request.path, kind: "file" as const, size: 8 },
-          },
-          diagnostics: [],
-        }),
+          }),
+        },
       }),
     { width: 120, height: 40 },
   );
@@ -237,8 +238,10 @@ test("RENDER native resource read errors expose their typed code and message", a
   const setup = await testRender(
     () =>
       readerApp({
-        readInstalled: async () => {
-          throw new SkillCliError("RESOURCE_NOT_FOUND", "resource moved");
+        installed: {
+          read: async () => {
+            throw new SkillCliError("RESOURCE_NOT_FOUND", "resource moved");
+          },
         },
       }),
     { width: 120, height: 40 },
@@ -268,15 +271,14 @@ test("RENDER native Markdown resource selection records the memory-renderer boun
   const setup = await testRender(
     () =>
       readerApp({
-        readInstalled: async (request) => ({
-          value: {
+        installed: {
+          read: async (request) => ({
             kind: "text" as const,
             path: request.path,
             text: "# Resource heading\n\nstable prose for native selection",
             format: "markdown" as const,
-          },
-          diagnostics: [],
-        }),
+          }),
+        },
       }),
     { width: 120, height: 40 },
   );

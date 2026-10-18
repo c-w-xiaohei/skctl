@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createSkillCliCore } from "../../src/create-core";
-import { StateCoordinator } from "../../src/internal/state";
+import { StateCoordinator } from "../../src/storage/state";
 
 test("PROJ-016 reports managed catalog unavailable for absent, empty, or incomplete Use", async () => {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-catalog-"));
@@ -91,16 +91,81 @@ test("PROJ-015/016 projects root and collection nodes without aliases or graph t
     await expect(core.catalog.search({ query: "review" })).resolves.toMatchObject({
       value: {
         results: [{ selector: "alpha:review", name: "review", description: "Review" }],
+        truncated: false,
       },
+    });
+    expect((await core.collections.inspect({ collection: "alpha" })).value).toMatchObject({
+      id: "alpha",
+      catalogPreview: { skills: 1, linkedSkills: 0, collections: 1 },
+      disclosure: { available: true, useRoot: true, referenceReachable: false },
+    });
+    expect((await core.collections.inspect({ collection: "zeta" })).value.disclosure).toMatchObject(
+      { useRoot: false, referenceReachable: true },
+    );
+    expect(
+      (await core.collections.inspect({ collection: "alpha", level: "global" })).value,
+    ).toMatchObject({
+      declared: [],
+      references: [],
+      links: [],
+      catalogPreview: { skills: 1, linkedSkills: 0, collections: 0 },
+      disclosure: { useRoot: true, referenceReachable: false },
     });
     await expect(core.catalog.search({ query: "again" })).resolves.toMatchObject({
       value: { results: [] },
+    });
+    expect((await core.catalog.search({ query: "review", limit: 0 })).value).toEqual({
+      results: [],
+      truncated: true,
+    });
+    expect((await core.catalog.search({ query: "absent", limit: 0 })).value).toEqual({
+      results: [],
+      truncated: false,
+    });
+    await expect(core.catalog.search({ query: "review", limit: -1 })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
     });
     await expect(
       core.catalog.search({ query: "review", collection: "zeta" }),
     ).resolves.toMatchObject({
       value: { results: [{ selector: "zeta:again", name: "review", description: "Review" }] },
     });
+  } finally {
+    delete process.env.SKILL_CLI_STATE_DIR;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Collection inspection does not match colliding source/path concatenations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skill-cli-catalog-address-collision-"));
+  const state = join(root, "state");
+  const global = join(root, "global.jsonc");
+  try {
+    const skill = join(root, "skills", "main", "guide");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "---\nname: guide\ndescription: Guide\n---\n");
+    await writeFile(
+      join(root, "skill-cli.jsonc"),
+      JSON.stringify({
+        sources: {
+          team: { kind: "local", path: "./skills", root: "" },
+          "team/main": { kind: "local", path: "./skills/main", root: "" },
+        },
+        collections: {
+          docs: { members: { guide: { source: "team/main", path: "guide" } } },
+        },
+        use: ["docs"],
+        agents: { opencode: "managed" },
+      }),
+    );
+    process.env.SKILL_CLI_STATE_DIR = state;
+    await writeFile(global, "{}\n");
+    const core = createSkillCliCore({ cwd: root, userConfigPath: global });
+    await core.installed.install({ source: "team", paths: ["main/guide"] });
+    expect((await core.workspace.get()).value.installedSkills[0]?.owner.health).toBe("healthy");
+    const inspection = await core.collections.inspect({ collection: "docs" });
+    expect(inspection.value.members[0]?.address).toEqual({ source: "team/main", path: "guide" });
+    expect(inspection.value.catalogPreview.skills).toBe(0);
   } finally {
     delete process.env.SKILL_CLI_STATE_DIR;
     await rm(root, { recursive: true, force: true });

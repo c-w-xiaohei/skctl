@@ -38,7 +38,7 @@ test("RENDER native Raw Reader exposes mouse-dragged selected text through the r
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async () => ({ value: readerContent, diagnostics: [] }),
+          installed: { load: async () => readerContent },
         })}
         exit={() => {}}
       />

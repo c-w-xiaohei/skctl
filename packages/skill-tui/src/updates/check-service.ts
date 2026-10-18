@@ -1,6 +1,6 @@
 import type {
-  ManagementCapability,
-  ManagementProjection,
+  InstalledCapability,
+  WorkspaceView,
   OperationResult,
   UpdateObservation,
 } from "@skill-cli/core";
@@ -14,7 +14,7 @@ import {
 export type CheckedUpdateObservation = UpdateObservation;
 
 export interface UpdateBaselineCapability {
-  getUpdateBaseline?(
+  updateBaseline(
     request: { readonly source: string },
     options?: { readonly signal?: AbortSignal },
   ): Promise<OperationResult<string>>;
@@ -48,7 +48,7 @@ export interface UpdateCheckServiceOptions {
   readonly onActivity?: () => void;
 }
 
-type CheckManagement = Pick<ManagementCapability, "checkUpdate"> & UpdateBaselineCapability;
+type CheckManagement = Pick<InstalledCapability, "checkUpdate"> & UpdateBaselineCapability;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const cancelled = (error: unknown) =>
   typeof error === "object" && error !== null && "code" in error && error.code === "CANCELLED";
@@ -102,13 +102,11 @@ export function createUpdateCheckService(
     }
   };
   const baseline = async (source: string, signal?: AbortSignal) => {
-    if (!management.getUpdateBaseline) return undefined;
-    return (await management.getUpdateBaseline({ source }, { signal })).value;
+    return (await management.updateBaseline({ source }, { signal })).value;
   };
   const persist = async () => {
-    if (!management.getUpdateBaseline) return;
     const entries: CachedUpdateCheck[] = [...checks.values()].flatMap((check) =>
-      check.observation && check.checkedAt !== undefined && check.observation.baseline !== undefined
+      check.observation && check.checkedAt !== undefined
         ? [
             {
               source: check.source,
@@ -145,12 +143,7 @@ export function createUpdateCheckService(
       if (result.value.source !== request.source)
         throw new Error("Observed Source no longer matches the requested Source");
       const after = await baseline(request.source, controller.signal);
-      if (
-        management.getUpdateBaseline &&
-        (result.value.baseline === undefined ||
-          after === undefined ||
-          result.value.baseline !== after)
-      )
+      if (result.value.baseline !== after)
         throw new Error("Installed Skills changed while checking; check updates again");
       if (controller.signal.aborted)
         throw Object.assign(new Error("cancelled"), { code: "CANCELLED" });
@@ -271,7 +264,7 @@ export function createUpdateCheckService(
       options.onActivity?.();
       return true;
     },
-    async start(projection: ManagementProjection) {
+    async start(projection: WorkspaceView) {
       const startingVersion = stopVersion;
       const installedSources = new Set(
         projection.installedSkills.map((skill) => skill.address.source),
@@ -283,9 +276,6 @@ export function createUpdateCheckService(
       const entries = await hydration;
       if (stopped || startingVersion !== stopVersion) return;
       for (const entry of entries) {
-        // A fake/old Core cannot validate an opaque persisted baseline. Never let a
-        // disk observation become submit-capable in that compatibility mode.
-        if (!management.getUpdateBaseline) continue;
         if (!installedSources.has(entry.source) || !configuredSources.has(entry.source)) continue;
         // A manual/automatic session result always wins over delayed hydration.
         if (checks.has(entry.source)) continue;
@@ -337,12 +327,12 @@ export function createUpdateCheckService(
         // same Source (or publish after teardown).
         if (stopped || checks.get(source) !== check) continue;
         if (
-          (management.getUpdateBaseline && current !== check.observation.baseline) ||
+          current !== check.observation.baseline ||
           (check.checkedAt !== undefined &&
             !isFreshUpdateCheck(
               {
                 source,
-                baseline: check.observation.baseline ?? "",
+                baseline: check.observation.baseline,
                 checkedAt: check.checkedAt,
                 observation: check.observation,
               },

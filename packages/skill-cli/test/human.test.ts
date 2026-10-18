@@ -6,74 +6,103 @@ import { runMain } from "../src/main";
 import type { SkillCliCore } from "@skill-cli/core";
 
 function core(calls: unknown[]): SkillCliCore {
+  const unsupported = async (): Promise<never> => {
+    throw new Error("Unsupported Core method in human CLI test fake");
+  };
+  const write = async (request: { level: "global" | "project" | "local" }) => ({
+    value: { changed: true, level: request.level, file: `/tmp/${request.level}.jsonc` },
+    diagnostics: [],
+  });
   return {
-    workspace: { get: async () => ({ value: {} as never, diagnostics: [] }) },
-    configuration: {
-      change: async (change) => {
-        calls.push(change);
+    workspace: { get: unsupported },
+    collections: {
+      inspect: unsupported,
+      create: async (request) => {
+        calls.push({ method: "create", request });
+        return write(request);
+      },
+      remove: async (request) => {
+        calls.push({ method: "remove", request });
+        return write(request);
+      },
+      addMember: async (request) => {
+        calls.push({ method: "addMember", request });
+        return write(request);
+      },
+      removeMember: async (request) => {
+        calls.push({ method: "removeMember", request });
+        return write(request);
+      },
+      editMembers: async (request) => {
+        calls.push({ method: "editMembers", request });
+        return write(request);
+      },
+      importMembers: async (request) => {
+        calls.push({ method: "importMembers", request });
+        return write(request);
+      },
+      addReference: async (request) => {
+        calls.push({ method: "addReference", request });
+        return write(request);
+      },
+      removeReference: async (request) => {
+        calls.push({ method: "removeReference", request });
+        return write(request);
+      },
+      setLink: async (request) => {
+        calls.push({ method: "setLink", request });
+        return write(request);
+      },
+      previewAddMember: unsupported,
+      previewRemoveMember: unsupported,
+      previewMemberEdit: unsupported,
+      previewImportMembers: unsupported,
+      previewAddReference: unsupported,
+      previewRemoveReference: unsupported,
+      previewSetLink: unsupported,
+      previewRemoval: unsupported,
+    },
+    use: {
+      set: async (request) => {
+        calls.push({ method: "use.set", request });
         return {
           value: {
-            changed: true,
-            level: change.level,
-            file: `/tmp/${change.level}.jsonc`,
-            ...(change.type === "use.set" ||
-            change.type === "use.add" ||
-            change.type === "use.remove"
-              ? {
-                  use: {
-                    before: [],
-                    after:
-                      change.type === "use.set"
-                        ? change.collections
-                        : change.type === "use.add"
-                          ? [change.collection]
-                          : [],
-                  },
-                }
-              : {}),
+            ...(await write(request)).value,
+            use: { before: [], after: request.collections },
           },
           diagnostics: [],
         };
       },
-      previewAddToCollection: async () => ({ value: {} as never, diagnostics: [] }),
-      previewMembershipBatch: async () => ({ value: {} as never, diagnostics: [] }),
-      previewMembershipRemoval: async () => ({ value: {} as never, diagnostics: [] }),
-      previewImport: async () => ({ value: {} as never, diagnostics: [] }),
-      previewReference: async () => ({ value: {} as never, diagnostics: [] }),
-      previewLinkChange: async () => ({ value: {} as never, diagnostics: [] }),
-      previewCollectionUse: async () => ({ value: {} as never, diagnostics: [] }),
-      previewCollectionRemoval: async () => ({ value: {} as never, diagnostics: [] }),
+      add: async (request) => {
+        calls.push({ method: "use.add", request });
+        return {
+          value: {
+            ...(await write(request)).value,
+            use: { before: [], after: [request.collection] },
+          },
+          diagnostics: [],
+        };
+      },
+      remove: async (request) => {
+        calls.push({ method: "use.remove", request });
+        return {
+          value: {
+            ...(await write(request)).value,
+            use: { before: [request.collection], after: [] },
+          },
+          diagnostics: [],
+        };
+      },
+      previewSet: unsupported,
     },
-    management: {
-      getUpdateBaseline: async () => ({ value: "fixture-baseline", diagnostics: [] }),
-      previewSourceRemoval: async () => ({ value: {} as never, diagnostics: [] }),
-      removeSource: async () => ({ value: undefined, diagnostics: [] }),
-      previewUninstall: async () => ({ value: {} as never, diagnostics: [] }),
-      previewRebind: async () => ({ value: {} as never, diagnostics: [] }),
-      previewAdoptConfig: async () => ({ value: {} as never, diagnostics: [] }),
-      previewForgetConfig: async () => ({ value: {} as never, diagnostics: [] }),
-      previewRemoveConfig: async () => ({ value: {} as never, diagnostics: [] }),
-      adoptConfig: async () => ({ value: undefined, diagnostics: [] }),
-      observeConfig: async (request) => ({
-        value: {
-          id: request.id,
-          kind: "git",
-          exactRevision: "a".repeat(40),
-          contributions: { sources: [], collections: [] },
-        },
-        diagnostics: [],
-      }),
-      removeConfig: async (request) => {
-        calls.push(["removeConfig", request]);
-        return { value: undefined, diagnostics: [] };
-      },
-      forgetConfig: async (request) => {
-        calls.push(["forgetConfig", request]);
-        return { value: undefined, diagnostics: [] };
-      },
-      gc: async () => {
-        calls.push(["gc"]);
-        return { value: undefined, diagnostics: [] };
+    setManagedOpenCode: async (request) => {
+      calls.push({ method: "managed", request });
+      return write(request);
+    },
+    sources: {
+      register: async (request) => {
+        calls.push(["source.register", request]);
+        return write(request);
       },
       discover: async (request) => {
         calls.push(["discover", request]);
@@ -87,6 +116,43 @@ function core(calls: unknown[]): SkillCliCore {
           diagnostics: [],
         };
       },
+      previewRemoval: unsupported,
+      remove: async (request) => {
+        calls.push(["removeSource", request]);
+        return { value: undefined, diagnostics: [] };
+      },
+    },
+    configSources: {
+      register: async (request) => {
+        calls.push(["configSources.register", request]);
+        return write(request);
+      },
+      observe: async (request) => ({
+        value: {
+          id: request.id,
+          kind: "git",
+          exactRevision: "a".repeat(40),
+          contributions: { sources: [], collections: [] },
+        },
+        diagnostics: [],
+      }),
+      adopt: async (request) => {
+        calls.push(["adoptConfig", request]);
+        return { value: undefined, diagnostics: [] };
+      },
+      previewAdoption: unsupported,
+      forget: async (request) => {
+        calls.push(["forgetConfig", request]);
+        return { value: undefined, diagnostics: [] };
+      },
+      previewForget: unsupported,
+      remove: async (request) => {
+        calls.push(["removeConfig", request]);
+        return { value: undefined, diagnostics: [] };
+      },
+      previewRemoval: unsupported,
+    },
+    installed: {
       install: async (request) => {
         calls.push(["install", request]);
         return {
@@ -98,16 +164,19 @@ function core(calls: unknown[]): SkillCliCore {
         calls.push(["uninstall", request]);
         return { value: undefined, diagnostics: [] };
       },
+      previewUninstall: unsupported,
       rebind: async (request) => {
         calls.push(["rebind", request]);
         return { value: undefined, diagnostics: [] };
       },
+      previewRebind: unsupported,
       checkUpdate: async (request) => {
         calls.push(["check", request]);
         return {
           value: {
             source: request.source,
             kind: "git",
+            baseline: "fixture-baseline",
             exactRevision: "a".repeat(40),
             changed: [{ path: "changed", name: "changed", description: "Changed" }],
             added: [{ path: "added", name: "added", description: "Added" }],
@@ -117,46 +186,45 @@ function core(calls: unknown[]): SkillCliCore {
           diagnostics: [],
         };
       },
+      previewUpdate: unsupported,
+      updateBaseline: async () => ({ value: "fixture-baseline" as never, diagnostics: [] }),
       update: async (request) => {
         calls.push(["update", request]);
         return { value: undefined, diagnostics: [] };
       },
+      load: async () => ({}) as never,
+      listResources: async () => [],
+      read: async () => ({}) as never,
+    },
+    gc: async () => {
+      calls.push(["gc"]);
+      return { value: undefined, diagnostics: [] };
     },
     catalog: {
       browse: async () => ({ value: {} as never, diagnostics: [] }),
-      search: async () => ({ value: {} as never, diagnostics: [] }),
+      search: async () => ({ value: { results: [], truncated: false }, diagnostics: [] }),
     },
     content: {
-      loadInstalled: async () => ({ value: {} as never, diagnostics: [] }),
-      listInstalledResources: async () => ({ value: [], diagnostics: [] }),
-      readInstalled: async () => ({ value: {} as never, diagnostics: [] }),
       load: async (request) => {
         calls.push(["load", request]);
         return {
-          value: {
-            selector: request.selector,
-            name: "review",
-            description: "Review a change",
-            path: "SKILL.md",
-            text: "# Review\n",
-            provenance: {
-              source: "workspace",
-              origin: "local",
-              stability: "mutable-local",
-            },
+          selector: request.selector,
+          name: "review",
+          description: "Review a change",
+          path: "SKILL.md",
+          text: "# Review\n",
+          provenance: {
+            source: "workspace",
+            origin: "local",
+            stability: "mutable-local",
           },
-          diagnostics: [],
         };
       },
-      listResources: async () => ({ value: [], diagnostics: [] }),
-      read: async () => ({ value: {} as never, diagnostics: [] }),
-      download: async () => ({ value: {} as never, diagnostics: [] }),
+      read: async () => ({}) as never,
+      download: async () => ({}) as never,
       run: async (request) => {
         calls.push(["run", request]);
-        return {
-          value: { selector: request.selector, exitCode: 1, signal: null, cancelled: false },
-          diagnostics: [],
-        };
+        return { selector: request.selector, exitCode: 1, signal: null, cancelled: false };
       },
     },
   };
@@ -186,24 +254,26 @@ test("CLI-001/PROJ-023 maps finalized source and management commands through Cor
   ])
     expect(await runMain(["--project", "/workspace", ...argv], options)).toBe(0);
   expect(calls).toEqual([
-    {
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    },
-    {
-      type: "source.register",
-      level: "project",
-      id: "git",
-      binding: { kind: "git", origin: "https://example.test/a.git", root: "", ref: "main" },
-    },
-    {
-      type: "source.register",
-      level: "project",
-      id: "github",
-      binding: { kind: "github", origin: "https://github.com/a/b", root: "", ref: "main" },
-    },
+    [
+      "source.register",
+      { level: "project", id: "local", binding: { kind: "local", path: "./skills", root: "" } },
+    ],
+    [
+      "source.register",
+      {
+        level: "project",
+        id: "git",
+        binding: { kind: "git", origin: "https://example.test/a.git", root: "", ref: "main" },
+      },
+    ],
+    [
+      "source.register",
+      {
+        level: "project",
+        id: "github",
+        binding: { kind: "github", origin: "https://github.com/a/b", root: "", ref: "main" },
+      },
+    ],
     ["discover", { source: "local" }],
     ["install", { source: "local", paths: ["review"], exactRevision: undefined }],
     ["check", { source: "local" }],
@@ -213,7 +283,7 @@ test("CLI-001/PROJ-023 maps finalized source and management commands through Cor
   ]);
 });
 
-test("CLI-001 maps collection, use, managed, and content commands without legacy aliases", async () => {
+test("CLI-001 maps collection, use, managed, and content commands through named APIs", async () => {
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
@@ -233,49 +303,76 @@ test("CLI-001 maps collection, use, managed, and content commands without legacy
     ["collection", "create", "new", "--level", "local"],
     ["collection", "remove", "new", "--level", "local"],
     ["collection", "link", "add", "engineering", "other"],
+    ["collection", "link", "remove", "engineering", "other"],
     ["use", "set", "engineering"],
     ["managed", "set"],
     ["content", "load", "engineering:review"],
     ["content", "run", "engineering:review", "--", "true"],
-  ])
+  ]) {
     expect(await runMain([argv[0]!, "--project", "/workspace", ...argv.slice(1)], options)).toBe(0);
+  }
   expect(calls).toContainEqual({
-    type: "collection.member.remove",
-    level: "project",
-    collection: "engineering",
-    name: "review",
+    method: "addMember",
+    request: {
+      level: "project",
+      collection: "engineering",
+      name: "review",
+      address: { source: "local", path: "review" },
+    },
   });
   expect(calls).toContainEqual({
-    type: "collection.reference.remove",
-    level: "project",
-    collection: "engineering",
-    name: "docs",
-  });
-  expect(calls).toContainEqual({ type: "collection.create", level: "local", collection: "new" });
-  expect(calls).toContainEqual({ type: "collection.remove", level: "local", collection: "new" });
-  expect(calls).toContainEqual({
-    type: "collection.reference.set",
-    level: "project",
-    collection: "engineering",
-    name: "docs",
-    target: "other",
-    description: "Documentation",
+    method: "importMembers",
+    request: {
+      level: "project",
+      from: "source",
+      into: "target",
+    },
   });
   expect(calls).toContainEqual({
-    type: "collection.link.set",
-    level: "project",
-    collection: "engineering",
-    target: "other",
-    linked: true,
+    method: "removeMember",
+    request: { level: "project", collection: "engineering", name: "review" },
   });
-  expect(calls).toContainEqual({ type: "use.set", level: "project", collections: ["engineering"] });
-  expect(calls).toContainEqual({ type: "agent.managed.set", level: "project", managed: true });
+  expect(calls).toContainEqual({
+    method: "removeReference",
+    request: { level: "project", collection: "engineering", name: "docs" },
+  });
+  expect(calls).toContainEqual({
+    method: "create",
+    request: { level: "local", collection: "new" },
+  });
+  expect(calls).toContainEqual({
+    method: "remove",
+    request: { level: "local", collection: "new" },
+  });
+  expect(calls).toContainEqual({
+    method: "addReference",
+    request: {
+      level: "project",
+      collection: "engineering",
+      name: "docs",
+      target: "other",
+      description: "Documentation",
+    },
+  });
+  expect(calls).toContainEqual({
+    method: "setLink",
+    request: { level: "project", collection: "engineering", target: "other", linked: true },
+  });
+  expect(calls).toContainEqual({
+    method: "setLink",
+    request: { level: "project", collection: "engineering", target: "other", linked: false },
+  });
+  expect(calls).toContainEqual({
+    method: "use.set",
+    request: { level: "project", collections: ["engineering"] },
+  });
+  expect(calls).toContainEqual({ method: "managed", request: { level: "project", managed: true } });
   expect(calls).toContainEqual(["load", { selector: "engineering:review" }]);
   expect(calls).toContainEqual(["run", { selector: "engineering:review", argv: ["true"] }]);
   expect(await runMain(["profile", "set", "x"], options)).toBe(2);
 });
 
-test("MGMT-031 maps scoped Config Source removal only through management", async () => {
+test("MGMT-031 maps scoped Config Source removal through configSources", async () => {
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
@@ -285,7 +382,6 @@ test("MGMT-031 maps scoped Config Source removal only through management", async
   };
   expect(await runMain(["config-source", "remove", "module", "-g"], options)).toBe(0);
   expect(calls).toEqual([["removeConfig", { id: "module", level: "global" }]]);
-  expect(calls).not.toContainEqual(expect.objectContaining({ type: "config-source.remove" }));
 });
 
 test("MGMT-001 and MGMT-027 reject unknown Config levels before any Core call", async () => {
@@ -377,6 +473,9 @@ test("MGMT-006/007/023 human observations emit deterministic exact-revision line
   expect(await run(["update", "check", "remote"])).toContain(
     "changed changed\tchanged\tChanged\nadded added\tadded\tAdded",
   );
+  expect(JSON.parse(await run(["update", "check", "remote", "--json"]))).not.toHaveProperty(
+    "baseline",
+  );
   expect(await run(["config-source", "observe", "remote"])).toStartWith(
     `revision ${"a".repeat(40)}\nconfig-source remote\n`,
   );
@@ -394,6 +493,7 @@ test("MGMT-034 rejects malformed exact revisions before any apply Core call", as
     ["install", "remote", "review", "--revision", "main"],
     ["update", "apply", "remote", "review", "--revision", "abc"],
     ["config-source", "adopt", "remote", "--revision", "f".repeat(39)],
+    ["config-source", "adopt", "remote"],
   ])
     expect(await runMain(argv, options)).toBe(2);
   expect(calls).toEqual([]);
@@ -481,10 +581,10 @@ test("declaration commands accept --level and -g/-p/-l as equivalent scope selec
   ])
     expect(await runMain(argv, options)).toBe(0);
   expect(calls).toEqual([
-    { type: "collection.create", level: "global", collection: "global" },
-    { type: "collection.create", level: "project", collection: "project" },
-    { type: "collection.create", level: "local", collection: "local" },
-    { type: "collection.create", level: "global", collection: "level" },
+    { method: "create", request: { level: "global", collection: "global" } },
+    { method: "create", request: { level: "project", collection: "project" } },
+    { method: "create", request: { level: "local", collection: "local" } },
+    { method: "create", request: { level: "global", collection: "level" } },
   ]);
   expect(
     await runMain(["collection", "create", "ambiguous", "-g", "--level", "local"], options),
@@ -535,52 +635,31 @@ test("human mutations describe their completed action, level, target file, and i
     `Installed 1 skills from source "workspace" at revision ${"a".repeat(40)}: review.`,
   );
   expect(output.join("")).not.toContain("source.register\n");
-  expect(output.join("")).not.toContain("management.install\n");
+  expect(calls).toContainEqual([
+    "install",
+    { source: "workspace", paths: ["review"], exactRevision: "a".repeat(40) },
+  ]);
 });
 
 test("collection inspect labels configuration preview separately from disclosure", async () => {
   const output: string[] = [];
-  const fake = core([]);
-  fake.workspace.get = async () => ({
-    value: {
-      effective: {
-        status: "complete",
-        use: ["root"],
-        agent: { status: "available" },
-        collectionsView: [
-          {
-            id: "root",
-            declared: [],
-            repository: { derived: false, producers: [] },
-            members: [],
-            references: [
-              {
-                name: "child",
-                collection: "child",
-                description: "Child",
-                owner: {
-                  level: "project",
-                  file: "/tmp/project.jsonc",
-                  pointer: "/collections/root/references/child",
-                },
-              },
-            ],
-            links: [],
-          },
-          {
-            id: "child",
-            declared: [],
-            repository: { derived: false, producers: [] },
-            members: [],
-            references: [],
-            links: [],
-          },
-        ],
+  const calls: unknown[] = [];
+  const fake = core(calls);
+  fake.collections.inspect = async (request) => {
+    calls.push({ method: "inspect", request });
+    return {
+      value: {
+        id: "child",
+        declared: [],
+        members: [],
+        references: [],
+        links: [],
+        catalogPreview: { skills: 0, linkedSkills: 0, collections: 0 },
+        disclosure: { available: true, useRoot: false, referenceReachable: true },
       },
-      installedSkills: [],
-    } as never,
-    diagnostics: [],
-  });
+      diagnostics: [],
+    };
+  };
   expect(
     await runMain(["collection", "inspect", "child", "--json"], {
       cwd: "/tmp",
@@ -590,17 +669,31 @@ test("collection inspect labels configuration preview separately from disclosure
     }),
   ).toBe(0);
   const result = JSON.parse(output.join(""));
+  expect(calls).toContainEqual({ method: "inspect", request: { collection: "child" } });
   expect(result.catalogPreview).toEqual({ skills: 0, linkedSkills: 0, collections: 0 });
   expect(result.disclosure).toEqual({ available: true, useRoot: false, referenceReachable: true });
   expect(result).not.toHaveProperty("agentProjection");
+  output.length = 0;
+  expect(
+    await runMain(["collection", "inspect", "child", "--scope", "global", "--json"], {
+      cwd: "/tmp",
+      createCore: () => fake,
+      stdout: { write: (value) => output.push(String(value)) },
+      stderr: { write() {} },
+    }),
+  ).toBe(0);
+  expect(calls).toContainEqual({
+    method: "inspect",
+    request: { collection: "child", level: "global" },
+  });
 });
 
-test("human mutations report no-op configuration changes and affected update paths", async () => {
+test("human mutations report no-op configuration writes and affected update paths", async () => {
   const calls: unknown[] = [];
   const output: string[] = [];
   const fake = core(calls);
-  fake.configuration.change = async (change) => ({
-    value: { changed: false, level: change.level, file: "/tmp/project.jsonc" },
+  fake.setManagedOpenCode = async (request) => ({
+    value: { changed: false, level: request.level, file: "/tmp/project.jsonc" },
     diagnostics: [],
   });
   const options = {
@@ -630,9 +723,32 @@ test("human init, repair, and content commands report actual results", async () 
   const root = await mkdtemp(join(tmpdir(), "skill-cli-human-output-"));
   const calls: unknown[] = [];
   const output: string[] = [];
+  const fake: SkillCliCore = {
+    ...core(calls),
+    workspace: {
+      get: async () => ({
+        value: {
+          project: { root, resolution: "explicit" },
+          configs: [],
+          effective: {
+            status: "complete",
+            sources: [],
+            collections: [],
+            use: [],
+            managed: false,
+            collectionsView: [],
+            agent: { status: "unavailable", integration: [], use: [], reasons: [], catalog: [] },
+          },
+          installedSkills: [],
+          diagnostics: [],
+        },
+        diagnostics: [],
+      }),
+    },
+  };
   const options = {
     cwd: root,
-    createCore: () => core(calls),
+    createCore: () => fake,
     stdout: { write: (value: string) => output.push(value) },
     stderr: { write() {} },
   };
@@ -729,7 +845,7 @@ test("human errors do not treat application errors as Commander help", async () 
     const stdout: string[] = [];
     const stderr: string[] = [];
     const fake = core([]);
-    fake.configuration.change = async () => {
+    fake.setManagedOpenCode = async () => {
       throw error;
     };
     expect(
@@ -750,15 +866,12 @@ test("content load preserves its body exactly after a metadata separator", async
   const fake = core([]);
   const text = "line one  \nline two\n\n  ";
   fake.content.load = async (request) => ({
-    value: {
-      selector: request.selector,
-      name: "review",
-      description: "Review a change",
-      path: "SKILL.md",
-      text,
-      provenance: { source: "workspace", origin: "local", stability: "mutable-local" },
-    },
-    diagnostics: [],
+    selector: request.selector,
+    name: "review",
+    description: "Review a change",
+    path: "SKILL.md",
+    text,
+    provenance: { source: "workspace", origin: "local", stability: "mutable-local" },
   });
   expect(
     await runMain(["content", "load", "engineering:review"], {
@@ -779,7 +892,7 @@ test("content run reports signal and cancellation results", async () => {
     { selector: "engineering:review", exitCode: null, signal: "SIGTERM", cancelled: false },
     { selector: "engineering:review", exitCode: null, signal: null, cancelled: true },
   ];
-  fake.content.run = async () => ({ value: results.shift()!, diagnostics: [] });
+  fake.content.run = async () => results.shift()!;
   const options = {
     cwd: "/tmp",
     createCore: () => fake,

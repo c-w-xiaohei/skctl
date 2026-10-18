@@ -5,12 +5,11 @@ import {
   canonicalRemoteOrigin,
   bindingDigest,
   parseSkillAddress,
-  parseNameSegment,
-  parseResourcePath,
-  parseSelector,
-  parseSkillMetadata,
-  SkillCliError,
-} from "../../src/internal/domain";
+} from "../../src/source/identity";
+import { parseNameSegment, parseSelector } from "../../src/collection/names";
+import { parseResourcePath } from "../../src/content/path";
+import { parseSkillMetadata } from "../../src/content/text";
+import { SkillCliError } from "../../src/shared";
 
 describe("domain identity", () => {
   test("normalizes remote origins without changing provider paths", () => {

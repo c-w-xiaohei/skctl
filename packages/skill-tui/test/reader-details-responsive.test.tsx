@@ -207,15 +207,13 @@ test("Details restores exact native scroll per address through A/B/A/B, view rem
             })),
           },
           {
-            loadInstalled: async (request) => {
-              loads.push(request.address.path);
-              return {
-                value:
-                  request.address.path === readerSecondAddress.path
-                    ? readerSecondContent
-                    : readerContent,
-                diagnostics: [],
-              };
+            installed: {
+              load: async (request) => {
+                loads.push(request.address.path);
+                return request.address.path === readerSecondAddress.path
+                  ? readerSecondContent
+                  : readerContent;
+              },
             },
           },
         )}

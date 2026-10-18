@@ -146,16 +146,15 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     () => (
       <App
         core={directSourceCore(projection, {
-          loadInstalled: async () => ({
-            value: {
+          installed: {
+            load: async () => ({
               address,
               name: "guide",
               description: "A detailed Installed Skill",
               rawText: "# Guide",
               markdownText: "# Guide",
-            },
-            diagnostics: [],
-          }),
+            }),
+          },
         })}
         exit={() => {}}
       />

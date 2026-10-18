@@ -7,7 +7,7 @@ export function rebindCommand(parent: Command, { core, stdout }: CommandContext)
     .description("Move an installed Skill to a different Source owner after review.")
     .option("--path <path>")
     .action(async (source, path, owner, flags, action) => {
-      await core(action).management.rebind({ source, path, owner, ownerPath: flags.path });
+      await core(action).installed.rebind({ source, path, owner, ownerPath: flags.path });
       stdout.write(`Rebound skill "${path}" from source "${source}" to "${owner}".\n`);
     });
 }

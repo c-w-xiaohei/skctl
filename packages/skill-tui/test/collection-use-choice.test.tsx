@@ -8,7 +8,7 @@ import { join } from "node:path";
 import {
   SkillCliError,
   type CollectionUseImpact,
-  type ManagementProjection,
+  type WorkspaceView,
   type OperationResult,
 } from "@skill-cli/core";
 import { App } from "../src/app";
@@ -511,7 +511,7 @@ for (const [width, height] of [
   });
 }
 
-function useProjection(): ManagementProjection {
+function useProjection(): WorkspaceView {
   const base = collectionsSourcesProjection();
   if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
   return {
@@ -582,7 +582,7 @@ for (const entry of ["Config", "relationship Edit Use"] as const) {
     const previews: unknown[] = [],
       changes: unknown[] = [];
     const core = directSourceCore(useProjection());
-    core.configuration.previewCollectionUse = async (request) => {
+    core.use.previewSet = async (request) => {
       previews.push(request);
       return result<CollectionUseImpact>({
         kind: "collection-use",
@@ -600,9 +600,14 @@ for (const entry of ["Config", "relationship Edit Use"] as const) {
         allowed: true,
       });
     };
-    core.configuration.change = async (request) => {
+    core.use.set = async (request) => {
       changes.push(request);
-      return result({ level: "project", changed: true });
+      return result({
+        level: "project",
+        file: owner.file,
+        changed: true,
+        use: { before: ["team", "retired"], after: request.collections },
+      });
     };
     const setup = await testRender(() => <App core={core} exit={() => {}} />, {
       width: 120,
@@ -644,9 +649,7 @@ for (const entry of ["Config", "relationship Edit Use"] as const) {
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-review-choice");
       await enterLive(setup, "collection-review-confirm");
       await setup.waitFor(() => changes.length === 1);
-      expect(changes).toEqual([
-        { type: "use.set", level: "project", collections: ["team", "docs"] },
-      ]);
+      expect(changes).toEqual([{ level: "project", collections: ["team", "docs"] }]);
     } finally {
       setup.renderer.destroy();
     }
@@ -657,13 +660,18 @@ test("production App failed Use review retains the same checked draft across sup
   const previews: unknown[] = [],
     changes: unknown[] = [];
   const core = directSourceCore(useProjection());
-  core.configuration.previewCollectionUse = async (request) => {
+  core.use.previewSet = async (request) => {
     previews.push(request);
     throw new SkillCliError("TRANSACTION_CONFLICT", "Review the current declaration again");
   };
-  core.configuration.change = async (request) => {
+  core.use.set = async (request) => {
     changes.push(request);
-    return result({ level: "project", changed: true });
+    return result({
+      level: "project",
+      file: owner.file,
+      changed: true,
+      use: { before: ["team", "retired"], after: request.collections },
+    });
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 120,
@@ -714,7 +722,7 @@ test("production App failed Use review retains the same checked draft across sup
 test("production App reviews and commits explicit empty Use without substituting other host roots", async () => {
   const changes: unknown[] = [];
   const core = directSourceCore(useProjection());
-  core.configuration.previewCollectionUse = async (request) =>
+  core.use.previewSet = async (request) =>
     result<CollectionUseImpact>({
       kind: "collection-use",
       owner,
@@ -730,9 +738,14 @@ test("production App reviews and commits explicit empty Use without substituting
       blockers: [],
       allowed: true,
     });
-  core.configuration.change = async (request) => {
+  core.use.set = async (request) => {
     changes.push(request);
-    return result({ level: "project", changed: true });
+    return result({
+      level: "project",
+      file: owner.file,
+      changed: true,
+      use: { before: ["team", "retired"], after: request.collections },
+    });
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 100,
@@ -755,7 +768,7 @@ test("production App reviews and commits explicit empty Use without substituting
     expect(changes).toEqual([]);
     await enterLive(setup, "collection-review-confirm");
     await setup.waitFor(() => changes.length === 1);
-    expect(changes).toEqual([{ type: "use.set", level: "project", collections: [] }]);
+    expect(changes).toEqual([{ level: "project", collections: [] }]);
   } finally {
     setup.renderer.destroy();
   }
@@ -769,13 +782,18 @@ test("production App cancels an outstanding Use preview without applying its lat
   });
   const changes: unknown[] = [];
   const core = directSourceCore(useProjection());
-  core.configuration.previewCollectionUse = async (_request, options) => {
+  core.use.previewSet = async (_request, options) => {
     signal = options?.signal;
     return pending;
   };
-  core.configuration.change = async (request) => {
+  core.use.set = async (request) => {
     changes.push(request);
-    return result({ level: "project", changed: true });
+    return result({
+      level: "project",
+      file: owner.file,
+      changed: true,
+      use: { before: ["team", "retired"], after: request.collections },
+    });
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 100,

@@ -3,9 +3,9 @@ import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
-import { bindingDigest, canonicalRemoteOrigin } from "../../src/internal/domain";
-import { StateCoordinator } from "../../src/internal/state";
-import { setAcquisitionTrapForTest } from "../../src/internal/sources";
+import { bindingDigest, canonicalRemoteOrigin } from "../../src/source/identity";
+import { StateCoordinator } from "../../src/storage/state";
+import { setAcquisitionTrapForTest } from "../../src/source/snapshot";
 
 const isolatedCore = (root: string) =>
   createSkillCliCore({ cwd: root, userConfigPath: join(root, "global.jsonc") });
@@ -36,13 +36,11 @@ test("AGT-001/AGT-002/CNT-001 uses only exposed installed Local content across a
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = isolatedCore(root);
     const selector = "engineering:review";
-    expect((await core.content.load({ selector })).value.text).toContain("body");
-    expect((await core.content.listResources({ selector })).value).toContainEqual(
-      expect.objectContaining({ path: "nested/note.txt", size: 4 }),
-    );
-    expect((await core.content.read({ selector, path: "nested/note.txt" })).value.text).toBe(
-      "note",
-    );
+    expect((await core.content.load({ selector })).text).toContain("body");
+    expect(
+      await core.installed.listResources({ address: { source: "source", path: "review" } }),
+    ).toContainEqual(expect.objectContaining({ path: "nested/note.txt", size: 4 }));
+    expect((await core.content.read({ selector, path: "nested/note.txt" })).text).toBe("note");
     const output = join(root, "output.txt");
     await core.content.download({ selector, path: "nested/note.txt", output, force: false });
     expect(await Bun.file(output).text()).toBe("note");
@@ -113,7 +111,9 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
       await core.catalog.browse({ collection: "c" });
       await core.catalog.search({ query: selector });
       await core.content.load({ selector });
-      await core.content.listResources({ selector });
+      await core.installed.listResources({
+        address: { source: selector.slice(2), path: selector.slice(2) },
+      });
       await core.content.read({ selector, path: "note.txt" });
       await core.content.download({
         selector,
@@ -206,13 +206,12 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
     expect(browsed).toMatchObject({ status: "available" });
     if (browsed.status === "available") expect(browsed.items).toHaveLength(1);
     expect((await core.catalog.search({ query: "remote" })).value.results).toHaveLength(1);
-    expect((await core.content.load({ selector: "engineering:review" })).value.name).toBe("remote");
+    expect((await core.content.load({ selector: "engineering:review" })).name).toBe("remote");
     expect(
-      (await core.content.listResources({ selector: "engineering:review" })).value,
+      await core.installed.listResources({ address: { source: "remote", path: "review" } }),
     ).toContainEqual(expect.objectContaining({ path: "nested/note.txt" }));
     expect(
-      (await core.content.read({ selector: "engineering:review", path: "nested/note.txt" })).value
-        .text,
+      (await core.content.read({ selector: "engineering:review", path: "nested/note.txt" })).text,
     ).toBe("note");
     await core.content.download({
       selector: "engineering:review",
@@ -231,7 +230,7 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
         "$(not-a-shell)",
       ],
     });
-    expect(run.value.exitCode).toBe(0);
+    expect(run.exitCode).toBe(0);
     expect(JSON.parse(await Bun.file(argv).text())).toEqual({
       argv: ["one two", "$(not-a-shell)"],
       uses: [],
@@ -295,7 +294,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
     });
     await symlink("SKILL.md", join(state, "snapshots", corrupt, "root", "corrupt-link"));
     await expect(
-      core.content.listResources({ selector: "engineering:review" }),
+      core.installed.listResources({ address: { source: "remote", path: "review" } }),
     ).rejects.toMatchObject({ code: "PROVIDER_INTEGRITY_FAILED" });
     expect(await Bun.file(join(state, "snapshots", corrupt, "root", "corrupt-link")).exists()).toBe(
       true,
@@ -419,7 +418,7 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
     ).rejects.toMatchObject({ code: "INVALID_RESOURCE_PATH" });
     await symlink("nested/note.txt", join(skill, "unsafe-link"));
     await expect(
-      core.content.listResources({ selector: "engineering:review" }),
+      core.installed.listResources({ address: { source: "source", path: "review" } }),
     ).rejects.toMatchObject({ code: "UNSUPPORTED_ENTRY" });
     await rm(join(skill, "unsafe-link"));
     const output = join(root, "output.txt");
@@ -522,7 +521,7 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
         throw new Error("Resistant child cancellation did not complete within 2 seconds");
       }),
     ]);
-    expect(result.value).toMatchObject({ cancelled: true, signal: "SIGKILL", exitCode: 137 });
+    expect(result).toMatchObject({ cancelled: true, signal: "SIGKILL", exitCode: 137 });
     await expect(lstat(child.cwd)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readdir(join(state, "runs"))).toEqual([]);

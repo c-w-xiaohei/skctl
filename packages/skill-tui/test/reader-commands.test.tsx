@@ -17,7 +17,7 @@ import {
 } from "./reader-test-controls";
 
 function readerState() {
-  const owner = createReaderOwner(directSourceCore(readerProjection()).content);
+  const owner = createReaderOwner(directSourceCore(readerProjection()).installed);
   owner.select({ source: "team-main", path: "guide" });
   return owner.current()!;
 }
@@ -84,9 +84,11 @@ test("RENDER Reader executes one command once through Enter and pointer without 
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async (request) => {
-            reads.push(request);
-            return { value: readerContent, diagnostics: [] };
+          installed: {
+            load: async (request) => {
+              reads.push(request);
+              return readerContent;
+            },
           },
         })}
         exit={() => {}}

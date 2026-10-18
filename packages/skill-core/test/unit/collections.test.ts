@@ -1,27 +1,30 @@
 import { expect, test } from "bun:test";
 
-import { resolveCollections, type CollectionContribution } from "../../src/collections";
+import { resolveCollections, type CollectionContribution } from "../../src/collection/graph";
 import { createSkillCliCore } from "../../src/create-core";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StateCoordinator } from "../../src/internal/state";
-import { bindingDigest } from "../../src/internal/domain";
+import { StateCoordinator } from "../../src/storage/state";
+import { bindingDigest } from "../../src/source/identity";
 
 test("PROJ-011 references reveal targets without members while Links expose members", () => {
   const resolved = resolveCollections(
-    {
-      engineering: {
-        members: { review: { source: "local", path: "review" } },
-        links: ["shared"],
-        references: { docs: { collection: "shared", description: "Shared documentation" } },
+    [
+      {
+        id: "engineering",
+        declaration: {
+          members: { review: { source: "local", path: "review" } },
+          links: ["shared"],
+          references: { docs: { collection: "shared", description: "Shared documentation" } },
+        },
       },
-      shared: { members: { write: { source: "local", path: "write" } } },
-    },
-    new Set([
-      { source: "local", path: "review" },
-      { source: "local", path: "write" },
-    ]),
+      { id: "shared", declaration: { members: { write: { source: "local", path: "write" } } } },
+    ],
+    [
+      { source: "local", path: "review", name: "review" },
+      { source: "local", path: "write", name: "write" },
+    ],
   );
   expect([...resolved.members.get("engineering")!.keys()]).toEqual(["review", "write"]);
   expect(resolved.references.get("engineering")).toEqual({
@@ -31,15 +34,21 @@ test("PROJ-011 references reveal targets without members while Links expose memb
 
 test("rejects link cycles and conflicting linked names before publication", () => {
   expect(() =>
-    resolveCollections({ a: { links: ["b"] }, b: { links: ["a"] } }, new Set()),
+    resolveCollections(
+      [
+        { id: "a", declaration: { links: ["b"] } },
+        { id: "b", declaration: { links: ["a"] } },
+      ],
+      [],
+    ),
   ).toThrow();
   expect(() =>
     resolveCollections(
-      {
-        a: { members: { x: { source: "s", path: "a" } }, links: ["b"] },
-        b: { members: { x: { source: "s", path: "b" } } },
-      },
-      new Set(),
+      [
+        { id: "a", declaration: { members: { x: { source: "s", path: "a" } }, links: ["b"] } },
+        { id: "b", declaration: { members: { x: { source: "s", path: "b" } } } },
+      ],
+      [],
     ),
   ).toThrow();
 });
@@ -47,13 +56,19 @@ test("rejects link cycles and conflicting linked names before publication", () =
 test("Collection resolution treats source and path as a structural Skill address", () => {
   expect(() =>
     resolveCollections(
-      {
-        source: {
-          members: { guide: { source: "team", path: "main/guide" } },
-          links: ["target"],
+      [
+        {
+          id: "source",
+          declaration: {
+            members: { guide: { source: "team", path: "main/guide" } },
+            links: ["target"],
+          },
         },
-        target: { members: { guide: { source: "team/main", path: "guide" } } },
-      },
+        {
+          id: "target",
+          declaration: { members: { guide: { source: "team/main", path: "guide" } } },
+        },
+      ],
       [
         { source: "team", path: "main/guide", name: "guide" },
         { source: "team/main", path: "guide", name: "guide" },
@@ -63,25 +78,31 @@ test("Collection resolution treats source and path as a structural Skill address
 });
 
 test("MGMT-018 previews legal transitive and equal-direct Links while cycles and name conflicts reject", () => {
-  const installed = new Set([
-    { source: "s", path: "review" },
-    { source: "s", path: "write" },
-    { source: "other", path: "review" },
-  ]);
+  const installed = [
+    { source: "s", path: "review", name: "review" },
+    { source: "s", path: "write", name: "write" },
+    { source: "other", path: "review", name: "review" },
+  ];
   const legal = resolveCollections(
-    {
-      source: {
-        members: { review: { source: "s", path: "review" } },
-        links: ["middle"],
-      },
-      middle: { links: ["target"] },
-      target: {
-        members: {
-          review: { source: "s", path: "review" },
-          write: { source: "s", path: "write" },
+    [
+      {
+        id: "source",
+        declaration: {
+          members: { review: { source: "s", path: "review" } },
+          links: ["middle"],
         },
       },
-    },
+      { id: "middle", declaration: { links: ["target"] } },
+      {
+        id: "target",
+        declaration: {
+          members: {
+            review: { source: "s", path: "review" },
+            write: { source: "s", path: "write" },
+          },
+        },
+      },
+    ],
     installed,
   );
   expect([...legal.members.get("source")!]).toEqual([
@@ -90,17 +111,26 @@ test("MGMT-018 previews legal transitive and equal-direct Links while cycles and
   ]);
   expect(legal.origins.get("source")!.get("review")).toHaveLength(2);
   expect(() =>
-    resolveCollections({ source: { links: ["target"] }, target: { links: ["source"] } }, installed),
+    resolveCollections(
+      [
+        { id: "source", declaration: { links: ["target"] } },
+        { id: "target", declaration: { links: ["source"] } },
+      ],
+      installed,
+    ),
   ).toThrow(/acyclic/i);
   expect(() =>
     resolveCollections(
-      {
-        source: {
-          members: { review: { source: "other", path: "review" } },
-          links: ["target"],
+      [
+        {
+          id: "source",
+          declaration: {
+            members: { review: { source: "other", path: "review" } },
+            links: ["target"],
+          },
         },
-        target: { members: { review: { source: "s", path: "review" } } },
-      },
+        { id: "target", declaration: { members: { review: { source: "s", path: "review" } } } },
+      ],
       installed,
     ),
   ).toThrow(/conflict/i);
@@ -109,13 +139,11 @@ test("MGMT-018 previews legal transitive and equal-direct Links while cycles and
 test("PROJ-008 retains duplicate JSONC Collection conflicts", () => {
   const contributions: readonly CollectionContribution[] = [
     {
-      kind: "declared",
       id: "engineering",
       declaration: { members: { review: { source: "global", path: "review" } } },
       owner: { level: "global", file: "/global.jsonc", pointer: "/collections/engineering" },
     },
     {
-      kind: "declared",
       id: "engineering",
       declaration: { members: { write: { source: "project", path: "write" } } },
       owner: {
@@ -125,7 +153,7 @@ test("PROJ-008 retains duplicate JSONC Collection conflicts", () => {
       },
     },
   ];
-  expect(() => resolveCollections(contributions, new Set())).toThrow(
+  expect(() => resolveCollections(contributions, [])).toThrow(
     "Collection is declared more than once: engineering",
   );
 });
@@ -135,7 +163,6 @@ test("rejects two Config Source JSONC contributions for one effective Collection
     resolveCollections(
       [
         {
-          kind: "declared",
           id: "team/shared",
           declaration: {},
           owner: {
@@ -145,7 +172,6 @@ test("rejects two Config Source JSONC contributions for one effective Collection
           },
         },
         {
-          kind: "declared",
           id: "team/shared",
           declaration: {},
           owner: {
@@ -155,16 +181,19 @@ test("rejects two Config Source JSONC contributions for one effective Collection
           },
         },
       ],
-      new Set(),
+      [],
     ),
   ).toThrow("Collection is declared more than once: team/shared");
 });
 
 test("PROJ-007/008 composes declared and repository-derived Collection contributions", () => {
   const resolved = resolveCollections(
-    {
-      "acme/skills": { members: { review: { source: "remote", path: "review" } } },
-    },
+    [
+      {
+        id: "acme/skills",
+        declaration: { members: { review: { source: "remote", path: "review" } } },
+      },
+    ],
     [{ source: "remote", path: "review", name: "review", repository: "acme/skills" }],
   );
   expect(resolved.origins.get("acme/skills")!.get("review")).toEqual([
@@ -177,7 +206,7 @@ test("PROJ-007/008 composes declared and repository-derived Collection contribut
     },
   ]);
   expect(
-    resolveCollections({}, [{ source: "local", path: "review", name: "review" }]).members.has(
+    resolveCollections([], [{ source: "local", path: "review", name: "review" }]).members.has(
       "local",
     ),
   ).toBe(false);
@@ -186,12 +215,15 @@ test("PROJ-007/008 composes declared and repository-derived Collection contribut
 test("PROJ-009/010 preserves direct, independent, and multi-hop Link origin paths", () => {
   const address = { source: "local", path: "review" };
   const resolved = resolveCollections(
-    {
-      engineering: { members: { review: address }, links: ["quality", "shared"] },
-      quality: { members: { review: address }, links: ["shared"] },
-      shared: { members: { review: address } },
-    },
-    new Set([{ source: "local", path: "review" }]),
+    [
+      {
+        id: "engineering",
+        declaration: { members: { review: address }, links: ["quality", "shared"] },
+      },
+      { id: "quality", declaration: { members: { review: address }, links: ["shared"] } },
+      { id: "shared", declaration: { members: { review: address } } },
+    ],
+    [{ ...address, name: "review" }],
   );
   expect(resolved.origins.get("engineering")!.get("review")).toEqual([
     { kind: "direct", collection: "engineering", entryName: "review" },
@@ -216,25 +248,22 @@ test("PROJ-009 retains exact Membership and Link owners through deterministic ro
   };
   const contributions: readonly CollectionContribution[] = [
     {
-      kind: "declared",
       id: "engineering",
       owner: { ...owner, pointer: "/collections/engineering" },
       declaration: { members: { review: address }, links: ["shared", "quality"] },
     },
     {
-      kind: "declared",
       id: "quality",
       owner: { ...owner, pointer: "/collections/quality" },
       declaration: { links: ["shared"] },
     },
     {
-      kind: "declared",
       id: "shared",
       owner: { ...owner, pointer: "/collections/shared" },
       declaration: { members: { review: address } },
     },
   ];
-  const origins = resolveCollections(contributions, new Set([{ source: "local", path: "review" }]))
+  const origins = resolveCollections(contributions, [{ ...address, name: "review" }])
     .origins.get("engineering")!
     .get("review");
   expect(origins).toEqual([
@@ -274,10 +303,13 @@ test("PROJ-009 retains exact Membership and Link owners through deterministic ro
 
 test("derives repository collections, requires explicit Local memberships, and collapses equal identities", () => {
   const resolved = resolveCollections(
-    {
-      "acme/skills": { members: { again: { source: "remote", path: "review" } } },
-      local: { members: { review: { source: "local", path: "review" } } },
-    },
+    [
+      {
+        id: "acme/skills",
+        declaration: { members: { again: { source: "remote", path: "review" } } },
+      },
+      { id: "local", declaration: { members: { review: { source: "local", path: "review" } } } },
+    ],
     [
       { source: "remote", path: "review", name: "review", repository: "acme/skills" },
       { source: "local", path: "review", name: "review" },
@@ -293,7 +325,12 @@ test("derives repository collections, requires explicit Local memberships, and c
 test("rejects derived collection entry collisions and validates conflicts through every reverse link", () => {
   expect(() =>
     resolveCollections(
-      { "acme/skills": { members: { review: { source: "other", path: "review" } } } },
+      [
+        {
+          id: "acme/skills",
+          declaration: { members: { review: { source: "other", path: "review" } } },
+        },
+      ],
       [
         { source: "remote", path: "review", name: "review", repository: "acme/skills" },
         { source: "other", path: "review", name: "review" },
@@ -302,14 +339,17 @@ test("rejects derived collection entry collisions and validates conflicts throug
   ).toThrow(/conflict/i);
   expect(() =>
     resolveCollections(
-      {
-        parent: { members: { review: { source: "a", path: "review" } }, links: ["child"] },
-        child: { members: { review: { source: "b", path: "review" } } },
-      },
-      new Set([
-        { source: "a", path: "review" },
-        { source: "b", path: "review" },
-      ]),
+      [
+        {
+          id: "parent",
+          declaration: { members: { review: { source: "a", path: "review" } }, links: ["child"] },
+        },
+        { id: "child", declaration: { members: { review: { source: "b", path: "review" } } } },
+      ],
+      [
+        { source: "a", path: "review", name: "review" },
+        { source: "b", path: "review", name: "review" },
+      ],
     ),
   ).toThrow(/conflict/i);
 });
@@ -336,12 +376,7 @@ test("MGMT-016 imports effective memberships as ordinary direct entries and reje
     }
     process.env.SKILL_CLI_STATE_DIR = state;
     const core = createSkillCliCore({ cwd: root });
-    await core.configuration.change({
-      type: "collection.import",
-      level: "project",
-      from: "source",
-      into: "target",
-    });
+    await core.collections.importMembers({ level: "project", from: "source", into: "target" });
     expect(JSON.parse(await readFile(file, "utf8")).collections.target.members).toEqual({
       keep: { source: "s", path: "keep" },
       review: { source: "s", path: "review" },
@@ -357,12 +392,7 @@ test("MGMT-016 imports effective memberships as ordinary direct entries and reje
     );
     const before = await readFile(file, "utf8");
     await expect(
-      core.configuration.change({
-        type: "collection.import",
-        level: "project",
-        from: "source",
-        into: "target",
-      }),
+      core.collections.importMembers({ level: "project", from: "source", into: "target" }),
     ).rejects.toMatchObject({ code: "EXPOSURE_CONFLICT" });
     expect(await readFile(file, "utf8")).toBe(before);
   } finally {
@@ -438,18 +468,12 @@ test("MGMT-016 imports contributed derived and composed effective Collections in
       else await coordinator.installLocal(source, path, skill);
     }
     const core = createSkillCliCore({ cwd: root });
-    await core.configuration.change({
-      type: "collection.import",
+    await core.collections.importMembers({
       level: "project",
       from: "shared/contributed",
       into: "target",
     });
-    await core.configuration.change({
-      type: "collection.import",
-      level: "project",
-      from: "acme/skills",
-      into: "target",
-    });
+    await core.collections.importMembers({ level: "project", from: "acme/skills", into: "target" });
     expect(
       JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).collections.target.members,
     ).toEqual({

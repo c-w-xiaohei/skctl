@@ -1,17 +1,16 @@
 import type {
-  ContentCapability,
   Diagnostic,
-  ManagementProjection,
+  WorkspaceView,
   ResourceDescriptor,
+  LoadedInstalledSkill as CoreLoadedInstalledSkill,
+  InstalledResourceResult,
 } from "@skill-cli/core";
 import { sameSkillAddress, skillAddressKey, type SkillAddress } from "@skill-cli/core";
 
-export type InstalledSkill = ManagementProjection["installedSkills"][number];
-export type LoadedInstalledSkill = Awaited<ReturnType<ContentCapability["loadInstalled"]>>["value"];
+export type InstalledSkill = WorkspaceView["installedSkills"][number];
+export type LoadedInstalledSkill = CoreLoadedInstalledSkill;
 export type InstalledResource = ResourceDescriptor;
-export type ReadInstalledResource = Awaited<
-  ReturnType<ContentCapability["readInstalled"]>
->["value"];
+export type ReadInstalledResource = InstalledResourceResult;
 
 export const destinations = ["workspace", "global", "project", "local"] as const;
 export type Destination = (typeof destinations)[number];
@@ -232,10 +231,7 @@ export const validSections = (destination: Destination): readonly Section[] =>
     ? ["skills", "collections", "sources", "updates"]
     : ["sources", "config-sources", "collections", "integrations"];
 
-export const projectionOwnerExists = (
-  snapshot: ManagementProjection,
-  owner: ProjectionOwner,
-): boolean =>
+export const projectionOwnerExists = (snapshot: WorkspaceView, owner: ProjectionOwner): boolean =>
   owner.kind === "source"
     ? snapshot.effective.sources.some((source) => source.id === owner.id)
     : owner.kind === "installed-skill"

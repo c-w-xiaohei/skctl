@@ -6,7 +6,7 @@ import {
   type Renderable,
 } from "@opentui/core";
 import { extend, useRenderer, useTerminalDimensions } from "@opentui/solid";
-import type { ManagementCapability, UpdateFileChange, UpdatePreview } from "@skill-cli/core";
+import type { InstalledCapability, UpdateFileChange, UpdatePreview } from "@skill-cli/core";
 import { createTwoFilesPatch } from "diff";
 import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { FocusRegistry } from "../focus";
@@ -27,10 +27,10 @@ declare module "@opentui/solid" {
   }
 }
 
-export type UpdatePreviewRequest = Parameters<ManagementCapability["previewUpdate"]>[0];
+export type UpdatePreviewRequest = Parameters<InstalledCapability["previewUpdate"]>[0];
 export interface SkillUpdatePreviewProps {
   readonly request: UpdatePreviewRequest;
-  readonly previewUpdate?: ManagementCapability["previewUpdate"];
+  readonly previewUpdate?: InstalledCapability["previewUpdate"];
   readonly unavailableReason?: string;
   readonly prefix: string;
   readonly focusRegistry?: FocusRegistry;

@@ -15,8 +15,8 @@ const bytes = Buffer.from("---\nname: proxy\ndescription: Proxy\n---\n");
 const blob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 const marker = { path: "SKILL.md", mode: "100644", type: "blob", sha: blob, size: bytes.length };
 const imports = `
-import { openGitHubSource, resolveGitHubApi } from ${JSON.stringify(join(import.meta.dir, "../../src/internal/source-github.ts"))};
-import { createSourceOperation } from ${JSON.stringify(join(import.meta.dir, "../../src/internal/source-network.ts"))};
+import { openGitHubSource, resolveGitHubApi } from ${JSON.stringify(join(import.meta.dir, "../../src/source/github.ts"))};
+import { createSourceOperation } from ${JSON.stringify(join(import.meta.dir, "../../src/source/network.ts"))};
 import { expect } from 'bun:test';
 expect(Bun.version).toBe('1.4.3');
 const before = {...process.env};
@@ -274,12 +274,13 @@ test("eligible API failure reuses explicit proxy and exact C for real smart HTTP
       if (url.pathname.startsWith("/repos/"))
         return Response.json({ message: "unavailable" }, { status: 503 });
       // Boundary forwarding only: the backend still exchanges real Git protocol/pack bytes.
-      return fetch(new URL(url.pathname + url.search, fixture.proxyUrl), {
+      const requestOptions = {
         method: request.method,
         headers: request.headers,
         body: request.method === "POST" ? await request.arrayBuffer() : undefined,
         proxy: { url: fixture.proxyUrl, respectNoProxy: false },
-      });
+      };
+      return fetch(new URL(url.pathname + url.search, fixture.proxyUrl), requestOptions);
     },
   });
   try {

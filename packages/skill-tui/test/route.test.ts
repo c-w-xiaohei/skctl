@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { configDeclarationOwnerKey, createConfigState } from "../src/config/state";
 import { createRoute } from "../src/route";
 import { validSections } from "../src/types";
@@ -565,7 +565,7 @@ test("projection revalidation retains and recovers exact integration owners with
     },
   };
   const projection = readerProjection();
-  const current: ManagementProjection = {
+  const current: WorkspaceView = {
     ...projection,
     configs: projection.configs.map((item) =>
       item.level === "project"

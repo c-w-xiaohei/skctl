@@ -1,7 +1,7 @@
 import type {
   ConfigDeclarationOwner,
   ConfigSourceContributionRef,
-  ManagementProjection,
+  WorkspaceView,
   SkillAddress,
 } from "@skill-cli/core";
 import { filterSkills } from "./skills-filter";
@@ -77,7 +77,7 @@ export type ActionRecord = CommandRecord & {
 };
 
 export function selectedConfigIntegrationOwner(
-  projection: ManagementProjection,
+  projection: WorkspaceView,
   destination: Exclude<Destination, "workspace">,
   config: ConfigSnapshot,
 ): ConfigDeclarationOwner | undefined {
@@ -122,9 +122,9 @@ export interface SourceActionContext {
 
 export function installedSkillContext(
   destination: Destination,
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   pages: PageActionFacts,
-): { readonly skill: ManagementProjection["installedSkills"][number] } | undefined {
+): { readonly skill: WorkspaceView["installedSkills"][number] } | undefined {
   const workspace = pages.workspace;
   if (!projection || destination !== "workspace" || workspace.section !== "skills")
     return undefined;
@@ -177,7 +177,7 @@ export function installedSkillContext(
 export function skillCollectionTargets(
   id: "skill-add-to-collection" | "skill-add-selected-to-collection",
   destination: Destination,
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   pages: PageActionFacts,
 ): { readonly addresses: readonly SkillAddress[]; readonly reason?: string } {
   if (!projection || destination !== "workspace" || pages.workspace.section !== "skills")
@@ -219,7 +219,7 @@ export function skillCollectionTargets(
 
 export function selectedSourceContext(
   destination: Destination,
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   pages: PageActionFacts,
 ): SourceActionContext | undefined {
   const section =
@@ -263,7 +263,7 @@ export function selectedSourceContext(
 
 function reachableActionIntents(
   destination: Destination,
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   pages: PageActionFacts,
 ): readonly ActionIntent[] {
   const currentSection =
@@ -518,7 +518,7 @@ function collectionMutationIntents(installedSkillCount: number): readonly Action
 
 function selectedSkillActionIntents(
   destination: Destination,
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   pages: PageActionFacts,
 ): readonly ActionIntent[] {
   if (!projection || destination !== "workspace" || pages.workspace.section !== "skills") return [];
@@ -576,7 +576,7 @@ function selectedSkillActionIntents(
 
 function checkedSkillActionIntents(
   destination: Destination,
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   pages: PageActionFacts,
 ): readonly ActionIntent[] {
   if (
@@ -693,7 +693,7 @@ const commandRecord = (intent: ActionIntent): ActionRecord => ({
 
 export function reachableActions(
   destination: Destination,
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   pages: PageActionFacts,
 ): readonly ActionRecord[] {
   const intents = [...reachableActionIntents(destination, projection, pages)];
@@ -725,7 +725,7 @@ export function reachableActions(
 
 export function selectedSkillActions(
   destination: Destination,
-  projection: ManagementProjection | undefined,
+  projection: WorkspaceView | undefined,
   pages: PageActionFacts,
 ): readonly ActionRecord[] {
   return selectedSkillActionIntents(destination, projection, pages).map(commandRecord);
@@ -733,7 +733,7 @@ export function selectedSkillActions(
 
 export function skillSourceIntent(
   destination: Destination,
-  projection: ManagementProjection,
+  projection: WorkspaceView,
   pages: PageActionFacts,
 ): {
   readonly kind: "source-update";
@@ -752,7 +752,7 @@ export function skillSourceIntent(
 export function sourceOperationIntent(
   id: "add-skills",
   destination: Destination,
-  projection: ManagementProjection,
+  projection: WorkspaceView,
   pages: PageActionFacts,
 ): SourceOperationIntent {
   const context = selectedSourceContext(destination, projection, pages);
@@ -766,7 +766,7 @@ export function sourceOperationIntent(
 export function actionIntent(
   id: "remove-source",
   destination: Destination,
-  projection: ManagementProjection,
+  projection: WorkspaceView,
   pages: PageActionFacts,
 ): DirectSourceIntent {
   const context = selectedSourceContext(destination, projection, pages);
@@ -779,19 +779,19 @@ export function actionIntent(
 export function sourceRouteIntent(
   id: "open-config",
   destination: Destination,
-  projection: ManagementProjection,
+  projection: WorkspaceView,
   pages: PageActionFacts,
 ): Extract<SourceRouteIntent, { readonly kind: "open-config" }>;
 export function sourceRouteIntent(
   id: "open-config-source",
   destination: Destination,
-  projection: ManagementProjection,
+  projection: WorkspaceView,
   pages: PageActionFacts,
 ): Extract<SourceRouteIntent, { readonly kind: "open-config-source" }>;
 export function sourceRouteIntent(
   id: "open-config" | "open-config-source",
   destination: Destination,
-  projection: ManagementProjection,
+  projection: WorkspaceView,
   pages: PageActionFacts,
 ): SourceRouteIntent {
   const context = selectedSourceContext(destination, projection, pages);

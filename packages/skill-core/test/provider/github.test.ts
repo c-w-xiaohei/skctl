@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openSource } from "../../src/internal/sources";
-import { openGitHubSource, resolveGitHubApi } from "../../src/internal/source-github";
+import { openSource } from "../../src/source/snapshot";
+import { openGitHubSource, resolveGitHubApi } from "../../src/source/github";
 import { createExecutableFixture } from "../executable-fixture";
 
 const test = bunTest.serial;
@@ -217,7 +217,7 @@ test("GitHub reads only the declared Source Root tree", async () => {
 });
 
 test("GitHub fallback is eligible only for incomplete or unavailable API operations", async () => {
-  const { classifyGitHubFailure } = await import("../../src/internal/source-github");
+  const { classifyGitHubFailure } = await import("../../src/source/github");
   expect(classifyGitHubFailure(403, "rate limit")).toBe("fallback");
   expect(classifyGitHubFailure(503, "unavailable")).toBe("fallback");
   expect(classifyGitHubFailure(401, "bad credentials")).toBe("auth");

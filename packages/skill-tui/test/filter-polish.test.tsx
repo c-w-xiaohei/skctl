@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { CollectionView, ManagementProjection } from "@skill-cli/core";
+import type { CollectionView, WorkspaceView } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directOwner, directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
@@ -18,7 +18,7 @@ afterEach(() => {
   setup = undefined;
 });
 
-function projection(): ManagementProjection {
+function projection(): WorkspaceView {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("Complete fixture required");
   const view = (

@@ -20,7 +20,7 @@ import {
 const firstAddress = { source: "team-main", path: "guide" };
 
 test("Reader cache keeps technical disclosure per address through selection and semantic restore", () => {
-  const owner = createReaderOwner(directSourceCore(readerProjection()).content);
+  const owner = createReaderOwner(directSourceCore(readerProjection()).installed);
   owner.select(firstAddress);
   owner.patch({ tab: "details", detailsMetadataOpen: true, detailsDescriptionOpen: true });
   const saved = owner.current()!;

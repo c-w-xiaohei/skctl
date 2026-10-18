@@ -84,25 +84,28 @@ test.each([
     const fixture = projection(12);
     const mounted = await renderApp(
       directSourceCore(fixture, {
-        checkUpdate: async ({ source }) => {
-          calls.push(source);
-          if (source === "source-12") throw new Error(failure);
-          return {
-            value: {
-              source,
-              kind: "github",
-              exactRevision: revision,
-              changed: [],
-              removed: [],
-              added: [],
-              unchanged: [{ path: "skill-0", name: "Skill 0", description: "Installed Skill 0" }],
-            },
-            diagnostics: [],
-          };
-        },
-        loadInstalled: async (request) => {
-          reads.push(request);
-          throw new Error("The update table must not read Skill content");
+        installed: {
+          checkUpdate: async ({ source }) => {
+            calls.push(source);
+            if (source === "source-12") throw new Error(failure);
+            return {
+              value: {
+                source,
+                kind: "github",
+                baseline: "baseline:test",
+                exactRevision: revision,
+                changed: [],
+                removed: [],
+                added: [],
+                unchanged: [{ path: "skill-0", name: "Skill 0", description: "Installed Skill 0" }],
+              },
+              diagnostics: [],
+            };
+          },
+          load: async (request) => {
+            reads.push(request);
+            throw new Error("The update table must not read Skill content");
+          },
         },
       }),
       width,
@@ -182,32 +185,35 @@ test("RENDER App Source table submits one selected Skill once at the checked exa
   const fixture = projection(1, 120);
   const mounted = await renderApp(
     directSourceCore(fixture, {
-      checkUpdate: async ({ source }) => {
-        checks.push(source);
-        return {
-          value: {
-            source,
-            kind: "github",
-            exactRevision: revision,
-            changed: fixture.installedSkills.map((skill) => ({
-              path: skill.address.path,
-              name: skill.name,
-              description: skill.description,
-            })),
-            removed: [],
-            added: [],
-            unchanged: [],
-          },
-          diagnostics: [],
-        };
-      },
-      update: async (request) => {
-        requests.push(request);
-        return { value: undefined, diagnostics: [] };
-      },
-      loadInstalled: async (request) => {
-        reads.push(request);
-        throw new Error("Table navigation and submit must not read Skill content");
+      installed: {
+        checkUpdate: async ({ source }) => {
+          checks.push(source);
+          return {
+            value: {
+              source,
+              kind: "github",
+              baseline: "baseline:test",
+              exactRevision: revision,
+              changed: fixture.installedSkills.map((skill) => ({
+                path: skill.address.path,
+                name: skill.name,
+                description: skill.description,
+              })),
+              removed: [],
+              added: [],
+              unchanged: [],
+            },
+            diagnostics: [],
+          };
+        },
+        update: async (request) => {
+          requests.push(request);
+          return { value: undefined, diagnostics: [] };
+        },
+        load: async (request) => {
+          reads.push(request);
+          throw new Error("Table navigation and submit must not read Skill content");
+        },
       },
     }),
     80,

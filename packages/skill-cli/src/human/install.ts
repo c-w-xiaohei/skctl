@@ -11,7 +11,7 @@ export function installCommand(parent: Command, { core, stdout }: CommandContext
     .option("--revision <revision>", "Exact 40-hex remote commit to materialize.", revision)
     .action(async (source, paths, flags, action) => {
       const exactRevision = flags.revision;
-      const { value } = await core(action).management.install({ source, paths, exactRevision });
+      const { value } = await core(action).installed.install({ source, paths, exactRevision });
       const candidates = value.map((candidate) => candidate.path).join(", ");
       stdout.write(
         `Installed ${value.length} skills from source "${source}"${exactRevision ? ` at revision ${exactRevision}` : ""}${candidates ? `: ${candidates}` : ""}.\n`,

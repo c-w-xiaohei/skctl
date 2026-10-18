@@ -11,9 +11,10 @@ export function updateCommand(parent: Command, { core, stdout }: CommandContext)
     .description("Compare installed Skills with the Source's current tracked revision.")
     .option("--json")
     .action(async (source, flags, action) => {
-      const { value } = await core(action).management.checkUpdate({ source });
+      const { value } = await core(action).installed.checkUpdate({ source });
+      const { baseline: _baseline, ...observation } = value;
       stdout.write(
-        formatObservation(value, !!flags.json, [
+        formatObservation(observation, !!flags.json, [
           ...(value.exactRevision ? [`revision ${value.exactRevision}`] : []),
           `source ${value.source}`,
           `kind ${value.kind}`,
@@ -32,7 +33,7 @@ export function updateCommand(parent: Command, { core, stdout }: CommandContext)
     .option("--revision <revision>", "Exact remote commit to apply.", revision)
     .action(async (source, paths, flags, action) => {
       const remove = flags.remove ?? [];
-      await core(action).management.update({
+      await core(action).installed.update({
         source,
         paths,
         remove,

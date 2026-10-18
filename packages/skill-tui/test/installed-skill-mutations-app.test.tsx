@@ -3,7 +3,7 @@ import { TextBufferRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { SkillCliError } from "@skill-cli/core";
 import type {
-  ManagementProjection,
+  WorkspaceView,
   OperationResult,
   RebindImpact,
   UninstallImpact,
@@ -30,7 +30,7 @@ const secondMembershipOwner = {
   pointer: "/collections/documentation/members/guide-copy",
 };
 
-function projection(): ManagementProjection {
+function projection(): WorkspaceView {
   const source = {
     id: "team-main",
     kind: "github" as const,
@@ -174,23 +174,25 @@ test.each([[120, 40, "Tab controls · Esc close"]] as const)(
       () => (
         <App
           core={directSourceCore(projection(), {
-            previewUninstall: async (request) =>
-              result<UninstallImpact>({
-                kind: "uninstall",
-                installed: request.paths.map((path) => ({ source: request.source, path })),
-                directMemberships: [],
-                disappearingSelectors: [],
-                retainedSelectors: [],
-                blockers: [],
-                allowed: true,
-              }),
-            uninstall: (_request, options) => {
-              executions++;
-              options?.signal?.addEventListener("abort", () => {
-                aborted++;
-                executing.reject(new SkillCliError("CANCELLED", "cancelled"));
-              });
-              return executing.promise;
+            installed: {
+              previewUninstall: async (request) =>
+                result<UninstallImpact>({
+                  kind: "uninstall",
+                  installed: request.paths.map((path) => ({ source: request.source, path })),
+                  directMemberships: [],
+                  disappearingSelectors: [],
+                  retainedSelectors: [],
+                  blockers: [],
+                  allowed: true,
+                }),
+              uninstall: (_request, options) => {
+                executions++;
+                options?.signal?.addEventListener("abort", () => {
+                  aborted++;
+                  executing.reject(new SkillCliError("CANCELLED", "cancelled"));
+                });
+                return executing.promise;
+              },
             },
           })}
           exit={() => {}}
@@ -227,20 +229,22 @@ test("App returns an Installed Skill execution failure to its live review and ca
     () => (
       <App
         core={directSourceCore(projection(), {
-          previewUninstall: async (request) =>
-            result<UninstallImpact>({
-              kind: "uninstall",
-              installed: request.paths.map((path) => ({ source: request.source, path })),
-              directMemberships: [],
-              disappearingSelectors: [],
-              retainedSelectors: [],
-              blockers: [],
-              allowed: true,
-            }),
-          uninstall: async () => {
-            executions++;
-            if (executions === 1) throw new Error("disk full");
-            return result(undefined);
+          installed: {
+            previewUninstall: async (request) =>
+              result<UninstallImpact>({
+                kind: "uninstall",
+                installed: request.paths.map((path) => ({ source: request.source, path })),
+                directMemberships: [],
+                disappearingSelectors: [],
+                retainedSelectors: [],
+                blockers: [],
+                allowed: true,
+              }),
+            uninstall: async () => {
+              executions++;
+              if (executions === 1) throw new Error("disk full");
+              return result(undefined);
+            },
           },
         })}
         exit={() => {}}
@@ -273,11 +277,13 @@ test("App mounts operation-specific preview surfaces and suppresses stale succes
     () => (
       <App
         core={directSourceCore(projection(), {
-          previewUninstall: (request, options) => {
-            previews++;
-            options?.signal?.addEventListener("abort", () => aborted++);
-            if (previews === 1) return pending.promise;
-            return Promise.reject(new Error("offline"));
+          installed: {
+            previewUninstall: (request, options) => {
+              previews++;
+              options?.signal?.addEventListener("abort", () => aborted++);
+              if (previews === 1) return pending.promise;
+              return Promise.reject(new Error("offline"));
+            },
           },
         })}
         exit={() => {}}
@@ -319,9 +325,11 @@ test("App retries an operation-specific Installed Skill preview failure", async 
     () => (
       <App
         core={directSourceCore(projection(), {
-          previewUninstall: () => {
-            previews++;
-            return previews === 1 ? Promise.reject(new Error("offline")) : retry.promise;
+          installed: {
+            previewUninstall: () => {
+              previews++;
+              return previews === 1 ? Promise.reject(new Error("offline")) : retry.promise;
+            },
           },
         })}
         exit={() => {}}
@@ -360,16 +368,18 @@ test("App Rebind form uses native Tab order and submits only a valid structural 
     () => (
       <App
         core={directSourceCore(projection(), {
-          previewRebind: async (request) => {
-            requests.push(request);
-            return result<RebindImpact>({
-              kind: "rebind",
-              address,
-              owner: request.owner,
-              ownerPath: request.ownerPath ?? request.path,
-              proof: "proven",
-              allowed: true,
-            });
+          installed: {
+            previewRebind: async (request) => {
+              requests.push(request);
+              return result<RebindImpact>({
+                kind: "rebind",
+                address,
+                owner: request.owner,
+                ownerPath: request.ownerPath ?? request.path,
+                proof: "proven",
+                allowed: true,
+              });
+            },
           },
         })}
         exit={() => {}}
@@ -415,29 +425,31 @@ test("App routes blocked Uninstall reference resolution by Collection ID with ex
     () => (
       <App
         core={directSourceCore(projection(), {
-          previewUninstall: async () =>
-            result<UninstallImpact>({
-              kind: "uninstall",
-              installed: [address],
-              directMemberships: [membershipOwner],
-              disappearingSelectors: [
-                {
-                  selector: "engineering:guide",
-                  address,
-                  paths: [
-                    {
-                      kind: "direct",
-                      collection: "engineering",
-                      entryName: "guide",
-                      owner: membershipOwner,
-                    },
-                  ],
-                },
-              ],
-              retainedSelectors: [],
-              blockers: [{ reason: "membership", owner: membershipOwner }],
-              allowed: false,
-            }),
+          installed: {
+            previewUninstall: async () =>
+              result<UninstallImpact>({
+                kind: "uninstall",
+                installed: [address],
+                directMemberships: [membershipOwner],
+                disappearingSelectors: [
+                  {
+                    selector: "engineering:guide",
+                    address,
+                    paths: [
+                      {
+                        kind: "direct",
+                        collection: "engineering",
+                        entryName: "guide",
+                        owner: membershipOwner,
+                      },
+                    ],
+                  },
+                ],
+                retainedSelectors: [],
+                blockers: [{ reason: "membership", owner: membershipOwner }],
+                allowed: false,
+              }),
+          },
         })}
         exit={() => {}}
       />
@@ -472,7 +484,7 @@ test("App routes the selected blocked Uninstall owner to its exact selector Memb
   const base = projection();
   const effective = base.effective;
   if (effective.status !== "complete") throw new Error("Missing effective Collections");
-  const twoOwnerProjection: ManagementProjection = {
+  const twoOwnerProjection: WorkspaceView = {
     ...base,
     configs: [
       ...base.configs,
@@ -506,44 +518,46 @@ test("App routes the selected blocked Uninstall owner to its exact selector Memb
     () => (
       <App
         core={directSourceCore(twoOwnerProjection, {
-          previewUninstall: async () =>
-            result<UninstallImpact>({
-              kind: "uninstall",
-              installed: [address],
-              directMemberships: [membershipOwner, secondMembershipOwner],
-              disappearingSelectors: [
-                {
-                  selector: "engineering:guide",
-                  address,
-                  paths: [
-                    {
-                      kind: "direct",
-                      collection: "engineering",
-                      entryName: "guide",
-                      owner: membershipOwner,
-                    },
-                  ],
-                },
-                {
-                  selector: "documentation:guide-copy",
-                  address,
-                  paths: [
-                    {
-                      kind: "direct",
-                      collection: "documentation",
-                      entryName: "guide-copy",
-                      owner: secondMembershipOwner,
-                    },
-                  ],
-                },
-              ],
-              retainedSelectors: [],
-              blockers: [
-                { reason: "membership", owner: membershipOwner },
-                { reason: "membership", owner: secondMembershipOwner },
-              ],
-              allowed: false,
-            }),
+          installed: {
+            previewUninstall: async () =>
+              result<UninstallImpact>({
+                kind: "uninstall",
+                installed: [address],
+                directMemberships: [membershipOwner, secondMembershipOwner],
+                disappearingSelectors: [
+                  {
+                    selector: "engineering:guide",
+                    address,
+                    paths: [
+                      {
+                        kind: "direct",
+                        collection: "engineering",
+                        entryName: "guide",
+                        owner: membershipOwner,
+                      },
+                    ],
+                  },
+                  {
+                    selector: "documentation:guide-copy",
+                    address,
+                    paths: [
+                      {
+                        kind: "direct",
+                        collection: "documentation",
+                        entryName: "guide-copy",
+                        owner: secondMembershipOwner,
+                      },
+                    ],
+                  },
+                ],
+                retainedSelectors: [],
+                blockers: [
+                  { reason: "membership", owner: membershipOwner },
+                  { reason: "membership", owner: secondMembershipOwner },
+                ],
+                allowed: false,
+              }),
+          },
         })}
         exit={() => {}}
       />

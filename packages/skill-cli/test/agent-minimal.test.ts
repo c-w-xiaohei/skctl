@@ -17,9 +17,7 @@ async function command(argv: string[], core?: Partial<SkillCliCore>) {
 
 test("search bounds results and only discloses truncation when it actually occurs", async () => {
   let requested: number | undefined;
-  const results = Array.from({ length: 11 }, (_, index) => ({
-    kind: "skill" as const,
-    rank: index + 1,
+  const results = Array.from({ length: 10 }, (_, index) => ({
     selector: `team:s${index}`,
     name: `s${index}`,
     description: "Review",
@@ -32,18 +30,16 @@ test("search bounds results and only discloses truncation when it actually occur
       search: async (request: { limit?: number }) => {
         requested = request.limit;
         return {
-          value: { query: "review", results: results.slice(0, request.limit) },
+          value: { results, truncated: request.limit === 10 },
           diagnostics: [],
         };
       },
     },
   };
   const response = await command(["search", "review"], core);
-  expect(requested).toBe(11);
+  expect(requested).toBe(10);
   expect(JSON.parse(response.stdout)).toEqual({
-    results: results
-      .slice(0, 10)
-      .map(({ selector, name, description }) => ({ selector, name, description })),
+    results: results.map(({ selector, name, description }) => ({ selector, name, description })),
     truncated: true,
   });
   const bounded = await command(["search", "review", "--limit=20"], core);
@@ -53,8 +49,8 @@ test("search bounds results and only discloses truncation when it actually occur
 test("content reads preserve bytes without metadata, wrapping, or added newlines", async () => {
   const text = '---\nname: quoted\ndescription: "Review"\n---\nNo final newline';
   const content = {
-    load: async () => ({ value: { text }, diagnostics: [] }),
-    read: async () => ({ value: { text }, diagnostics: [] }),
+    load: async () => ({ text }),
+    read: async () => ({ text }),
   } as unknown as SkillCliCore["content"];
   for (const argv of [
     ["load", "team:quoted"],
@@ -84,10 +80,7 @@ test("run propagates child status and cleans up its own signal listeners without
   const content = {
     run: async (request: { argv: string[] }) => {
       expect(request.argv).toEqual(argv);
-      return {
-        value: { selector: "team:run", exitCode: 7, signal: null, cancelled: false },
-        diagnostics: [],
-      };
+      return { selector: "team:run", exitCode: 7, signal: null, cancelled: false };
     },
   } as unknown as SkillCliCore["content"];
   expect(await command(["run", "team:run", "--", ...argv], { content })).toEqual({

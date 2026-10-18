@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { ManagementProjection } from "@skill-cli/core";
+import type { WorkspaceView } from "@skill-cli/core";
 import { App } from "../src/app";
 import { exposureTreePathKey } from "../src/collections/agent-access-tree";
 import { directSourceCore } from "./direct-source.fixture";
@@ -56,7 +56,7 @@ test("Source updates replace the browser and Back restores its exact selected So
 test("Agent access opens the exact structural Skill while preserving an All Skills filter and checked state", async () => {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
-  const projection: ManagementProjection = {
+  const projection: WorkspaceView = {
     ...base,
     effective: {
       ...base.effective,
@@ -81,31 +81,31 @@ test("Agent access opens the exact structural Skill while preserving an All Skil
     () => (
       <App
         core={directSourceCore(projection, {
-          checkUpdate: async ({ source }) => {
-            checks.push(source);
-            return {
-              value: {
-                source,
-                kind: "github" as const,
-                exactRevision: "a".repeat(40),
-                changed: [],
-                added: [],
-                removed: [],
-                unchanged: [],
-              },
-              diagnostics: [],
-            };
-          },
-          loadInstalled: async ({ address }) => ({
-            value: {
+          installed: {
+            checkUpdate: async ({ source }) => {
+              checks.push(source);
+              return {
+                value: {
+                  source,
+                  kind: "github" as const,
+                  baseline: "baseline:test",
+                  exactRevision: "a".repeat(40),
+                  changed: [],
+                  added: [],
+                  removed: [],
+                  unchanged: [],
+                },
+                diagnostics: [],
+              };
+            },
+            load: async ({ address }) => ({
               address,
               name: address.path,
               description: "",
               rawText: `Body ${address.path}`,
               markdownText: `# ${address.path}\n\nBody ${address.path}`,
-            },
-            diagnostics: [],
-          }),
+            }),
+          },
         })}
         exit={() => {}}
       />
@@ -184,7 +184,7 @@ for (const originKind of ["direct", "via-link"] as const) {
               links: [{ collection: "team", linkedCollection: "linked", owner }],
             },
           ];
-    const projection: ManagementProjection = {
+    const projection: WorkspaceView = {
       ...base,
       effective: {
         ...base.effective,
@@ -205,16 +205,15 @@ for (const originKind of ["direct", "via-link"] as const) {
       () => (
         <App
           core={directSourceCore(projection, {
-            loadInstalled: async ({ address }) => ({
-              value: {
+            installed: {
+              load: async ({ address }) => ({
                 address,
                 name: address.path,
                 description: "",
                 rawText: `Body ${address.path}`,
                 markdownText: `# ${address.path}\n\nBody ${address.path}`,
-              },
-              diagnostics: [],
-            }),
+              }),
+            },
           })}
           exit={() => {}}
         />

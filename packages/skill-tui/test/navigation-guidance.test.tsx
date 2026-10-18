@@ -22,8 +22,8 @@ async function mount(width = 100, height = 30) {
     () => (
       <App
         core={directSourceCore(readerProjection(), {
-          loadInstalled: async ({ address }) => ({
-            value: {
+          installed: {
+            load: async ({ address }) => ({
               address,
               name: address.path,
               description: "",
@@ -31,9 +31,8 @@ async function mount(width = 100, height = 30) {
               markdownText: Array.from({ length: 100 }, (_, index) => `Content ${index}`).join(
                 "\n\n",
               ),
-            },
-            diagnostics: [],
-          }),
+            }),
+          },
         })}
         exit={() => {}}
       />

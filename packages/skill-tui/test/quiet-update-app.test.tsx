@@ -10,7 +10,7 @@ import {
   TextRenderable,
 } from "@opentui/core";
 import { ButtonRenderable } from "@tuiparts/core/button";
-import { SkillCliError, type ManagementProjection } from "@skill-cli/core";
+import { SkillCliError, type WorkspaceView } from "@skill-cli/core";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
@@ -67,7 +67,7 @@ async function mount(
   const prior = process.env.SKILL_TUI_UPDATE_CACHE_DIR;
   process.env.SKILL_TUI_UPDATE_CACHE_DIR = cache;
   const projection = fixture(count);
-  let currentProjection: ManagementProjection = projection;
+  let currentProjection: WorkspaceView = projection;
   const loaded: { source: string; path: string }[] = [];
   const acquisitions: string[] = [];
   const calls: {
@@ -86,86 +86,87 @@ async function mount(
   let updateSignal: AbortSignal | undefined;
   let settle!: () => void;
   const core = directSourceCore(projection, {
-    get: async () => ({ value: currentProjection, diagnostics: [] }),
-    discover: async ({ source }) => {
-      acquisitions.push(`discover:${source}`);
-      throw new Error("Browsing installed content must not discover a Source");
+    workspace: { get: async () => ({ value: currentProjection, diagnostics: [] }) },
+    sources: {
+      discover: async ({ source }) => {
+        acquisitions.push(`discover:${source}`);
+        throw new Error("Browsing installed content must not discover a Source");
+      },
     },
-    install: async ({ source }) => {
-      acquisitions.push(`install:${source}`);
-      throw new Error("Browsing installed content must not install a Skill");
-    },
-    checkUpdate: async ({ source }) => {
-      checks.push(source);
-      return {
-        value: {
-          source,
-          kind: "github",
-          exactRevision: revision,
-          baseline: "checked-baseline",
-          changed: projection.installedSkills
-            .filter((skill) => skill.address.source === source)
-            .map((skill) => ({
-              path: skill.address.path,
-              name: skill.name,
-              description: skill.description,
-            })),
-          unchanged: [],
-          removed: [],
-          added: [],
-        },
-        diagnostics: [],
-      };
-    },
-    previewUpdate: async (request) => {
-      previews.push(request);
-      return {
-        value: {
-          address: { source: request.source, path: request.path },
-          status: "ready",
-          targetRevision: request.exactRevision!,
-          removed: false,
-          files: [
-            {
-              path: "SKILL.md",
-              status: "modified",
-              content: {
-                kind: "text",
-                before: `Installed ${request.path}\n`,
-                after: `Checked ${request.path}\n`,
+    installed: {
+      install: async ({ source }) => {
+        acquisitions.push(`install:${source}`);
+        throw new Error("Browsing installed content must not install a Skill");
+      },
+      checkUpdate: async ({ source }) => {
+        checks.push(source);
+        return {
+          value: {
+            source,
+            kind: "github",
+            exactRevision: revision,
+            baseline: "checked-baseline",
+            changed: projection.installedSkills
+              .filter((skill) => skill.address.source === source)
+              .map((skill) => ({
+                path: skill.address.path,
+                name: skill.name,
+                description: skill.description,
+              })),
+            unchanged: [],
+            removed: [],
+            added: [],
+          },
+          diagnostics: [],
+        };
+      },
+      previewUpdate: async (request) => {
+        previews.push(request);
+        return {
+          value: {
+            address: { source: request.source, path: request.path },
+            status: "ready",
+            targetRevision: request.exactRevision!,
+            removed: false,
+            files: [
+              {
+                path: "SKILL.md",
+                status: "modified",
+                content: {
+                  kind: "text",
+                  before: `Installed ${request.path}\n`,
+                  after: `Checked ${request.path}\n`,
+                },
               },
-            },
-          ],
-        },
-        diagnostics: [],
-      };
-    },
-    update: async (request, options) => {
-      updateSignal = options?.signal;
-      calls.push(request);
-      if (updateFailure) throw updateFailure;
-      if (pending && request.source === (pending === "other" ? "other" : "team-main"))
-        await new Promise<void>((resolve) => {
-          settle = resolve;
-        });
-      return { value: undefined, diagnostics: [] };
-    },
-    loadInstalled: async ({ address }) => {
-      loaded.push(address);
-      const skill = projection.installedSkills.find(
-        (skill) => skill.address.source === address.source && skill.address.path === address.path,
-      )!;
-      const text = `# ${skill.name}\n\nInstalled body for ${address.source}/${address.path}\n\n${Array.from({ length: 50 }, (_, index) => `Content line ${index}`).join("\n\n")}`;
-      return {
-        value: {
+            ],
+          },
+          diagnostics: [],
+        };
+      },
+      update: async (request, options) => {
+        updateSignal = options?.signal;
+        calls.push(request);
+        if (updateFailure) throw updateFailure;
+        if (pending && request.source === (pending === "other" ? "other" : "team-main"))
+          await new Promise<void>((resolve) => {
+            settle = resolve;
+          });
+        return { value: undefined, diagnostics: [] };
+      },
+      load: async ({ address }) => {
+        loaded.push(address);
+        const skill = projection.installedSkills.find(
+          (skill) => skill.address.source === address.source && skill.address.path === address.path,
+        )!;
+        const text = `# ${skill.name}\n\nInstalled body for ${address.source}/${address.path}\n\n${Array.from({ length: 50 }, (_, index) => `Content line ${index}`).join("\n\n")}`;
+        return {
           address,
           name: skill.name,
           description: skill.description,
           rawText: text,
           markdownText: text,
-        },
-        diagnostics: [],
-      };
+        };
+      },
     },
   });
   let setup: Setup | undefined;
@@ -266,15 +267,18 @@ test.each([
     let checks = 0;
     const projection = fixture();
     const core = directSourceCore(projection, {
-      checkUpdate: async (_request, options) => {
-        checks += 1;
-        signal = options?.signal;
-        await new Promise<void>((_resolve, reject) => {
-          const abort = () => reject(Object.assign(new Error("cancelled"), { code: "CANCELLED" }));
-          if (signal?.aborted) abort();
-          else signal?.addEventListener("abort", abort, { once: true });
-        });
-        throw new Error("This fixture only settles on cancellation");
+      installed: {
+        checkUpdate: async (_request, options) => {
+          checks += 1;
+          signal = options?.signal;
+          await new Promise<void>((_resolve, reject) => {
+            const abort = () =>
+              reject(Object.assign(new Error("cancelled"), { code: "CANCELLED" }));
+            if (signal?.aborted) abort();
+            else signal?.addEventListener("abort", abort, { once: true });
+          });
+          throw new Error("This fixture only settles on cancellation");
+        },
       },
     });
     let setup: Setup | undefined;
@@ -1244,6 +1248,7 @@ test("Source scan orders updates before current and unchecked results without co
     unchanged: [candidate],
     added: [],
     removed: [],
+    baseline: "baseline:test",
   });
   state.observe({
     source: "has-updates",
@@ -1253,6 +1258,7 @@ test("Source scan orders updates before current and unchecked results without co
     unchanged: [],
     added: [],
     removed: [],
+    baseline: "baseline:test",
   });
   const submitted: unknown[] = [];
   const opened: string[] = [];
@@ -1304,6 +1310,7 @@ test("Source scan orders updates before current and unchecked results without co
       unchanged: [],
       added: [],
       removed: [],
+      baseline: "baseline:test",
     });
     await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable).toBe(browser);

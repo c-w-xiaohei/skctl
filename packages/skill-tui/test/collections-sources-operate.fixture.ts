@@ -1,4 +1,4 @@
-import type { CollectionView, ManagementProjection } from "@skill-cli/core";
+import type { CollectionView, WorkspaceView } from "@skill-cli/core";
 import { readerProjection } from "./installed-reader.fixture";
 
 export const operateCollectionOwner = {
@@ -8,7 +8,7 @@ export const operateCollectionOwner = {
 };
 
 /** Core-shaped input; visible lists/counts/eligibility remain production derivations. */
-export function collectionsSourcesProjection(): ManagementProjection {
+export function collectionsSourcesProjection(): WorkspaceView {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
   const empty = (id: string): CollectionView => ({

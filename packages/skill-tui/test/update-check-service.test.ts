@@ -8,7 +8,7 @@ import {
 } from "../src/updates/check-service";
 import {
   SkillCliError,
-  type ManagementCapability,
+  type InstalledCapability,
   type OperationResult,
   type UpdateObservation,
 } from "@skill-cli/core";
@@ -48,10 +48,10 @@ function management(
     signal?: AbortSignal,
   ) => Promise<OperationResult<UpdateObservation>>,
   baseline = "baseline",
-): Pick<ManagementCapability, "checkUpdate"> & UpdateBaselineCapability {
+): Pick<InstalledCapability, "checkUpdate"> & UpdateBaselineCapability {
   return {
     checkUpdate: ({ source }, options) => checkUpdate(source, options?.signal),
-    getUpdateBaseline: async () => result(baseline),
+    updateBaseline: async () => result(baseline),
   };
 }
 
@@ -111,7 +111,7 @@ test("a baseline change fails closed and does not publish the check", async () =
       baseline = "after";
       return result(observation(source, "before"));
     },
-    getUpdateBaseline: async () => result(baseline),
+    updateBaseline: async () => result(baseline),
   });
   await service.refresh(["first"]);
   expect(service.check("first")?.status).toBe("failed");
@@ -458,7 +458,7 @@ test("hydration rechecks after a blocked baseline read before publishing old dis
           changed: [{ path: "manual", name: "manual", description: "manual" }],
         });
       },
-      getUpdateBaseline: async () => {
+      updateBaseline: async () => {
         if (++baselineReads === 1) {
           markBaselineStarted();
           await baselineBlocked;
