@@ -4,7 +4,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSkillCliCore } from "../../src/create-core";
 import { bindingDigest } from "../../src/internal/domain";
-import { StateCoordinator } from "../../src/internal/state";
+import { StateCoordinator, type IdentityEvidence } from "../../src/internal/state";
+
+async function installRemoteReview(
+  state: string,
+  identityEvidence: IdentityEvidence = { status: "unavailable" },
+) {
+  await new StateCoordinator(state).installRemoteForTest({
+    source: "remote",
+    path: "review",
+    name: "review",
+    description: "Review",
+    kind: "remote",
+    digest: "a".repeat(64),
+    bindingDigest: bindingDigest({
+      kind: "github",
+      origin: "https://github.com/acme/skills",
+      root: "",
+      ref: "main",
+    }),
+    adoptedRevision: "b".repeat(40),
+    identityEvidence,
+  });
+}
 
 async function fixture(config = "{}\n") {
   const root = await mkdtemp(join(tmpdir(), "skill-cli-impact-"));
@@ -166,25 +188,10 @@ test("MGMT-010 Uninstall impact preserves repository-derived and Link origin pat
     }),
   );
   try {
-    await new StateCoordinator(value.state).installRemoteForTest({
-      source: "remote",
-      path: "review",
-      name: "review",
-      description: "Review",
-      kind: "remote",
-      digest: "a".repeat(64),
-      bindingDigest: bindingDigest({
-        kind: "github",
-        origin: "https://github.com/acme/skills",
-        root: "",
-        ref: "main",
-      }),
-      adoptedRevision: "b".repeat(40),
-      identityEvidence: {
-        status: "known",
-        canonicalOrigin: "https://github.com/acme/skills",
-        originRelativeSkillRoot: "review",
-      },
+    await installRemoteReview(value.state, {
+      status: "known",
+      canonicalOrigin: "https://github.com/acme/skills",
+      originRelativeSkillRoot: "review",
     });
     const impact = await value.core.management.previewUninstall({
       source: "remote",
@@ -868,22 +875,7 @@ test("MGMT-012 reports repository and plural Link paths without a false direct M
     }),
   );
   try {
-    await new StateCoordinator(value.state).installRemoteForTest({
-      source: "remote",
-      path: "review",
-      name: "review",
-      description: "Review",
-      kind: "remote",
-      digest: "a".repeat(64),
-      bindingDigest: bindingDigest({
-        kind: "github",
-        origin: "https://github.com/acme/skills",
-        root: "",
-        ref: "main",
-      }),
-      adoptedRevision: "b".repeat(40),
-      identityEvidence: { status: "unavailable" },
-    });
+    await installRemoteReview(value.state);
     const impact = await value.core.management.previewUninstall({
       source: "remote",
       paths: ["review"],
@@ -926,22 +918,7 @@ test("MGMT-013 distinguishes direct contributed derived and composed Add-to-Coll
         collections: { direct: {} },
       }),
     );
-    await new StateCoordinator(value.state).installRemoteForTest({
-      source: "remote",
-      path: "review",
-      name: "review",
-      description: "Review",
-      kind: "remote",
-      digest: "a".repeat(64),
-      bindingDigest: bindingDigest({
-        kind: "github",
-        origin: "https://github.com/acme/skills",
-        root: "",
-        ref: "main",
-      }),
-      adoptedRevision: "b".repeat(40),
-      identityEvidence: { status: "unavailable" },
-    });
+    await installRemoteReview(value.state);
     const address = { source: "remote", path: "review" };
     expect(
       (
@@ -1047,22 +1024,7 @@ test("MGMT-015 reports repository-derived Membership removal as a producer actio
     }),
   );
   try {
-    await new StateCoordinator(value.state).installRemoteForTest({
-      source: "remote",
-      path: "review",
-      name: "review",
-      description: "Review",
-      kind: "remote",
-      digest: "a".repeat(64),
-      bindingDigest: bindingDigest({
-        kind: "github",
-        origin: "https://github.com/acme/skills",
-        root: "",
-        ref: "main",
-      }),
-      adoptedRevision: "b".repeat(40),
-      identityEvidence: { status: "unavailable" },
-    });
+    await installRemoteReview(value.state);
     expect(
       (
         await value.core.configuration.previewMembershipRemoval({
@@ -1170,22 +1132,7 @@ test("MGMT-021 refuses contributed and repository-derived Collection removal as 
         configSources: { shared: { kind: "local", path: "./module", root: "" } },
       }),
     );
-    await new StateCoordinator(value.state).installRemoteForTest({
-      source: "remote",
-      path: "review",
-      name: "review",
-      description: "Review",
-      kind: "remote",
-      digest: "a".repeat(64),
-      bindingDigest: bindingDigest({
-        kind: "github",
-        origin: "https://github.com/acme/skills",
-        root: "",
-        ref: "main",
-      }),
-      adoptedRevision: "b".repeat(40),
-      identityEvidence: { status: "unavailable" },
-    });
+    await installRemoteReview(value.state);
     expect(
       (
         await value.core.configuration.previewCollectionRemoval({
