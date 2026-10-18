@@ -6,22 +6,13 @@ import { App } from "../src/app";
 import { selectScrollOffset } from "../src/select-scroll";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
-import { enterLive, focusLive, openAllInstalledSkills, parsedEnter } from "./reader-test-controls";
-
-async function awaitParsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
-  await new Promise<void>((resolve) => {
-    const onKeypress = (event: { readonly name: string }) => {
-      if (event.name === "escape" || event.name === "esc") {
-        setup.renderer.keyInput.off("keypress", onKeypress);
-        resolve();
-      }
-    };
-    setup.renderer.keyInput.prependListener("keypress", onKeypress);
-    setup.mockInput.pressKey("ESCAPE");
-  });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  await setup.renderOnce();
-}
+import {
+  enterLive,
+  focusLive,
+  openAllInstalledSkills,
+  parsedEnter,
+  parsedEscape,
+} from "./reader-test-controls";
 
 function textIn(renderable: { getChildren(): readonly unknown[] }): string {
   return (
@@ -423,7 +414,7 @@ test("RENDER narrow Source browser shows one level and preserves selection throu
     );
     expect(setup.renderer.root.findDescendantById("shell-section-tab-sources")).toBeDefined();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-command-config");
-    await awaitParsedEscape(setup);
+    await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
     const restoredBrowser = setup.renderer.root.findDescendantById(
       "source-browser",
@@ -433,7 +424,7 @@ test("RENDER narrow Source browser shows one level and preserves selection throu
     expect(restoredBrowser.getSelectedIndex()).toBe(selectedIndex);
     expect(selectScrollOffset(restoredBrowser)).toBe(scroll);
     expect(setup.captureCharFrame()).toContain("team-main");
-    await awaitParsedEscape(setup);
+    await parsedEscape(setup);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-browser");
     expect(setup.renderer.root.findDescendantById("shell-section-tab-sources")).toBeDefined();
   } finally {
@@ -461,7 +452,7 @@ test("RENDER 43x30 narrow detail returns to the retained Source browser on Escap
       textIn(setup.renderer.root).includes("Canonical Origin  https://github.com/acme/main"),
     );
     expect(setup.renderer.root.findDescendantById("shell-section-tab-sources")).toBeDefined();
-    await awaitParsedEscape(setup);
+    await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
     const restoredBrowser = setup.renderer.root.findDescendantById(
       "source-browser",
@@ -471,7 +462,7 @@ test("RENDER 43x30 narrow detail returns to the retained Source browser on Escap
     expect(restoredBrowser.getSelectedIndex()).toBe(selectedIndex);
     expect(selectScrollOffset(restoredBrowser)).toBe(scroll);
     expect(setup.captureCharFrame()).toContain("team-main");
-    await awaitParsedEscape(setup);
+    await parsedEscape(setup);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-browser");
     expect(setup.renderer.root.findDescendantById("source-browser")).toBeDefined();
   } finally {
@@ -530,7 +521,7 @@ test("RENDER Source View Skills opens a Skill Inspector and Escape restores both
       () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
     );
 
-    await awaitParsedEscape(setup);
+    await parsedEscape(setup);
     await setup.waitForFrame((frame) => frame.includes("Installed Skills from team-main"));
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
     expect(setup.captureCharFrame()).toContain("Installed Skills from team-main");
@@ -540,14 +531,14 @@ test("RENDER Source View Skills opens a Skill Inspector and Escape restores both
       ).getSelectedOption()?.value,
     ).toBe('["team-main","guide"]');
 
-    await awaitParsedEscape(setup);
+    await parsedEscape(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "source-command-skills",
     );
     expect(setup.renderer.root.findDescendantById("source-command-skills")).toBeDefined();
     expect(setup.captureCharFrame()).toContain("team-main");
 
-    await awaitParsedEscape(setup);
+    await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
   } finally {
     setup.renderer.destroy();
@@ -594,7 +585,7 @@ test("RENDER narrow observation progress remains bounded at 79x24 and 43x30", as
         const frame = setup.captureCharFrame();
         expect(frame).toContain("Escape Cancel");
         expect(textIn(setup.renderer.root)).toContain("Esc cancel");
-        await awaitParsedEscape(setup);
+        await parsedEscape(setup);
         await setup.waitFor(() => aborts === 1);
         await setup.waitFor(
           () => setup.renderer.root.findDescendantById("source-observation-progress") === undefined,

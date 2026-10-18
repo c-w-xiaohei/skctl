@@ -4,6 +4,7 @@ import { testRender } from "@opentui/solid";
 import type { ManagementProjection } from "@skill-cli/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
+import { parsedEscape } from "./reader-test-controls";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
@@ -16,20 +17,6 @@ function native(id: string, setup: Setup): NativeSelect {
   const target = setup.renderer.root.findDescendantById(id);
   if (!(target instanceof SelectRenderable)) throw new Error(`${id} is not a SelectRenderable`);
   return target as unknown as NativeSelect;
-}
-
-async function awaitParsedEscape(setup: Setup) {
-  await new Promise<void>((resolve) => {
-    const onKeypress = (event: { readonly name: string }) => {
-      if (event.name !== "escape" && event.name !== "esc") return;
-      setup.renderer.keyInput.off("keypress", onKeypress);
-      resolve();
-    };
-    setup.renderer.keyInput.prependListener("keypress", onKeypress);
-    setup.mockInput.pressKey("ESCAPE");
-  });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  await setup.renderOnce();
 }
 
 async function openSources(setup: Setup) {
@@ -121,7 +108,7 @@ test("RENDER Sources restores exact selected source and native offset after Insp
       if (event.name === "escape" || event.name === "esc") escapeCount += 1;
     };
     setup.renderer.keyInput.prependListener("keypress", onEscape);
-    await awaitParsedEscape(setup);
+    await parsedEscape(setup);
     setup.renderer.keyInput.off("keypress", onEscape);
     await setup.flush();
     expect(setup.renderer.root.findDescendantById("source-browser")).toBeDefined();

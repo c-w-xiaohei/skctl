@@ -29,10 +29,6 @@ import {
   parsedEscape,
 } from "./reader-test-controls";
 
-async function awaitParsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
-  await parsedEscape(setup);
-}
-
 const paddedReaderContent = {
   ...readerContent,
   rawText: `${readerContent.rawText}${"padding\n".repeat(80)}`,
@@ -53,12 +49,12 @@ async function loadedReader(setup: Awaited<ReturnType<typeof testRender>>) {
 
 async function escapeReaderToBrowser(setup: Awaited<ReturnType<typeof testRender>>) {
   await focusLive(setup, "reader-scrollbox");
-  await awaitParsedEscape(setup);
+  await parsedEscape(setup);
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
   );
   await focusLive(setup, "skill-inspector-open-reader");
-  await awaitParsedEscape(setup);
+  await parsedEscape(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
   const browser = setup.renderer.root.findDescendantById("installed-skill-browser")!;
   browser.focus();
@@ -348,7 +344,7 @@ test.serial(
       expect(
         setup.renderer.root.findDescendantById("reader-scrollbox")?.getChildren(),
       ).toHaveLength(1);
-      await awaitParsedEscape(setup);
+      await parsedEscape(setup);
       await parsedEnter(setup);
       await setup.renderOnce();
       expect(setup.renderer.root.findDescendantById("reader-find")).toBeInstanceOf(InputRenderable);
@@ -372,11 +368,11 @@ test.serial(
         await setup.waitFor(
           () => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox",
         );
-        await awaitParsedEscape(setup);
+        await parsedEscape(setup);
         await setup.waitFor(
           () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
         );
-        await awaitParsedEscape(setup);
+        await parsedEscape(setup);
         await setup.waitFor(
           () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
         );
@@ -476,7 +472,7 @@ test.serial(
       setup.mockInput.pressKey("PAGEDOWN");
       setup.mockInput.pressKey("END");
       await setup.renderOnce();
-      await awaitParsedEscape(setup);
+      await parsedEscape(setup);
       expect(scroll.positions).toContain(15);
     } finally {
       scroll.restore();
@@ -667,7 +663,7 @@ test.serial(
       await restoreReaderScroll(setup);
       expect(scroll.positions).toContain(15);
 
-      await awaitParsedEscape(setup);
+      await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
       );
@@ -685,7 +681,7 @@ test.serial(
       await Promise.resolve();
       await setup.renderOnce();
 
-      await awaitParsedEscape(setup);
+      await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
       );
@@ -713,7 +709,7 @@ test.serial(
       await setup.mockMouse.scroll(details.screenX, details.screenY, "down");
       await setup.renderOnce();
 
-      await awaitParsedEscape(setup);
+      await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
       );
@@ -734,7 +730,7 @@ test.serial(
       await setup.mockMouse.scroll(reopenedDetails.screenX, reopenedDetails.screenY, "up");
       await setup.renderOnce();
 
-      await awaitParsedEscape(setup);
+      await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
       );
@@ -813,7 +809,7 @@ test.serial("RENDER Reader Details Escape restores the initiating Inspector comm
   try {
     await openReader(setup);
     await openDetails(setup);
-    await awaitParsedEscape(setup);
+    await parsedEscape(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
     );
@@ -874,7 +870,7 @@ test.serial("RENDER Reader state survives 120 79 43 80 120 resize sequence", asy
         expect(setup.captureCharFrame()).toContain("2/3");
       }
       if (width === 43) {
-        await awaitParsedEscape(setup);
+        await parsedEscape(setup);
         await setup.renderOnce();
         await Promise.resolve();
         expect(setup.renderer.currentFocusedRenderable?.id).toBe("skill-inspector-open-reader");
@@ -962,9 +958,9 @@ test.serial(
       await escapeReaderToBrowser(setup);
       expect(setup.captureCharFrame()).toContain("Installed Skills from team-main");
       expect(setup.captureCharFrame()).toContain("guide");
-      await awaitParsedEscape(setup);
+      await parsedEscape(setup);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-command-skills"));
-      await awaitParsedEscape(setup);
+      await parsedEscape(setup);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
       expect(setup.captureCharFrame()).toContain("team-main");
     } finally {
@@ -1002,7 +998,7 @@ test.serial("RENDER Source Enter replaces its browser at wide and medium widths"
       );
       await setup.waitForFrame((frame) => frame.includes("Origin"));
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-command-config");
-      await awaitParsedEscape(setup);
+      await parsedEscape(setup);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
       expect(setup.renderer.root.findDescendantById("source-command-config")).toBeUndefined();
       await focusLive(setup, "source-browser");

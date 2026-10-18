@@ -26,7 +26,13 @@ import { filterProblemRows, problemRowKey, problemRows } from "../src/workspace/
 import { selectScrollOffset, setSelectScrollOffset } from "../src/select-scroll";
 import { skillAddressKey } from "../src/types";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { enterLive, focusLive, openReaderTab, parsedEnter } from "./reader-test-controls";
+import {
+  enterLive,
+  focusLive,
+  openReaderTab,
+  parsedEnter,
+  parsedEscape,
+} from "./reader-test-controls";
 import {
   readerContent,
   readerProjection,
@@ -79,22 +85,6 @@ async function openSkillView(
   browser.focus();
   await setup.renderOnce();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
-}
-
-async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
-  await new Promise<void>((resolve) => {
-    const listener = (event: { readonly name: string }) => {
-      const name = event.name.toLowerCase();
-      if (name === "escape" || name === "esc") {
-        setup.renderer.keyInput.off("keypress", listener);
-        resolve();
-      }
-    };
-    setup.renderer.keyInput.prependListener("keypress", listener);
-    setup.mockInput.pressKey("ESCAPE");
-  });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  await setup.renderOnce();
 }
 
 test("FILTER Collections combines semantic facts without Core calls", () => {
