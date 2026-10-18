@@ -6,6 +6,12 @@ build/
 coverage/
 dist/
 out/
+*.bun-build
+
+# Local agent workflow artifacts
+/.impeccable/critique/
+/.opencode/workflows/runs/
+/.superpowers/sdd/
 
 # Existing design and task evidence are not workspace source inputs.
 CONTEXT.md

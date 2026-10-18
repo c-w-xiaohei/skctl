@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAgentCommand } from "../src/agent";
-import { runHumanCommand } from "../src/human";
+import { runMain } from "../src/main";
 import { createSkillCliCore } from "@skill-cli/core";
 
 test("CLI-001 public setup discovers and installs a Local Skill into a managed catalog", async () => {
@@ -19,7 +18,7 @@ test("CLI-001 public setup discovers and installs a Local Skill into a managed c
     );
     process.env.SKILL_CLI_STATE_DIR = state;
     await writeFile(global, JSON.stringify({ agents: { opencode: "managed" } }));
-    expect(await runHumanCommand(["init", root, "--host", "project"], { cwd: root })).toBe(0);
+    expect(await runMain(["init", root, "--host", "project"], { cwd: root })).toBe(0);
     await writeFile(join(root, "skill-cli.jsonc"), '{ "collections": { "engineering": {} } }\n');
     for (const argv of [
       ["--project", root, "source", "register", "local", "local", "./source"],
@@ -38,7 +37,7 @@ test("CLI-001 public setup discovers and installs a Local Skill into a managed c
       ],
       ["--project", root, "use", "set", "engineering"],
     ] as const)
-      expect(await runHumanCommand(argv, { cwd: root })).toBe(0);
+      expect(await runMain(argv, { cwd: root })).toBe(0);
     const catalog = await createSkillCliCore({ cwd: root, userConfigPath: global }).catalog.browse({
       collection: "engineering",
     });
@@ -50,7 +49,7 @@ test("CLI-001 public setup discovers and installs a Local Skill into a managed c
     for (const argv of [["browse"], ["load", "engineering:review"]] as const) {
       let output = "";
       expect(
-        await runAgentCommand(argv, {
+        await runMain(["agent", ...argv], {
           cwd: root,
           createCore: (options) => createSkillCliCore({ ...options, userConfigPath: global }),
           stdout: { write: (chunk) => (output += String(chunk)) },

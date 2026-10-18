@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runHumanCommand } from "../src/human";
+import { runMain } from "../src/main";
 import type { SkillCliCore } from "@skill-cli/core";
 
 function core(calls: unknown[]): SkillCliCore {
@@ -166,7 +166,10 @@ test("CLI-001/PROJ-023 maps finalized source and management commands through Cor
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
-    createCore: () => core(calls),
+    createCore: (context: { cwd: string; project?: string }) => {
+      expect(context).toEqual({ cwd: "/tmp", project: "/workspace" });
+      return core(calls);
+    },
     stdout: { write() {} },
     stderr: { write() {} },
   };
@@ -181,7 +184,7 @@ test("CLI-001/PROJ-023 maps finalized source and management commands through Cor
     ["rebind", "old", "review", "new", "--path", "renamed"],
     ["uninstall", "local", "review"],
   ])
-    expect(await runHumanCommand(argv, options)).toBe(0);
+    expect(await runMain(["--project", "/workspace", ...argv], options)).toBe(0);
   expect(calls).toEqual([
     {
       type: "source.register",
@@ -214,7 +217,10 @@ test("CLI-001 maps collection, use, managed, and content commands without legacy
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
-    createCore: () => core(calls),
+    createCore: (context: { cwd: string; project?: string }) => {
+      expect(context).toEqual({ cwd: "/tmp", project: "/workspace" });
+      return core(calls);
+    },
     stdout: { write() {} },
     stderr: { write() {} },
   };
@@ -232,7 +238,7 @@ test("CLI-001 maps collection, use, managed, and content commands without legacy
     ["content", "load", "engineering:review"],
     ["content", "run", "engineering:review", "--", "true"],
   ])
-    expect(await runHumanCommand(argv, options)).toBe(0);
+    expect(await runMain([argv[0]!, "--project", "/workspace", ...argv.slice(1)], options)).toBe(0);
   expect(calls).toContainEqual({
     type: "collection.member.remove",
     level: "project",
@@ -266,7 +272,7 @@ test("CLI-001 maps collection, use, managed, and content commands without legacy
   expect(calls).toContainEqual({ type: "agent.managed.set", level: "project", managed: true });
   expect(calls).toContainEqual(["load", { selector: "engineering:review" }]);
   expect(calls).toContainEqual(["run", { selector: "engineering:review", argv: ["true"] }]);
-  expect(await runHumanCommand(["profile", "set", "x"], options)).toBe(2);
+  expect(await runMain(["profile", "set", "x"], options)).toBe(2);
 });
 
 test("MGMT-031 maps scoped Config Source removal only through management", async () => {
@@ -277,7 +283,7 @@ test("MGMT-031 maps scoped Config Source removal only through management", async
     stdout: { write() {} },
     stderr: { write() {} },
   };
-  expect(await runHumanCommand(["config-source", "remove", "module", "-g"], options)).toBe(0);
+  expect(await runMain(["config-source", "remove", "module", "-g"], options)).toBe(0);
   expect(calls).toEqual([["removeConfig", { id: "module", level: "global" }]]);
   expect(calls).not.toContainEqual(expect.objectContaining({ type: "config-source.remove" }));
 });
@@ -297,7 +303,7 @@ test("MGMT-001 and MGMT-027 reject unknown Config levels before any Core call", 
     ["source", "register", "local", "local", "./skills", "--level", "user"],
     ["managed", "unset", "--level", "user"],
   ])
-    expect(await runHumanCommand(argv, options)).toBe(2);
+    expect(await runMain(argv, options)).toBe(2);
   expect(created).toBe(0);
 });
 
@@ -316,7 +322,7 @@ test("MGMT-001 real human Source registration writes only exact Global Project a
       ["local", "local"],
     ] as const)
       expect(
-        await runHumanCommand(["source", "register", "local", id, `./${id}`, "--level", level], {
+        await runMain(["source", "register", "local", id, `./${id}`, "--level", level], {
           cwd: root,
           stdout: { write() {} },
           stderr: { write() {} },
@@ -346,7 +352,7 @@ test("MGMT-006/007/023 human observations emit deterministic exact-revision line
   const run = async (argv: string[]) => {
     const output: string[] = [];
     expect(
-      await runHumanCommand(argv, {
+      await runMain(argv, {
         cwd: "/tmp",
         createCore: () => core(calls),
         stdout: { write: (value) => output.push(String(value)) },
@@ -389,7 +395,7 @@ test("MGMT-034 rejects malformed exact revisions before any apply Core call", as
     ["update", "apply", "remote", "review", "--revision", "abc"],
     ["config-source", "adopt", "remote", "--revision", "f".repeat(39)],
   ])
-    expect(await runHumanCommand(argv, options)).toBe(2);
+    expect(await runMain(argv, options)).toBe(2);
   expect(calls).toEqual([]);
 });
 
@@ -398,7 +404,7 @@ test("human help is written to stdout and succeeds without an error", async () =
     const stdout: string[] = [];
     const stderr: string[] = [];
     expect(
-      await runHumanCommand(argv, {
+      await runMain(argv, {
         cwd: "/tmp",
         stdout: { write: (value) => stdout.push(String(value)) },
         stderr: { write: (value) => stderr.push(String(value)) },
@@ -417,7 +423,7 @@ test("source, config-source, install, and global use help explain the remote wor
   const help = async (argv: string[]) => {
     const stdout: string[] = [];
     expect(
-      await runHumanCommand(argv, {
+      await runMain(argv, {
         cwd: "/tmp",
         stdout: { write: (value) => stdout.push(String(value)) },
         stderr: { write() {} },
@@ -440,7 +446,7 @@ test("use Help names declaration scope and accepts --scope as the primary option
   const stdout: string[] = [];
   const stderr: string[] = [];
   expect(
-    await runHumanCommand(["use", "add", "catalog", "--scope", "global"], {
+    await runMain(["use", "add", "catalog", "--scope", "global"], {
       cwd: "/tmp",
       createCore: () => core([]),
       stdout: { write: (value) => stdout.push(String(value)) },
@@ -448,7 +454,7 @@ test("use Help names declaration scope and accepts --scope as the primary option
     }),
   ).toBe(0);
   expect(
-    await runHumanCommand(["use", "add", "--help"], {
+    await runMain(["use", "add", "--help"], {
       cwd: "/tmp",
       stdout: { write: (value) => stdout.push(String(value)) },
       stderr: { write: (value) => stderr.push(String(value)) },
@@ -473,7 +479,7 @@ test("declaration commands accept --level and -g/-p/-l as equivalent scope selec
     ["collection", "create", "local", "-l"],
     ["collection", "create", "level", "--level", "global"],
   ])
-    expect(await runHumanCommand(argv, options)).toBe(0);
+    expect(await runMain(argv, options)).toBe(0);
   expect(calls).toEqual([
     { type: "collection.create", level: "global", collection: "global" },
     { type: "collection.create", level: "project", collection: "project" },
@@ -481,7 +487,7 @@ test("declaration commands accept --level and -g/-p/-l as equivalent scope selec
     { type: "collection.create", level: "global", collection: "level" },
   ]);
   expect(
-    await runHumanCommand(["collection", "create", "ambiguous", "-g", "--level", "local"], options),
+    await runMain(["collection", "create", "ambiguous", "-g", "--level", "local"], options),
   ).toBe(2);
 });
 
@@ -496,24 +502,21 @@ test("human mutations describe their completed action, level, target file, and i
   };
 
   expect(
-    await runHumanCommand(
+    await runMain(
       ["source", "register", "local", "workspace", "./skills", "--level", "local"],
       options,
     ),
   ).toBe(0);
   expect(
-    await runHumanCommand(
+    await runMain(
       ["collection", "member", "add", "engineering", "review", "workspace", "review"],
       options,
     ),
   ).toBe(0);
-  expect(await runHumanCommand(["use", "set", "engineering"], options)).toBe(0);
-  expect(await runHumanCommand(["managed", "set"], options)).toBe(0);
+  expect(await runMain(["use", "set", "engineering"], options)).toBe(0);
+  expect(await runMain(["managed", "set"], options)).toBe(0);
   expect(
-    await runHumanCommand(
-      ["install", "workspace", "review", "--revision", "a".repeat(40)],
-      options,
-    ),
+    await runMain(["install", "workspace", "review", "--revision", "a".repeat(40)], options),
   ).toBe(0);
 
   expect(output.join("")).toContain(
@@ -579,7 +582,7 @@ test("collection inspect labels configuration preview separately from disclosure
     diagnostics: [],
   });
   expect(
-    await runHumanCommand(["collection", "inspect", "child", "--json"], {
+    await runMain(["collection", "inspect", "child", "--json"], {
       cwd: "/tmp",
       createCore: () => fake,
       stdout: { write: (value) => output.push(String(value)) },
@@ -607,9 +610,9 @@ test("human mutations report no-op configuration changes and affected update pat
     stderr: { write() {} },
   };
 
-  expect(await runHumanCommand(["managed", "set"], options)).toBe(0);
+  expect(await runMain(["managed", "set"], options)).toBe(0);
   expect(
-    await runHumanCommand(
+    await runMain(
       ["update", "apply", "workspace", "review", "docs", "--remove", "old", "legacy"],
       options,
     ),
@@ -634,12 +637,10 @@ test("human init, repair, and content commands report actual results", async () 
     stderr: { write() {} },
   };
   try {
-    expect(await runHumanCommand(["init", "nested", "--host", "local"], options)).toBe(0);
-    expect(await runHumanCommand(["repair"], options)).toBe(0);
-    expect(await runHumanCommand(["content", "load", "engineering:review"], options)).toBe(0);
-    expect(
-      await runHumanCommand(["content", "run", "engineering:review", "--", "false"], options),
-    ).toBe(0);
+    expect(await runMain(["init", "nested", "--host", "local"], options)).toBe(0);
+    expect(await runMain(["repair"], options)).toBe(0);
+    expect(await runMain(["content", "load", "engineering:review"], options)).toBe(0);
+    expect(await runMain(["content", "run", "engineering:review", "--", "false"], options)).toBe(0);
 
     expect(output.join("")).toContain(
       `Initialized configuration at ${join(root, "nested", "skill-cli.local.jsonc")}.`,
@@ -663,7 +664,7 @@ test("init reports an existing configuration without claiming to validate or cha
   try {
     await writeFile(file, contents);
     expect(
-      await runHumanCommand(["init", "--host", "project"], {
+      await runMain(["init", "--host", "project"], {
         cwd: root,
         stdout: { write: (value) => output.push(String(value)) },
         stderr: { write() {} },
@@ -687,7 +688,7 @@ test("init rejects directories and symlinks without changing their targets", asy
     const directoryOutput: string[] = [];
     const directoryErrors: string[] = [];
     expect(
-      await runHumanCommand(["init", "--host", "project"], {
+      await runMain(["init", "--host", "project"], {
         cwd: root,
         stdout: { write: (value) => directoryOutput.push(String(value)) },
         stderr: { write: (value) => directoryErrors.push(String(value)) },
@@ -704,7 +705,7 @@ test("init rejects directories and symlinks without changing their targets", asy
     const symlinkOutput: string[] = [];
     const symlinkErrors: string[] = [];
     expect(
-      await runHumanCommand(["init", "--host", "project"], {
+      await runMain(["init", "--host", "project"], {
         cwd: root,
         stdout: { write: (value) => symlinkOutput.push(String(value)) },
         stderr: { write: (value) => symlinkErrors.push(String(value)) },
@@ -732,7 +733,7 @@ test("human errors do not treat application errors as Commander help", async () 
       throw error;
     };
     expect(
-      await runHumanCommand(["managed", "set"], {
+      await runMain(["managed", "set"], {
         cwd: "/tmp",
         createCore: () => fake,
         stdout: { write: (value) => stdout.push(String(value)) },
@@ -760,7 +761,7 @@ test("content load preserves its body exactly after a metadata separator", async
     diagnostics: [],
   });
   expect(
-    await runHumanCommand(["content", "load", "engineering:review"], {
+    await runMain(["content", "load", "engineering:review"], {
       cwd: "/tmp",
       createCore: () => fake,
       stdout: { write: (value) => output.push(String(value)) },
@@ -785,12 +786,8 @@ test("content run reports signal and cancellation results", async () => {
     stdout: { write: (value: string) => output.push(value) },
     stderr: { write() {} },
   };
-  expect(
-    await runHumanCommand(["content", "run", "engineering:review", "--", "true"], options),
-  ).toBe(0);
-  expect(
-    await runHumanCommand(["content", "run", "engineering:review", "--", "true"], options),
-  ).toBe(0);
+  expect(await runMain(["content", "run", "engineering:review", "--", "true"], options)).toBe(0);
+  expect(await runMain(["content", "run", "engineering:review", "--", "true"], options)).toBe(0);
   expect(output.join("")).toContain('Skill "engineering:review" was terminated by signal SIGTERM.');
   expect(output.join("")).toContain('Skill "engineering:review" was cancelled.');
 });

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAgentCommand } from "../../../skill-cli/src/agent";
+import { runMain } from "../../../skill-cli/src/main";
 import { createSkillCliCore } from "../../src/create-core";
 import { StateCoordinator } from "../../src/internal/state";
 
@@ -52,7 +52,7 @@ async function command(
 ): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> {
   let stdout = "";
   let stderr = "";
-  const code = await runAgentCommand(argv, {
+  const code = await runMain(["agent", ...argv], {
     cwd: root,
     createCore: (options) => createSkillCliCore({ ...options, userConfigPath: global }),
     stdout: { write: (value) => (stdout += String(value)) },
@@ -344,9 +344,7 @@ test("agent commands reject the removed list protocol and JSON flags", async () 
     const result = await command("/tmp", "/missing", argv);
     expect(result.code).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain(
-      argv[0] === "list" ? "Unknown agent command" : "Unknown or inapplicable option",
-    );
+    expect(result.stderr).toContain(argv[0] === "list" ? "unknown command" : "unknown option");
     expect(result.stderr).not.toContain("INVALID_ARGUMENT");
   }
 });
@@ -376,8 +374,14 @@ test("agent rejects collection IDs and Skill Selectors in the wrong address posi
     ["read", "team", "SKILL.md"],
     ["download", "team", "SKILL.md", "--output", "/tmp/out"],
     ["run", "team", "--", "true"],
+    ["search", "review", "--limit=0"],
+    ["search", "review", "--limit=1.5"],
+    ["download", "team:review", "note.txt"],
+    ["read", "team:review", "note.txt", "extra"],
+    ["run", "team:review", "binary"],
+    ["run", "team:review", "--"],
   ])
-    expect(await runAgentCommand(argv, options)).toBe(1);
+    expect(await runMain(["agent", ...argv], options)).toBe(1);
   expect(created).toBe(0);
 });
 

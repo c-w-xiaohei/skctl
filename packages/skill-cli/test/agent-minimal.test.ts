@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import type { SkillCliCore } from "@skill-cli/core";
-import { runAgentCommand } from "../src/agent";
+import { runMain } from "../src/main";
 import { unavailableCatalogPrompt } from "../src/agent-prompt";
 
 async function command(argv: string[], core?: Partial<SkillCliCore>) {
   let stdout = "",
     stderr = "";
-  const code = await runAgentCommand(argv, {
+  const code = await runMain(["agent", ...argv], {
     cwd: "/project",
     createCore: () => core as SkillCliCore,
     stdout: { write: (value) => (stdout += value) },
@@ -46,7 +46,7 @@ test("search bounds results and only discloses truncation when it actually occur
       .map(({ selector, name, description }) => ({ selector, name, description })),
     truncated: true,
   });
-  const bounded = await command(["search", "review", "--limit", "20"], core);
+  const bounded = await command(["search", "review", "--limit=20"], core);
   expect(JSON.parse(bounded.stdout)).not.toHaveProperty("truncated");
 });
 
@@ -80,13 +80,17 @@ test("unavailable browse provides fallback instructions for system injection", a
 
 test("run propagates child status and cleans up its own signal listeners without a JSON suffix", async () => {
   const before = process.listenerCount("SIGTERM");
+  const argv = ["command", "agent", "--help", "--project", "child-path", "--", "-x"];
   const content = {
-    run: async () => ({
-      value: { selector: "team:run", exitCode: 7, signal: null, cancelled: false },
-      diagnostics: [],
-    }),
+    run: async (request: { argv: string[] }) => {
+      expect(request.argv).toEqual(argv);
+      return {
+        value: { selector: "team:run", exitCode: 7, signal: null, cancelled: false },
+        diagnostics: [],
+      };
+    },
   } as unknown as SkillCliCore["content"];
-  expect(await command(["run", "team:run", "--", "command", "--help"], { content })).toEqual({
+  expect(await command(["run", "team:run", "--", ...argv], { content })).toEqual({
     code: 7,
     stdout: "",
     stderr: "",
@@ -95,7 +99,14 @@ test("run propagates child status and cleans up its own signal listeners without
 });
 
 test("help aliases and argument positions do not consume child help", async () => {
-  for (const argv of [["-h"], ["--help"], ["search", "-h"], ["load", "team:x", "--help"]]) {
+  for (const argv of [
+    [],
+    ["-h"],
+    ["--help"],
+    ["search", "-h"],
+    ["load", "team:x", "--help"],
+    ["run", "--help"],
+  ]) {
     const response = await command(argv);
     expect(response.code).toBe(0);
     expect(response.stdout).toContain("Usage:");

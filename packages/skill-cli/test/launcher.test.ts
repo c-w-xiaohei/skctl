@@ -1,9 +1,7 @@
 import { expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseMainArgs } from "../src/dispatch";
 import { installedTuiCandidates, resolveInstalledTui, superviseTui } from "../src/tui-launcher";
 import { runMain } from "../src/main";
 
@@ -44,7 +42,7 @@ test("compiled sibling canonical, host release then PATH; source never searches 
 });
 
 test("resolver checks files and executable eligibility before selecting a candidate", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-resolver-"));
+  const root = await mkdtemp(join(import.meta.dir, "../../../tmp/skill-cli-resolver-"));
   const canonical = join(root, "skill-tui");
   const release = join(root, "skill-tui-linux-x64");
   const options = { ...runtime, execPath: join(root, "skill-cli"), path: join(root, "path") };
@@ -157,25 +155,25 @@ test("POSIX resize is relayed without settling supervision; Windows does not sub
   }
 });
 
-test("bounded dispatch preserves agent child argv and values named agent", () => {
-  expect(parseMainArgs(["--project", "agent", "tui"])).toMatchObject({
-    kind: "tui",
-    project: "agent",
-  });
-  expect(parseMainArgs(["tui", "--project", "agent"])).toMatchObject({
-    kind: "tui",
-    project: "agent",
-  });
-  expect(parseMainArgs(["init", "agent"])).toMatchObject({ kind: "human" });
-  expect(parseMainArgs(["--unknown", "agent", "browse"])).toMatchObject({ kind: "human" });
-  const child = ["run", "c:s", "--", "binary", "agent", "--project", "child-path"];
-  expect(parseMainArgs(["--project", "parent", "agent", ...child])).toEqual({
-    kind: "agent",
-    project: "parent",
-    args: child,
-  });
-  expect(() => parseMainArgs(["--project"])).toThrow("requires a value");
-  expect(() => parseMainArgs(["tui", "--unknown"])).toThrow("Unknown");
+test("Commander routes project values named agent and rejects invalid root or TUI options", async () => {
+  const projects: (string | undefined)[] = [];
+  const options = {
+    cwd: "/work",
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    stdout: { write() {} },
+    stderr: { write() {} },
+    launchTui: async ({ project }: { project?: string }) => {
+      projects.push(project);
+      return 0;
+    },
+  };
+  expect(await runMain(["--project", "agent", "tui"], options)).toBe(0);
+  expect(await runMain(["tui", "--project", "agent"], options)).toBe(0);
+  expect(projects).toEqual(["agent", "agent"]);
+  for (const argv of [["--project"], ["tui", "--unknown"], ["--unknown", "agent", "browse"]])
+    expect(await runMain(argv, options)).not.toBe(0);
+  expect(projects).toHaveLength(2);
 });
 
 test("implicit TTY and explicit UI forward project/status; nonTTY never launches", async () => {
@@ -210,7 +208,10 @@ test("implicit TTY and explicit UI forward project/status; nonTTY never launches
   expect(await runMain([], nonTTY)).toBe(0);
   expect(await runMain(["tui"], nonTTY)).toBe(1);
   expect(await runMain(["tui", "--help"], nonTTY)).toBe(0);
+  expect(await runMain(["--help"], nonTTY)).toBe(0);
   expect(await runMain(["--unknown", "agent", "browse"], nonTTY)).not.toBe(0);
   expect(launches).toHaveLength(2);
   expect(output).toContain("interactive input/output terminal");
+  expect(output).toMatch(/agent\s/);
+  expect(output).toMatch(/tui\s/);
 });

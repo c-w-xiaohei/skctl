@@ -84,5 +84,5 @@ test("CLI-002 process agent browse rejects an inapplicable output option without
   });
   expect(await command.exited).toBe(1);
   expect(await new Response(command.stdout).text()).toBe("");
-  expect(await new Response(command.stderr).text()).toContain("Unknown or inapplicable option");
+  expect(await new Response(command.stderr).text()).toContain("unknown option '--output'");
 });
