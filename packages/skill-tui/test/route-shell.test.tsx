@@ -45,13 +45,11 @@ test("shared native buttons retain disabled and focus state beside metadata", as
       <Pane id="details" title="Details" active>
         <MetadataGrid
           fields={[
-            { label: "Owner", value: "Project", priority: 1, wrap: "word", narrow: "stack" },
+            { label: "Owner", value: "Project", wrap: "word" },
             {
               label: "Defined at",
               value: "/workspace/config.jsonc",
-              priority: 2,
-              wrap: "path",
-              narrow: "description",
+              wrap: "word",
             },
           ]}
         />

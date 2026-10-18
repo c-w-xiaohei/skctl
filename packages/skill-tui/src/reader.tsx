@@ -288,9 +288,7 @@ export function Reader(props: {
   const field = (label: string, value: string): MetadataField => ({
     label,
     value,
-    priority: 1,
     wrap: "word",
-    narrow: "stack",
   });
   const summaryFields = createMemo((): MetadataField[] => {
     const installed = installedSkill();

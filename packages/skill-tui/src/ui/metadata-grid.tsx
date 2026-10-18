@@ -4,9 +4,7 @@ import { useTheme } from "./use-theme";
 export interface MetadataField {
   readonly label: string;
   readonly value: string;
-  readonly priority: number;
-  readonly wrap: "none" | "word" | "path";
-  readonly narrow: "stack" | "omit" | "description";
+  readonly wrap: "none" | "word";
 }
 
 export interface MetadataGridProps {

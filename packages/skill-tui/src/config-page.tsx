@@ -606,9 +606,7 @@ export function ConfigPage(props: {
     const field = (label: string, text: string): MetadataField => ({
       label,
       value: text || ".",
-      priority: 1,
       wrap: "word",
-      narrow: "stack",
     });
     const bindingField = ([label, text]: DetailFact) =>
       field(

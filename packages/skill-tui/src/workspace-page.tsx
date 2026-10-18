@@ -190,9 +190,7 @@ const views: readonly { label: string; value: SkillsView }[] = [
 const field = (label: string, value: string): MetadataField => ({
   label,
   value,
-  priority: 1,
   wrap: "word",
-  narrow: "stack",
 });
 
 /** Workspace surfaces use the existing state owners; no page-local router or cache. */
