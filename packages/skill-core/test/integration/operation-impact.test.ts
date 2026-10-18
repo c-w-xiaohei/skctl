@@ -62,6 +62,15 @@ async function fixture(config = "{}\n") {
   }
 }
 
+async function registerLocalSource(core: Awaited<ReturnType<typeof fixture>>["core"]) {
+  await core.configuration.change({
+    type: "source.register",
+    level: "project",
+    id: "local",
+    binding: { kind: "local", path: "./skills", root: "" },
+  });
+}
+
 function assertPublicImpact(value: unknown) {
   const forbidden = new Set([
     "weight",
@@ -92,12 +101,7 @@ function assertPublicImpact(value: unknown) {
 test("MGMT-002 removes a direct zero-installed Source while preserving other declarations and state", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await registerLocalSource(value.core);
     const empty = await value.core.management.previewSourceRemoval({ source: "local" });
     expect(empty.value).toMatchObject({
       kind: "source-removal",
@@ -132,12 +136,7 @@ test("MGMT-002 removes a direct zero-installed Source while preserving other dec
 test("MGMT-003 stale Source removal rejects newly installed owners then permits current unblocked execution", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await registerLocalSource(value.core);
     expect(
       (await value.core.management.previewSourceRemoval({ source: "local" })).value.allowed,
     ).toBe(true);
@@ -225,12 +224,7 @@ test("MGMT-010 Uninstall impact preserves repository-derived and Link origin pat
 test("MGMT-011 stale Uninstall rejects a new direct Membership without changing bytes then succeeds after removal", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await registerLocalSource(value.core);
     await value.core.management.install({ source: "local", paths: ["review"] });
     const uninstall = await value.core.management.previewUninstall({
       source: "local",
@@ -328,12 +322,7 @@ test("MGMT-004 contributed Sources allow management reads but reject host remova
 test("MGMT-018/019/020/021 Link, Use, and Collection impacts retain exact declaration dependencies", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await registerLocalSource(value.core);
     await value.core.management.install({ source: "local", paths: ["review"] });
     for (const collection of ["source", "target"])
       await value.core.configuration.change({
@@ -416,12 +405,7 @@ test("MGMT-020 Collection Use reports selected-owner deltas, completeness, and a
     }),
   );
   try {
-    await value.core.configuration.change({
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await registerLocalSource(value.core);
     await value.core.management.install({ source: "local", paths: ["review"] });
     await writeFile(join(value.root, "skill-cli.local.jsonc"), JSON.stringify({ use: ["other"] }));
 
@@ -490,12 +474,7 @@ test("MGMT-026 keeps Membership Link and Use removal choices distinct", async ()
 test("MGMT-021 Collection removal distinguishes selected ownership and retained derived members", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await registerLocalSource(value.core);
     await value.core.management.install({ source: "local", paths: ["review"] });
     await value.core.configuration.change({
       type: "collection.create",
@@ -623,12 +602,7 @@ test("MGMT-021 Collection removal execution revalidates outgoing Links without c
 test("MGMT-013/015/026 previews direct membership ownership and alternate link paths", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await registerLocalSource(value.core);
     await value.core.management.install({ source: "local", paths: ["review"] });
     for (const collection of ["source", "target"])
       await value.core.configuration.change({
@@ -789,12 +763,7 @@ test("MGMT-013/015 reports repository-derived choices and preserves direct alter
 test("MGMT-012/018/019/026 previews prospective Link graphs with exact retained origins", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await registerLocalSource(value.core);
     await value.core.management.install({ source: "local", paths: ["review"] });
     for (const collection of ["source", "middle", "target"])
       await value.core.configuration.change({
@@ -1157,12 +1126,7 @@ test("MGMT-021 refuses contributed and repository-derived Collection removal as 
 test("MGMT-033 explicit observations remain caller-owned and absent from declarations and private state", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await registerLocalSource(value.core);
     const discovered = await value.core.management.discover({ source: "local" });
     await value.core.management.install({ source: "local", paths: ["review"] });
     const checked = await value.core.management.checkUpdate({ source: "local" });
@@ -1179,12 +1143,7 @@ test("MGMT-033 explicit observations remain caller-owned and absent from declara
 test("MGMT-032 management mutations return focused results without an embedded Workspace", async () => {
   const value = await fixture();
   try {
-    await value.core.configuration.change({
-      type: "source.register",
-      level: "project",
-      id: "local",
-      binding: { kind: "local", path: "./skills", root: "" },
-    });
+    await registerLocalSource(value.core);
     const result = await value.core.management.removeSource({ source: "local" });
     expect(result).toEqual({ value: undefined, diagnostics: [] });
     expect("workspace" in result).toBe(false);
