@@ -43,14 +43,12 @@ export interface UpdatesPageProps {
   readonly onStop: () => void;
   readonly onRetry?: () => void;
   readonly onOpenSource?: (source: string) => void;
-  readonly onOpenSkill?: (address: UpdateAddress) => void;
   readonly previewUpdate?: ManagementCapability["previewUpdate"];
   readonly onInspectSkill?: (address: UpdateAddress) => void;
   readonly onInspectSource?: (source: string) => void;
   readonly active?: () => boolean;
   readonly run?: () => UpdateRun | undefined;
   readonly checkingActive?: () => boolean;
-  readonly currentCheckSource?: () => string | undefined;
   readonly checkWarning?: () => string | undefined;
   readonly onStopChecking?: () => void;
   readonly focusRegistry?: FocusRegistry;

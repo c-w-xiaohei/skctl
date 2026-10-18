@@ -804,10 +804,6 @@ export function createTuiEffects(
       checkRevision();
       return updateChecks.activity();
     },
-    currentCheckSource: () => {
-      checkRevision();
-      return updateChecks.currentSource();
-    },
     stopUpdateChecks: () => updateChecks.stop(),
     reviewInstalled,
     confirmInstalled,

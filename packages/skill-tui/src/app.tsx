@@ -3186,112 +3186,12 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         overlay={() => !!overlayKind()}
                         mode={layout.mode()}
                         narrowLevel={workspaceState.narrowLevel()}
-                        handoff={route.snapshot().handoff}
                         projection={projection.workspace}
                         focusRegistry={focusRegistry}
                         registerCommand={registerPageCommand}
                         onRequestFocus={requestFocus}
                         executeCommand={executePageCommand}
                         actions={actions()}
-                        onSkillRelationship={(relationship: string) => {
-                          workspaceState.selectSkillRelationship(relationship);
-                          const workspace = projection.workspace();
-                          const skill = workspace?.installedSkills.find((item) =>
-                            sameSkillAddress(
-                              item.address,
-                              workspaceState.selectedSkill() ?? {
-                                source: "",
-                                path: "",
-                              },
-                            ),
-                          );
-                          if (!skill) return;
-                          const source = skill.source;
-                          if (relationship.startsWith("selectors:")) {
-                            const collection = relationship.slice("selectors:".length);
-                            const selector =
-                              skill.selectorViews.status === "complete"
-                                ? skill.selectorViews.values.find(
-                                    (value) =>
-                                      value.collection === collection &&
-                                      (value.exposurePaths?.length ?? 0) > 0,
-                                  )
-                                : undefined;
-                            const exposurePath = selector?.exposurePaths?.[0];
-                            if (selector && exposurePath) {
-                              route.transition(
-                                {
-                                  destination: "workspace",
-                                  section: "collections",
-                                  selection: exposurePath.segments[0]!.collection,
-                                  surface: "browser",
-                                  focus: "browser",
-                                  handoff: {
-                                    kind: "agent-use",
-                                    collection: exposurePath.segments[0]!.collection,
-                                    owner: exposurePath.owner,
-                                    exposurePath: {
-                                      segments: exposurePath.segments,
-                                    },
-                                  },
-                                },
-                                () => {
-                                  workspaceState.selectSkillsView("current-exposure");
-                                  workspaceState.showWorkArea();
-                                  for (let index = 1; index < exposurePath.segments.length; index++)
-                                    workspaceState.expandExposurePath({
-                                      segments: exposurePath.segments.slice(0, index),
-                                    });
-                                  workspaceState.selectExposurePath(
-                                    JSON.stringify(
-                                      exposurePath.segments.map((segment) => [
-                                        segment.collection,
-                                        segment.reference,
-                                      ]),
-                                    ),
-                                  );
-                                },
-                              );
-                            }
-                            return;
-                          }
-                          if (relationship === "source" && source) {
-                            routeSource({
-                              destination: "workspace",
-                              section: "sources",
-                              selection: source.id,
-                            });
-                            workspaceState.openDetail();
-                            requestFocus(sourceInspectorFocus(source));
-                          } else if (relationship === "config-source" && source?.contribution) {
-                            routeSource({
-                              destination: source.contribution.configSource.level,
-                              section: "config-sources",
-                              selection: source.contribution.configSource.pointer,
-                            });
-                          } else if (relationship === "config" && source) {
-                            const owner = workspace?.configs
-                              .flatMap((config) => config.direct.sources)
-                              .find((item) => item.id === source.id)?.ref.owner;
-                            if (owner)
-                              routeSource({
-                                destination: owner.level,
-                                section: "sources",
-                                selection: source.id,
-                              });
-                          } else if (relationship.startsWith("collection:")) {
-                            const collection = relationship.slice("collection:".length);
-                            routeSource({
-                              destination: "workspace",
-                              section: "collections",
-                              selection: collection,
-                            });
-                            collectionsState.select(collection);
-                            workspaceState.selectSection("collections");
-                            workspaceState.openDetail();
-                            requestFocus("inspector");
-                          }
-                        }}
                         onSourceRelationship={(relationship: string) => {
                           const source = projection
                             .workspace()
@@ -3371,7 +3271,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         updatesActive={effects.updatesActive}
                         updatesRun={effects.updateRun}
                         updatesCheckingActive={effects.checkingActive}
-                        updatesCurrentCheckSource={effects.currentCheckSource}
                         updatesCheckWarning={effects.updateChecksWarning}
                         sourceUpdates={activeSourceUpdatesView}
                         onSourceUpdatesQuery={workspaceState.setSourceUpdatesQuery}
@@ -3393,7 +3292,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         onUpdatesRetry={() => {
                           void effects.continueUpdates();
                         }}
-                        onOpenSourceUpdates={(source) => openSourceUpdates(source)}
                         onSourceUpdatesDetails={(source) => {
                           const binding = projection
                             .workspace()
@@ -3560,17 +3458,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                           workspaceState.setCollectionPathExpanded(path, expanded)
                         }
                         onToggleExposurePath={(path) => workspaceState.toggleExposurePath(path)}
-                        onExposureUpdate={(row) => {
-                          const entry =
-                            row.kind === "skill"
-                              ? { kind: "skill" as const, address: row.address }
-                              : {
-                                  kind: "collection" as const,
-                                  collection:
-                                    row.kind === "collection" ? row.collection : row.target,
-                                };
-                          openUpdates(entry, true);
-                        }}
                         onRepairCurrentExposure={(level, section, collection) => {
                           // Preserve the mounted repair control as the route-back focus before navigation.
                           requestFocus("work-area");
@@ -4023,7 +3910,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                             match: current?.find === value ? current.match : 0,
                           });
                         }}
-                        onResources={() => ensureResources()}
                         onRetryContent={(address) => void readerOwner.load(address)}
                         onReloadContent={(address) => {
                           readerOwner.cancelContent();

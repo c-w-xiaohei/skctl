@@ -30,8 +30,6 @@ export interface CollectionsPageProps {
   readonly onInspectorFocus: () => void;
   readonly onDetail: () => void;
   readonly onRelationship: (intent: CollectionRelationshipIntent) => void;
-  readonly onOpenMembership?: (collection: string, member: string) => void;
-  readonly onOpenRelation?: (collection: string, relation: string) => void;
   readonly onToggleOrigin?: (collection: string, key: string) => void;
   readonly onToggleOrigins?: (collection: string, keys: readonly string[]) => void;
   readonly onRemoveOrigins?: (collection: string, rows: readonly CollectionRemovalRow[]) => void;

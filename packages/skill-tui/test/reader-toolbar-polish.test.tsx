@@ -81,7 +81,6 @@ async function mountReader(width = 90, height = 13) {
             actions={actions()}
             onPatch={patch}
             onCommitFind={(find) => patch({ find })}
-            onResources={() => {}}
             onReadResource={() => {}}
             onRetryResource={() => {}}
             onReload={() => call("reload")}

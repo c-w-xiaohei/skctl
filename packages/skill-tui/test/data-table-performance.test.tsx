@@ -59,7 +59,6 @@ test("PERF 120 selected Skills cache scope derivations instead of reading them p
         filter="updates"
         onQuery={() => {}}
         onFilter={() => {}}
-        onOpenSkill={() => {}}
         onSourceDetails={() => {}}
         onCheck={() => {}}
         onUpdate={() => {}}

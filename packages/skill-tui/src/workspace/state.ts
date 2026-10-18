@@ -24,7 +24,6 @@ export interface WorkspaceSnapshot {
   readonly section: WorkspaceSection;
   readonly selectedSource?: string;
   readonly selectedSourceRelationship?: string;
-  readonly selectedSkillRelationship?: string;
   readonly selectedSkill?: SkillAddress;
   readonly selectedProblem?: string;
   readonly diagnosticDetail?: string;
@@ -336,7 +335,6 @@ export function createWorkspaceState(
     section: () => snapshot().section,
     selectedSource: () => snapshot().selectedSource,
     selectedSourceRelationship: () => snapshot().selectedSourceRelationship,
-    selectedSkillRelationship: () => snapshot().selectedSkillRelationship,
     selectedSkill: () => snapshot().selectedSkill,
     selectedProblem: () => snapshot().selectedProblem,
     diagnosticDetail: () => snapshot().diagnosticDetail,
@@ -433,9 +431,6 @@ export function createWorkspaceState(
     },
     selectSourceRelationship(selectedSourceRelationship?: string) {
       update((current) => ({ ...current, selectedSourceRelationship }));
-    },
-    selectSkillRelationship(selectedSkillRelationship?: string) {
-      update((current) => ({ ...current, selectedSkillRelationship }));
     },
     selectSkill(selectedSkill?: SkillAddress) {
       const current = snapshot();
@@ -705,7 +700,6 @@ export type WorkspaceReadonly = Pick<
   | "section"
   | "selectedSource"
   | "selectedSourceRelationship"
-  | "selectedSkillRelationship"
   | "selectedSkill"
   | "selectedProblem"
   | "diagnosticDetail"

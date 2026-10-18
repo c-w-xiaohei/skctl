@@ -29,7 +29,6 @@ import type {
   NarrowLevel,
   NavigationSurface,
   ReaderState,
-  RouteHandoff,
   SkillsView,
 } from "./types";
 import { sameSkillAddress, skillAddressKey } from "./types";
@@ -77,7 +76,6 @@ export interface WorkspacePageProps {
   readonly overlay?: () => boolean;
   readonly mode: LayoutMode;
   readonly narrowLevel: NarrowLevel;
-  readonly handoff?: RouteHandoff;
   readonly projection: () => ManagementProjection | undefined;
   readonly focusRegistry?: FocusRegistry;
   /** App owns deferred focus across page transitions; the page only requests a region. */
@@ -88,7 +86,6 @@ export interface WorkspacePageProps {
   readonly onSelectSource: (source: string) => void;
   readonly onSkill: (address: SkillAddress, intent: "select" | "open") => void;
   readonly onToggleSkill: (address: SkillAddress) => void;
-  readonly onSkillRelationship: (value: string) => void;
   readonly onSourceRelationship: (value: string) => void;
   readonly onOpenSourceSkills?: (source: string) => void;
   readonly onSourceBrowseView?: (source: string, patch: Partial<SourceBrowseView>) => void;
@@ -111,7 +108,6 @@ export interface WorkspacePageProps {
   readonly onInspectorFocus: () => void;
   readonly onReaderPatch: (value: Partial<ReaderState>) => void;
   readonly onReaderFindCommit: (value: string) => void;
-  readonly onResources: (address: SkillAddress) => void;
   readonly onReadResource: (address: SkillAddress, path: string) => void;
   readonly onRetryResource: (address: SkillAddress) => void;
   readonly onRetryContent?: (address: SkillAddress) => void;
@@ -150,13 +146,10 @@ export interface WorkspacePageProps {
   readonly onSelectCollectionPath?: (path: string) => void;
   readonly onCollectionPathExpanded?: (path: string, expanded: boolean) => void;
   readonly onCollectionBrowserOpen?: (open: boolean) => void;
-  /** AgentAccess hands the structural row to the route owner for existing update scope handling. */
-  readonly onExposureUpdate?: (row: AgentAccessTreeRow) => void;
   readonly updates?: () => UpdatesState | undefined;
   readonly updatesActive?: () => boolean;
   readonly updatesRun?: () => UpdateRun | undefined;
   readonly updatesCheckingActive?: () => boolean;
-  readonly updatesCurrentCheckSource?: () => string | undefined;
   readonly updatesCheckWarning?: () => string | undefined;
   readonly onUpdatesCheck?: (sources?: readonly string[]) => void;
   readonly onUpdatesSubmit?: (addresses: readonly UpdateAddress[]) => void;
@@ -167,7 +160,6 @@ export interface WorkspacePageProps {
   readonly onUpdatesOpenSkill?: (address: UpdateAddress, tab?: "skill" | "details") => void;
   readonly previewUpdate?: ManagementCapability["previewUpdate"];
   readonly onUpdatesOpenSource?: (source: string) => void;
-  readonly onOpenSourceUpdates?: (source: string) => void;
   readonly onSourceUpdatesDetails?: (source: string) => void;
   readonly sourceUpdates?: () =>
     | {
@@ -725,7 +717,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
           actions={props.actions}
           onPatch={props.onReaderPatch}
           onCommitFind={props.onReaderFindCommit}
-          onResources={() => props.onResources(selected().address)}
           onReadResource={(path) => props.onReadResource(selected().address, path)}
           onRetryResource={() => props.onRetryResource(selected().address)}
           onRetryContent={() => props.onRetryContent?.(selected().address)}
@@ -1797,14 +1788,12 @@ export function WorkspacePage(props: WorkspacePageProps) {
                       active={props.updatesActive}
                       run={props.updatesRun}
                       checkingActive={props.updatesCheckingActive}
-                      currentCheckSource={props.updatesCurrentCheckSource}
                       checkWarning={props.updatesCheckWarning}
                       onCheck={(sources) => props.onUpdatesCheck?.(sources)}
                       onUpdate={(addresses) => props.onUpdatesSubmit?.(addresses)}
                       onStop={() => props.onUpdatesStop?.()}
                       onStopChecking={() => props.onUpdatesStopChecking?.()}
                       onRetry={() => props.onUpdatesRetry?.()}
-                      onOpenSkill={(address) => props.onUpdatesOpenSkill?.(address)}
                       previewUpdate={props.previewUpdate}
                       onInspectSkill={(address) => props.onUpdatesOpenSkill?.(address, "details")}
                       onInspectSource={(source) => props.onSourceUpdatesDetails?.(source)}
@@ -1831,7 +1820,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
                       active={props.updatesActive}
                       run={props.updatesRun}
                       checkingActive={props.updatesCheckingActive}
-                      currentCheckSource={props.updatesCurrentCheckSource}
                       checkWarning={props.updatesCheckWarning}
                       onCheck={(sources) => props.onUpdatesCheck?.(sources)}
                       onUpdate={(addresses) => props.onUpdatesSubmit?.(addresses)}
@@ -1840,7 +1828,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
                       onRetry={() => props.onUpdatesRetry?.()}
                       onQuery={(value) => props.onSourceUpdatesQuery?.(value)}
                       onFilter={(value) => props.onSourceUpdatesFilter?.(value)}
-                      onOpenSkill={(address) => props.onUpdatesOpenSkill?.(address)}
                       previewUpdate={props.previewUpdate}
                       onInspectSkill={(address) => props.onUpdatesOpenSkill?.(address, "details")}
                       onInspectSource={(source) => props.onSourceUpdatesDetails?.(source)}

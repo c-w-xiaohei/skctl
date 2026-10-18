@@ -38,7 +38,6 @@ test("RENDER Reader registers exact Enter records and describes only mounted res
         actions={[]}
         onPatch={() => {}}
         onCommitFind={() => {}}
-        onResources={() => {}}
         onReadResource={() => {}}
         onRetryResource={() => {}}
         onResourceBack={() => {}}

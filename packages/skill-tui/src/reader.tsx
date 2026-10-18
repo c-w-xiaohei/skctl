@@ -97,7 +97,6 @@ export function Reader(props: {
   readonly actions: readonly import("./actions").ActionRecord[];
   readonly onPatch: (value: Partial<ReaderState>) => void;
   readonly onCommitFind: (value: string) => void;
-  readonly onResources: () => void;
   readonly onReadResource: (path: string) => void;
   readonly onRetryResource: () => void;
   readonly onRetryContent?: () => void;
