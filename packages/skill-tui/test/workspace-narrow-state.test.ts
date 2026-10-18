@@ -9,7 +9,7 @@ test("workspace narrow Source flow distinguishes Skills, Sources, and inspector"
   expect(workspace.section()).toBe("skills");
   workspace.selectSection("sources");
   expect(workspace.section()).toBe("sources");
-  workspace.openWorkArea();
+  workspace.showWorkArea();
   expect(workspace.narrowLevel()).toBe("work-area");
   workspace.openDetail();
   expect(workspace.narrowLevel()).toBe("detail");

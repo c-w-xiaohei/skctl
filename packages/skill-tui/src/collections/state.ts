@@ -283,14 +283,6 @@ export function createCollectionsState() {
             ),
       }));
     },
-    clearFilter(dimension: string) {
-      update((current) => ({
-        ...current,
-        filters: Object.fromEntries(
-          Object.entries(current.filters).filter(([key]) => key !== dimension),
-        ),
-      }));
-    },
     clearFilters() {
       update((current) => ({ ...current, query: "", filters: {} }));
     },

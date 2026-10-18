@@ -89,7 +89,6 @@ export interface WorkspacePageProps {
   readonly onSourceRelationship: (value: string) => void;
   readonly onOpenSourceSkills?: (source: string) => void;
   readonly onSourceBrowseView?: (source: string, patch: Partial<SourceBrowseView>) => void;
-  readonly onSelectSourceRelationship: (value: string, scroll: number) => void;
   readonly onFirstSkill: () => void;
   readonly onDetail: () => void;
   readonly onSkillsView: (view: SkillsView) => void;
@@ -1377,7 +1376,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
                     workspace.sourceBrowseView(source().id).detailsOpen ?? false;
                   let metadata: ScrollBoxRenderable | undefined;
                   const follow = (value: string) => {
-                    props.onSelectSourceRelationship(value, 0);
+                    props.onWorkspaceScroll("source-relationships", 0);
                     if (metadata && !metadata.isDestroyed)
                       props.onWorkspaceScroll(`source:${source().id}:details`, metadata.scrollTop);
                     props.onSourceRelationship(value);

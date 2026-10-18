@@ -7,7 +7,7 @@ test("clearing facet filters leaves text search and Source browsing context inta
   state.setQuery("seo");
   state.setFilter("Collection", "marketing");
   state.setFilter("Config", "global");
-  state.clearFilter("Collection");
+  state.setFilter("Collection", undefined);
   expect(state.query()).toBe("seo");
   expect(state.filters()).toEqual({ Config: "global" });
   state.clearFilters();

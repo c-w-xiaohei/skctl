@@ -23,7 +23,6 @@ export interface WorkspaceSnapshot {
   readonly skillsView: SkillsView;
   readonly section: WorkspaceSection;
   readonly selectedSource?: string;
-  readonly selectedSourceRelationship?: string;
   readonly selectedSkill?: SkillAddress;
   readonly selectedProblem?: string;
   readonly diagnosticDetail?: string;
@@ -334,7 +333,6 @@ export function createWorkspaceState(
     skillsView: () => snapshot().skillsView,
     section: () => snapshot().section,
     selectedSource: () => snapshot().selectedSource,
-    selectedSourceRelationship: () => snapshot().selectedSourceRelationship,
     selectedSkill: () => snapshot().selectedSkill,
     selectedProblem: () => snapshot().selectedProblem,
     diagnosticDetail: () => snapshot().diagnosticDetail,
@@ -362,9 +360,6 @@ export function createWorkspaceState(
     },
     scroll: (surface: string) => snapshot().scrolls[surface] ?? 0,
     narrowLevel,
-    openWorkArea() {
-      setNarrowLevel("work-area");
-    },
     openDetail() {
       setNarrowLevel("detail");
     },
@@ -428,9 +423,6 @@ export function createWorkspaceState(
     },
     selectSource(selectedSource?: string) {
       update((current) => ({ ...current, selectedSource }));
-    },
-    selectSourceRelationship(selectedSourceRelationship?: string) {
-      update((current) => ({ ...current, selectedSourceRelationship }));
     },
     selectSkill(selectedSkill?: SkillAddress) {
       const current = snapshot();
@@ -514,14 +506,6 @@ export function createWorkspaceState(
           : Object.fromEntries(
               Object.entries(current.filters).filter(([key]) => key !== dimension),
             ),
-      }));
-    },
-    clearFilter(dimension: string) {
-      update((current) => ({
-        ...current,
-        filters: Object.fromEntries(
-          Object.entries(current.filters).filter(([key]) => key !== dimension),
-        ),
       }));
     },
     clearFilters() {
@@ -699,7 +683,6 @@ export type WorkspaceReadonly = Pick<
   | "skillsView"
   | "section"
   | "selectedSource"
-  | "selectedSourceRelationship"
   | "selectedSkill"
   | "selectedProblem"
   | "diagnosticDetail"

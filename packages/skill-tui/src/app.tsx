@@ -3239,10 +3239,6 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                         onSourceBrowseView={(source, patch) =>
                           workspaceState.patchSourceBrowseView(source, patch)
                         }
-                        onSelectSourceRelationship={(relationship, scroll) => {
-                          workspaceState.selectSourceRelationship(relationship);
-                          workspaceState.setScroll("source-relationships", scroll);
-                        }}
                         onSelectSource={(source) => {
                           if (!overlayKind()) workspaceState.selectSource(source);
                         }}
@@ -3515,7 +3511,7 @@ export function App(props: { readonly core: TuiCore; readonly exit: () => void }
                           reconcileCollectionSelection();
                         }}
                         onClearCollectionFilter={(dimension) => {
-                          collectionsState.clearFilter(dimension);
+                          collectionsState.setFilter(dimension, undefined);
                           reconcileCollectionSelection();
                           requestFocus("browser");
                         }}
