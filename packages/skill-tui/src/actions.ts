@@ -64,7 +64,7 @@ export type ActionId = (typeof actionIds)[number];
 interface ActionIntent {
   readonly id: ActionId;
   readonly title: string;
-  readonly description: string;
+  readonly description?: string;
   readonly enabled: boolean;
   readonly reason?: string;
 }
@@ -289,17 +289,15 @@ function reachableActionIntents(
       {
         id: "new-collection",
         title: "New Collection",
-        description: "Create an empty Collection in Global, Project, or Local configuration",
         enabled: true,
       },
       ...(direct
-        ? collectionMutationIntents(collection!.id, direct.level, projection.installedSkills.length)
+        ? collectionMutationIntents(projection.installedSkills.length)
         : collection?.repository.derived
           ? [
               {
                 id: "add-membership" as const,
                 title: "Add Membership",
-                description: `Create a direct contribution for ${collection.id} before adding a Membership`,
                 enabled: true,
               },
             ]
@@ -336,7 +334,6 @@ function reachableActionIntents(
           {
             id: "open-config-integration",
             title: "Open owning Config",
-            description: `Inspect Managed OpenCode owned by ${selectedOwner.level} Config`,
             enabled: true,
           },
         ];
@@ -347,9 +344,6 @@ function reachableActionIntents(
         {
           id: managed ? "disable-managed-opencode" : "enable-managed-opencode",
           title: managed ? "Disable Managed OpenCode" : "Enable Managed OpenCode",
-          description: managed
-            ? "Remove this Config owner's managed OpenCode integration"
-            : "Enable managed OpenCode in this Config owner",
           enabled: true,
         },
       ];
@@ -366,7 +360,6 @@ function reachableActionIntents(
           {
             id: "add-config-source",
             title: "Add Config Source",
-            description: `Register a Config Source in ${destination} configuration`,
             enabled: true,
           },
         ];
@@ -377,7 +370,6 @@ function reachableActionIntents(
               {
                 id: "config-observe" as const,
                 title: "Check / review Config update…",
-                description: "Resolve the exact remote revision and review its Config update",
                 enabled: true,
               },
             ]
@@ -387,7 +379,6 @@ function reachableActionIntents(
               {
                 id: "config-forget" as const,
                 title: "Forget Adopted Config",
-                description: "Remove adopted remote Config bytes",
                 enabled: true,
               },
             ]
@@ -395,13 +386,11 @@ function reachableActionIntents(
         {
           id: "config-remove",
           title: "Remove Config Source",
-          description: "Remove this exact direct Config Source declaration",
           enabled: true,
         },
         {
           id: "add-config-source",
           title: "Add Config Source",
-          description: `Register another Config Source in ${destination} configuration`,
           enabled: true,
         },
       ];
@@ -411,22 +400,14 @@ function reachableActionIntents(
         {
           id: "new-collection",
           title: "New Collection",
-          description: `Create an empty Collection in ${destination} configuration`,
           enabled: true,
         },
         ...(collection || collectionUse
           ? [
-              ...(collection
-                ? collectionMutationIntents(
-                    collection.id,
-                    undefined,
-                    projection.installedSkills.length,
-                  )
-                : []),
+              ...(collection ? collectionMutationIntents(projection.installedSkills.length) : []),
               {
                 id: "set-collection-use" as const,
                 title: "Set Collection Use",
-                description: `Choose whether ${collection?.id ?? collectionUse?.collection} is disclosed by ${destination} configuration`,
                 enabled: true,
               },
             ]
@@ -439,7 +420,6 @@ function reachableActionIntents(
           {
             id: "add-source",
             title: "Add Source",
-            description: "Register a Source in Global, Project, or Local configuration",
             enabled: true,
           },
         ]
@@ -451,26 +431,22 @@ function reachableActionIntents(
     {
       id: "add-skills" as const,
       title: "Add Skills",
-      description: "Discover and install Skill Roots from this Source",
       enabled: true,
     },
     {
       id: "check-updates" as const,
       title: "Check Updates",
-      description: "Check installed Skills for updates",
       enabled: true,
     },
     {
       id: "view-installed-skills" as const,
       title: "View Installed Skills",
-      description: "Show Installed Skills owned by this Source",
       enabled: true,
     },
   ];
   const addSource = {
     id: "add-source" as const,
     title: "Add Source",
-    description: "Register another Source in Global, Project, or Local configuration",
     enabled: true,
   };
   const unavailableReason =
@@ -484,7 +460,6 @@ function reachableActionIntents(
       {
         id: "open-config-source",
         title: "Open Config Source",
-        description: "Open the contributing Config Source",
         enabled: true,
       },
       addSource,
@@ -496,13 +471,11 @@ function reachableActionIntents(
         {
           id: "open-config",
           title: "Open Config",
-          description: "Open the owning Config",
           enabled: true,
         },
         {
           id: "remove-source",
           title: "Remove Source",
-          description: "Remove this direct Source declaration",
           enabled: !unavailableReason,
           reason: unavailableReason,
         },
@@ -511,43 +484,33 @@ function reachableActionIntents(
     : [...common, addSource];
 }
 
-function collectionMutationIntents(
-  id: string,
-  directOwnerLevel: string | undefined,
-  installedSkillCount: number,
-): readonly ActionIntent[] {
+function collectionMutationIntents(installedSkillCount: number): readonly ActionIntent[] {
   const hasSkills = installedSkillCount > 0;
-  const ownerLabel = directOwnerLevel ? ` (${directOwnerLevel})` : "";
   return [
     {
       id: "add-membership",
       title: "Add Membership",
-      description: `Add an Installed Skill to ${id}${ownerLabel}`,
       enabled: hasSkills,
       reason: hasSkills ? undefined : "No Installed Skill is available",
     },
     {
       id: "import-collection",
       title: "Import Collection",
-      description: `Copy effective Memberships into ${id}${ownerLabel}`,
       enabled: true,
     },
     {
       id: "add-reference",
       title: "Add Reference",
-      description: `Describe another Collection from ${id}`,
       enabled: true,
     },
     {
       id: "add-link",
       title: "Add Link",
-      description: `Expose a linked Collection through ${id}`,
       enabled: true,
     },
     {
       id: "remove-collection",
       title: "Remove Collection",
-      description: `Remove the direct ${id} declaration`,
       enabled: true,
     },
   ];
@@ -562,7 +525,6 @@ function selectedSkillActionIntents(
   const context = installedSkillContext(destination, projection, pages);
   if (!context) return [];
   const { skill } = context;
-  const address = `${skill.address.source}/${skill.address.path}`;
   const source = skill.source;
   const healthy = skill.owner.health === "healthy";
   const sourceReason = source ? undefined : `Source ${skill.address.source} is not available`;
@@ -575,7 +537,6 @@ function selectedSkillActionIntents(
   const handoff = (title: string, enabled: boolean, reason?: string): ActionIntent => ({
     id: `skill-${title.toLowerCase().replaceAll(" ", "-")}` as ActionId,
     title,
-    description: `${address}; choose its exact owner`,
     enabled,
     reason,
   });
@@ -590,7 +551,6 @@ function selectedSkillActionIntents(
     {
       id: "skill-open-collection-use",
       title: "Collection Use",
-      description: "Open the owning Collection Use relationship",
       enabled: skill.selectorViews.status === "complete",
       reason:
         skill.selectorViews.status === "complete"
@@ -600,14 +560,12 @@ function selectedSkillActionIntents(
     {
       id: "skill-open-source",
       title: "Open source",
-      description: source ? `Open ${source.origin} for ${address}` : `Open ${address} source`,
       enabled: !!source,
       reason: sourceReason,
     },
     {
       id: "skill-check-updates",
       title: "Update Skill",
-      description: `Check and update ${skill.address.source}/${skill.address.path}`,
       enabled: !!source && healthy,
       reason: sourceReason ?? (healthy ? undefined : `Owner is ${skill.owner.health}`),
     },
@@ -727,11 +685,7 @@ const commandRecord = (intent: ActionIntent): ActionRecord => ({
   verb: intent.title,
   destination: actionDestination(intent.id),
   scope: "page",
-  ...(intent.id === "skill-add-to-collection" ||
-  intent.id === "skill-add-selected-to-collection" ||
-  intent.id === "collection-check-updates"
-    ? { description: intent.description }
-    : {}),
+  ...(intent.description !== undefined ? { description: intent.description } : {}),
   enabled: intent.enabled,
   ...(intent.reason ? { disabledReason: intent.reason } : {}),
   danger: dangerousAction(intent.id),
