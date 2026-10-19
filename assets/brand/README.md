@@ -16,6 +16,7 @@ content to disclose. skctl and its terminal workbench, sktui, share the mark.
 | `logo-white.png`                            | White monochrome mark, transparent, 512 × 512                         |
 | `avatar.png`                                | White mark on blue, 512 × 512, for repository or organization avatars |
 | `icon-16.png`, `icon-32.png`, `icon-48.png` | Compact transparent blue marks at their named pixel sizes             |
+| `favicon.ico`                               | Browser icon containing the transparent 16, 32 and 48 px marks        |
 | `source/generated-mark.png`                 | Original image returned by gptx                                       |
 | `source/generation-brief.md`                | Approved direction, visual rules and generation prompt                |
 | `source/export-metadata.json`               | Generation parameters, crop coordinates and file digests              |
@@ -30,6 +31,21 @@ assistive technology can read it.
 The avatar is available for manual upload; adding this file does not change a
 GitHub account or repository setting. The icons are available for future web
 integration; this repository currently ships terminal applications.
+
+## Favicon
+
+A favicon is the small site icon shown in browser tabs and bookmarks. For a
+website, copy `favicon.ico` to its public directory and add this to the HTML head:
+
+```html
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+```
+
+The ICO uses only the dark-background palette: `#f3f6fa` cards with the middle
+card in `#80b7f5`, on a transparent background. Its three sizes retain the small
+icons' silhouettes and alpha channels. It does not switch palettes with the browser
+theme. The separate `icon-*.png` files keep their original blue color. Adding a
+favicon does not change GitHub's own tab icon or add a web interface to skctl.
 
 ## Color and spacing
 

@@ -29,12 +29,18 @@
     "alphaCleanup": "values below 16 become 0; above 240 become 255; other values retained",
     "geometry": "Generated silhouette preserved; colors normalized from theme.ts; resize only.",
     "compact16Alpha": "After area reduction, alpha below 128 becomes 0; all remaining pixels become 255.",
+    "favicon": "ICO container with 16, 32 and 48 px PNG payloads. Existing compact silhouettes and alpha preserved; dark palette only: #f3f6fa cards and #80b7f5 middle card, transparent background.",
     "readmeBackgrounds": {
       "logo-readme-light.png": "#ffffff",
       "logo-readme-dark.png": "#0d1117"
     }
   },
   "files": {
+    "favicon.ico": {
+      "sizes": [16, 32, 48],
+      "bytes": 872,
+      "sha256": "5ee7d004eb719c0f9b35d9d7f53b0e96bd910f2d722bc5e71410d41f182b29fa"
+    },
     "logo-light.png": {
       "size": [512, 512],
       "bytes": 7555,
