@@ -16,5 +16,6 @@ out/
 # Existing design and task evidence are not workspace source inputs.
 CONTEXT.md
 DESIGN.md
-docs/
+/docs/*
+!/docs/skctl-use-cases-and-positioning.md
 tmp/

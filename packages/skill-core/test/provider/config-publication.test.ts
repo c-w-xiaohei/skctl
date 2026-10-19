@@ -44,7 +44,7 @@ async function enableFiltering(remote: string) {
   await git(remote, "config", "uploadpack.allowReachableSHA1InWant", "true");
 }
 test("MGMT-023 adopts the observed exact Remote Config commit after the tracked ref moves", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-publication-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-publication-"));
   const state = join(root, "state");
   const global = join(root, "global.jsonc");
   const remote = join(root, "remote");
@@ -56,16 +56,16 @@ test("MGMT-023 adopts the observed exact Remote Config commit after the tracked 
     await writeFile(global, "{}\n");
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), bytes);
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "config");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = {
       cwd: root,
       userConfigPath: global,
@@ -94,21 +94,21 @@ test("MGMT-023 adopts the observed exact Remote Config commit after the tracked 
     await api.gc();
     expect(await Bun.file(join(state, "configs", digest, "config.jsonc")).exists()).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT contains adopted reusable Config bindings that escape their remote host", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-contained-reusable-binding-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-contained-reusable-binding-"));
   const state = join(root, "state");
   const global = join(root, "global.jsonc");
   const remote = join(root, "remote");
-  const host = join(root, "skill-cli.jsonc");
+  const host = join(root, "skctl.jsonc");
   try {
     await mkdir(join(remote, "host"), { recursive: true });
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(
       join(remote, "host", "config.jsonc"),
@@ -139,7 +139,7 @@ test("MGMT contains adopted reusable Config bindings that escape their remote ho
         },
       }),
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const bytes = await readFile(join(remote, "host", "config.jsonc"));
     const core = {
       cwd: root,
@@ -175,34 +175,32 @@ test("MGMT contains adopted reusable Config bindings that escape their remote ho
     );
     expect(workspace.effective.status).toBe("unavailable");
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-029 Config Source Adopt rejects a declaration changed after preview without cache or state publication", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-adopt-barrier-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-adopt-barrier-"));
   const state = join(root, "state");
   const remote = join(root, "remote");
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), "{}\n");
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "config");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root, sourceTransport: () => remote };
     const changedBytes =
       '{ "configSources": { "module": { "kind": "local", "path": "./module", "root": "changed" } } }\n';
-    setManagementPublicationHookForTest(() =>
-      writeFile(join(root, "skill-cli.jsonc"), changedBytes),
-    );
+    setManagementPublicationHookForTest(() => writeFile(join(root, "skctl.jsonc"), changedBytes));
     const observation = await api.observeConfigSource(core, { id: "remote" });
     expect(
       (
@@ -222,10 +220,10 @@ test("MGMT-029 Config Source Adopt rejects a declaration changed after preview w
     });
     expect(await Bun.file(join(state, "state.json")).exists()).toBe(false);
     expect(await Bun.file(join(state, "configs")).exists()).toBe(false);
-    expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).toBe(changedBytes);
+    expect(await Bun.file(join(root, "skctl.jsonc")).text()).toBe(changedBytes);
     setManagementPublicationHookForTest();
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
     await api.adoptConfigSource(core, {
@@ -237,28 +235,28 @@ test("MGMT-029 Config Source Adopt rejects a declaration changed after preview w
     );
   } finally {
     setManagementPublicationHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("Config adoption cancellation before publication preserves state and cache", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-adopt-cancel-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-adopt-cancel-"));
   const state = join(root, "state");
   const remote = join(root, "remote");
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), "{}\n");
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "config");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root, sourceTransport: () => remote };
     const observation = await api.observeConfigSource(core, { id: "remote" });
     const controller = new AbortController();
@@ -274,12 +272,12 @@ test("Config adoption cancellation before publication preserves state and cache"
     expect(await Bun.file(join(state, "configs")).exists()).toBe(false);
   } finally {
     setManagementPublicationHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("Config observation cancels a blocked real Git child without publication", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-observe-cancel-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-observe-cancel-"));
   const state = join(root, "state");
   const shimRoot = await createExecutableFixture();
   const bin = join(shimRoot, "bin");
@@ -316,10 +314,10 @@ exec /usr/bin/git "$@"
     );
     process.env.PATH = `${bin}:${previousPath}`;
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     pending = api.observeConfigSource(
       { cwd: root },
       { id: "remote" },
@@ -338,7 +336,7 @@ exec /usr/bin/git "$@"
     expect(await Bun.file(join(state, "configs")).exists()).toBe(false);
   } finally {
     process.env.PATH = previousPath;
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     controller.abort();
     await pending?.catch(() => {});
     await rm(shimRoot, { recursive: true, force: true });
@@ -346,14 +344,14 @@ exec /usr/bin/git "$@"
   }
 });
 test("MGMT-024 and MGMT-025 reject Config Source lifecycle changes that orphan an Installed owner", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-owner-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-owner-"));
   const state = join(root, "state");
   const remote = join(root, "remote");
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(
       join(remote, "config.jsonc"),
@@ -362,10 +360,10 @@ test("MGMT-024 and MGMT-025 reject Config Source lifecycle changes that orphan a
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "initial");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root, sourceTransport: () => remote };
     const observation = await api.observeConfigSource(core, { id: "remote" });
     await api.adoptConfigSource(core, {
@@ -392,7 +390,7 @@ test("MGMT-024 and MGMT-025 reject Config Source lifecycle changes that orphan a
     await expect(api.forgetConfig(core, { id: "remote" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
-    expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).toContain('"remote"');
+    expect(await Bun.file(join(root, "skctl.jsonc")).text()).toContain('"remote"');
     await writeFile(join(remote, "config.jsonc"), "{}\n");
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "remove owner");
@@ -404,22 +402,22 @@ test("MGMT-024 and MGMT-025 reject Config Source lifecycle changes that orphan a
     });
     expect(await Bun.file(join(state, "state.json")).text()).toBe(JSON.stringify(parsed));
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-025 and MGMT-031 keep declaration removal management-owned for Local Config Sources", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-impact-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-impact-"));
   const state = join(root, "state");
   const local = join(root, "module");
   try {
     await mkdir(local);
     await writeFile(join(local, "config.jsonc"), "{}\n");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "module": { "kind": "local", "path": "./module", "root": "" } } }\n',
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root };
     const previews = await Promise.all([
       api.previewConfigForget(core, { id: "module" }),
@@ -434,21 +432,21 @@ test("MGMT-025 and MGMT-031 keep declaration removal management-owned for Local 
       expect(JSON.stringify(preview.value)).not.toContain("digest");
     }
     await api.removeConfig(core, { id: "module" });
-    expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).not.toContain('"module"');
+    expect(await Bun.file(join(root, "skctl.jsonc")).text()).not.toContain('"module"');
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-024 previews exact Forget consequences while retaining the declaration", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-impact-exact-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-impact-exact-"));
   const state = join(root, "state");
   const remote = join(root, "remote");
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(
       join(remote, "config.jsonc"),
@@ -460,10 +458,10 @@ test("MGMT-024 previews exact Forget consequences while retaining the declaratio
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "config");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root, sourceTransport: () => remote };
     const observed = await api.observeConfigSource(core, { id: "remote" });
     if (!observed.value.exactRevision)
@@ -504,20 +502,20 @@ test("MGMT-024 previews exact Forget consequences while retaining the declaratio
     assertPublicConfigImpact(forget.value);
     assertPublicConfigImpact((await api.previewConfigRemoval(core, { id: "remote" })).value);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-025 removes an adopted Remote Config declaration and state atomically", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-remove-remote-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-remove-remote-"));
   const remote = join(root, "remote");
-  const host = join(root, "skill-cli.jsonc");
+  const host = join(root, "skctl.jsonc");
   const state = join(root, "state");
   try {
     await mkdir(remote);
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), "{}\n");
     await git(remote, "add", ".");
@@ -526,7 +524,7 @@ test("MGMT-025 removes an adopted Remote Config declaration and state atomically
       host,
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root, sourceTransport: () => remote };
     const observed = await api.observeConfigSource(core, { id: "remote" });
     await api.adoptConfigSource(core, {
@@ -541,28 +539,28 @@ test("MGMT-025 removes an adopted Remote Config declaration and state atomically
     expect(await readFile(host, "utf8")).not.toContain('"remote"');
     expect(await Bun.file(join(state, "state.json")).text()).not.toContain('"remote"');
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-034 rejects tampered foreign or unavailable Config observations without publication", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-observation-integrity-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-observation-integrity-"));
   const remote = join(root, "remote");
   const state = join(root, "state");
   try {
     await mkdir(remote);
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), JSON.stringify({ collections: { team: {} } }));
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "config");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root, sourceTransport: () => remote };
     const observed = (await api.observeConfigSource(core, { id: "remote" })).value;
     for (const observation of [
@@ -583,12 +581,12 @@ test("MGMT-034 rejects tampered foreign or unavailable Config observations witho
     expect(await Bun.file(join(state, "state.json")).exists()).toBe(false);
     expect(await Bun.file(join(state, "configs")).exists()).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-029 declaration removal rejects stale host bytes and leaves execution-start bytes and state untouched", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-remove-stale-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-remove-stale-"));
   const state = join(root, "state");
   const module = join(root, "module");
   try {
@@ -596,36 +594,36 @@ test("MGMT-029 declaration removal rejects stale host bytes and leaves execution
     await writeFile(join(module, "config.jsonc"), "{}\n");
     const host =
       '{ "configSources": { "module": { "kind": "local", "path": "./module", "root": "" } } }\n';
-    await writeFile(join(root, "skill-cli.jsonc"), host);
-    process.env.SKILL_CLI_STATE_DIR = state;
+    await writeFile(join(root, "skctl.jsonc"), host);
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root };
     await api.previewConfigRemoval(core, { id: "module" });
-    setManagementPublicationHookForTest(() => writeFile(join(root, "skill-cli.jsonc"), "{}\n"));
+    setManagementPublicationHookForTest(() => writeFile(join(root, "skctl.jsonc"), "{}\n"));
     await expect(api.removeConfig(core, { id: "module" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
-    expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).toBe("{}\n");
+    expect(await Bun.file(join(root, "skctl.jsonc")).text()).toBe("{}\n");
     expect(await Bun.file(join(state, "state.json")).exists()).toBe(false);
     setManagementPublicationHookForTest();
-    await writeFile(join(root, "skill-cli.jsonc"), host);
+    await writeFile(join(root, "skctl.jsonc"), host);
     await api.removeConfig(core, { id: "module" });
-    expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).not.toContain('"module"');
+    expect(await Bun.file(join(root, "skctl.jsonc")).text()).not.toContain('"module"');
   } finally {
     setManagementPublicationHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-022 registers Local Git and GitHub Config Sources at exact G/P/L hosts with no adoption or disclosure side effects", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-register-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-register-"));
   const global = join(root, "global", "config.jsonc");
   const module = join(root, "module");
   try {
     await mkdir(join(root, "global"));
     await mkdir(module);
     await writeFile(join(module, "config.jsonc"), "{}\n");
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
+    process.env.SKCTL_STATE_DIR = join(root, "state");
     const core = { cwd: root, userConfigPath: global };
     const cases = [
       {
@@ -637,7 +635,7 @@ test("MGMT-022 registers Local Git and GitHub Config Sources at exact G/P/L host
       {
         level: "project" as const,
         id: "git",
-        file: join(root, "skill-cli.jsonc"),
+        file: join(root, "skctl.jsonc"),
         binding: {
           kind: "git" as const,
           origin: "https://example.test/config.git",
@@ -648,7 +646,7 @@ test("MGMT-022 registers Local Git and GitHub Config Sources at exact G/P/L host
       {
         level: "local" as const,
         id: "github",
-        file: join(root, "skill-cli.local.jsonc"),
+        file: join(root, "skctl.local.jsonc"),
         binding: {
           kind: "github" as const,
           origin: "https://github.com/acme/config",
@@ -682,21 +680,21 @@ test("MGMT-022 registers Local Git and GitHub Config Sources at exact G/P/L host
     expect(workspace.installedSkills).toEqual([]);
     expect(await Bun.file(join(root, "state", "state.json")).exists()).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-023 observes and previews Remote Config contributions at their Global, Project, and Local hosts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-host-level-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-host-level-"));
   const remote = join(root, "remote");
   const global = join(root, "global.jsonc");
   const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(
       join(remote, "config.jsonc"),
@@ -710,11 +708,11 @@ test("MGMT-023 observes and previews Remote Config contributions at their Global
     const binding = { kind: "git", origin: "https://example.test/config", root: "", ref: "main" };
     await writeFile(global, JSON.stringify({ configSources: { "global-source": binding } }));
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({ configSources: { "project-source": binding } }),
     );
     await writeFile(
-      join(root, "skill-cli.local.jsonc"),
+      join(root, "skctl.local.jsonc"),
       JSON.stringify({ configSources: { "local-source": binding } }),
     );
     for (const [level, id] of [
@@ -744,19 +742,19 @@ test("MGMT-023 observes and previews Remote Config contributions at their Global
         expect(contribution.owner).toMatchObject({ level, pointer: expect.any(String) });
     }
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-023 re-adoption compares current immutable contributions with the proposed exact revision", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-readopt-delta-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-readopt-delta-"));
   const remote = join(root, "remote");
   const state = join(root, "state");
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(
       join(remote, "config.jsonc"),
@@ -774,10 +772,10 @@ test("MGMT-023 re-adoption compares current immutable contributions with the pro
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "first");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root, sourceTransport: () => remote };
     const first = await api.observeConfigSource(core, { id: "remote" });
     await api.adoptConfigSource(core, { id: "remote", exactRevision: first.value.exactRevision! });
@@ -828,20 +826,20 @@ test("MGMT-023 re-adoption compares current immutable contributions with the pro
       removedCollections: [],
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-029 Forget uses current dependency facts, rejects a new blocker unchanged, then succeeds after blocker removal", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-forget-stale-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-forget-stale-"));
   const remote = join(root, "remote");
-  const host = join(root, "skill-cli.jsonc");
+  const host = join(root, "skctl.jsonc");
   const state = join(root, "state");
   try {
     await mkdir(remote);
     await git(remote, "init", "-b", "main");
     await enableFiltering(remote);
-    await git(remote, "config", "user.email", "test@skill-cli.invalid");
+    await git(remote, "config", "user.email", "test@skctl.invalid");
     await git(remote, "config", "user.name", "Skill CLI");
     await writeFile(join(remote, "config.jsonc"), JSON.stringify({ collections: { shared: {} } }));
     await git(remote, "add", ".");
@@ -857,7 +855,7 @@ test("MGMT-029 Forget uses current dependency facts, rejects a new blocker uncha
       },
     };
     await writeFile(host, JSON.stringify(declaration));
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root, sourceTransport: () => remote };
     const observed = await api.observeConfigSource(core, { id: "remote" });
     await api.adoptConfigSource(core, {
@@ -878,7 +876,7 @@ test("MGMT-029 Forget uses current dependency facts, rejects a new blocker uncha
     expect(await Bun.file(join(state, "state.json")).text()).not.toContain('"remote"');
     expect(await readFile(host, "utf8")).toContain('"remote"');
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });

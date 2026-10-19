@@ -14,11 +14,11 @@ import {
 test.serial(
   "operation reads only the custom user scope, freezes it, and rejects inaccessible files",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "skill-cli-network-reader-"));
+    const root = await mkdtemp(join(tmpdir(), "skctl-network-reader-"));
     const file = join(root, "arbitrary-user-name.jsonc");
-    const previous = process.env.SKILL_CLI_STATE_DIR;
+    const previous = process.env.SKCTL_STATE_DIR;
     try {
-      process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+      process.env.SKCTL_STATE_DIR = join(root, "state");
       const options = { cwd: root, userConfigPath: file };
       expect(await readUserNetwork(options)).toEqual({});
       await writeFile(file, '{"network":{}}');
@@ -47,8 +47,8 @@ test.serial(
       }
     } finally {
       await chmod(file, 0o600).catch(() => undefined);
-      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-      else process.env.SKILL_CLI_STATE_DIR = previous;
+      if (previous === undefined) delete process.env.SKCTL_STATE_DIR;
+      else process.env.SKCTL_STATE_DIR = previous;
       await rm(root, { recursive: true, force: true });
     }
   },

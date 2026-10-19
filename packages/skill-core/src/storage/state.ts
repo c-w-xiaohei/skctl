@@ -15,7 +15,7 @@ import {
 import { AsyncLocalStorage } from "node:async_hooks";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { bindingDigest } from "../source/identity";
 import { decodeStrictText, parseSkillMetadata } from "../content/text";
 import {
@@ -53,13 +53,13 @@ export function setSemanticStateReadHookForTest(next?: () => void) {
 }
 const signal = async (name: string) => {
   await hook?.(name);
-  if (process.env.SKILL_CLI_TEST_BARRIER_AT === name) {
-    const release = process.env.SKILL_CLI_TEST_BARRIER_RELEASE;
+  if (process.env.SKCTL_TEST_BARRIER_AT === name) {
+    const release = process.env.SKCTL_TEST_BARRIER_RELEASE;
     if (!release) throw new Error("Barrier release path is required");
     while (!(await lstat(release).catch(() => undefined))) await Bun.sleep(10);
   }
   // Private child-process crash seam used only by transaction integration tests.
-  if (process.env.SKILL_CLI_TEST_CRASH_AT === name) process.exit(97);
+  if (process.env.SKCTL_TEST_CRASH_AT === name) process.exit(97);
 };
 const empty = (): PrivateState => ({ version: 3, generation: 0, installed: [], configs: {} });
 const hash = (value: Uint8Array) => new Bun.CryptoHasher("sha256").update(value).digest("hex");
@@ -70,15 +70,14 @@ export function resolveStateRoot(
   env: Readonly<Record<string, string | undefined>> = process.env,
   platform = process.platform,
 ): string {
-  if (env.SKILL_CLI_STATE_DIR !== undefined) {
-    if (!isAbsolute(env.SKILL_CLI_STATE_DIR))
-      throw new SkillCliError("INVALID_ARGUMENT", "SKILL_CLI_STATE_DIR must be absolute");
-    return resolve(env.SKILL_CLI_STATE_DIR);
+  if (env.SKCTL_STATE_DIR !== undefined) {
+    if (!isAbsolute(env.SKCTL_STATE_DIR))
+      throw new SkctlError("INVALID_ARGUMENT", "SKCTL_STATE_DIR must be absolute");
+    return resolve(env.SKCTL_STATE_DIR);
   }
-  if (platform === "win32") return join(env.LOCALAPPDATA ?? env.HOME ?? "", "skill-cli");
-  if (platform === "darwin")
-    return join(env.HOME ?? "", "Library", "Application Support", "skill-cli");
-  return join(env.XDG_STATE_HOME ?? join(env.HOME ?? "", ".local", "state"), "skill-cli");
+  if (platform === "win32") return join(env.LOCALAPPDATA ?? env.HOME ?? "", "skctl");
+  if (platform === "darwin") return join(env.HOME ?? "", "Library", "Application Support", "skctl");
+  return join(env.XDG_STATE_HOME ?? join(env.HOME ?? "", ".local", "state"), "skctl");
 }
 
 async function sync(path: string) {
@@ -102,9 +101,9 @@ function parseState(bytes: Uint8Array | undefined): PrivateState {
   try {
     value = JSON.parse(decodeStrictText(bytes));
   } catch {
-    throw new SkillCliError("CONFIG_INVALID", "Invalid private state");
+    throw new SkctlError("CONFIG_INVALID", "Invalid private state");
   }
-  if (!validateState(value)) throw new SkillCliError("CONFIG_INVALID", "Invalid private state");
+  if (!validateState(value)) throw new SkctlError("CONFIG_INVALID", "Invalid private state");
   return value;
 }
 
@@ -132,7 +131,7 @@ export class StateCoordinator {
       relative(this.root, absolute).startsWith("..") ||
       (!relative(this.root, absolute) && absolute !== this.root)
     )
-      throw new SkillCliError("CONFIG_SYMLINK", "State path escapes configured root");
+      throw new SkctlError("CONFIG_SYMLINK", "State path escapes configured root");
     return absolute;
   }
   private async check(path: string, kind: "file" | "directory", optional = true) {
@@ -148,7 +147,7 @@ export class StateCoordinator {
       }
       const expected = index === pieces.length ? kind : "directory";
       if (stat.isSymbolicLink() || (expected === "file" ? !stat.isFile() : !stat.isDirectory()))
-        throw new SkillCliError("CONFIG_SYMLINK", `Unsafe state entry: ${current}`);
+        throw new SkctlError("CONFIG_SYMLINK", `Unsafe state entry: ${current}`);
     }
   }
   private async ensureRoot() {
@@ -158,7 +157,7 @@ export class StateCoordinator {
       current = current === "/" ? join(current, part) : current ? join(current, part) : part;
       const stat = await lstat(current).catch(() => undefined);
       if (stat && (stat.isSymbolicLink() || !stat.isDirectory()))
-        throw new SkillCliError("CONFIG_SYMLINK", `Unsafe state root parent: ${current}`);
+        throw new SkctlError("CONFIG_SYMLINK", `Unsafe state root parent: ${current}`);
     }
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     await this.check(this.root, "directory", false);
@@ -236,7 +235,7 @@ export class StateCoordinator {
             await rm(claim, { force: true });
           }
           if (Date.now() >= deadline)
-            throw new SkillCliError("LOCK_TIMEOUT", "State mutation lock is held");
+            throw new SkctlError("LOCK_TIMEOUT", "State mutation lock is held");
           await Bun.sleep(10);
         }
       }
@@ -305,7 +304,7 @@ export class StateCoordinator {
       }
       if (Date.now() >= deadline) {
         await rm(ownerPath, { force: true });
-        throw new SkillCliError("LOCK_TIMEOUT", "State mutation lock is held");
+        throw new SkctlError("LOCK_TIMEOUT", "State mutation lock is held");
       }
       await Bun.sleep(10);
     }
@@ -411,10 +410,10 @@ export class StateCoordinator {
   async write(next: StateContents, expected: number): Promise<PrivateState> {
     const current = await this.read();
     if (current.generation !== expected)
-      throw new SkillCliError("TRANSACTION_CONFLICT", "State generation changed");
+      throw new SkctlError("TRANSACTION_CONFLICT", "State generation changed");
     const installed = [...next.installed];
     if (!installed.every((item) => validateCurrentMaterialization(item)))
-      throw new SkillCliError("CONFIG_INVALID", "Version 3 Installed Skill identity is invalid");
+      throw new SkctlError("CONFIG_INVALID", "Version 3 Installed Skill identity is invalid");
     const value = { ...next, installed, version: 3 as const, generation: expected + 1 };
     await this.publish([{ target: this.statePath, bytes: `${JSON.stringify(value)}\n` }], expected);
     return value;
@@ -426,7 +425,7 @@ export class StateCoordinator {
   ): Promise<PrivateState> {
     if (current.version !== 1) return current;
     if (installed.length !== current.installed.length)
-      throw new SkillCliError("CONFIG_INVALID", "Legacy Installed Skill migration is incomplete");
+      throw new SkctlError("CONFIG_INVALID", "Legacy Installed Skill migration is incomplete");
     return this.write({ installed, configs: current.configs }, current.generation);
   }
   async recover(): Promise<void> {
@@ -450,12 +449,12 @@ export class StateCoordinator {
       try {
         marker = JSON.parse(decodeStrictText((await readBytes(markerPath))!));
       } catch {
-        throw new SkillCliError("TRANSACTION_CONFLICT", "Malformed transaction marker");
+        throw new SkctlError("TRANSACTION_CONFLICT", "Malformed transaction marker");
       }
       const id = name.slice(0, -5);
       const stageRoot = join(this.root, "staging", id);
       const declarationTarget = (target: string) =>
-        ["config.jsonc", "skill-cli.jsonc", "skill-cli.local.jsonc"].includes(
+        ["config.jsonc", "skctl.jsonc", "skctl.local.jsonc"].includes(
           target.split(/[/\\]/u).at(-1) ?? "",
         ) && isAbsolute(target);
       const validTarget = (target: TransactionTarget, index: number) =>
@@ -470,7 +469,7 @@ export class StateCoordinator {
           (!marker.targets.some((target) => target.target === this.statePath) ||
             marker.state.target !== this.statePath))
       )
-        throw new SkillCliError("TRANSACTION_CONFLICT", "Malformed transaction marker");
+        throw new SkctlError("TRANSACTION_CONFLICT", "Malformed transaction marker");
       await this.check(stageRoot, "directory", false);
       for (const target of marker.targets) await this.check(target.stage, "file", false);
       const current = await Promise.all(
@@ -482,15 +481,15 @@ export class StateCoordinator {
         (marker.state.next !== marker.state.expected + 1 ||
           (state!.generation !== marker.state.expected && state!.generation !== marker.state.next))
       )
-        throw new SkillCliError("TRANSACTION_CONFLICT", "State generation changed");
+        throw new SkctlError("TRANSACTION_CONFLICT", "State generation changed");
       const allOld = current.every(({ target, bytes }) => same(bytes, target.old));
       const known = current.every(
         ({ target, bytes }) => same(bytes, target.old) || same(bytes, target.next),
       );
-      if (!known) throw new SkillCliError("TRANSACTION_CONFLICT", "Transaction target was edited");
+      if (!known) throw new SkctlError("TRANSACTION_CONFLICT", "Transaction target was edited");
       if (marker.status === "prepared") {
         if (!allOld || (marker.state && state!.generation !== marker.state.expected))
-          throw new SkillCliError(
+          throw new SkctlError(
             "TRANSACTION_CONFLICT",
             "Prepared transaction was partially published",
           );
@@ -502,7 +501,7 @@ export class StateCoordinator {
         if (same(bytes, target.old)) {
           const staged = await readBytes(target.stage);
           if (!staged || !same(staged, target.next))
-            throw new SkillCliError("TRANSACTION_CONFLICT", "Transaction stage is unavailable");
+            throw new SkctlError("TRANSACTION_CONFLICT", "Transaction stage is unavailable");
           await this.replace(target.target, target.stage);
         }
       await rm(join(this.root, "staging", name.slice(0, -5)), { recursive: true, force: true });
@@ -609,13 +608,13 @@ export class StateCoordinator {
           ? await lstat(resolved).catch(() => undefined)
           : undefined;
       if (!stat || stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory()))
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Snapshot contains an unsafe link");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Snapshot contains an unsafe link");
       return target;
     };
     const visit = async (directory: string, path: string): Promise<void> => {
       const stat = await lstat(directory).catch(() => undefined);
       if (!stat?.isDirectory() || stat.isSymbolicLink())
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Snapshot root is incomplete");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Snapshot root is incomplete");
       hasher.update(`directory\0${path}\0`);
       const entries = await readdir(directory, { withFileTypes: true });
       entries.sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name)));
@@ -624,18 +623,18 @@ export class StateCoordinator {
         const childStat = await lstat(child);
         const childPath = path ? `${path}/${entry.name}` : entry.name;
         if (entry.name === ".git")
-          throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Snapshot contains a gitlink");
+          throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Snapshot contains a gitlink");
         if (childStat.isSymbolicLink()) {
           hasher.update(`symlink\0${childPath}\0${await safeLink(child)}\0`);
           continue;
         }
         if (!childStat.isFile() && !childStat.isDirectory())
-          throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Snapshot contains an unsafe entry");
+          throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Snapshot contains an unsafe entry");
         if (childStat.isDirectory()) await visit(child, childPath);
         else {
           const bytes = await readBytes(child);
           if (!bytes)
-            throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Snapshot entry is unavailable");
+            throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Snapshot entry is unavailable");
           hasher.update(
             `file\0${childPath}\0${childStat.mode & 0o111 ? 1 : 0}\0${bytes.byteLength}\0`,
           );
@@ -645,7 +644,7 @@ export class StateCoordinator {
     };
     await visit(root, "");
     const skill = await readBytes(join(root, "SKILL.md"));
-    if (!skill) throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Snapshot has no SKILL.md");
+    if (!skill) throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Snapshot has no SKILL.md");
     decodeStrictText(skill);
     return hasher.digest("hex");
   }
@@ -654,26 +653,23 @@ export class StateCoordinator {
   }
   async publishSnapshot(digest: string, sourceRoot: string): Promise<void> {
     if (!digest || !/^[a-f0-9]{64}$/u.test(digest))
-      throw new SkillCliError("INVALID_ARGUMENT", "Snapshot digest is invalid");
+      throw new SkctlError("INVALID_ARGUMENT", "Snapshot digest is invalid");
     await this.withLock(async () => {
       const sourceDigest = await this.completeRoot(resolve(sourceRoot));
       if (sourceDigest !== digest)
-        throw new SkillCliError(
-          "PROVIDER_INTEGRITY_FAILED",
-          "Snapshot digest does not match content",
-        );
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Snapshot digest does not match content");
       const destination = this.snapshotRoot(digest);
       const existing = await lstat(destination).catch(() => undefined);
       if (existing) {
         if ((await this.completeRoot(destination)) !== digest)
-          throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Snapshot digest collision");
+          throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Snapshot digest collision");
         return;
       }
       const stage = join(this.root, "staging", crypto.randomUUID(), "snapshot");
       await this.mutableDir(dirname(stage));
       await cp(sourceRoot, stage, { recursive: true, dereference: false, errorOnExist: true });
       if ((await this.completeRoot(stage)) !== digest)
-        throw new SkillCliError(
+        throw new SkctlError(
           "PROVIDER_INTEGRITY_FAILED",
           "Snapshot digest does not match staged content",
         );
@@ -685,10 +681,7 @@ export class StateCoordinator {
   async verifySnapshot(digest: string): Promise<string> {
     const root = this.snapshotRoot(digest);
     if ((await this.completeRoot(root)) !== digest)
-      throw new SkillCliError(
-        "PROVIDER_INTEGRITY_FAILED",
-        "Snapshot digest does not match content",
-      );
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Snapshot digest does not match content");
     return root;
   }
   async discardUnreferencedSnapshot(digest: string): Promise<void> {
@@ -724,7 +717,7 @@ export class StateCoordinator {
     installed?: readonly InstalledMaterialization[],
   ): Promise<void> {
     if (!validateConfigIdentity({ id, commit }))
-      throw new SkillCliError("INVALID_ARGUMENT", "Remote Config identity is invalid");
+      throw new SkctlError("INVALID_ARGUMENT", "Remote Config identity is invalid");
     decodeStrictText(bytes);
     const value = hash(bytes);
     const path = this.configPath(value);
@@ -732,7 +725,7 @@ export class StateCoordinator {
       await this.mutableDir(dirname(path));
       const current = await readBytes(path);
       if (current && !same(current, value))
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Config cache digest collision");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Config cache digest collision");
       if (!current) {
         await this.writeSynced(path, bytes);
         await signal("immutable-published");
@@ -814,11 +807,11 @@ export class StateCoordinator {
       const item = state.installed.find(
         (candidate) => candidate.source === address.source && candidate.path === address.path,
       );
-      if (!item) throw new SkillCliError("SKILL_NOT_FOUND", "Installed Skill not found");
+      if (!item) throw new SkctlError("SKILL_NOT_FOUND", "Installed Skill not found");
       const root = item.kind === "remote" ? await this.verifySnapshot(item.digest) : item.root;
       const stat = await lstat(root).catch(() => undefined);
       if (!stat?.isDirectory() || stat.isSymbolicLink())
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Installed content is unavailable");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Installed content is unavailable");
       if (item.kind === "remote") use = await this.createUse(item.digest);
       found = { item, root };
     });

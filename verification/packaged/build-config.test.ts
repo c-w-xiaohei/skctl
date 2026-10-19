@@ -8,20 +8,20 @@ const manifest = async (name: string) =>
     dependencies: Record<string, string>;
   };
 const core = await manifest("skill-core");
-const cli = await manifest("skill-cli");
-const tui = await manifest("skill-tui");
+const cli = await manifest("skctl");
+const tui = await manifest("sktui");
 const lock = await Bun.file("bun.lock").text();
 const buildSource = await Bun.file("scripts/build.ts").text();
 
 test("workspace packages own their actual runtime dependencies", () => {
-  expect(core.name).toBe("@skill-cli/core");
-  expect(cli.name).toBe("@skill-cli/cli");
-  expect(tui.name).toBe("@skill-cli/tui");
+  expect(core.name).toBe("@skctl/core");
+  expect(cli.name).toBe("@skctl/cli");
+  expect(tui.name).toBe("@skctl/tui");
   for (const pkg of [core, cli, tui]) expect(pkg.private).toBe(true);
   expect(core.exports).toEqual({ ".": "./src/index.ts" });
-  expect(Object.keys(cli.dependencies).sort()).toEqual(["@skill-cli/core", "commander"]);
-  expect(cli.dependencies["@skill-cli/core"]).toBe("workspace:*");
-  expect(tui.dependencies["@skill-cli/core"]).toBe("workspace:*");
+  expect(Object.keys(cli.dependencies).sort()).toEqual(["@skctl/core", "commander"]);
+  expect(cli.dependencies["@skctl/core"]).toBe("workspace:*");
+  expect(tui.dependencies["@skctl/core"]).toBe("workspace:*");
   for (const dependency of ["commander", "solid-js", "@opentui/core", "@opentui/solid"])
     expect(core.dependencies).not.toHaveProperty(dependency);
   expect(tui.dependencies["@opentui/core"]).toBe("0.5.14");
@@ -39,9 +39,9 @@ test("dependency lock has one Solid 1.9.12 resolution", () => {
 });
 
 test("only TUI owns JSX and UI preloads", async () => {
-  for (const name of ["skill-core", "skill-cli", "skill-tui"]) {
+  for (const name of ["skill-core", "skctl", "sktui"]) {
     const config = JSON.parse(await Bun.file(`packages/${name}/tsconfig.json`).text());
-    if (name === "skill-tui") {
+    if (name === "sktui") {
       expect(config.compilerOptions.jsx).toBe("preserve");
       expect(config.compilerOptions.jsxImportSource).toBe("@opentui/solid");
     } else {
@@ -52,12 +52,12 @@ test("only TUI owns JSX and UI preloads", async () => {
   expect(await Bun.file("bunfig.toml").text()).not.toContain("preload");
   const root = JSON.parse(await Bun.file("package.json").text());
   expect(root.scripts["test:tui"]).toContain("--preload @opentui/solid/preload");
-  expect(root.scripts["test:tui"]).toContain("packages/skill-tui/test/test-renderer-preload.ts");
+  expect(root.scripts["test:tui"]).toContain("packages/sktui/test/test-renderer-preload.ts");
 });
 
 test("CLI source no longer imports the TUI graph", async () => {
-  const main = await Bun.file("packages/skill-cli/src/main.ts").text();
-  expect(main).not.toContain("skill-tui/src");
+  const main = await Bun.file("packages/skctl/src/main.ts").text();
+  expect(main).not.toContain("sktui/src");
   expect(main).not.toContain("./tui/");
   expect(main).not.toContain("@opentui/");
 });

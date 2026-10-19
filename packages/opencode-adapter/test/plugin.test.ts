@@ -7,7 +7,7 @@ import plugin from "../src/index.ts";
 const roots: string[] = [];
 const originalPath = process.env.PATH;
 const catalog =
-  "Use `skill-cli agent browse <collection-id>` to inspect a Collection and `skill-cli agent load <selector>` to load a Skill.\n" +
+  "Use `skctl agent browse <collection-id>` to inspect a Collection and `skctl agent load <selector>` to load a Skill.\n" +
   '<managed_skill_catalog scope="root"><collection><id>engineering</id><name>engineering</name><description>Code review</description></collection></managed_skill_catalog>\n';
 
 afterEach(async () => {
@@ -18,12 +18,12 @@ afterEach(async () => {
 async function fixture(catalog: string) {
   const parent = join(import.meta.dir, "../../../tmp");
   await mkdir(parent, { recursive: true });
-  const root = await mkdtemp(join(parent, "skill-cli-adapter-test-"));
+  const root = await mkdtemp(join(parent, "skctl-adapter-test-"));
   roots.push(root);
   const catalogPath = join(root, "catalog.json");
   await writeFile(catalogPath, catalog);
-  await writeFile(join(root, "skill-cli"), `#!/bin/sh\n/bin/cat '${catalogPath}'\n`);
-  await chmod(join(root, "skill-cli"), 0o755);
+  await writeFile(join(root, "skctl"), `#!/bin/sh\n/bin/cat '${catalogPath}'\n`);
+  await chmod(join(root, "skctl"), 0o755);
   process.env.PATH = root;
   return root;
 }
@@ -76,15 +76,15 @@ describe("OpenCode plugin", () => {
     async (failure) => {
       const parent = join(import.meta.dir, "../../../tmp");
       await mkdir(parent, { recursive: true });
-      const root = await mkdtemp(join(parent, "skill-cli-adapter-test-"));
+      const root = await mkdtemp(join(parent, "skctl-adapter-test-"));
       roots.push(root);
       if (failure === "nonzero CLI with hostile output") {
         const stderr = `secret-token=very-secret\\000\\001\\037\\177😀${"x".repeat(2048)}`;
         await writeFile(
-          join(root, "skill-cli"),
+          join(root, "skctl"),
           `#!/bin/sh\n/bin/printf '%s' 'stdout-sensitive-marker'\n/bin/printf '%b' '${stderr}' >&2\nexit 7\n`,
         );
-        await chmod(join(root, "skill-cli"), 0o755);
+        await chmod(join(root, "skctl"), 0o755);
       }
       process.env.PATH = root;
       const log = console.error;
@@ -100,7 +100,7 @@ describe("OpenCode plugin", () => {
 
         expect(chatOutput.system).toEqual([]);
         expect(compactionOutput.context).toEqual([]);
-        expect(diagnostics).toEqual(["skill-cli managed catalog is unavailable"]);
+        expect(diagnostics).toEqual(["skctl managed catalog is unavailable"]);
       } finally {
         console.error = log;
       }

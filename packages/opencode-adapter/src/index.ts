@@ -3,10 +3,10 @@ import { createProcessClient } from "./process.ts";
 
 function report(_error: unknown): void {
   // Adapter failures are not part of the managed Skill interface.
-  console.error("skill-cli managed catalog is unavailable");
+  console.error("skctl managed catalog is unavailable");
 }
 
-const SkillCliOpenCodePlugin: Plugin = async (input) => {
+const SkctlOpenCodePlugin: Plugin = async (input) => {
   const client = createProcessClient();
   let hasReportedFailure = false;
   const appendFreshCatalog = async (target: string[]) => {
@@ -30,4 +30,4 @@ const SkillCliOpenCodePlugin: Plugin = async (input) => {
   };
 };
 
-export default SkillCliOpenCodePlugin;
+export default SkctlOpenCodePlugin;

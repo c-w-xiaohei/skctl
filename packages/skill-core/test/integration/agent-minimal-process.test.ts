@@ -4,22 +4,22 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 test("Agent preserves multi-line metadata and raw content, forwards exit status and keeps persistent output", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-minimal-agent-"));
-  const previousState = process.env.SKILL_CLI_STATE_DIR;
+  const root = await mkdtemp(join(tmpdir(), "skctl-minimal-agent-"));
+  const previousState = process.env.SKCTL_STATE_DIR;
   const state = join(root, "state"),
     config = join(root, "config");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const skill = join(root, "skills", "review");
     await mkdir(join(skill, "references"), { recursive: true });
-    await mkdir(join(config, "skill-cli"), { recursive: true });
-    await writeFile(join(config, "skill-cli", "config.jsonc"), "{}\n");
+    await mkdir(join(config, "skctl"), { recursive: true });
+    await writeFile(join(config, "skctl", "config.jsonc"), "{}\n");
     const text =
       '---\nname: "review"\ndescription: >-\n  Use for code\n  review.\n---\n# Review\nRead references/check.md';
     await writeFile(join(skill, "SKILL.md"), text);
     await writeFile(join(skill, "references/check.md"), "Check only requested changes");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { local: { kind: "local", path: "./skills", root: "" } },
         collections: {
@@ -34,7 +34,7 @@ test("Agent preserves multi-line metadata and raw content, forwards exit status 
     );
     const core = {
       cwd: root,
-      userConfigPath: join(config, "skill-cli/config.jsonc"),
+      userConfigPath: join(config, "skctl/config.jsonc"),
     };
     expect(
       (await api.discoverSkills(core, { source: "local" })).value.candidates[0]!.description,
@@ -47,15 +47,10 @@ test("Agent preserves multi-line metadata and raw content, forwards exit status 
     });
     const invoke = async (argv: string[]) => {
       const child = Bun.spawn(
-        [
-          process.execPath,
-          join(import.meta.dir, "../../../skill-cli/src/main.ts"),
-          "agent",
-          ...argv,
-        ],
+        [process.execPath, join(import.meta.dir, "../../../skctl/src/main.ts"), "agent", ...argv],
         {
           cwd: root,
-          env: { ...process.env, HOME: root, XDG_CONFIG_HOME: config, SKILL_CLI_STATE_DIR: state },
+          env: { ...process.env, HOME: root, XDG_CONFIG_HOME: config, SKCTL_STATE_DIR: state },
           stdin: "ignore",
           stdout: "pipe",
           stderr: "pipe",
@@ -105,8 +100,8 @@ test("Agent preserves multi-line metadata and raw content, forwards exit status 
       expect(await readdir(join(state, "runs"))).toEqual([]);
     }
   } finally {
-    if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previousState;
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
     await rm(root, { recursive: true, force: true });
   }
 }, 20000);

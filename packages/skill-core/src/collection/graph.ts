@@ -1,6 +1,6 @@
 import type { SkillAddress } from "../source/schema";
 import type { CollectionDeclaration, CollectionReference } from "./schema";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { type ConfigDeclarationOwner } from "../config/types";
 
 export interface InstalledIdentity extends SkillAddress {
@@ -44,7 +44,7 @@ export type MemberOriginPath =
       readonly source: string;
       readonly path: string;
     };
-export class CollectionResolutionError extends SkillCliError {
+export class CollectionResolutionError extends SkctlError {
   constructor(
     code: "CONFIG_CONFLICT" | "EXPOSURE_CONFLICT",
     message: string,
@@ -84,7 +84,7 @@ export function resolveCollections(
   )) {
     const current = declared.get(contribution.id);
     if (current)
-      throw new SkillCliError(
+      throw new SkctlError(
         "CONFIG_CONFLICT",
         `Collection is declared more than once: ${contribution.id}`,
       );
@@ -96,7 +96,7 @@ export function resolveCollections(
     const members = derived.get(item.repository) ?? new Map<string, InstalledIdentity>();
     const current = members.get(item.name);
     if (current && !sameSkillAddress(current, item))
-      throw new SkillCliError("EXPOSURE_CONFLICT", `Collection member conflict: ${item.name}`);
+      throw new SkctlError("EXPOSURE_CONFLICT", `Collection member conflict: ${item.name}`);
     members.set(item.name, item);
     derived.set(item.repository, members);
   }
@@ -112,7 +112,7 @@ export function resolveCollections(
     const contribution = declared.get(id);
     const declaration = contribution?.declaration ?? {};
     if (!contribution && !derived.has(id))
-      throw new SkillCliError("REFERENCE_NOT_FOUND", `Collection not found: ${id}`);
+      throw new SkctlError("REFERENCE_NOT_FOUND", `Collection not found: ${id}`);
     if (visiting.has(id)) {
       const cycle = [...route.slice(route.indexOf(id)), id];
       throw new CollectionResolutionError(
@@ -213,7 +213,7 @@ export function resolveCollections(
     const declaredReferences = declaration.references ?? {};
     for (const reference of Object.values(declaredReferences))
       if (!declared.has(reference.collection) && !derived.has(reference.collection))
-        throw new SkillCliError(
+        throw new SkctlError(
           "REFERENCE_NOT_FOUND",
           `Collection not found: ${reference.collection}`,
         );

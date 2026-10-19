@@ -11,10 +11,10 @@ async function git(cwd: string, ...args: string[]) {
   return output.trim();
 }
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-update-baseline-"));
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  const root = await mkdtemp(join(tmpdir(), "skctl-update-baseline-"));
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   await mkdir(join(root, "skills", "review"), { recursive: true });
-  await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+  await writeFile(join(root, "skctl.jsonc"), "{}\n");
   await writeFile(
     join(root, "skills", "review", "SKILL.md"),
     "---\nname: review\ndescription: First\n---\n",
@@ -45,7 +45,7 @@ test("update baselines persist across Core instances and invalidate for local co
       afterLocalEdit.value,
     );
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -53,13 +53,13 @@ test("identical bindings in isolated installation storage never share an update 
   const value = await fixture();
   try {
     const firstBaseline = await api.getUpdateBaseline(value.core, { source: "local" });
-    process.env.SKILL_CLI_STATE_DIR = join(value.root, "other-state");
+    process.env.SKCTL_STATE_DIR = join(value.root, "other-state");
     const isolated = { cwd: value.root };
     await api.installSkills(isolated, { source: "local", paths: ["review"] });
     const secondBaseline = await api.getUpdateBaseline(isolated, { source: "local" });
     expect(secondBaseline.value).not.toBe(firstBaseline.value);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -69,7 +69,7 @@ test("update baseline rejects an installed source whose binding changed across r
     const baseline = await api.getUpdateBaseline(value.core, { source: "local" });
     await mkdir(join(value.root, "other-skills"));
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "local": { "kind": "local", "path": "./other-skills", "root": "" } } }\n',
     );
     const restarted = { cwd: value.root };
@@ -78,24 +78,24 @@ test("update baseline rejects an installed source whose binding changed across r
     });
     expect(baseline.value).toBeDefined();
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
 test("update baseline changes after a remote skill is re-materialized across restart", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-remote-update-baseline-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-remote-update-baseline-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   try {
     await mkdir(join(work, "skills", "review"), { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await writeFile(
       join(work, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: First\n---\n",
     );
     await git(work, "init", "-b", "main");
-    await git(work, "config", "user.email", "test@skill-cli.invalid");
+    await git(work, "config", "user.email", "test@skctl.invalid");
     await git(work, "config", "user.name", "Skill CLI");
     await git(work, "add", ".");
     await git(work, "commit", "-m", "first");
@@ -126,7 +126,7 @@ test("update baseline changes after a remote skill is re-materialized across res
       exactRevision: initial.value.exactRevision,
     });
     const before = await api.getUpdateBaseline(core, { source: "remote" });
-    process.env.SKILL_CLI_STATE_DIR = join(root, "other-state");
+    process.env.SKCTL_STATE_DIR = join(root, "other-state");
     const isolated = {
       cwd: root,
       sourceTransport: (url: string) =>
@@ -140,7 +140,7 @@ test("update baseline changes after a remote skill is re-materialized across res
     expect((await api.getUpdateBaseline(isolated, { source: "remote" })).value).not.toBe(
       before.value,
     );
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    process.env.SKCTL_STATE_DIR = join(root, "state");
     await writeFile(
       join(work, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: Second\n---\n",
@@ -155,7 +155,7 @@ test("update baseline changes after a remote skill is re-materialized across res
       before.value,
     );
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -187,7 +187,7 @@ test("checkUpdate baseline guards update at the commit lock while callers withou
       description: "Third",
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -208,7 +208,7 @@ test("checkUpdate rejects a local change after candidate capture instead of retu
     });
   } finally {
     setManagementUpdateCheckHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });

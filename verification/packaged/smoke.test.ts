@@ -13,7 +13,7 @@ import {
 } from "./smoke";
 
 const root = resolve(import.meta.dir, "../..");
-const version = (await Bun.file(join(root, "packages/skill-cli/package.json")).json())
+const version = (await Bun.file(join(root, "packages/skctl/package.json")).json())
   .version as string;
 
 describe("packaged release orchestration", () => {
@@ -31,9 +31,7 @@ describe("packaged release orchestration", () => {
   });
   test("publishes import-safe native and plugin build metadata", () => {
     expect(buildMetadata.nativeArtifact).toBe(expectedArtifactName());
-    expect(buildMetadata.tuiArtifact).toBe(
-      expectedArtifactName().replace("skill-cli-", "skill-tui-"),
-    );
+    expect(buildMetadata.tuiArtifact).toBe(expectedArtifactName().replace("skctl-", "sktui-"));
     expect(buildMetadata.nativeTarget).toBe(
       `bun-${process.platform === "win32" ? "windows" : process.platform}-${process.arch}-modern`,
     );
@@ -57,7 +55,7 @@ describe("packaged release orchestration", () => {
   });
 
   test("requires absolute artifact and fresh absolute operation output roots", async () => {
-    const outputRoot = await mkdtemp(join(tmpdir(), "skill-cli-packaged-test-"));
+    const outputRoot = await mkdtemp(join(tmpdir(), "skctl-packaged-test-"));
     try {
       expect(() =>
         parseSmokeOptions(["--artifact", "relative", "--output-root", outputRoot]),
@@ -81,7 +79,7 @@ describe("packaged release orchestration", () => {
   });
 
   test("evidence-only invocation rebuilds and records the supplied manifest", () => {
-    const evidenceDir = "/tmp/opencode/skill-cli-evidence-options";
+    const evidenceDir = "/tmp/opencode/skctl-evidence-options";
     const manifest = join(evidenceDir, "worktree-manifest.json");
     const options = parseSmokeOptions(["--evidence-dir", evidenceDir, "--manifest", manifest]);
     expect(options).toMatchObject({
@@ -98,9 +96,9 @@ describe("packaged release orchestration", () => {
   });
 
   test("qualifies foreign artifacts without claiming a foreign host run", () => {
-    expect(expectedArtifactName("linux", "x64")).toBe("skill-cli-linux-x64");
-    expect(expectedArtifactName("darwin", "arm64")).toBe("skill-cli-darwin-arm64");
-    expect(expectedArtifactName("win32", "x64")).toBe("skill-cli-windows-x64.exe");
+    expect(expectedArtifactName("linux", "x64")).toBe("skctl-linux-x64");
+    expect(expectedArtifactName("darwin", "arm64")).toBe("skctl-darwin-arm64");
+    expect(expectedArtifactName("win32", "x64")).toBe("skctl-windows-x64.exe");
   });
 
   test("Windows controller is render-gated and boundedly drains every owned resource", () => {
@@ -147,8 +145,8 @@ describe("packaged release orchestration", () => {
       path: buildMetadata.tuiArtifact,
       digest: tuiDigest,
     });
-    const output = await mkdtemp(join(tmpdir(), "skill-cli-plugin-extract-"));
-    const pluginOutput = await mkdtemp(join(tmpdir(), "skill-cli-plugin-build-"));
+    const output = await mkdtemp(join(tmpdir(), "skctl-plugin-extract-"));
+    const pluginOutput = await mkdtemp(join(tmpdir(), "skctl-plugin-build-"));
     try {
       const build = Bun.spawn([
         process.execPath,
@@ -172,7 +170,7 @@ describe("packaged release orchestration", () => {
         (await readdir(packageRoot, { recursive: true })).filter((path) => path !== "dist").sort(),
       ).toEqual([...pluginPackageFiles].sort());
       const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
-      expect(manifest.name).toBe("@skill-cli/opencode-adapter");
+      expect(manifest.name).toBe("@skctl/opencode-adapter");
       expect(manifest.version).toBe(version);
       const exported = await import(
         `${pathToFileURL(join(packageRoot, "dist/index.js")).href}?test=${Date.now()}`
@@ -186,7 +184,7 @@ describe("packaged release orchestration", () => {
   });
 
   test("rejects foreign release output and preserves generated artifacts", async () => {
-    const output = await mkdtemp(join(tmpdir(), "skill-cli-native-release-"));
+    const output = await mkdtemp(join(tmpdir(), "skctl-native-release-"));
     try {
       await writeFile(join(output, "foreign-artifact"), "foreign");
       const rejected = Bun.spawn(
@@ -243,7 +241,7 @@ describe("packaged release orchestration", () => {
   }, 30_000);
 
   test("runs observable packaged actions and removes only its owned fixture root", async () => {
-    const outputRoot = await mkdtemp(join(tmpdir(), "skill-cli-packaged-smoke-"));
+    const outputRoot = await mkdtemp(join(tmpdir(), "skctl-packaged-smoke-"));
     const artifact = join(root, "dist", buildMetadata.nativeArtifact);
     try {
       await runPackagedSmoke({

@@ -17,10 +17,10 @@ async function initBare(cwd: string, path: string) {
   await git(cwd, `--git-dir=${path}`, "config", "uploadpack.allowReachableSHA1InWant", "true");
 }
 test("remote update and installed reading accept quoted ampersands; invalid metadata identifies its Root and rejects before publication", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-update-frontmatter-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-update-frontmatter-"));
   const work = join(root, "work"),
     bare = join(root, "remote.git");
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   try {
     for (const name of ["one", "placement"]) {
       await mkdir(join(work, "skills", name), { recursive: true });
@@ -29,9 +29,9 @@ test("remote update and installed reading accept quoted ampersands; invalid meta
         `---\nname: ${name}\ndescription: Original\n---\n`,
       );
     }
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await git(work, "init", "-b", "main");
-    await git(work, "config", "user.email", "test@skill-cli.invalid");
+    await git(work, "config", "user.email", "test@skctl.invalid");
     await git(work, "config", "user.name", "Skill CLI");
     await git(work, "add", ".");
     await git(work, "commit", "-m", "original");
@@ -119,17 +119,17 @@ test("remote update and installed reading accept quoted ampersands; invalid meta
     ).toBe(description);
   } finally {
     setManagementPublicationHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-007 classifies Changed New Removed and unchanged while selecting only Changed for update", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-update-"));
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  const root = await mkdtemp(join(tmpdir(), "skctl-update-"));
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   try {
     await mkdir(join(root, "skills", "review"), { recursive: true });
     await mkdir(join(root, "skills", "removed"), { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await writeFile(
       join(root, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: First\n---\n",
@@ -183,16 +183,16 @@ test("MGMT-007 classifies Changed New Removed and unchanged while selecting only
       }),
     ]);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-029 update rejects a Source removed after observation without publishing state", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-update-binding-barrier-"));
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  const root = await mkdtemp(join(tmpdir(), "skctl-update-binding-barrier-"));
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   try {
     await mkdir(join(root, "skills", "review"), { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await writeFile(
       join(root, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: First\n---\n",
@@ -209,7 +209,7 @@ test("MGMT-029 update rejects a Source removed after observation without publish
       join(root, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: Changed\n---\n",
     );
-    setManagementPublicationHookForTest(() => writeFile(join(root, "skill-cli.jsonc"), "{}\n"));
+    setManagementPublicationHookForTest(() => writeFile(join(root, "skctl.jsonc"), "{}\n"));
     await expect(
       api.updateSkills(core, { source: "local", paths: ["review"] }),
     ).rejects.toMatchObject({
@@ -218,13 +218,13 @@ test("MGMT-029 update rejects a Source removed after observation without publish
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
   } finally {
     setManagementPublicationHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-008 selected update is atomic when one root fails validation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-update-atomic-"));
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  const root = await mkdtemp(join(tmpdir(), "skctl-update-atomic-"));
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   try {
     for (const name of ["one", "two"]) {
       await mkdir(join(root, "skills", name), { recursive: true });
@@ -233,7 +233,7 @@ test("MGMT-008 selected update is atomic when one root fails validation", async 
         `---\nname: ${name}\ndescription: First\n---\n`,
       );
     }
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     const core = { cwd: root };
     await api.registerSource(core, {
       level: "project",
@@ -254,21 +254,21 @@ test("MGMT-008 selected update is atomic when one root fails validation", async 
     });
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-008 reports installed metadata, applies the reviewed revision after ref movement, and preserves bytes on publication failure", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-remote-update-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-remote-update-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   try {
     for (const name of ["alpha", "beta", "removed"])
       await mkdir(join(work, "skills", name), { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await git(work, "init");
-    await git(work, "config", "user.email", "test@skill-cli.invalid");
+    await git(work, "config", "user.email", "test@skctl.invalid");
     await git(work, "config", "user.name", "Skill CLI");
     for (const name of ["alpha", "beta", "removed"])
       await writeFile(
@@ -396,21 +396,21 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
     expect(remaining.sort()).toEqual(referenced);
   } finally {
     setCoordinatorHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-007 checks exact Git and GitHub revisions using installed metadata only", async () => {
   for (const kind of ["git", "github"] as const) {
-    const root = await mkdtemp(join(tmpdir(), `skill-cli-${kind}-update-categories-`));
+    const root = await mkdtemp(join(tmpdir(), `skctl-${kind}-update-categories-`));
     const work = join(root, "work");
     const bare = join(root, "remote.git");
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    process.env.SKCTL_STATE_DIR = join(root, "state");
     try {
       await mkdir(join(work, "skills", "review"), { recursive: true });
-      await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+      await writeFile(join(root, "skctl.jsonc"), "{}\n");
       await git(work, "init", "-b", "main");
-      await git(work, "config", "user.email", "test@skill-cli.invalid");
+      await git(work, "config", "user.email", "test@skctl.invalid");
       await git(work, "config", "user.name", "Skill CLI");
       await writeFile(
         join(work, "skills", "review", "SKILL.md"),
@@ -452,21 +452,21 @@ test("MGMT-007 checks exact Git and GitHub revisions using installed metadata on
         unchanged: [],
       });
     } finally {
-      delete process.env.SKILL_CLI_STATE_DIR;
+      delete process.env.SKCTL_STATE_DIR;
       await rm(root, { recursive: true, force: true });
     }
   }
 });
 test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, and binding drift without publication", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-update-integrity-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-update-integrity-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   try {
     await mkdir(join(work, "skills", "review"), { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await git(work, "init", "-b", "main");
-    await git(work, "config", "user.email", "test@skill-cli.invalid");
+    await git(work, "config", "user.email", "test@skctl.invalid");
     await git(work, "config", "user.name", "Skill CLI");
     await writeFile(
       join(work, "skills", "review", "SKILL.md"),
@@ -523,7 +523,7 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
     setManagementPublicationHookForTest(() =>
       writeFile(
-        join(root, "skill-cli.jsonc"),
+        join(root, "skctl.jsonc"),
         '{ "sources": { "remote": { "kind": "git", "origin": "https://example.test/skills.git", "root": "other", "ref": "main" } } }\n',
       ),
     );
@@ -537,7 +537,7 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
   } finally {
     setManagementPublicationHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });

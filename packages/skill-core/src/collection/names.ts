@@ -1,7 +1,7 @@
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 
-const fail = (code: SkillCliError["code"], message: string): never => {
-  throw new SkillCliError(code, message);
+const fail = (code: SkctlError["code"], message: string): never => {
+  throw new SkctlError(code, message);
 };
 export function parseNameSegment(value: string, normalizeNfc = true): string {
   const n = value.normalize("NFC");

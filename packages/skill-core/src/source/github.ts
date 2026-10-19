@@ -1,7 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import { createHash } from "node:crypto";
 import type { SkillProvenance } from "./types";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { assertSourceContentLimit, SourceContentLimitError } from "../content/text";
 import { parseResourcePath } from "../content/path";
 import { openGitSource, runProviderChild, inspectTreeRoots } from "./git";
@@ -48,7 +48,7 @@ export function parseGitHubRepository(
   return { owner: match[2]!, repo: match[3]! };
 }
 
-function providerCode(status: number, message: string): SkillCliError["code"] {
+function providerCode(status: number, message: string): SkctlError["code"] {
   if ((status >= 200 && status < 300) || /json|unexpected|parse/i.test(message))
     return "PROVIDER_INTEGRITY_FAILED";
   switch (classifyGitHubFailure(status, message)) {
@@ -73,7 +73,7 @@ function normalizeEntry(
     !/^[0-9a-f]{40}$/u.test(item.sha) ||
     typeof item.mode !== "string"
   )
-    throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub tree entry is malformed");
+    throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub tree entry is malformed");
   if (item.mode === "160000" && item.type === "commit")
     return { kind: "gitlink", path, commit: item.sha };
   if (item.type === "tree" && item.mode === "040000") return { kind: "directory", path };
@@ -84,7 +84,7 @@ function normalizeEntry(
     !Number.isSafeInteger(item.size) ||
     item.size < 0
   )
-    throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub tree entry is malformed");
+    throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub tree entry is malformed");
   return item.mode === "120000"
     ? { kind: "symlink", path, size: item.size, objectId: item.sha }
     : {
@@ -215,7 +215,7 @@ export async function resolveGitHubApi(
         operation,
         "GitHub meta",
         error,
-        error instanceof SkillCliError ? error.code : "PROVIDER_UNAVAILABLE",
+        error instanceof SkctlError ? error.code : "PROVIDER_UNAVAILABLE",
         [token],
       );
     }
@@ -237,10 +237,10 @@ export async function openGitHubSource(
   batchTrees = false,
 ): Promise<RemoteSnapshot> {
   const repository = parseGitHubRepository(url, api.baseUrl !== "https://api.github.com");
-  if (!repository) throw new SkillCliError("INVALID_ARGUMENT", "Invalid GitHub repository URL");
+  if (!repository) throw new SkctlError("INVALID_ARGUMENT", "Invalid GitHub repository URL");
   const { owner, repo } = repository;
   if (!/^[0-9a-f]{40}$/u.test(commit))
-    throw new SkillCliError("INVALID_ARGUMENT", "Expected exact SHA-1 commit");
+    throw new SkctlError("INVALID_ARGUMENT", "Expected exact SHA-1 commit");
   if (repositoryRoot) parseResourcePath(repositoryRoot);
   const owned = operation === undefined;
   operation ??= createSourceOperation({ source: sourceName, signal, budgetMs: api.timeout });
@@ -280,7 +280,7 @@ export async function openGitHubSource(
           active,
           phase,
           error,
-          error instanceof SkillCliError ? error.code : "PROVIDER_UNAVAILABLE",
+          error instanceof SkctlError ? error.code : "PROVIDER_UNAVAILABLE",
           api.token ? [api.token] : [],
         );
       } finally {
@@ -337,7 +337,7 @@ export async function openGitHubSource(
       return data;
     } catch (error) {
       checkAbort(phase);
-      if (error instanceof SkillCliError) throw error;
+      if (error instanceof SkctlError) throw error;
       const status =
         typeof error === "object" && error && "status" in error && typeof error.status === "number"
           ? error.status
@@ -386,7 +386,7 @@ export async function openGitHubSource(
           "GitHub tree",
         );
         if (response.sha !== id || !Array.isArray(response.tree))
-          throw new SkillCliError(
+          throw new SkctlError(
             "PROVIDER_INTEGRITY_FAILED",
             "GitHub recursive tree identity mismatch",
           );
@@ -411,7 +411,7 @@ export async function openGitHubSource(
             entry.path.split("/").some((part) => !part || part === "." || part === "..") ||
             names.has(entry.path)
           )
-            throw new SkillCliError(
+            throw new SkctlError(
               "PROVIDER_INTEGRITY_FAILED",
               "GitHub recursive tree path is malformed",
             );
@@ -425,7 +425,7 @@ export async function openGitHubSource(
           const split = item.entry.path.lastIndexOf("/");
           const parent = split < 0 ? "" : item.entry.path.slice(0, split);
           if (!directoryIds.has(parent))
-            throw new SkillCliError(
+            throw new SkctlError(
               "PROVIDER_INTEGRITY_FAILED",
               "GitHub recursive tree has missing parents",
             );
@@ -455,13 +455,13 @@ export async function openGitHubSource(
       "GitHub commit",
     );
     if (resolved.sha !== revision || !/^[0-9a-f]{40}$/u.test(resolved.commit?.tree?.sha ?? ""))
-      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub commit identity mismatch");
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub commit identity mismatch");
     return resolved.commit.tree.sha;
   }
   function revisionRoot(revision: string) {
     checkAbort("GitHub commit");
     if (!/^[0-9a-f]{40}$/u.test(revision))
-      throw new SkillCliError("INVALID_ARGUMENT", "Expected exact SHA-1 commit");
+      throw new SkctlError("INVALID_ARGUMENT", "Expected exact SHA-1 commit");
     let pending = revisions.get(revision);
     if (!pending) {
       pending = (async () => {
@@ -475,7 +475,7 @@ export async function openGitHubSource(
           const currentTree = await commitTree(commit);
           const knownCurrent = revisions.get(commit);
           if (knownCurrent && (await knownCurrent) !== currentTree)
-            throw new SkillCliError(
+            throw new SkctlError(
               "PROVIDER_INTEGRITY_FAILED",
               "GitHub current commit tree identity mismatch",
             );
@@ -505,7 +505,7 @@ export async function openGitHubSource(
           "GitHub tree",
         );
         if (response.sha !== id || !Array.isArray(response.tree))
-          throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub tree identity mismatch");
+          throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub tree identity mismatch");
         if (response.truncated) {
           const error = sourceNetworkError(active, "GitHub tree", "GitHub tree is incomplete");
           eligibleFallback.add(error);
@@ -521,7 +521,7 @@ export async function openGitHubSource(
             [".", ".."].includes(item.path) ||
             names.has(item.path)
           )
-            throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub tree path is malformed");
+            throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub tree path is malformed");
           names.add(item.path);
           return { entry: normalizeEntry(item, item.path), objectId: item.sha! };
         });
@@ -578,7 +578,7 @@ export async function openGitHubSource(
     );
     const item = parent && (await tree(parent)).find((item) => item.entry.path === name);
     if (!item || (item.entry.kind !== "file" && item.entry.kind !== "symlink"))
-      throw new SkillCliError("RESOURCE_NOT_FOUND", `Resource not found: ${path}`);
+      throw new SkctlError("RESOURCE_NOT_FOUND", `Resource not found: ${path}`);
     return { ...item.entry, path };
   }
   let fallbackSnapshot: Promise<RemoteSnapshot> | undefined;
@@ -633,7 +633,7 @@ export async function openGitHubSource(
         active,
         "GitHub Git fallback",
         `Primary: ${primaryFact.slice(0, 200)} ${primaryFact.slice(-100)}; fallback: ${String(error)}`,
-        error instanceof SkillCliError ? error.code : "PROVIDER_UNAVAILABLE",
+        error instanceof SkctlError ? error.code : "PROVIDER_UNAVAILABLE",
         api.token ? [api.token] : [],
       );
     }
@@ -649,7 +649,7 @@ export async function openGitHubSource(
     }
     const objectId = entry.objectId;
     if (!objectId)
-      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub entry has no object id");
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub entry has no object id");
     const location = [repositoryRoot, path]
       .filter(Boolean)
       .flatMap((segment) => segment.split("/").map((part) => encodeURIComponent(part)))
@@ -696,12 +696,12 @@ export async function openGitHubSource(
     bytes: Uint8Array,
   ) {
     if (bytes.byteLength !== entry.size)
-      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub blob size mismatch");
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub blob size mismatch");
     if (
       createHash("sha1").update(`blob ${bytes.byteLength}\0`).update(bytes).digest("hex") !==
       entry.objectId
     )
-      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub blob identity mismatch");
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub blob identity mismatch");
     return { entry, bytes };
   }
   const snapshot: RemoteSnapshot = {
@@ -865,7 +865,7 @@ export async function openGitHubSource(
         assertSourceContentLimit(entry.size, maxBytes);
       const objectId = entry.objectId;
       if (!objectId)
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub entry has no object id");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub entry has no object id");
       const blob = await request(() =>
         client.rest.git.getBlob({ owner, repo, file_sha: objectId }),
       );
@@ -874,10 +874,10 @@ export async function openGitHubSource(
         blob.encoding !== "base64" ||
         typeof blob.content !== "string"
       )
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub blob identity mismatch");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub blob identity mismatch");
       const content = blob.content.replace(/\n/gu, "");
       if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(content))
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "GitHub blob encoding is malformed");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "GitHub blob encoding is malformed");
       const bytes = new Uint8Array(Buffer.from(content, "base64"));
       return validatedBlob(entry, bytes);
     } catch (error) {

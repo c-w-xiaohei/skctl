@@ -1,0 +1,15 @@
+{
+  "name": "@skctl/tui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@opentui/core": "0.5.14",
+    "@opentui/solid": "0.5.14",
+    "@skctl/core": "workspace:*",
+    "@tuiparts/core": "0.0.6",
+    "@tuiparts/solid": "0.0.6",
+    "diff": "9.0.0",
+    "solid-js": "1.9.12"
+  }
+}

@@ -7,13 +7,13 @@ import { StateCoordinator } from "../../src/storage/state";
 import { setAcquisitionTrapForTest } from "../../src/source/snapshot";
 import { setContentHookForTest } from "../../src/content/operations";
 test("READ-001/005/006 reads undisclosed installed content structurally and classifies non-text", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-reader-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-reader-"));
   const skill = join(root, "skills", "review");
   const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await mkdir(skill, { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), "{}");
+    await writeFile(join(root, "skctl.jsonc"), "{}");
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\nbody\n");
     await writeFile(join(skill, "data.bin"), Buffer.from([0, 1, 2]));
     const core = { cwd: root };
@@ -38,18 +38,18 @@ test("READ-001/005/006 reads undisclosed installed content structurally and clas
       metadata: { path: "data.bin", kind: "file", size: 3 },
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("READ-001/003 structural load ignores disclosure and owner health but validates installed text", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-reader-load-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-reader-load-"));
   const state = join(root, "state");
   const skill = join(root, "skill");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await mkdir(skill);
-    await writeFile(join(root, "skill-cli.jsonc"), "{}");
+    await writeFile(join(root, "skctl.jsonc"), "{}");
     await writeFile(join(skill, "SKILL.md"), "---\nname: live\ndescription: Live\n---\nbody\n");
     await new StateCoordinator(state).installLocal("missing", "skill", skill);
     const core = { cwd: root };
@@ -69,19 +69,19 @@ test("READ-001/003 structural load ignores disclosure and owner health but valid
       api.loadInstalledSkill(core, { address: { source: "missing", path: "skill" } }),
     ).rejects.toMatchObject({ code: "TEXT_TOO_LARGE" });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("READ-002/003/009 Remote structural reads use only an intact Snapshot despite owner drift", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-reader-remote-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-reader-remote-"));
   const state = join(root, "state");
   const source = join(root, "source");
   const fetch = globalThis.fetch;
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await mkdir(source);
-    await writeFile(join(root, "skill-cli.jsonc"), "{}");
+    await writeFile(join(root, "skctl.jsonc"), "{}");
     await writeFile(
       join(source, "SKILL.md"),
       "---\nname: remote\ndescription: Remote\n---\nbody\n",
@@ -113,18 +113,18 @@ test("READ-002/003/009 Remote structural reads use only an intact Snapshot despi
   } finally {
     setAcquisitionTrapForTest();
     globalThis.fetch = fetch;
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("READ-004/005/006/011 structural resources are live, deterministic, bounded and safe", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-reader-tree-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-reader-tree-"));
   const state = join(root, "state");
   const skill = join(root, "skill");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await mkdir(join(skill, "nested"), { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), "{}");
+    await writeFile(join(root, "skctl.jsonc"), "{}");
     await writeFile(join(skill, "SKILL.md"), "---\nname: tree\ndescription: Tree\n---\n");
     await writeFile(join(skill, "nested", "z.md"), "# z");
     await writeFile(join(skill, "a.txt"), "a");
@@ -197,18 +197,18 @@ test("READ-004/005/006/011 structural resources are live, deterministic, bounded
     ).rejects.toMatchObject({ code: "TEXT_TOO_LARGE" });
   } finally {
     setContentHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("READ-008/010 cancels protected Remote traversal and releases it for later GC", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-reader-cancel-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-reader-cancel-"));
   const state = join(root, "state");
   const source = join(root, "source");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await mkdir(source);
-    await writeFile(join(root, "skill-cli.jsonc"), "{}");
+    await writeFile(join(root, "skctl.jsonc"), "{}");
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     await writeFile(join(source, "note.txt"), "note");
     const coordinator = new StateCoordinator(state);
@@ -253,18 +253,18 @@ test("READ-008/010 cancels protected Remote traversal and releases it for later 
     expect(await Bun.file(join(state, "snapshots", digest)).exists()).toBe(false);
   } finally {
     setContentHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("READ-007 structural Remote reads reject a missing or corrupt Snapshot without repair", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-reader-corrupt-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-reader-corrupt-"));
   const state = join(root, "state");
   const source = join(root, "source");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await mkdir(source);
-    await writeFile(join(root, "skill-cli.jsonc"), "{}");
+    await writeFile(join(root, "skctl.jsonc"), "{}");
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     const coordinator = new StateCoordinator(state);
     const digest = await coordinator.snapshotDigest(source);
@@ -290,7 +290,7 @@ test("READ-007 structural Remote reads reject a missing or corrupt Snapshot with
     ).rejects.toMatchObject({ code: "PROVIDER_INTEGRITY_FAILED" });
     expect(await Bun.file(join(state, "snapshots", digest)).exists()).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });

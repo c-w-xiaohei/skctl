@@ -7,19 +7,19 @@ import { join } from "node:path";
 import { bindingDigest, canonicalLocalOrigin } from "../../src/source/identity";
 import { setManagementPublicationHookForTest } from "../../src/installed/update";
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-management-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-management-"));
   const skills = join(root, "skills");
   const global = join(root, "global.jsonc");
   await mkdir(join(skills, "one"), { recursive: true });
   await mkdir(join(skills, "two"), { recursive: true });
-  await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+  await writeFile(join(root, "skctl.jsonc"), "{}\n");
   await writeFile(global, "{}\n");
   await writeFile(join(skills, "one", "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
   await writeFile(
     join(skills, "two", "SKILL.md"),
     "---\nname: publish\ndescription: Publish\n---\n",
   );
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   return { root, skills, global, core: { cwd: root, userConfigPath: global } };
 }
 function legacyLocal(root: string, source: string, path: string) {
@@ -83,7 +83,7 @@ test("MGMT-006 Local discovery installs an atomic selected set without an invent
       (await api.getWorkspace(value.core)).value.installedSkills.map((item) => item.address.path),
     ).toEqual(["one", "two"]);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -102,7 +102,7 @@ test("MGMT-006 rejects the whole selected Local set when one candidate is invali
     });
     expect((await api.getWorkspace(value.core)).value.installedSkills).toEqual([]);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -128,7 +128,7 @@ test("INS-001 permits same frontmatter names for distinct Local identities", asy
     await api.installSkills(value.core, { source: "second", paths: ["review"] });
     expect((await api.getWorkspace(value.core)).value.installedSkills).toHaveLength(2);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -156,7 +156,7 @@ test("INS-001 rejects a second Source that attempts to install the same Local id
       address: { source: "first", path: "one" },
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -169,7 +169,7 @@ test("INS-001 rejects a first install whose owner is removed after acquisition",
       binding: { kind: "local", path: "./skills", root: "" },
     });
     setManagementPublicationHookForTest(async () => {
-      await writeFile(join(value.root, "skill-cli.jsonc"), "{}\n");
+      await writeFile(join(value.root, "skctl.jsonc"), "{}\n");
     });
     await expect(
       api.installSkills(value.core, { source: "local", paths: ["one"] }),
@@ -179,7 +179,7 @@ test("INS-001 rejects a first install whose owner is removed after acquisition",
     expect((await api.getWorkspace(value.core)).value.installedSkills).toEqual([]);
   } finally {
     setManagementPublicationHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -207,7 +207,7 @@ test("MGMT-003 Source removal independently rejects every owned Installed addres
     });
     expect(await readFile(join(value.root, "state", "state.json"), "utf8")).toBe(before);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -221,7 +221,7 @@ test("MGMT-005 diagnoses missing or drifted owners, keeps content readable, and 
     });
     await api.installSkills(value.core, { source: "first", paths: ["one"] });
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./other", "root": "" } } }\n',
     );
     await expect(api.discoverSkills(value.core, { source: "first" })).rejects.toMatchObject({
@@ -231,12 +231,12 @@ test("MGMT-005 diagnoses missing or drifted owners, keeps content readable, and 
       (await api.loadInstalledSkill(value.core, { address: { source: "first", path: "one" } }))
         .name,
     ).toBe("review");
-    await writeFile(join(value.root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(value.root, "skctl.jsonc"), "{}\n");
     await expect(api.discoverSkills(value.core, { source: "first" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
     await api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" });
@@ -245,9 +245,9 @@ test("MGMT-005 diagnoses missing or drifted owners, keeps content readable, and 
     );
     await api.uninstallSkills(value.core, { source: "second", paths: ["one"] });
     expect((await api.getWorkspace(value.core)).value.installedSkills).toEqual([]);
-    expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toContain('"second"');
+    expect(await readFile(join(value.root, "skctl.jsonc"), "utf8")).toContain('"second"');
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -266,7 +266,7 @@ test("SRC-003 rebinds same canonical identity through a different binding and re
     });
     await api.installSkills(value.core, { source: "first", paths: ["nested/one"] });
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "nested" }, "third": { "kind": "local", "path": "./skills", "root": "other" } } }\n',
     );
     const before = await Bun.file(join(value.root, "state", "state.json")).text();
@@ -287,7 +287,7 @@ test("SRC-003 rebinds same canonical identity through a different binding and re
       JSON.parse(await Bun.file(join(value.root, "state", "state.json")).text()).installed[0],
     ).toMatchObject({ source: "second", path: "one" });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -301,7 +301,7 @@ test("MGMT-009 rebinds a missing legacy owner only when retained identity eviden
     });
     await api.installSkills(value.core, { source: "first", paths: ["one"] });
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
     await api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" });
@@ -310,7 +310,7 @@ test("MGMT-009 rebinds a missing legacy owner only when retained identity eviden
       path: "one",
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -362,12 +362,12 @@ test("MGMT-009 preview reports proven, distinct, and unprovable Rebind proof wit
     expect(
       (await api.previewRebind(value.core, { source: "first", path: "one", owner: "other" })).value,
     ).toMatchObject({ proof: "distinct", allowed: false });
-    await writeFile(join(value.root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(value.root, "skctl.jsonc"), "{}\n");
     expect(
       (await api.previewRebind(value.core, { source: "first", path: "one", owner: "other" })).value,
     ).toMatchObject({ proof: "unprovable", allowed: false });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -380,7 +380,7 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
       "---\nname: nested\ndescription: Nested\n---\n",
     );
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
     const legacy = legacyLocal(value.root, "first", "nested/one");
@@ -405,7 +405,7 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
       },
     });
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "second": { "kind": "local", "path": "./skills", "root": "nested" } } }\n',
     );
     await api.rebindSkill(value.core, {
@@ -421,7 +421,7 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
       path: "one",
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -429,7 +429,7 @@ test("MGMT-009 degrades an already-missing literal v1 owner without provider acc
   const value = await fixture();
   try {
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
     const legacy = legacyLocal(value.root, "missing", "one");
@@ -468,7 +468,7 @@ test("MGMT-009 degrades an already-missing literal v1 owner without provider acc
       path: "one",
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -476,7 +476,7 @@ test("MGMT-009 derives literal v1 Remote evidence during a state-only uninstall 
   const value = await fixture();
   try {
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "remote": { "kind": "git", "origin": "https://example.test/skills.git", "root": "skills", "ref": "main" } } }\n',
     );
     await mkdir(join(value.root, "state"), { recursive: true });
@@ -519,7 +519,7 @@ test("MGMT-009 derives literal v1 Remote evidence during a state-only uninstall 
       configs: {},
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -533,7 +533,7 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
     });
     await api.installSkills(value.core, { source: "first", paths: ["one"] });
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
     const before = await Bun.file(join(value.root, "state", "state.json")).text();
@@ -544,16 +544,16 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
     const removedOwnerBytes =
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" } } }\n';
     setManagementPublicationHookForTest(() =>
-      writeFile(join(value.root, "skill-cli.jsonc"), removedOwnerBytes),
+      writeFile(join(value.root, "skctl.jsonc"), removedOwnerBytes),
     );
     await expect(
       api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await Bun.file(join(value.root, "state", "state.json")).text()).toBe(before);
-    expect(await Bun.file(join(value.root, "skill-cli.jsonc")).text()).toBe(removedOwnerBytes);
+    expect(await Bun.file(join(value.root, "skctl.jsonc")).text()).toBe(removedOwnerBytes);
     setManagementPublicationHookForTest();
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
     await api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" });
@@ -562,7 +562,7 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
     );
   } finally {
     setManagementPublicationHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -583,7 +583,7 @@ test("private snapshot fixture publication cannot forge a Remote Installed ident
     expect(await state.exists()).toBe(false);
     expect(await Bun.file(join(value.root, "state", "snapshots", digest)).exists()).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -599,15 +599,15 @@ async function initBare(cwd: string, path: string) {
   await git(cwd, `--git-dir=${path}`, "config", "uploadpack.allowReachableSHA1InWant", "true");
 }
 test("MGMT-006 Remote discovery installs the reviewed exact commit after the tracked ref moves", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-managed-git-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-managed-git-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   try {
     await mkdir(join(work, "skills", "review"), { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await git(work, "init");
-    await git(work, "config", "user.email", "test@skill-cli.invalid");
+    await git(work, "config", "user.email", "test@skctl.invalid");
     await git(work, "config", "user.name", "Skill CLI");
     await writeFile(
       join(work, "skills", "review", "SKILL.md"),
@@ -665,25 +665,25 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
           join(root, "state", "snapshots", state.installed[0].digest, "root", "SKILL.md"),
         ).text(),
       ).toContain("description: Remote");
-      expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).not.toContain("members");
-      expect(await Bun.file(join(root, "skill-cli.jsonc")).text()).not.toContain('"use"');
+      expect(await Bun.file(join(root, "skctl.jsonc")).text()).not.toContain("members");
+      expect(await Bun.file(join(root, "skctl.jsonc")).text()).not.toContain('"use"');
     } finally {
     }
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable commits, and binding drift without publication", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-install-integrity-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-install-integrity-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   try {
     await mkdir(join(work, "skills", "review"), { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await git(work, "init", "-b", "main");
-    await git(work, "config", "user.email", "test@skill-cli.invalid");
+    await git(work, "config", "user.email", "test@skctl.invalid");
     await git(work, "config", "user.name", "Skill CLI");
     await writeFile(
       join(work, "skills", "review", "SKILL.md"),
@@ -723,10 +723,10 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
       });
       expect(await Bun.file(join(root, "state", "state.json")).exists()).toBe(false);
     }
-    const beforeConfig = await Bun.file(join(root, "skill-cli.jsonc")).text();
+    const beforeConfig = await Bun.file(join(root, "skctl.jsonc")).text();
     setManagementPublicationHookForTest(() =>
       writeFile(
-        join(root, "skill-cli.jsonc"),
+        join(root, "skctl.jsonc"),
         beforeConfig.replace('"root": "skills"', '"root": "other"'),
       ),
     );
@@ -740,20 +740,20 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
     expect(await Bun.file(join(root, "state", "state.json")).exists()).toBe(false);
   } finally {
     setManagementPublicationHookForTest();
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-006 GitHub discovery and install use its controlled API at the reviewed exact revision", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-managed-github-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-managed-github-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   try {
     await mkdir(join(work, "skills", "review"), { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await git(work, "init");
-    await git(work, "config", "user.email", "test@skill-cli.invalid");
+    await git(work, "config", "user.email", "test@skctl.invalid");
     await git(work, "config", "user.name", "Skill CLI");
     const skill = "---\nname: review\ndescription: GitHub\n---\n";
     await writeFile(join(work, "skills", "review", "SKILL.md"), skill);
@@ -870,7 +870,7 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
       server.stop(true);
     }
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });

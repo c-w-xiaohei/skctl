@@ -1,6 +1,6 @@
 import { schemaJson } from "../packages/skill-core/src/config/document";
 
-const path = "packages/skill-core/schema/skill-cli.schema.json";
+const path = "packages/skill-core/schema/skctl.schema.json";
 const mode = process.argv[2];
 
 if (mode === "write") {

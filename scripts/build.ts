@@ -13,20 +13,20 @@ import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const workspace = resolve(import.meta.dir, "..");
-const appManifest = join(workspace, "packages/skill-cli/package.json");
+const appManifest = join(workspace, "packages/skctl/package.json");
 const adapterManifest = join(workspace, "packages/opencode-adapter/package.json");
 
 const nativeTargets: Record<string, { artifact: string; target: string }> = {
-  "linux-x64": { artifact: "skill-cli-linux-x64", target: "bun-linux-x64-modern" },
-  "darwin-arm64": { artifact: "skill-cli-darwin-arm64", target: "bun-darwin-arm64-modern" },
-  "win32-x64": { artifact: "skill-cli-windows-x64.exe", target: "bun-windows-x64-modern" },
+  "linux-x64": { artifact: "skctl-linux-x64", target: "bun-linux-x64-modern" },
+  "darwin-arm64": { artifact: "skctl-darwin-arm64", target: "bun-darwin-arm64-modern" },
+  "win32-x64": { artifact: "skctl-windows-x64.exe", target: "bun-windows-x64-modern" },
 };
 const currentNative = nativeTargets[`${platform()}-${arch()}`];
 if (!currentNative) throw new Error(`Unsupported native host ${platform()}-${arch()}`);
 
 export const buildMetadata = {
   nativeArtifact: currentNative.artifact,
-  tuiArtifact: currentNative.artifact.replace("skill-cli-", "skill-tui-"),
+  tuiArtifact: currentNative.artifact.replace("skctl-", "sktui-"),
   nativeTarget: currentNative.target,
   pluginEntry: "opencode-adapter.js",
   pluginDeclaration: "dist/index.d.ts",
@@ -94,9 +94,7 @@ async function regularFiles(root: string, prefix = ""): Promise<string[]> {
 const releaseMetadataFiles = ["SHA256SUMS", "release-metadata.json"] as const;
 const generatedReleaseFiles = [
   ...Object.values(nativeTargets).map((target) => target.artifact),
-  ...Object.values(nativeTargets).map((target) =>
-    target.artifact.replace("skill-cli-", "skill-tui-"),
-  ),
+  ...Object.values(nativeTargets).map((target) => target.artifact.replace("skctl-", "sktui-")),
   "opencode-adapter.tgz",
   "opencode-adapter.js",
   ...releaseMetadataFiles,
@@ -152,10 +150,10 @@ async function writeReleaseMetadata(outputRoot: string): Promise<void> {
 
 async function buildNative(kind: "cli" | "tui", outputRoot: string): Promise<void> {
   await prepareReleaseOutput(outputRoot);
-  const staging = await mkdtemp(join(outputRoot, ".skill-cli-native-build-"));
+  const staging = await mkdtemp(join(outputRoot, ".skctl-native-build-"));
   try {
     const result = await Bun.build({
-      entrypoints: [join(workspace, `packages/skill-${kind}/src/main.ts`)],
+      entrypoints: [join(workspace, `packages/${kind === "cli" ? "skctl" : "sktui"}/src/main.ts`)],
       plugins: kind === "tui" ? [(await import("@opentui/solid/bun-plugin")).default] : [],
       compile: {
         target: currentNative.target,
@@ -179,7 +177,7 @@ async function buildNative(kind: "cli" | "tui", outputRoot: string): Promise<voi
 
 async function buildPlugin(outputRoot: string): Promise<void> {
   await prepareReleaseOutput(outputRoot);
-  const staging = await mkdtemp(join(tmpdir(), "skill-cli-plugin-pack-"));
+  const staging = await mkdtemp(join(tmpdir(), "skctl-plugin-pack-"));
   try {
     const packageRoot = join(staging, "package");
     const dist = join(packageRoot, "dist");

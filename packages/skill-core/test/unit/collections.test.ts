@@ -142,7 +142,7 @@ test("PROJ-008 retains duplicate JSONC Collection conflicts", () => {
       declaration: { members: { write: { source: "project", path: "write" } } },
       owner: {
         level: "project",
-        file: "/project/skill-cli.jsonc",
+        file: "/project/skctl.jsonc",
         pointer: "/collections/engineering",
       },
     },
@@ -169,7 +169,7 @@ test("rejects two Config Source JSONC contributions for one effective Collection
           declaration: {},
           owner: {
             level: "project",
-            file: "/project/skill-cli.jsonc",
+            file: "/project/skctl.jsonc",
             pointer: "/configSources/team/collections/shared",
           },
         },
@@ -233,7 +233,7 @@ test("PROJ-009 retains exact Membership and Link owners through deterministic ro
   const address = { source: "local", path: "review" };
   const owner = {
     level: "project" as const,
-    file: "/project/skill-cli.jsonc",
+    file: "/project/skctl.jsonc",
     pointer: "/collections",
   };
   const contributions: readonly CollectionContribution[] = [
@@ -342,10 +342,10 @@ test("rejects derived collection entry collisions and validates conflicts throug
   ).toThrow(/conflict/i);
 });
 test("MGMT-016 imports effective memberships as ordinary direct entries and rejects conflicts atomically", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-collection-import-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-collection-import-"));
   const state = join(root, "state");
   try {
-    const file = join(root, "skill-cli.jsonc");
+    const file = join(root, "skctl.jsonc");
     await writeFile(
       file,
       JSON.stringify({
@@ -361,7 +361,7 @@ test("MGMT-016 imports effective memberships as ordinary direct entries and reje
       await writeFile(join(skill, "SKILL.md"), `---\nname: ${name}\ndescription: ${name}\n---\n`);
       await new StateCoordinator(state).installLocal("s", name, skill);
     }
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root };
     await api.importMembers(core, { level: "project", from: "source", into: "target" });
     expect(JSON.parse(await readFile(file, "utf8")).collections.target.members).toEqual({
@@ -383,16 +383,16 @@ test("MGMT-016 imports effective memberships as ordinary direct entries and reje
     ).rejects.toMatchObject({ code: "EXPOSURE_CONFLICT" });
     expect(await readFile(file, "utf8")).toBe(before);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-016 imports contributed derived and composed effective Collections into one direct owner", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-collection-import-origins-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-collection-import-origins-"));
   const state = join(root, "state");
   const module = join(root, "module");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await mkdir(module);
     await writeFile(
       join(module, "config.jsonc"),
@@ -406,7 +406,7 @@ test("MGMT-016 imports contributed derived and composed effective Collections in
       }),
     );
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: {
           remote: {
@@ -461,14 +461,14 @@ test("MGMT-016 imports contributed derived and composed effective Collections in
     });
     await api.importMembers(core, { level: "project", from: "acme/skills", into: "target" });
     expect(
-      JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).collections.target.members,
+      JSON.parse(await readFile(join(root, "skctl.jsonc"), "utf8")).collections.target.members,
     ).toEqual({
       contributed: { source: "shared/reusable", path: "contributed" },
       declared: { source: "remote", path: "declared" },
       derived: { source: "remote", path: "derived" },
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });

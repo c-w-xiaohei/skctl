@@ -37,7 +37,7 @@ export interface Diagnostic {
       };
 }
 
-export type SkillCliErrorCode =
+export type SkctlErrorCode =
   | "INVALID_ARGUMENT"
   | "PROJECT_NOT_FOUND"
   | "CONFIG_SYMLINK"
@@ -74,16 +74,16 @@ export type SkillCliErrorCode =
   | "TRANSACTION_CONFLICT"
   | "INTERNAL";
 
-export class SkillCliError extends Error {
+export class SkctlError extends Error {
   readonly diagnostics: readonly Diagnostic[];
   constructor(
-    readonly code: SkillCliErrorCode,
+    readonly code: SkctlErrorCode,
     message: string,
     diagnostics: readonly Diagnostic[] = [],
     options?: ErrorOptions,
   ) {
     super(message, options);
-    this.name = "SkillCliError";
+    this.name = "SkctlError";
     this.diagnostics = diagnostics;
   }
 }

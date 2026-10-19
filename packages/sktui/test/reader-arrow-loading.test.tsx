@@ -1,0 +1,153 @@
+import { expect, test } from "bun:test";
+import { SelectRenderable } from "@opentui/core";
+import { testRender } from "@opentui/solid";
+import { App } from "../src/app";
+import type { TuiCore } from "../src/effects";
+import { directSourceCore } from "./direct-source.fixture";
+import {
+  readerAddress,
+  readerProjection,
+  readerContent,
+  readerResources,
+} from "./installed-reader.fixture";
+import {
+  enterInstalledAddress,
+  live,
+  openAllInstalledSkills,
+  openReaderTab,
+  parsedEnter,
+} from "./reader-test-controls";
+import type { ResourceDescriptor } from "@skctl/core";
+test("Reader arrows navigate loading and empty Resources without phantom selections", async () => {
+  let complete!: (value: readonly ResourceDescriptor[]) => void;
+  const resources = new Promise<readonly ResourceDescriptor[]>((resolve) => (complete = resolve));
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(readerProjection(), {
+          loadInstalledSkill: async () => readerContent,
+          listInstalledResources: async () => resources,
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 100, height: 30 },
+  );
+  try {
+    await openAllInstalledSkills(setup);
+    await enterInstalledAddress(setup, readerAddress);
+    await openReaderTab(setup, 1);
+    await parsedEnter(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-resources-status",
+    );
+    await setup.waitForFrame((frame) => frame.includes("Loading resources"));
+    for (const [key, id] of [
+      ["ARROW_LEFT", "reader-resources-status"],
+      ["ARROW_RIGHT", "reader-resources-status"],
+      ["ARROW_DOWN", "reader-resources-status"],
+      ["ARROW_UP", "reader-tabs-tab-resources"],
+      ["ARROW_LEFT", "reader-tabs-tab-skill"],
+      ["ARROW_RIGHT", "reader-tabs-tab-resources"],
+    ] as const) {
+      setup.mockInput.pressKey(key);
+      await setup.flush();
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe(id);
+      expect(setup.renderer.root.findDescendantById("resource-browser")).toBeUndefined();
+    }
+    await parsedEnter(setup);
+    setup.mockInput.pressKey("TAB");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-skills",
+    );
+    setup.mockInput.pressKey("TAB", { shift: true });
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-resources-status",
+    );
+    complete([]);
+    await setup.waitFor(() => setup.captureCharFrame().includes("No supporting resources"));
+    setup.mockInput.pressArrow("down");
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-resources-status");
+    expect(setup.renderer.root.findDescendantById("resource-browser")).toBeUndefined();
+    setup.mockInput.pressArrow("up");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-tabs-tab-resources",
+    );
+    expect(setup.captureCharFrame()).toContain("Resources");
+  } finally {
+    complete([]);
+    setup.renderer.destroy();
+  }
+});
+test("late resource completion cannot steal focus after returning to the list", async () => {
+  let finishRead!: (value: Awaited<ReturnType<TuiCore["readInstalledResource"]>>) => void;
+  const requests: unknown[] = [];
+  let delivered = 0;
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(readerProjection(), {
+          loadInstalledSkill: async () => readerContent,
+          listInstalledResources: async () => readerResources,
+          readInstalledResource: async (
+            _environment: import("@skctl/core").CoreOptions,
+            request,
+          ) => {
+            requests.push(request);
+            const result = await new Promise<Awaited<ReturnType<TuiCore["readInstalledResource"]>>>(
+              (resolve) => (finishRead = resolve),
+            );
+            delivered++;
+            return result;
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 100, height: 30 },
+  );
+  try {
+    await openAllInstalledSkills(setup);
+    await enterInstalledAddress(setup, readerAddress);
+    await openReaderTab(setup, 1);
+    await parsedEnter(setup);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
+    const select = live(setup, "resource-browser") as SelectRenderable;
+    const fileIndex = select.options.findIndex((option) => option.value === "docs/guide.md");
+    expect(fileIndex).toBeGreaterThanOrEqual(0);
+    for (let i = 0; i < fileIndex; i++) {
+      setup.mockInput.pressArrow("down");
+      await setup.waitFor(() => select.getSelectedIndex() === i + 1);
+    }
+    expect(select.getSelectedOption()?.value).toBe("docs/guide.md");
+    await parsedEnter(setup);
+    await setup.waitFor(() => requests.length === 1);
+    await setup.waitForFrame((frame) => frame.includes("Loading resource content"));
+    setup.mockInput.pressArrow("left");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
+    finishRead({ kind: "text", path: "docs/guide.md", text: "late", format: "text" });
+    await setup.waitFor(() => delivered === 1);
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("resource-browser");
+    expect(setup.renderer.root.findDescendantById("resource-content")).toBeUndefined();
+    expect((live(setup, "resource-browser") as SelectRenderable).getSelectedOption()?.value).toBe(
+      "docs/guide.md",
+    );
+    await parsedEnter(setup);
+    await setup.waitFor(() => requests.length === 2);
+    finishRead({ kind: "text", path: "docs/guide.md", text: "current", format: "text" });
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-content");
+    await setup.waitForFrame((frame) => frame.includes("current"));
+    setup.mockInput.pressArrow("left");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
+    await parsedEnter(setup);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-content");
+    expect(requests).toEqual([
+      { address: readerAddress, path: "docs/guide.md" },
+      { address: readerAddress, path: "docs/guide.md" },
+    ]);
+  } finally {
+    setup.renderer.destroy();
+  }
+});

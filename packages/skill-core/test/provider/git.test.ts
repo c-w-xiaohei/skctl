@@ -32,7 +32,7 @@ async function initBare(cwd: string, path: string) {
 }
 
 test("Generic Git reads an exact pinned commit with spaces and executable modes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   await mkdir(work);
@@ -70,7 +70,7 @@ test("Generic Git reads an exact pinned commit with spaces and executable modes"
 });
 
 test("Generic Git never broadens a rejected exact fetch to all advertised refs", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-fallback-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-fallback-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   await mkdir(work);
@@ -123,7 +123,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git fetches remote Snapshots without eagerly downloading blobs", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-filter-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-filter-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   const log = join(root, "git.log");
@@ -169,7 +169,7 @@ exec /usr/bin/git "$@"
 });
 
 test("an explicit git Source binding uses Git transport for a GitHub-shaped origin", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-kind-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-kind-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   try {
@@ -214,7 +214,7 @@ test("an explicit git Source binding uses Git transport for a GitHub-shaped orig
 });
 
 test("Generic Git batches candidate SKILL.md acquisition without fetching unselected resources", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-batch-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-batch-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   const log = join(root, "git.log");
@@ -294,7 +294,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git rejects a remote that ignores blob filtering", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-no-filter-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-no-filter-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   try {
@@ -324,7 +324,7 @@ test("Generic Git rejects a remote that ignores blob filtering", async () => {
 });
 
 test("Generic Git serializes concurrent reads and lets close wait for them", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-concurrent-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-concurrent-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   try {
@@ -360,7 +360,7 @@ test("Generic Git serializes concurrent reads and lets close wait for them", asy
 });
 
 test("Generic Git sanitizes post-open provider failures", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-sanitize-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-sanitize-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   const shimRoot = await createExecutableFixture();
@@ -414,7 +414,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git reports an unreachable pinned source as unavailable without stderr", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-transport-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-transport-"));
   const shimRoot = await createExecutableFixture();
   const bin = join(shimRoot, "bin");
   try {
@@ -459,7 +459,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git reports authentication failures without exposing stderr", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-auth-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-auth-"));
   const shimRoot = await createExecutableFixture();
   const bin = join(shimRoot, "bin");
   const invocation = join(root, "auth-invocation");
@@ -514,7 +514,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git reads symlink blob bytes without treating it as an installable file", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-symlink-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-symlink-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   try {
@@ -559,7 +559,7 @@ test("Generic Git reads symlink blob bytes without treating it as an installable
 });
 
 test("Generic Git rejects malformed cat-file batch separators", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-batch-malformed-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-batch-malformed-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   const shimRoot = await createExecutableFixture();
@@ -614,7 +614,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git rejects cat-file batch headers with extra fields", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-batch-header-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-batch-header-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   const shimRoot = await createExecutableFixture();
@@ -669,7 +669,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git rejects non-decimal cat-file batch sizes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-batch-size-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-batch-size-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   const shimRoot = await createExecutableFixture();
@@ -724,7 +724,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git rejects trailing cat-file batch bytes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-batch-trailing-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-batch-trailing-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   const shimRoot = await createExecutableFixture();
@@ -779,7 +779,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git leaves an empty batch entirely idle", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-empty-batch-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-empty-batch-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   const shimRoot = await createExecutableFixture();
@@ -830,7 +830,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git never substitutes a missing pinned commit", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-missing-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-missing-"));
   const work = join(root, "work");
   try {
     const bare = join(root, "remote.git");
@@ -859,7 +859,7 @@ test("Generic Git never substitutes a missing pinned commit", async () => {
 });
 
 test("Generic Git aborts, escalates, and drains a blocked child", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-abort-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-abort-"));
   const shimRoot = await createExecutableFixture();
   const bin = join(shimRoot, "bin");
   const ready = join(root, "ready");
@@ -929,7 +929,7 @@ exec /usr/bin/git "$@"
 });
 
 test("Generic Git keeps Source-Root-relative paths when filtering a nested Skill Root", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-git-nested-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-git-nested-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   await mkdir(join(work, "alpha"), { recursive: true });

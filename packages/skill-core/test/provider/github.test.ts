@@ -30,7 +30,7 @@ async function git(cwd: string, ...args: string[]) {
 }
 
 async function bareFixture() {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-github-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-github-"));
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   await mkdir(work);
@@ -226,7 +226,7 @@ test("GitHub fallback is eligible only for incomplete or unavailable API operati
 });
 
 test("GitHub.com auth token child is cancelled and drained", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-gh-abort-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-gh-abort-"));
   const shimRoot = await createExecutableFixture();
   const bin = join(shimRoot, "bin");
   const ready = join(root, "ready");
@@ -285,7 +285,7 @@ while :; do sleep 1; done
 });
 
 test("GitHub.com resolves API tokens without exposing test APIs to gh", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-gh-token-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-gh-token-"));
   const shimRoot = await createExecutableFixture();
   const bin = join(shimRoot, "bin");
   const invocation = join(root, "invocation");
@@ -581,9 +581,7 @@ test("GitHub treats malformed JSON as integrity failure without fallback", async
 
 test("GitHub fallback closes its temporary Generic Git snapshot after a successful operation", async () => {
   const fixture = await bareFixture();
-  const before = new Set(
-    (await readdir(tmpdir())).filter((name) => name.startsWith("skill-cli-git-")),
-  );
+  const before = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("skctl-git-")));
   const server = Bun.serve({
     port: 0,
     fetch(request) {
@@ -612,7 +610,7 @@ test("GitHub fallback closes its temporary Generic Git snapshot after a successf
     await snapshot.close();
     expect(
       (await readdir(tmpdir())).filter(
-        (name) => name.startsWith("skill-cli-git-") && !before.has(name),
+        (name) => name.startsWith("skctl-git-") && !before.has(name),
       ),
     ).toEqual([]);
   } finally {
@@ -645,9 +643,7 @@ test("GitHub request timeout is authoritative and never falls back", async () =>
 
 test("GitHub fallback closes its temporary Generic Git snapshot after a failed operation", async () => {
   const fixture = await bareFixture();
-  const before = new Set(
-    (await readdir(tmpdir())).filter((name) => name.startsWith("skill-cli-git-")),
-  );
+  const before = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("skctl-git-")));
   const server = Bun.serve({
     port: 0,
     fetch(request) {
@@ -682,7 +678,7 @@ test("GitHub fallback closes its temporary Generic Git snapshot after a failed o
     await snapshot.close();
     expect(
       (await readdir(tmpdir())).filter(
-        (name) => name.startsWith("skill-cli-git-") && !before.has(name),
+        (name) => name.startsWith("skctl-git-") && !before.has(name),
       ),
     ).toEqual([]);
   } finally {

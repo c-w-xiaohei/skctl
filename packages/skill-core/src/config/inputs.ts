@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { ConfigLevel } from "./types";
-import { SkillCliError, type CoreOptions, type OperationOptions } from "../shared";
+import { SkctlError, type CoreOptions, type OperationOptions } from "../shared";
 import { runProviderChild } from "../source/git";
 
 export type ReadWorkspaceOptions = Pick<CoreOptions, "cwd" | "project" | "userConfigPath"> &
@@ -16,11 +16,11 @@ export async function resolveProjectRoot(
     const root = resolve(cwd, explicit);
     if ((await lstat(root).catch(() => undefined))?.isDirectory())
       return { root, resolution: "explicit" };
-    throw new SkillCliError("PROJECT_NOT_FOUND", "Project directory must exist");
+    throw new SkctlError("PROJECT_NOT_FOUND", "Project directory must exist");
   }
   let current = resolve(cwd);
   while (true) {
-    const config = await lstat(join(current, "skill-cli.jsonc")).catch(() => undefined);
+    const config = await lstat(join(current, "skctl.jsonc")).catch(() => undefined);
     if (config?.isFile() && !config.isSymbolicLink())
       return { root: current, resolution: "nearest-config" };
     const parent = dirname(current);
@@ -35,16 +35,16 @@ export async function resolveProjectRoot(
     const output = new TextDecoder().decode(result.stdout).trim();
     if (result.status === 0 && output) return { root: output, resolution: "git-root" };
   } catch (error) {
-    if (error instanceof SkillCliError && error.code === "CANCELLED") throw error;
+    if (error instanceof SkctlError && error.code === "CANCELLED") throw error;
   }
-  throw new SkillCliError("PROJECT_NOT_FOUND", "Project not found");
+  throw new SkctlError("PROJECT_NOT_FOUND", "Project not found");
 }
 export function userConfigFile(options: ReadWorkspaceOptions): string {
   return (
     options.userConfigPath ??
     join(
       process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"),
-      "skill-cli",
+      "skctl",
       "config.jsonc",
     )
   );
@@ -56,7 +56,7 @@ export function configFile(
 ): string {
   return level === "global"
     ? userConfigFile(options)
-    : join(project, level === "project" ? "skill-cli.jsonc" : "skill-cli.local.jsonc");
+    : join(project, level === "project" ? "skctl.jsonc" : "skctl.local.jsonc");
 }
 export function configInputs(options: ReadWorkspaceOptions, project?: string) {
   return [

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "skill-cli-workspace",
+      "name": "skctl-workspace",
       "devDependencies": {
         "@opencode-ai/sdk": "1.18.4",
         "@types/bun": "1.4.3",
@@ -15,22 +15,22 @@
       },
     },
     "packages/opencode-adapter": {
-      "name": "@skill-cli/opencode-adapter",
+      "name": "@skctl/opencode-adapter",
       "version": "0.1.0",
       "dependencies": {
         "@opencode-ai/plugin": "1.18.4",
       },
     },
-    "packages/skill-cli": {
-      "name": "@skill-cli/cli",
+    "packages/skctl": {
+      "name": "@skctl/cli",
       "version": "0.1.0",
       "dependencies": {
-        "@skill-cli/core": "workspace:*",
+        "@skctl/core": "workspace:*",
         "commander": "15.0.0",
       },
     },
     "packages/skill-core": {
-      "name": "@skill-cli/core",
+      "name": "@skctl/core",
       "version": "0.1.0",
       "dependencies": {
         "@octokit/rest": "22.0.1",
@@ -40,13 +40,13 @@
         "yaml": "2.9.0",
       },
     },
-    "packages/skill-tui": {
-      "name": "@skill-cli/tui",
+    "packages/sktui": {
+      "name": "@skctl/tui",
       "version": "0.1.0",
       "dependencies": {
         "@opentui/core": "0.5.14",
         "@opentui/solid": "0.5.14",
-        "@skill-cli/core": "workspace:*",
+        "@skctl/core": "workspace:*",
         "@tuiparts/core": "0.0.6",
         "@tuiparts/solid": "0.0.6",
         "diff": "9.0.0",
@@ -265,13 +265,13 @@
 
     "@sinclair/typebox": ["@sinclair/typebox@0.34.52", "", {}, "sha512-XiMQh7qqVlxZzcVD+kkGMNGMzcTrDMLWI7S4x7z1MkCkbDPrekpZXEUK0eZqZFMuHQg2a2DZOcDIh9o5v3Gonw=="],
 
-    "@skill-cli/cli": ["@skill-cli/cli@workspace:packages/skill-cli"],
+    "@skctl/cli": ["@skctl/cli@workspace:packages/skctl"],
 
-    "@skill-cli/core": ["@skill-cli/core@workspace:packages/skill-core"],
+    "@skctl/core": ["@skctl/core@workspace:packages/skill-core"],
 
-    "@skill-cli/opencode-adapter": ["@skill-cli/opencode-adapter@workspace:packages/opencode-adapter"],
+    "@skctl/opencode-adapter": ["@skctl/opencode-adapter@workspace:packages/opencode-adapter"],
 
-    "@skill-cli/tui": ["@skill-cli/tui@workspace:packages/skill-tui"],
+    "@skctl/tui": ["@skctl/tui@workspace:packages/sktui"],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 

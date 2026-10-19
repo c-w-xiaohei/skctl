@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { parse } from "jsonc-parser";
 import type { ConfigDeclarationOwner, ConfigLevel } from "../config/types";
 
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 
 import { parseQualifiedName } from "../collection/names";
 import { StateCoordinator } from "../storage/state";
@@ -27,16 +27,16 @@ export async function removeDirectSource(
     if (!level) {
       const workspace = await readWorkspaceUnlocked(options, coordinator);
       if (workspace.value.effective.status !== "complete")
-        throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
+        throw new SkctlError("CONFIG_INVALID", "Configuration is incomplete");
       const source = capturedWorkspace(workspace.value)?.sources.get(id);
-      if (!source) throw new SkillCliError("SOURCE_NOT_FOUND", `Source not found: ${id}`);
+      if (!source) throw new SkctlError("SOURCE_NOT_FOUND", `Source not found: ${id}`);
       if (source.contribution)
-        throw new SkillCliError("INVALID_ARGUMENT", "Config Source contributions are immutable");
+        throw new SkctlError("INVALID_ARGUMENT", "Config Source contributions are immutable");
       owner = source.provenance as ConfigDeclarationOwner;
       assertDeclarationOwner(owner, expectedOwner);
       const state = await coordinator.read();
       if (state.installed.some((item) => item.source === id))
-        throw new SkillCliError("CONFIG_CONFLICT", "Installed Skills still belong to this Source");
+        throw new SkctlError("CONFIG_CONFLICT", "Installed Skills still belong to this Source");
       original = decodeConfig(await readFile(owner.file), owner.file);
     } else {
       parseQualifiedName(id);
@@ -49,14 +49,14 @@ export async function removeDirectSource(
       assertDeclarationOwner(owner, expectedOwner);
       original = decodeConfig(await readFile(file), file);
       if (!parse(original, [], { allowTrailingComma: true }).sources?.[id])
-        throw new SkillCliError("SOURCE_NOT_FOUND", `Source not found: ${id}`);
+        throw new SkctlError("SOURCE_NOT_FOUND", `Source not found: ${id}`);
       const state = await coordinator.read();
       if (state.installed.some((item) => item.source === id))
-        throw new SkillCliError("CONFIG_CONFLICT", "Installed Skills still belong to this Source");
+        throw new SkctlError("CONFIG_CONFLICT", "Installed Skills still belong to this Source");
     }
     const next = edit(original, ["sources", id], undefined);
     if (!validatorFor(owner.level)(parse(next, [], { allowTrailingComma: true })))
-      throw new SkillCliError("CONFIG_INVALID", "Invalid declaration edit");
+      throw new SkctlError("CONFIG_INVALID", "Invalid declaration edit");
     await coordinator.publish([{ target: owner.file, bytes: next }]);
   });
 }

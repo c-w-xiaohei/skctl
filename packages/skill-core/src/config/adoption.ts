@@ -6,7 +6,7 @@ import type { ImpactBlocker } from "../collection/types";
 
 import type { WorkspaceView } from "../workspace/types";
 
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 
 import { parseQualifiedName } from "../collection/names";
 import { StateCoordinator } from "../storage/state";
@@ -33,10 +33,10 @@ export async function declaredConfigSource(
     const binding = (await document(file, level)).configSources?.[id];
     if (!binding) continue;
     if (found)
-      throw new SkillCliError("CONFIG_CONFLICT", `Config Source is declared more than once: ${id}`);
+      throw new SkctlError("CONFIG_CONFLICT", `Config Source is declared more than once: ${id}`);
     found = { binding, file, level };
   }
-  if (!found) throw new SkillCliError("SOURCE_NOT_FOUND", `Config Source not found: ${id}`);
+  if (!found) throw new SkctlError("SOURCE_NOT_FOUND", `Config Source not found: ${id}`);
   return found;
 }
 
@@ -47,16 +47,16 @@ export async function forgetConfigSource(options: ReadWorkspaceOptions, id: stri
     const state = await coordinator.read();
     const installed = await migrateLegacyInstalled(options, coordinator, state);
     if (!state.configs[id])
-      throw new SkillCliError("SOURCE_NOT_FOUND", `Config Source is not adopted: ${id}`);
+      throw new SkctlError("SOURCE_NOT_FOUND", `Config Source is not adopted: ${id}`);
     if (state.installed.some((item) => item.source.startsWith(`${id}/`)))
-      throw new SkillCliError(
+      throw new SkctlError(
         "CONFIG_CONFLICT",
         "Installed Skills still belong to this Config Source",
       );
     const workspace = await readWorkspaceUnlocked(options, coordinator);
     const dependencies = configSourceDependencies(workspace.value, id);
     if (dependencies.length)
-      throw new SkillCliError("CONFIG_CONFLICT", "Config Source has effective graph dependencies");
+      throw new SkctlError("CONFIG_CONFLICT", "Config Source has effective graph dependencies");
     const nextState = {
       version: 3,
       generation: state.generation + 1,
@@ -84,26 +84,23 @@ export async function removeConfigSource(
       (declared.file !== expected.file ||
         !Buffer.from(await readFile(declared.file)).equals(expected.bytes))
     )
-      throw new SkillCliError(
-        "CONFIG_CONFLICT",
-        "Config Source declaration changed during removal",
-      );
+      throw new SkctlError("CONFIG_CONFLICT", "Config Source declaration changed during removal");
     const state = await coordinator.read();
     const installed = await migrateLegacyInstalled(options, coordinator, state);
     if (state.installed.some((item) => item.source.startsWith(`${id}/`)))
-      throw new SkillCliError(
+      throw new SkctlError(
         "CONFIG_CONFLICT",
         "Installed Skills still belong to this Config Source",
       );
     const workspace = await readWorkspaceUnlocked(options, coordinator);
     const dependencies = configSourceDependencies(workspace.value, id);
     if (dependencies.length)
-      throw new SkillCliError("CONFIG_CONFLICT", "Config Source has effective graph dependencies");
+      throw new SkctlError("CONFIG_CONFLICT", "Config Source has effective graph dependencies");
     const original = decodeConfig(await readFile(declared.file), declared.file);
     const next = edit(original, ["configSources", id], undefined);
     const proposed = parse(next, [], { allowTrailingComma: true });
     if (!validatorFor(declared.level)(proposed))
-      throw new SkillCliError("CONFIG_INVALID", "Invalid declaration edit");
+      throw new SkctlError("CONFIG_INVALID", "Invalid declaration edit");
     await coordinator.publish(
       [
         { target: declared.file, bytes: next },

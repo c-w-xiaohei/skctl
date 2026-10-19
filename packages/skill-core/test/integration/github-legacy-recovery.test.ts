@@ -38,14 +38,14 @@ async function fixture(changed: boolean) {
   const work = join(root, "work"),
     bare = join(root, "remote.git"),
     stateFile = join(root, "state", "state.json");
-  const previousState = process.env.SKILL_CLI_STATE_DIR;
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  const previousState = process.env.SKCTL_STATE_DIR;
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   let oldOutcome: OldOutcome = "available",
     currentUnavailable = false,
     disappearAfterOld = false;
   const requests: string[] = [];
   await mkdir(work);
-  await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+  await writeFile(join(root, "skctl.jsonc"), "{}\n");
   await git(work, "init", "-b", "main");
   await git(work, "config", "user.email", "test@example.test");
   await git(work, "config", "user.name", "Test");
@@ -229,8 +229,8 @@ async function fixture(changed: boolean) {
     async close() {
       api.closeAllConnections();
       await new Promise<void>((resolve) => api.close(() => resolve()));
-      if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-      else process.env.SKILL_CLI_STATE_DIR = previousState;
+      if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+      else process.env.SKCTL_STATE_DIR = previousState;
       await rm(root, { recursive: true, force: true });
     },
   };

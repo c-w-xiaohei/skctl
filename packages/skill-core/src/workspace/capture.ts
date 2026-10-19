@@ -12,7 +12,7 @@ import {
   type ResolvedCollections,
   type MemberOriginPath,
 } from "../collection/graph";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { canonicalLocalOrigin, canonicalRemoteOrigin } from "../source/identity";
 import { parseQualifiedName } from "../collection/names";
 import { StateCoordinator } from "../storage/state";
@@ -76,11 +76,7 @@ export async function readWorkspaceUnlocked(
   const project = options.globalOnly
     ? { root: resolve(options.cwd), resolution: "global-only" as const }
     : await resolveProjectRoot(options.cwd, options.project, options.signal).catch((error) => {
-        if (
-          !options.project &&
-          error instanceof SkillCliError &&
-          error.code === "PROJECT_NOT_FOUND"
-        )
+        if (!options.project && error instanceof SkctlError && error.code === "PROJECT_NOT_FOUND")
           return { root: resolve(options.cwd), resolution: "global-only" as const };
         throw error;
       });
@@ -135,22 +131,20 @@ export async function readWorkspaceUnlocked(
       rejectHost(
         input,
         {
-          code: error instanceof SkillCliError ? error.code : "CONFIG_INVALID",
+          code: error instanceof SkctlError ? error.code : "CONFIG_INVALID",
           severity: "warning",
-          message: error instanceof SkillCliError ? error.message : "Configuration cannot be read",
+          message: error instanceof SkctlError ? error.message : "Configuration cannot be read",
           location:
-            error instanceof SkillCliError
+            error instanceof SkctlError
               ? (error.diagnostics[0]?.location ?? { file: input.file })
               : { file: input.file },
           subject: { kind: "config", owner: { level: input.level, file: input.file, pointer: "" } },
         },
-        error instanceof SkillCliError && error.code === "CONFIG_SYMLINK"
-          ? "unreadable"
-          : "invalid",
+        error instanceof SkctlError && error.code === "CONFIG_SYMLINK" ? "unreadable" : "invalid",
       );
       continue;
     }
-    let bindingError: SkillCliError | undefined;
+    let bindingError: SkctlError | undefined;
     const reusableConfigs = new Map<
       string,
       {
@@ -192,7 +186,7 @@ export async function readWorkspaceUnlocked(
             ),
           });
       } catch (error) {
-        if (!(error instanceof SkillCliError) || error.code !== "CONFIG_INVALID") throw error;
+        if (!(error instanceof SkctlError) || error.code !== "CONFIG_INVALID") throw error;
         bindingError = invalidConfig(
           input.file,
           error.message,
@@ -228,7 +222,7 @@ export async function readWorkspaceUnlocked(
       .map(([id, item]) => {
         const source = sourceView(id, item, input.file, input.level);
         if (sources.has(source.id))
-          throw new SkillCliError(
+          throw new SkctlError(
             "CONFIG_CONFLICT",
             `Source is declared more than once: ${source.id}`,
           );
@@ -242,7 +236,7 @@ export async function readWorkspaceUnlocked(
     for (const id of Object.keys(value.collections ?? {})) {
       parseQualifiedName(id);
       if (collections.has(id))
-        throw new SkillCliError("CONFIG_CONFLICT", `Collection is declared more than once: ${id}`);
+        throw new SkctlError("CONFIG_CONFLICT", `Collection is declared more than once: ${id}`);
       collections.add(id);
       collectionContributions.push({
         id,
@@ -264,7 +258,7 @@ export async function readWorkspaceUnlocked(
       ([configId, binding]) => {
         parseQualifiedName(configId);
         if (configSources.has(configId))
-          throw new SkillCliError(
+          throw new SkctlError(
             "CONFIG_CONFLICT",
             `Config Source is declared more than once: ${configId}`,
           );
@@ -304,7 +298,7 @@ export async function readWorkspaceUnlocked(
             contribution,
           };
           if (sources.has(source.id))
-            throw new SkillCliError(
+            throw new SkctlError(
               "CONFIG_CONFLICT",
               `Source is declared more than once: ${source.id}`,
             );
@@ -315,7 +309,7 @@ export async function readWorkspaceUnlocked(
           ([id, declaration]) => {
             const namespaced = namespace(id);
             if (collections.has(namespaced))
-              throw new SkillCliError(
+              throw new SkctlError(
                 "CONFIG_CONFLICT",
                 `Collection is declared more than once: ${namespaced}`,
               );
@@ -421,7 +415,7 @@ export async function readWorkspaceUnlocked(
           const declarationOwner = declaredContributions[0]?.owner;
           const ownerFor = (pointer: string) => {
             if (!declarationOwner)
-              throw new SkillCliError("INTERNAL", "Declared Collection owner is unavailable");
+              throw new SkctlError("INTERNAL", "Declared Collection owner is unavailable");
             return { ...declarationOwner, pointer: `${declarationOwner.pointer}/${pointer}` };
           };
           return {

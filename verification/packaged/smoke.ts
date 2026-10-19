@@ -30,9 +30,9 @@ export function expectedArtifactName(
   currentPlatform = process.platform,
   currentArch = process.arch,
 ): string {
-  if (currentPlatform === "linux") return `skill-cli-linux-${currentArch}`;
-  if (currentPlatform === "darwin") return `skill-cli-darwin-${currentArch}`;
-  if (currentPlatform === "win32") return `skill-cli-windows-${currentArch}.exe`;
+  if (currentPlatform === "linux") return `skctl-linux-${currentArch}`;
+  if (currentPlatform === "darwin") return `skctl-darwin-${currentArch}`;
+  if (currentPlatform === "win32") return `skctl-windows-${currentArch}.exe`;
   throw new Error(`Unsupported native platform ${currentPlatform}-${currentArch}`);
 }
 
@@ -69,7 +69,7 @@ export function parseSmokeOptions(argv: readonly string[]): SmokeOptions {
     tuiArtifact = resolve(
       import.meta.dir,
       "../../dist",
-      expectedArtifactName().replace("skill-cli-", "skill-tui-"),
+      expectedArtifactName().replace("skctl-", "sktui-"),
     );
   if (evidenceDir && !outputRoot) outputRoot = join(evidenceDir, "fixture-runtime");
   if (!artifact || !isAbsolute(artifact)) throw new Error("--artifact must be an absolute path");
@@ -106,9 +106,9 @@ function isolatedEnvironment(outputRoot: string): Record<string, string> {
   return {
     ...process.env,
     BUN_CONFIG_DISABLE: "1",
-    SKILL_CLI_AGENT: "packaged-smoke",
-    SKILL_CLI_AGENT_VERSION: "1",
-    SKILL_CLI_STATE_DIR: join(outputRoot, "state"),
+    SKCTL_AGENT: "packaged-smoke",
+    SKCTL_AGENT_VERSION: "1",
+    SKCTL_STATE_DIR: join(outputRoot, "state"),
     XDG_CONFIG_HOME: join(outputRoot, "xdg-config"),
     XDG_STATE_HOME: join(outputRoot, "xdg-state"),
     HOME: join(outputRoot, "home"),
@@ -228,9 +228,7 @@ async function tui(
       ]);
       const text = Buffer.concat(chunks).toString();
       assert(
-        status === 1 &&
-          text.includes("skill-tui is not installed") &&
-          !text.includes("\x1b[?1049h"),
+        status === 1 && text.includes("sktui is not installed") && !text.includes("\x1b[?1049h"),
         "CLI missing-TUI behavior differs",
       );
     } finally {
@@ -287,7 +285,7 @@ async function tui(
   if (absent) {
     assert(
       exitCode === 1 &&
-        rendered.includes("skill-tui is not installed") &&
+        rendered.includes("sktui is not installed") &&
         !rendered.includes("\x1b[?1049h"),
       "CLI missing-TUI behavior differs",
     );
@@ -363,7 +361,7 @@ async function nativeJourney(driver: NativeDriver, mode: NativeMode, outputRoot:
   };
   await driver.frame("startup", ["Agent access", "Scope: Workspace ▾"]);
   if (mode === "cold") {
-    const path = join(outputRoot, "fixture-project", "skill-cli.jsonc");
+    const path = join(outputRoot, "fixture-project", "skctl.jsonc");
     const before = await readFile(path, "utf8");
     await activateAllSkills();
     await driver.frame("cold-installed", ["Your Skill library is empty", "Add a Source"]);
@@ -412,7 +410,7 @@ async function nativeJourney(driver: NativeDriver, mode: NativeMode, outputRoot:
       await driver.frame("direct-reader-resize", ["SKILL.md", "Fixture", "fixture", "↑↓ scroll"]);
     }
     if (mode === "reader") {
-      const config = join(outputRoot, "fixture-project", "skill-cli.jsonc");
+      const config = join(outputRoot, "fixture-project", "skctl.jsonc");
       const before = await readFile(config, "utf8");
       await driver.click("Details");
       await driver.frame("reader-details-tabs", [
@@ -447,7 +445,7 @@ async function nativeJourney(driver: NativeDriver, mode: NativeMode, outputRoot:
     await escape();
     await driver.frame("installed-return", ["All Skills", "fixture", "Enter read"]);
     if (mode === "reader") {
-      const config = join(outputRoot, "fixture-project", "skill-cli.jsonc");
+      const config = join(outputRoot, "fixture-project", "skctl.jsonc");
       const before = await readFile(config, "utf8");
       for (const [width, height] of [
         [100, 24],
@@ -539,7 +537,7 @@ async function nativeJourney(driver: NativeDriver, mode: NativeMode, outputRoot:
     await driver.frame("owning-config", ["Project Config / Collections"]);
     await escape();
     await driver.frame("reference-return", ["Reference child", "Open owning Config"]);
-    const path = join(outputRoot, "fixture-project", "skill-cli.jsonc");
+    const path = join(outputRoot, "fixture-project", "skctl.jsonc");
     const before = await readFile(path, "utf8");
     await driver.click("Remove Reference");
     await driver.frame("removal-review", ["Remove Reference", "Cancel"]);
@@ -630,7 +628,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
   const project = join(options.outputRoot, "fixture-project");
   const install = join(options.outputRoot, "installed");
   await mkdir(install);
-  const cli = join(install, process.platform === "win32" ? "skill-cli.exe" : "skill-cli");
+  const cli = join(install, process.platform === "win32" ? "skctl.exe" : "skctl");
   await copyFile(options.artifact, cli);
   await chmod(cli, 0o755);
   const command = async (args: readonly string[]) => {
@@ -695,7 +693,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
     await mkdir(join(skill, "assets"), { recursive: true });
     await mkdir(project);
     await writeFile(
-      join(project, "skill-cli.jsonc"),
+      join(project, "skctl.jsonc"),
       '{"collections":{"fixture-collection":{"members":{}}}}\n',
     );
     await writeFile(join(skill, "SKILL.md"), skillBytes);
@@ -729,10 +727,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
       true,
       "cold-cli-tui-missing",
     );
-    const installedTui = join(
-      install,
-      process.platform === "win32" ? "skill-tui.exe" : "skill-tui",
-    );
+    const installedTui = join(install, process.platform === "win32" ? "sktui.exe" : "sktui");
     await copyFile(options.tuiArtifact, installedTui);
     await chmod(installedTui, 0o755);
     const help = Bun.spawn([installedTui, "--help"], {
@@ -742,7 +737,7 @@ export async function runPackagedSmoke(options: SmokeOptions): Promise<void> {
     });
     const [helpCode, helpText] = await Promise.all([help.exited, new Response(help.stdout).text()]);
     assert(
-      helpCode === 0 && helpText.includes("Usage: skill-tui"),
+      helpCode === 0 && helpText.includes("Usage: sktui"),
       "Standalone help failed without a terminal",
     );
     await tui(

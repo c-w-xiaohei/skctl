@@ -9,7 +9,7 @@ import {
 import { parseNameSegment, parseSelector } from "../../src/collection/names";
 import { parseResourcePath } from "../../src/content/path";
 import { parseSkillMetadata } from "../../src/content/text";
-import { SkillCliError } from "../../src/shared";
+import { SkctlError } from "../../src/shared";
 
 describe("domain identity", () => {
   test("normalizes remote origins without changing provider paths", () => {
@@ -18,7 +18,7 @@ describe("domain identity", () => {
     expect(canonicalRemoteOrigin("HTTPS://Example.TEST:443/A.git/")).toBe(
       "https://example.test/A.git",
     );
-    expect(() => canonicalRemoteOrigin("https://user@example.test/a")).toThrow(SkillCliError);
+    expect(() => canonicalRemoteOrigin("https://user@example.test/a")).toThrow(SkctlError);
     expect(canonicalRemoteOrigin("HTTP://EXAMPLE.TEST:80/owner/repo.git/")).toBe(
       "http://example.test/owner/repo.git",
     );
@@ -32,7 +32,7 @@ describe("domain identity", () => {
       "ftp://example.test/repo",
       "not a url",
     ])
-      expect(() => canonicalRemoteOrigin(value)).toThrow(SkillCliError);
+      expect(() => canonicalRemoteOrigin(value)).toThrow(SkctlError);
   });
 
   test("keeps a missing local root as a lexical identity and binds immutably", () => {
@@ -70,7 +70,7 @@ describe("domain identity", () => {
       "team/../review",
       "team/./review",
     ])
-      expect(() => parseSkillAddress(address, ["team", "team/core"])).toThrow(SkillCliError);
+      expect(() => parseSkillAddress(address, ["team", "team/core"])).toThrow(SkctlError);
   });
 
   test("rejects aliases, invalid references, locators, and resource paths", () => {
@@ -79,7 +79,7 @@ describe("domain identity", () => {
       () => parseSelector("source:one:two"),
       () => parseResourcePath("../secret"),
     ]) {
-      expect(parse).toThrow(SkillCliError);
+      expect(parse).toThrow(SkctlError);
     }
   });
 });
@@ -116,5 +116,5 @@ test("Skill metadata still rejects actual YAML aliases, anchors, tags, duplicate
     "name: review\ndescription: []",
     "name: review\ndescription: ' '",
   ])
-    expect(() => parseSkillMetadata(`---\n${header}\n---\n`)).toThrow(SkillCliError);
+    expect(() => parseSkillMetadata(`---\n${header}\n---\n`)).toThrow(SkctlError);
 });

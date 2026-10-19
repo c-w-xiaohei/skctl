@@ -9,24 +9,24 @@ test("MGMT-029 execution requests accept no preview token generation or digest a
   type Forbidden = "token" | "generation" | "digest";
   type Clean<T> = Extract<keyof T, Forbidden> extends never ? true : false;
   const requests: true[] = [
-    true as Clean<Parameters<typeof import("@skill-cli/core").removeSource>[1]>,
-    true as Clean<Parameters<typeof import("@skill-cli/core").rebindSkill>[1]>,
-    true as Clean<Parameters<typeof import("@skill-cli/core").uninstallSkills>[1]>,
-    true as Clean<Parameters<typeof import("@skill-cli/core").adoptConfigSource>[1]>,
-    true as Clean<Parameters<typeof import("@skill-cli/core").forgetConfig>[1]>,
-    true as Clean<Parameters<typeof import("@skill-cli/core").removeConfig>[1]>,
-    true as Clean<Parameters<typeof import("@skill-cli/core").editMembers>[1]>,
+    true as Clean<Parameters<typeof import("@skctl/core").removeSource>[1]>,
+    true as Clean<Parameters<typeof import("@skctl/core").rebindSkill>[1]>,
+    true as Clean<Parameters<typeof import("@skctl/core").uninstallSkills>[1]>,
+    true as Clean<Parameters<typeof import("@skctl/core").adoptConfigSource>[1]>,
+    true as Clean<Parameters<typeof import("@skctl/core").forgetConfig>[1]>,
+    true as Clean<Parameters<typeof import("@skctl/core").removeConfig>[1]>,
+    true as Clean<Parameters<typeof import("@skctl/core").editMembers>[1]>,
   ];
   expect(requests).toEqual([true, true, true, true, true, true, true]);
 });
 test("PROJ-022 contains no private state or generic management fields in a real projection", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-containment-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-projection-containment-"));
   const global = join(root, "global.jsonc");
   const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await writeFile(global, "{}\n");
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     const projection = (await api.getWorkspace({ cwd: root, userConfigPath: global })).value;
     const serialized = JSON.stringify(projection);
     for (const forbidden of [
@@ -45,35 +45,35 @@ test("PROJ-022 contains no private state or generic management fields in a real 
     ])
       expect(serialized.toLowerCase()).not.toContain(forbidden);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("PROJ-023 uses only global project local Config levels in a real workspace", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-levels-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-projection-levels-"));
   const global = join(root, "global.jsonc");
   const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await writeFile(global, "{}\n");
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
-    await writeFile(join(root, "skill-cli.local.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.local.jsonc"), "{}\n");
     const levels = (
       await api.getWorkspace({ cwd: root, userConfigPath: global })
     ).value.configs.map((config) => config.level);
     expect(levels).toEqual(["global", "project", "local"]);
     expect(levels).not.toContain("user");
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("PROJ-024 exposes one workspace authority and focused mutation results", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-authority-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-projection-authority-"));
   const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    process.env.SKCTL_STATE_DIR = state;
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     const core = { cwd: root };
     const result = await api.registerSource(core, {
       level: "project",
@@ -82,23 +82,23 @@ test("PROJ-024 exposes one workspace authority and focused mutation results", as
     });
     expect(result.value).toEqual({
       level: "project",
-      file: join(root, "skill-cli.jsonc"),
+      file: join(root, "skctl.jsonc"),
       changed: true,
     });
     expect("workspace" in result.value).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("PROJ-004/005/006 projects direct and unadopted Remote Config Sources without cache or provider access", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-unit-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-projection-unit-"));
   const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await mkdir(join(root, "skills"));
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         configSources: {
           remote: { kind: "git", origin: "https://example.test/config", root: "", ref: "main" },
@@ -119,18 +119,18 @@ test("PROJ-004/005/006 projects direct and unadopted Remote Config Sources witho
     expect(JSON.stringify(projection)).not.toContain("configs/");
     expect(JSON.stringify(projection)).not.toContain("bindingDigest");
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("PROJ direct Source rows retain binding tracked refs apart from declaration ownership", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-tracked-ref-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-projection-tracked-ref-"));
   const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await mkdir(join(root, "skills"));
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: {
           local: { kind: "local", path: "./skills", root: "" },
@@ -148,22 +148,22 @@ test("PROJ direct Source rows retain binding tracked refs apart from declaration
     expect(source("local")).toMatchObject({ ref: { id: "local" } });
     expect(source("local").trackedRef).toBeUndefined();
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("PROJ-017 excludes unresolved owners from selectors without blocking structural reads", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-projection-content-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-projection-content-"));
   const global = join(root, "global.jsonc");
   const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await writeFile(global, "{}\n");
     const skill = join(root, "skills", "review");
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         collections: { reviews: { members: { review: { source: "gone", path: "review" } } } },
         use: ["reviews"],
@@ -179,7 +179,7 @@ test("PROJ-017 excludes unresolved owners from selectors without blocking struct
       (await api.loadInstalledSkill(core, { address: { source: "gone", path: "review" } })).name,
     ).toBe("review");
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });

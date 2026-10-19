@@ -1,6 +1,6 @@
 import { isAbsolute, normalize, resolve } from "node:path";
 
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import type { SkillAddress, SourceBinding } from "./schema";
 import type { SourceBindingView } from "./types";
 
@@ -8,8 +8,8 @@ export interface InternalSourceBinding extends SourceBindingView {
   readonly bindingDigest: string;
 }
 
-const fail = (code: SkillCliError["code"], message: string): never => {
-  throw new SkillCliError(code, message);
+const fail = (code: SkctlError["code"], message: string): never => {
+  throw new SkctlError(code, message);
 };
 export interface CanonicalSourceBinding {
   readonly kind: SourceBinding["kind"];

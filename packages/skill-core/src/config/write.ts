@@ -5,7 +5,7 @@ import type { ConfigDeclarationOwner, ConfigLevel, ConfigWriteResult } from "./t
 
 import type { OperationOptions, OperationResult } from "../shared";
 
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { canonicalLocalOrigin } from "../source/identity";
 import { parseQualifiedName } from "../collection/names";
 import { StateCoordinator } from "../storage/state";
@@ -77,7 +77,7 @@ export function assertDeclarationOwner(
       actual.namespace !== expected.namespace ||
       !!actual.contribution !== !!expected.contribution)
   )
-    throw new SkillCliError("CONFIG_CONFLICT", "Declaration changed after review");
+    throw new SkctlError("CONFIG_CONFLICT", "Declaration changed after review");
 }
 
 export async function writeConfig<T extends object>(
@@ -86,7 +86,7 @@ export async function writeConfig<T extends object>(
   apply: (edit: ConfigEdit) => Promise<T> | T,
   operation?: OperationOptions,
 ): Promise<OperationResult<ConfigWriteResult & T>> {
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   const coordinator = new StateCoordinator();
   return coordinator.withLock(async () => {
     const project =
@@ -104,17 +104,14 @@ export async function writeConfig<T extends object>(
     const file = configFile(options, level, project.root);
     const stat = await lstat(file).catch(() => undefined);
     if (stat && (!stat.isFile() || stat.isSymbolicLink()))
-      throw new SkillCliError(
-        "CONFIG_SYMLINK",
-        `Configuration file is not an ordinary file: ${file}`,
-      );
+      throw new SkctlError("CONFIG_SYMLINK", `Configuration file is not an ordinary file: ${file}`);
     const original = stat ? decodeConfig(await readFile(file), file) : "{}\n";
     let host: ConfigDocument | undefined;
     const directDocument = () => (host ??= parseDocument(original, file, level));
     const directCollection = (id: string) => {
       const collection = directDocument().collections?.[id];
       if (!collection)
-        throw new SkillCliError(
+        throw new SkctlError(
           "INVALID_ARGUMENT",
           `Collection "${id}" is not directly declared at ${level} scope in ${file}`,
         );
@@ -136,7 +133,7 @@ export async function writeConfig<T extends object>(
     });
     const proposed: unknown = parse(next, [], { allowTrailingComma: true });
     if (!validatorFor(level)(proposed))
-      throw new SkillCliError("CONFIG_INVALID", "Invalid declaration edit");
+      throw new SkctlError("CONFIG_INVALID", "Invalid declaration edit");
     validateDocumentNames(proposed, file);
     validateDocumentBindings(proposed, file, false);
     const workspace = await readWorkspaceUnlocked(workspaceOptions, coordinator);
@@ -147,7 +144,7 @@ export async function writeConfig<T extends object>(
       coordinator,
       { file, value: proposed },
     );
-    if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+    if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
     const changed = next !== original;
     let diagnostics = workspace.diagnostics;
     if (changed) {

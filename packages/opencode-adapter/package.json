@@ -1,5 +1,5 @@
 {
-  "name": "@skill-cli/opencode-adapter",
+  "name": "@skctl/opencode-adapter",
   "version": "0.1.0",
   "private": true,
   "type": "module",

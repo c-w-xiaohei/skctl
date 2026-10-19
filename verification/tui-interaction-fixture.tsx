@@ -3,22 +3,22 @@
 import { createCliRenderer } from "@opentui/core";
 import { render } from "@opentui/solid";
 import { appendFile, mkdir } from "node:fs/promises";
-import { App } from "../packages/skill-tui/src/app";
+import { App } from "../packages/sktui/src/app";
 import {
-  SkillCliError,
+  SkctlError,
   type CollectionView,
   type ConfigSourceImpact,
   type WorkspaceView,
   type OperationResult,
   type SourceBindingView,
-} from "@skill-cli/core";
-import type { TuiCore } from "../packages/skill-tui/src/effects";
+} from "@skctl/core";
+import type { TuiCore } from "../packages/sktui/src/effects";
 const output = "tmp/tui-interaction-audit/fixture-calls.ndjson";
 await mkdir("tmp/tui-interaction-audit", { recursive: true });
 const result = <T,>(value: T): OperationResult<T> => ({ value, diagnostics: [] });
 const owner = (pointer: string, level: "project" | "global" | "local" = "project") => ({
   level,
-  file: `/virtual/${level}/skill-cli.jsonc`,
+  file: `/virtual/${level}/skctl.jsonc`,
   pointer,
 });
 const configOwner = owner("/configSources/team-config", "global");
@@ -284,7 +284,7 @@ let projection: WorkspaceView = {
 };
 // Unsupported operations fail visibly rather than silently simulate completed domain changes.
 const unsupported = async (): Promise<never> => {
-  throw new SkillCliError(
+  throw new SkctlError(
     "INVALID_ARGUMENT",
     "Fixture does not implement this operation; use a focused isolated App test",
   );
@@ -306,7 +306,7 @@ const core: TuiCore = {
     throw new Error("Unexpected fixture inspection");
   },
   getWorkspace: async () => result(structuredClone(projection)),
-  loadInstalledSkill: async (_environment: import("@skill-cli/core").CoreOptions, { address }) => {
+  loadInstalledSkill: async (_environment: import("@skctl/core").CoreOptions, { address }) => {
     const markdownText =
       `# ${address.source} / ${address.path}\n\nneedle first\n\n` +
       Array.from(
@@ -332,7 +332,7 @@ const core: TuiCore = {
     { path: "link", kind: "symlink" },
     { path: "submodule", kind: "gitlink", gitlinkCommit: "a".repeat(40) },
   ],
-  readInstalledResource: async (_environment: import("@skill-cli/core").CoreOptions, { path }) =>
+  readInstalledResource: async (_environment: import("@skctl/core").CoreOptions, { path }) =>
     path.endsWith(".md") || path === "notes.txt"
       ? {
           kind: "text" as const,
@@ -359,10 +359,7 @@ const core: TuiCore = {
                   : ("file" as const),
           },
         },
-  previewUninstall: async (
-    _environment: import("@skill-cli/core").CoreOptions,
-    { source, paths },
-  ) =>
+  previewUninstall: async (_environment: import("@skctl/core").CoreOptions, { source, paths }) =>
     result({
       kind: "uninstall",
       installed: paths.map((path) => ({ source, path })),
@@ -372,10 +369,7 @@ const core: TuiCore = {
       blockers: [],
       allowed: true,
     }),
-  uninstallSkills: async (
-    _environment: import("@skill-cli/core").CoreOptions,
-    { source, paths },
-  ) => {
+  uninstallSkills: async (_environment: import("@skctl/core").CoreOptions, { source, paths }) => {
     projection = {
       ...projection,
       installedSkills: projection.installedSkills.filter(
@@ -385,7 +379,7 @@ const core: TuiCore = {
     return result(undefined);
   },
   previewRebind: async (
-    _environment: import("@skill-cli/core").CoreOptions,
+    _environment: import("@skctl/core").CoreOptions,
     { source, path, owner: nextOwner, ownerPath },
   ) =>
     result({
@@ -398,7 +392,7 @@ const core: TuiCore = {
     }),
   rebindSkill: unsupported,
   installSkills: unsupported,
-  checkUpdate: async (_environment: import("@skill-cli/core").CoreOptions, { source }) =>
+  checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) =>
     result({
       source,
       kind: "github",
@@ -413,7 +407,7 @@ const core: TuiCore = {
   getUpdateBaseline: async () => result("fixture-update-baseline"),
   updateSkills: unsupported,
   registerSource: unsupported,
-  previewSourceRemoval: async (_environment: import("@skill-cli/core").CoreOptions, { source }) =>
+  previewSourceRemoval: async (_environment: import("@skctl/core").CoreOptions, { source }) =>
     result({
       kind: "source-removal",
       source,
@@ -424,7 +418,7 @@ const core: TuiCore = {
       allowed: true,
     }),
   removeSource: unsupported,
-  discoverSkills: async (_environment: import("@skill-cli/core").CoreOptions, { source }) =>
+  discoverSkills: async (_environment: import("@skctl/core").CoreOptions, { source }) =>
     result({
       source,
       kind: "github",
@@ -432,7 +426,7 @@ const core: TuiCore = {
       candidates: [{ path: "new-guide", name: "new-guide", description: "Discoverable fixture" }],
     }),
   registerConfigSource: unsupported,
-  observeConfigSource: async (_environment: import("@skill-cli/core").CoreOptions, { id }) =>
+  observeConfigSource: async (_environment: import("@skctl/core").CoreOptions, { id }) =>
     result({
       id,
       kind: "github",
@@ -440,7 +434,7 @@ const core: TuiCore = {
       contributions: { sources: [], collections: [] },
     }),
   previewConfigAdoption: async (
-    _environment: import("@skill-cli/core").CoreOptions,
+    _environment: import("@skctl/core").CoreOptions,
     { id, exactRevision, observation },
   ) => {
     const source = projection.configs
@@ -478,7 +472,7 @@ const core: TuiCore = {
   setLink: unsupported,
   previewAddToCollection: unsupported,
   previewMembershipRemoval: unsupported,
-  previewMembershipBatch: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+  previewMembershipBatch: async (_environment: import("@skctl/core").CoreOptions, request) =>
     result({
       kind: "membership-batch",
       collection: request.collection,
@@ -491,7 +485,7 @@ const core: TuiCore = {
       allowed: true,
     }),
   previewImport: unsupported,
-  previewAddReference: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+  previewAddReference: async (_environment: import("@skctl/core").CoreOptions, request) =>
     result({
       kind: "reference",
       collection: request.collection,
@@ -503,7 +497,7 @@ const core: TuiCore = {
       allowed: true,
     }),
   previewRemoveReference: unsupported,
-  previewLinkChange: async (_environment: import("@skill-cli/core").CoreOptions, request) =>
+  previewLinkChange: async (_environment: import("@skctl/core").CoreOptions, request) =>
     result({
       kind: "link-change",
       collection: request.collection,
@@ -521,7 +515,7 @@ const core: TuiCore = {
   removeUse: unsupported,
   previewCollectionUse: unsupported,
   setManagedOpenCode: async (
-    _environment: import("@skill-cli/core").CoreOptions,
+    _environment: import("@skctl/core").CoreOptions,
     { level, managed },
   ) => {
     if (projection.effective.status !== "complete") return unsupported();
@@ -556,7 +550,7 @@ async function waitForResponse(
   method: string,
 ) {
   const signal = ignoreAbort ? undefined : options?.signal;
-  if (signal?.aborted) throw new SkillCliError("CANCELLED", `Fixture request cancelled: ${method}`);
+  if (signal?.aborted) throw new SkctlError("CANCELLED", `Fixture request cancelled: ${method}`);
   if (!delay) return;
   await new Promise<void>((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout>;
@@ -567,7 +561,7 @@ async function waitForResponse(
       if (error) reject(error);
       else resolve();
     };
-    abort = () => finish(new SkillCliError("CANCELLED", `Fixture request cancelled: ${method}`));
+    abort = () => finish(new SkctlError("CANCELLED", `Fixture request cancelled: ${method}`));
     timer = setTimeout(() => finish(), delay);
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
@@ -594,7 +588,7 @@ function traced<T extends object>(family: string, port: T): T {
             method,
           );
           if (failOnce.delete(method))
-            throw new SkillCliError("PROVIDER_UNAVAILABLE", `Fixture fail-once: ${method}`);
+            throw new SkctlError("PROVIDER_UNAVAILABLE", `Fixture fail-once: ${method}`);
           const valueResult = await value.apply(target, args);
           await record({ phase: "success", call, method });
           return valueResult;

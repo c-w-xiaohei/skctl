@@ -12,7 +12,7 @@ import type { CollectionView } from "../collection/types";
 import type { OperationResult } from "../shared";
 
 import type { CoreOptions } from "../shared";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { reachableCollections, skillAddressKey } from "../collection/graph";
 import { readWorkspace } from "../workspace/capture";
 
@@ -72,10 +72,10 @@ export async function browseCatalog(
       diagnostics: value.workspace.diagnostics,
     };
   if (value.workspace.value.effective.status !== "complete")
-    throw new SkillCliError("INTERNAL", "Catalog is unavailable");
+    throw new SkctlError("INTERNAL", "Catalog is unavailable");
   const requested = request.collection;
   if (requested && !value.reachable.has(requested))
-    throw new SkillCliError("SKILL_NOT_FOUND", "Collection is not exposed");
+    throw new SkctlError("SKILL_NOT_FOUND", "Collection is not exposed");
   if (!requested)
     return {
       value: {
@@ -94,7 +94,7 @@ export async function browseCatalog(
       diagnostics: value.workspace.diagnostics,
     };
   const collection = value.collections.get(requested);
-  if (!collection) throw new SkillCliError("SKILL_NOT_FOUND", "Collection is not exposed");
+  if (!collection) throw new SkctlError("SKILL_NOT_FOUND", "Collection is not exposed");
   const items: AgentCatalogItem[] = skillsFor(collection, value.installed).map((skill) => ({
     kind: "skill",
     ...skill,
@@ -117,14 +117,14 @@ export async function searchSkills(
   factory: CoreOptions,
   request: SearchSkillsRequest,
 ): Promise<OperationResult<SearchSkillsResult>> {
-  if (!request.query.trim()) throw new SkillCliError("INVALID_ARGUMENT", "Invalid search request");
+  if (!request.query.trim()) throw new SkctlError("INVALID_ARGUMENT", "Invalid search request");
   if (request.limit !== undefined && (!Number.isSafeInteger(request.limit) || request.limit < 0))
-    throw new SkillCliError("INVALID_ARGUMENT", "Search limit must be a non-negative integer");
+    throw new SkctlError("INVALID_ARGUMENT", "Search limit must be a non-negative integer");
   const value = await records(factory);
-  if (value.unavailable) throw new SkillCliError("CONFIG_INVALID", value.unavailable);
+  if (value.unavailable) throw new SkctlError("CONFIG_INVALID", value.unavailable);
   const query = request.query.toLowerCase();
   if (request.collection && !value.reachable.has(request.collection))
-    throw new SkillCliError("SKILL_NOT_FOUND", "Collection is not exposed");
+    throw new SkctlError("SKILL_NOT_FOUND", "Collection is not exposed");
   const collectionIds = request.collection ? [request.collection] : value.rootCollections;
   const entries =
     value.workspace.value.effective.status === "complete"

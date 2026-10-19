@@ -24,9 +24,9 @@ async function inputs() {
     .filter(
       (path) =>
         path &&
-        (path.startsWith("packages/skill-cli/src/") ||
+        (path.startsWith("packages/skctl/src/") ||
           path.startsWith("packages/skill-core/src/") ||
-          path.startsWith("packages/skill-tui/src/") ||
+          path.startsWith("packages/sktui/src/") ||
           path.startsWith("packages/opencode-adapter/src/") ||
           path === "scripts/build.ts" ||
           /^(bun\.lockb?|package\.json)$/.test(path) ||
@@ -73,7 +73,7 @@ export async function buildEvidence(
   const artifact = join(evidenceDir, "binary", artifactName);
   await mkdir(join(evidenceDir, "binary"));
   await copyFile(join(workspace, "dist", artifactName), artifact);
-  const tuiName = artifactName.replace("skill-cli-", "skill-tui-");
+  const tuiName = artifactName.replace("skctl-", "sktui-");
   const tuiArtifact = join(evidenceDir, "binary", tuiName);
   await copyFile(join(workspace, "dist", tuiName), tuiArtifact);
   const binarySha256 = digest(await readFile(artifact));

@@ -1,4 +1,4 @@
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import type { MemberEditRequest } from "./types";
 import { sameSkillAddress } from "./graph";
 import { type SkillAddress } from "../source/schema";
@@ -17,7 +17,7 @@ export function normalizeMemberEdit(request: MemberEditRequest) {
   const names = new Set<string>();
   for (const entry of [...additions, ...removals]) {
     if (names.has(entry.name))
-      throw new SkillCliError(
+      throw new SkctlError(
         "INVALID_ARGUMENT",
         "Membership batch cannot contain duplicate entry names",
       );
@@ -34,17 +34,17 @@ export function editMembers(
   for (const entry of request.removals) {
     const address = current[entry.name];
     if (!address)
-      throw new SkillCliError(
+      throw new SkctlError(
         "INVALID_ARGUMENT",
         `Membership "${entry.name}" is not directly declared in Collection "${request.collection}"`,
       );
     if (!sameSkillAddress(address, entry.expectedAddress))
-      throw new SkillCliError("CONFIG_CONFLICT", "Membership changed after preview");
+      throw new SkctlError("CONFIG_CONFLICT", "Membership changed after preview");
   }
   for (const entry of request.additions) {
     const address = current[entry.name];
     if (address && !sameSkillAddress(address, entry.address))
-      throw new SkillCliError("CONFIG_CONFLICT", "Membership entry name is already in use");
+      throw new SkctlError("CONFIG_CONFLICT", "Membership entry name is already in use");
   }
   const members = { ...current };
   for (const entry of request.removals) delete members[entry.name];

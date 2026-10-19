@@ -154,7 +154,7 @@ export class TerminalScreen {
 
 export function shellSelectionInvariants(text: string) {
   const lines = text.split("\n");
-  if (!lines[0]?.includes("skill-cli")) return { resizeOrModal: true };
+  if (!lines[0]?.includes("skctl")) return { resizeOrModal: true };
   // Compact headers can clip the closing bracket; the opening bracket and exact
   // canonical token still identify selection, never bare unselected context text.
   const selectedContextCount = [
@@ -291,7 +291,7 @@ export async function nativeTerminal(
   };
   let failure: unknown;
   try {
-    await wait(() => screen.text().includes("skill-cli"), "startup");
+    await wait(() => screen.text().includes("skctl"), "startup");
     await journey(driver);
     if (terminationSignal) child.kill(terminationSignal);
     else terminal.write("\x03");

@@ -1,6 +1,6 @@
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { type SkillProvenance } from "./types";
 import { parseResourcePath } from "../content/path";
 import type { LocalSnapshot, SourceEntry } from "./snapshot";
@@ -52,14 +52,14 @@ export async function openLocalSource(
       parseResourcePath(path);
       const entry = (await entries(root)).find((item) => item.path === path);
       if (!entry || entry.kind === "directory")
-        throw new SkillCliError("RESOURCE_NOT_FOUND", `Resource not found: ${path}`);
+        throw new SkctlError("RESOURCE_NOT_FOUND", `Resource not found: ${path}`);
       const target = join(root, ...path.split("/"));
       try {
         const bytes = await readFile(target);
         return { entry, bytes };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT")
-          throw new SkillCliError("RESOURCE_NOT_FOUND", `Resource not found: ${path}`, [], {
+          throw new SkctlError("RESOURCE_NOT_FOUND", `Resource not found: ${path}`, [], {
             cause: error,
           });
         throw error;

@@ -118,7 +118,7 @@ async function startOpenCode(
 }
 
 test("packaged adapter composes with OpenCode 1.18.4 deterministically", async () => {
-  const root = await fs.mkdtemp(join(tmpdir(), "skill-cli-opencode-real-"));
+  const root = await fs.mkdtemp(join(tmpdir(), "skctl-opencode-real-"));
   let host: Awaited<ReturnType<typeof startOpenCode>> | undefined;
   let llm: ReturnType<typeof createLlmServer> | undefined;
   let sessionID: string | undefined;
@@ -144,7 +144,7 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
       HOME: join(root, "home"),
       XDG_CONFIG_HOME: join(root, "xdg-config"),
       XDG_STATE_HOME: join(root, "xdg-state"),
-      SKILL_CLI_STATE_DIR: join(root, "state"),
+      SKCTL_STATE_DIR: join(root, "state"),
       OPENCODE_CONFIG_DIR: join(root, "opencode-config"),
       OPENCODE_DB: join(root, "opencode.db"),
       OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
@@ -159,8 +159,8 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
     const project = join(root, "project");
     const selector = "engineering:review";
     const token = crypto.randomUUID();
-    const browseCommand = "skill-cli agent browse engineering";
-    const loadCommand = `skill-cli agent load ${selector}`;
+    const browseCommand = "skctl agent browse engineering";
+    const loadCommand = `skctl agent load ${selector}`;
     await Promise.all([
       fs.mkdir(bin),
       fs.mkdir(audit),
@@ -171,11 +171,11 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
       `---\nname: review\ndescription: Load the managed instruction.\n---\n${token}\n`,
     );
 
-    const skillCli = join(bin, "skill-cli");
+    const skctl = join(bin, "skctl");
     const opencode = join(bin, "opencode");
     await Promise.all([
       fs.writeFile(
-        skillCli,
+        skctl,
         `#!/bin/sh\nprintf '%s\\000' "$PWD" "$@" > "$AUDIT_DIR/$$"\nexec '${native.replaceAll("'", "'\\''")}' "$@"\n`,
       ),
       fs.writeFile(
@@ -183,7 +183,7 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
         `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '1.18.4\\n'; exit 0; fi\nexec '${candidate.replaceAll("'", "'\\''")}' "$@"\n`,
       ),
     ]);
-    await Promise.all([fs.chmod(skillCli, 0o700), fs.chmod(opencode, 0o700)]);
+    await Promise.all([fs.chmod(skctl, 0o700), fs.chmod(opencode, 0o700)]);
     const envOverrides = {
       ...isolatedEnv,
       PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
@@ -202,7 +202,7 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
       [...inProject, "use", "set", "engineering"],
       [...inProject, "managed", "set"],
     ])
-      await command([skillCli, ...args], project, env);
+      await command([skctl, ...args], project, env);
 
     llm = createLlmServer(browseCommand, loadCommand, project);
     host = await startOpenCode(project, envOverrides, {
@@ -260,8 +260,8 @@ test("packaged adapter composes with OpenCode 1.18.4 deterministically", async (
       expect.arrayContaining([
         expect.stringContaining('<managed_skill_catalog scope="root">'),
         expect.stringContaining("<id>engineering</id>"),
-        expect.stringContaining("skill-cli agent browse <collection-id>"),
-        expect.stringContaining("skill-cli agent load <selector>"),
+        expect.stringContaining("skctl agent browse <collection-id>"),
+        expect.stringContaining("skctl agent load <selector>"),
       ]),
     );
     expect(systemPrompts?.join("\n")).not.toContain(`<selector>${selector}</selector>`);

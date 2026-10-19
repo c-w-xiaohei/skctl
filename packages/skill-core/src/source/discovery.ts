@@ -2,10 +2,10 @@ import { decodeStrictText, parseSkillMetadata, type SkillMetadata } from "../con
 import { readdir, lstat, readFile } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 
-import { SkillCliError, type Diagnostic } from "../shared";
+import { SkctlError, type Diagnostic } from "../shared";
 
-const fail = (code: SkillCliError["code"], message: string): never => {
-  throw new SkillCliError(code, message);
+const fail = (code: SkctlError["code"], message: string): never => {
+  throw new SkctlError(code, message);
 };
 export interface DiscoveredSkill extends SkillMetadata {
   readonly root: string;
@@ -35,7 +35,7 @@ export async function discoverLocalSkills(
             description,
           });
         } catch (error) {
-          if (error instanceof SkillCliError && error.code === "DUPLICATE_SKILL_NAME") throw error;
+          if (error instanceof SkctlError && error.code === "DUPLICATE_SKILL_NAME") throw error;
           diagnostics.push({
             code: "SKILL_FRONTMATTER_INVALID",
             severity: "warning",
@@ -46,7 +46,7 @@ export async function discoverLocalSkills(
         return;
       }
     } catch (error) {
-      if (error instanceof SkillCliError) throw error;
+      if (error instanceof SkctlError) throw error;
     }
     const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries.sort((a, b) => Buffer.from(a.name).compare(Buffer.from(b.name))))

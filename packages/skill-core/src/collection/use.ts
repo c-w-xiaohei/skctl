@@ -1,4 +1,4 @@
-import { SkillCliError, type OperationOptions } from "../shared";
+import { SkctlError, type OperationOptions } from "../shared";
 import { type ConfigLevel } from "../config/types";
 import { type CoreOptions } from "../shared";
 import type { SetUseRequest, UseCollectionRequest } from "./types";
@@ -20,16 +20,16 @@ function editUse(
       const before = [...(edit.document().use ?? [])];
       const after = [...transform(before)];
       if (new Set(after).size !== after.length)
-        throw new SkillCliError(
+        throw new SkctlError(
           "INVALID_ARGUMENT",
           "Collection Use cannot contain duplicate Collection IDs",
         );
       const workspace = await readWorkspaceUnlocked(edit.workspaceOptions, edit.coordinator);
       const effective = workspace.value.effective;
       if (effective.status !== "complete")
-        throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
+        throw new SkctlError("CONFIG_INVALID", "Configuration is incomplete");
       if (after.some((id) => !effective.collectionsView.some((collection) => collection.id === id)))
-        throw new SkillCliError("CONFIG_CONFLICT", "Collection Use is incomplete");
+        throw new SkctlError("CONFIG_CONFLICT", "Collection Use is incomplete");
       edit.set(["use"], after);
       const resolved = await resolveEffectiveCollections(
         options,
@@ -39,7 +39,7 @@ function editUse(
         { file: edit.file, value: edit.proposed() },
       );
       if (after.length && !resolveCollectionUse(resolved, after).complete)
-        throw new SkillCliError("CONFIG_CONFLICT", "Collection Use is incomplete");
+        throw new SkctlError("CONFIG_CONFLICT", "Collection Use is incomplete");
       return { use: { before, after } };
     },
     operation,

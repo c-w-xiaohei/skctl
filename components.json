@@ -2,6 +2,6 @@
   "$schema": "https://ui.shadcn.com/schema.json",
   "style": "new-york",
   "tsx": true,
-  "aliases": { "components": "@skill-cli/tui/ui" },
+  "aliases": { "components": "@skctl/tui/ui" },
   "registries": { "@tuiparts": "https://tuiparts.sh/r/{framework}/{name}.json" }
 }

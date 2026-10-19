@@ -1,4 +1,4 @@
-import { SkillCliError, type OperationOptions } from "../shared";
+import { SkctlError, type OperationOptions } from "../shared";
 import { type CoreOptions } from "../shared";
 
 import type { RegisterSourceRequest } from "../source/types";
@@ -20,9 +20,9 @@ function register(
     (edit) => {
       parseQualifiedName(request.id);
       if (edit.immutableContributions.has(request.id))
-        throw new SkillCliError("INVALID_ARGUMENT", "Config Source contributions are immutable");
+        throw new SkctlError("INVALID_ARGUMENT", "Config Source contributions are immutable");
       if (edit.document()[key]?.[request.id])
-        throw new SkillCliError(
+        throw new SkctlError(
           "CONFIG_CONFLICT",
           "Source bindings are immutable; remove and register a new Source ID",
         );

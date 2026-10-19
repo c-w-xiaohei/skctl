@@ -8,7 +8,7 @@ import type { WorkspaceView } from "../workspace/types";
 import type { SetLinkRequest } from "./types";
 import { CollectionResolutionError, type MemberOriginPath } from "./graph";
 import { type SkillAddress } from "../source/schema";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 
 import { parseQualifiedName } from "./names";
 import { StateCoordinator } from "../storage/state";
@@ -81,7 +81,7 @@ export function changedLinks(
   parseQualifiedName(target);
   const existing = current.indexOf(target);
   if ((linked && existing >= 0) || (!linked && existing < 0))
-    throw new SkillCliError("INVALID_ARGUMENT", linked ? "Link already exists" : "Link not found");
+    throw new SkctlError("INVALID_ARGUMENT", linked ? "Link already exists" : "Link not found");
   const links = [...current];
   if (linked) links.push(target);
   else links.splice(existing, 1);
@@ -102,7 +102,7 @@ export async function previewLinkChangeImpact(
       coordinator,
     );
     if (workspace.value.effective.status !== "complete")
-      throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
+      throw new SkctlError("CONFIG_INVALID", "Configuration is incomplete");
     const file = configFile(options, request.level, workspace.value.project.root);
     const host = await document(file, request.level);
     const declaration = host.collections?.[request.collection];

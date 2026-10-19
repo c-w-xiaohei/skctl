@@ -223,16 +223,16 @@ export function createProcessClient(options: ProcessClientOptions = {}) {
   const cleanupTimeoutMs = options.cleanupTimeoutMs ?? 100;
   const platform = options.platform ?? (process.platform === "win32" ? "win32" : "posix");
   const pathExt = options.pathExt ?? env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
-  const skillCli = resolveFromPath("skill-cli", path, options.exists, platform, pathExt);
+  const skctl = resolveFromPath("skctl", path, options.exists, platform, pathExt);
   return {
     async browse(cwd: string): Promise<string> {
-      const executable = await skillCli;
-      if (!executable) throw new AdapterProcessError("SKILL_CLI_NOT_FOUND");
+      const executable = await skctl;
+      if (!executable) throw new AdapterProcessError("SKCTL_NOT_FOUND");
       const result = await execute(runner, [executable, "agent", "browse"], {
         cwd,
         env: {
           ...env,
-          SKILL_CLI_AGENT: "opencode",
+          SKCTL_AGENT: "opencode",
           NO_COLOR: "1",
           GIT_TERMINAL_PROMPT: "0",
         },

@@ -7,15 +7,15 @@ import { StateCoordinator } from "../../src/storage/state";
 test.serial(
   "content.run normalizes runtime signal numbers without changing named strings or null",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "skill-cli-runtime-signal-"));
+    const root = await mkdtemp(join(tmpdir(), "skctl-runtime-signal-"));
     const state = join(root, "state");
     const skill = join(root, "skills", "review");
-    const previous = process.env.SKILL_CLI_STATE_DIR;
+    const previous = process.env.SKCTL_STATE_DIR;
     try {
       await mkdir(skill, { recursive: true });
       await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
       await writeFile(
-        join(root, "skill-cli.jsonc"),
+        join(root, "skctl.jsonc"),
         JSON.stringify({
           sources: { local: { kind: "local", path: "./skills", root: "" } },
           collections: { c: { members: { review: { source: "local", path: "review" } } } },
@@ -23,7 +23,7 @@ test.serial(
           agents: { opencode: "managed" },
         }),
       );
-      process.env.SKILL_CLI_STATE_DIR = state;
+      process.env.SKCTL_STATE_DIR = state;
       await new StateCoordinator(state).installLocal("local", "review", skill);
       const core = { cwd: root, userConfigPath: join(root, "global.jsonc") };
       const cases = [
@@ -65,8 +65,8 @@ test.serial(
         }
       }
     } finally {
-      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-      else process.env.SKILL_CLI_STATE_DIR = previous;
+      if (previous === undefined) delete process.env.SKCTL_STATE_DIR;
+      else process.env.SKCTL_STATE_DIR = previous;
       await rm(root, { recursive: true, force: true });
     }
   },
@@ -74,15 +74,15 @@ test.serial(
 test.skipIf(process.platform !== "linux")(
   "content.run preserves a real unnamed Linux signal number as text, not exit status",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "skill-cli-runtime-real-signal-"));
+    const root = await mkdtemp(join(tmpdir(), "skctl-runtime-real-signal-"));
     const state = join(root, "state");
     const skill = join(root, "skills", "review");
-    const previous = process.env.SKILL_CLI_STATE_DIR;
+    const previous = process.env.SKCTL_STATE_DIR;
     try {
       await mkdir(skill, { recursive: true });
       await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
       await writeFile(
-        join(root, "skill-cli.jsonc"),
+        join(root, "skctl.jsonc"),
         JSON.stringify({
           sources: { local: { kind: "local", path: "./skills", root: "" } },
           collections: { c: { members: { review: { source: "local", path: "review" } } } },
@@ -90,7 +90,7 @@ test.skipIf(process.platform !== "linux")(
           agents: { opencode: "managed" },
         }),
       );
-      process.env.SKILL_CLI_STATE_DIR = state;
+      process.env.SKCTL_STATE_DIR = state;
       await new StateCoordinator(state).installLocal("local", "review", skill);
       // Linux x64 signal 35 is a real-time signal, not in Node's named constants.
       expect(Object.values(constants.signals)).not.toContain(35);
@@ -113,8 +113,8 @@ test.skipIf(process.platform !== "linux")(
       });
       expect(await readdir(join(state, "runs"))).toEqual([]);
     } finally {
-      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-      else process.env.SKILL_CLI_STATE_DIR = previous;
+      if (previous === undefined) delete process.env.SKCTL_STATE_DIR;
+      else process.env.SKCTL_STATE_DIR = previous;
       await rm(root, { recursive: true, force: true });
     }
   },

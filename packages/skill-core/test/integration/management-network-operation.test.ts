@@ -12,7 +12,7 @@ import { command } from "../provider/network-fixture";
 test("W3 actual management Git acquisition uses frozen user proxy through install, check and discovery", async () => {
   const fixture = await networkFixture();
   const keys = [
-    "SKILL_CLI_STATE_DIR",
+    "SKCTL_STATE_DIR",
     "HTTP_PROXY",
     "http_proxy",
     "HTTPS_PROXY",
@@ -26,7 +26,7 @@ test("W3 actual management Git acquisition uses frozen user proxy through instal
   ];
   const saved = new Map(keys.map((key) => [key, process.env[key]]));
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(fixture.root, "state");
+    process.env.SKCTL_STATE_DIR = join(fixture.root, "state");
     process.env.GIT_CONFIG_GLOBAL = join(fixture.root, "gitconfig");
     process.env.GIT_CONFIG_NOSYSTEM = "1";
     await writeFile(process.env.GIT_CONFIG_GLOBAL, "");
@@ -34,7 +34,7 @@ test("W3 actual management Git acquisition uses frozen user proxy through instal
       process.env[key] = key.toLowerCase() === "no_proxy" ? "*" : "http://127.0.0.1:1";
     const user = join(fixture.root, "user.jsonc");
     await writeFile(user, JSON.stringify({ network: { proxy: fixture.proxyUrl } }));
-    await writeFile(join(fixture.root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(fixture.root, "skctl.jsonc"), "{}\n");
     const core = { cwd: fixture.root, userConfigPath: user };
     await api.registerSource(core, {
       level: "project",
@@ -88,12 +88,12 @@ test("W3 actual management Git acquisition uses frozen user proxy through instal
 });
 test("W3 invalid user network and user read errors fail before provider acquisition", async () => {
   const fixture = await networkFixture();
-  const saved = process.env.SKILL_CLI_STATE_DIR;
-  process.env.SKILL_CLI_STATE_DIR = join(fixture.root, "state");
+  const saved = process.env.SKCTL_STATE_DIR;
+  process.env.SKCTL_STATE_DIR = join(fixture.root, "state");
   let opens = 0;
   try {
     const user = join(fixture.root, "user.jsonc");
-    await writeFile(join(fixture.root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(fixture.root, "skctl.jsonc"), "{}\n");
     const core = {
       cwd: fixture.root,
       userConfigPath: user,
@@ -129,15 +129,15 @@ test("W3 invalid user network and user read errors fail before provider acquisit
     }
   } finally {
     setAcquisitionTrapForTest();
-    if (saved === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = saved;
+    if (saved === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = saved;
     await fixture.close();
   }
 });
 test("W3 Config observe, preview and adoption share actual user-proxy acquisition and close before publication", async () => {
   const fixture = await networkFixture();
-  const saved = process.env.SKILL_CLI_STATE_DIR;
-  process.env.SKILL_CLI_STATE_DIR = join(fixture.root, "state");
+  const saved = process.env.SKCTL_STATE_DIR;
+  process.env.SKCTL_STATE_DIR = join(fixture.root, "state");
   const user = join(fixture.root, "user.jsonc");
   try {
     const work = join(fixture.root, "work");
@@ -150,7 +150,7 @@ test("W3 Config observe, preview and adoption share actual user-proxy acquisitio
       await command(work, ["/usr/bin/git", ...args]);
     const revision = await command(work, ["/usr/bin/git", "rev-parse", "HEAD"]);
     await writeFile(user, JSON.stringify({ network: { proxy: fixture.proxyUrl } }));
-    await writeFile(join(fixture.root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(fixture.root, "skctl.jsonc"), "{}\n");
     const core = { cwd: fixture.root, userConfigPath: user };
     await api.registerConfigSource(core, {
       level: "project",
@@ -186,17 +186,17 @@ test("W3 Config observe, preview and adoption share actual user-proxy acquisitio
   } finally {
     setAcquisitionTrapForTest();
     setManagementPublicationHookForTest();
-    if (saved === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = saved;
+    if (saved === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = saved;
     await fixture.close();
   }
 });
 test("W3 check deadline covers delayed ref plus acquisition, drains cancellation, then the next check succeeds", async () => {
   const fixture = await networkFixture();
-  const saved = process.env.SKILL_CLI_STATE_DIR;
+  const saved = process.env.SKCTL_STATE_DIR;
   const oldGitConfig = process.env.GIT_CONFIG_GLOBAL;
   const oldNoSystem = process.env.GIT_CONFIG_NOSYSTEM;
-  process.env.SKILL_CLI_STATE_DIR = join(fixture.root, "state");
+  process.env.SKCTL_STATE_DIR = join(fixture.root, "state");
   let mode: "slow" | "hang" | "fast" = "slow";
   let requests = 0;
   let closed = 0;
@@ -244,7 +244,7 @@ test("W3 check deadline covers delayed ref plus acquisition, drains cancellation
     // so the timeout proves the budget spans ref resolution AND exact fetch.
     await writeFile(process.env.GIT_CONFIG_GLOBAL, "[protocol]\nversion = 0\n");
     const user = join(fixture.root, "user.jsonc");
-    await writeFile(join(fixture.root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(fixture.root, "skctl.jsonc"), "{}\n");
     const options = { cwd: fixture.root, userConfigPath: user };
     const initial = {
       ...options,
@@ -305,8 +305,8 @@ test("W3 check deadline covers delayed ref plus acquisition, drains cancellation
     else process.env.GIT_CONFIG_GLOBAL = oldGitConfig;
     if (oldNoSystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
     else process.env.GIT_CONFIG_NOSYSTEM = oldNoSystem;
-    if (saved === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = saved;
+    if (saved === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = saved;
     await fixture.close();
   }
 }, 45000);

@@ -10,7 +10,7 @@ import {
   MembershipBatchImpact,
   ReferenceImpact,
 } from "./types";
-import { OperationOptions, OperationResult, SkillCliError } from "../shared";
+import { OperationOptions, OperationResult, SkctlError } from "../shared";
 import { type ConfigLevel } from "../config/types";
 import { type WorkspaceView } from "../workspace/types";
 import { membershipBatchAffected, previewLinkChangeImpact } from "./impact";
@@ -260,7 +260,7 @@ export async function previewMembershipBatch(
         }
       } catch (error) {
         if (
-          error instanceof SkillCliError &&
+          error instanceof SkctlError &&
           (error.code === "INVALID_ARGUMENT" || error.code === "CONFIG_CONFLICT")
         ) {
           blockers.push({ reason: "membership", owner: decision.owner });
@@ -443,7 +443,7 @@ export async function previewCollectionUse(
   operation?: OperationOptions,
 ): Promise<OperationResult<CollectionUseImpact>> {
   if (new Set(request.collections).size !== request.collections.length)
-    throw new SkillCliError(
+    throw new SkctlError(
       "INVALID_ARGUMENT",
       "Collection Use cannot contain duplicate Collection IDs",
     );

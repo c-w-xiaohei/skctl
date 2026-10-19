@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { type SkillProvenance } from "./types";
 import { assertSourceContentLimit, SourceContentLimitError } from "../content/text";
 import { parseResourcePath } from "../content/path";
@@ -36,7 +36,7 @@ export async function runProviderChild(
   options: ProviderChildOptions,
   signal?: AbortSignal,
 ): Promise<{ readonly status: number; readonly stdout: Uint8Array; readonly stderr: Uint8Array }> {
-  if (signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   const child = Bun.spawn(options.cmd, {
     ...options,
     env: options.env ?? process.env,
@@ -52,10 +52,7 @@ export async function runProviderChild(
     let size = 0;
     for await (const chunk of value) {
       if (rejectOverflow && chunk.length > limit - size)
-        throw new SkillCliError(
-          "PROVIDER_INTEGRITY_FAILED",
-          "Git response exceeds the output limit",
-        );
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Git response exceeds the output limit");
       const keep = chunk.subarray(0, Math.max(0, limit - size));
       if (keep.length) {
         chunks.push(keep);
@@ -91,7 +88,7 @@ export async function runProviderChild(
           results.some((result) => result.status === "rejected") ||
           (results[0].status === "fulfilled" && results[0].value !== 0)
         )
-          throw new SkillCliError("PROVIDER_UNAVAILABLE", "Owned child tree cleanup failed");
+          throw new SkctlError("PROVIDER_UNAVAILABLE", "Owned child tree cleanup failed");
       } else {
         kill("SIGTERM");
         // Pipes/leader may settle first; the owned group still gets its escalation.
@@ -154,17 +151,17 @@ export async function runProviderChild(
     ]);
     await cleanup;
     if (cleanupError)
-      throw new SkillCliError(
+      throw new SkctlError(
         "PROVIDER_UNAVAILABLE",
         `Owned child cleanup failed: ${String(cleanupError)}`,
       );
     for (const result of results)
       if (result.status === "rejected")
-        throw new SkillCliError(
+        throw new SkctlError(
           "PROVIDER_UNAVAILABLE",
           `Owned pipe drain failed: ${String(result.reason)}`,
         );
-    if (aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+    if (aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
     const [status, output, error] = results;
     if (
       status.status !== "fulfilled" ||
@@ -280,7 +277,7 @@ async function gitCommands(
       operation.throwIfAborted(phase);
       if (combined.aborted)
         throw sourceNetworkError(operation, phase, "Operation cancelled", "CANCELLED");
-      if (error instanceof SkillCliError) throw error;
+      if (error instanceof SkctlError) throw error;
       throw sourceNetworkError(operation, `${phase} startup/execution`, error);
     }
   };
@@ -298,7 +295,7 @@ export function inspectTreeRoots(
     if (!entries) {
       const facts = trees.get(id);
       if (!facts)
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Root directory facts are incomplete");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Root directory facts are incomplete");
       entries = new Map(facts.map((item) => [item.entry.path, item]));
       indexed.set(id, entries);
     }
@@ -327,7 +324,7 @@ function parseTree(bytes: Uint8Array): TreeItem[] {
     .map((part) => {
       const match = /^(\d+) (\w+) ([0-9a-f]{40})\t([\s\S]+)$/u.exec(part);
       if (!match)
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Git tree response is malformed");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Git tree response is malformed");
       const mode = match[1]!,
         type = match[2]!,
         objectId = match[3]!,
@@ -340,7 +337,7 @@ function parseTree(bytes: Uint8Array): TreeItem[] {
         entry = { kind: "symlink", path, size: 0, objectId };
       else if (["100644", "100755"].includes(mode) && type === "blob")
         entry = { kind: "file", path, size: 0, executable: mode === "100755", objectId };
-      else throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Unsupported Git tree mode");
+      else throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Unsupported Git tree mode");
       return { entry, objectId };
     });
 }
@@ -355,7 +352,7 @@ export async function openGitSource(
   operation?: SourceOperation,
   run?: RunGit,
 ): Promise<RemoteSnapshot> {
-  if (!oid(commit)) throw new SkillCliError("INVALID_ARGUMENT", "Expected exact SHA-1 commit");
+  if (!oid(commit)) throw new SkctlError("INVALID_ARGUMENT", "Expected exact SHA-1 commit");
   return openGitSnapshot(
     sourceName,
     url,
@@ -408,7 +405,7 @@ async function openGitSnapshot(
   const owned = operation === undefined;
   operation ??= createSourceOperation({ source: sourceName, signal });
   const active = operation;
-  const directory = await mkdtemp(join(tmpdir(), "skill-cli-git-"));
+  const directory = await mkdtemp(join(tmpdir(), "skctl-git-"));
   try {
     const git = await gitCommands(active, gitUrl(url), signal, run);
     await git(directory, ["init", "--bare", "--object-format=sha1"]);
@@ -457,13 +454,12 @@ async function openGitSnapshot(
       .split("\n");
     const pinned = initial[0]!;
     if (!oid(pinned) || ("commit" in target && pinned !== target.commit))
-      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Fetched commit identity mismatch");
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Fetched commit identity mismatch");
     const commit = pinned;
     fetched.add(commit);
     function revisionRoot(revision: string, readSignal?: AbortSignal) {
       checkAbort("Git commit", readSignal);
-      if (!oid(revision))
-        throw new SkillCliError("INVALID_ARGUMENT", "Expected exact SHA-1 commit");
+      if (!oid(revision)) throw new SkctlError("INVALID_ARGUMENT", "Expected exact SHA-1 commit");
       let promise = revisions.get(revision);
       if (!promise) {
         promise = (async () => {
@@ -485,7 +481,7 @@ async function openGitSnapshot(
                   .split("\n");
           const root = resolved[1];
           if (resolved[0] !== revision || !root || !oid(root))
-            throw new SkillCliError(
+            throw new SkctlError(
               "PROVIDER_INTEGRITY_FAILED",
               "Pinned commit/tree identity mismatch",
             );
@@ -504,12 +500,9 @@ async function openGitSnapshot(
               item.entry.path.startsWith("/") ||
               item.entry.path.split("/").some((part) => !part || part === "." || part === "..")
             )
-              throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Git listing path is malformed");
+              throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Git listing path is malformed");
             if (names.has(item.entry.path))
-              throw new SkillCliError(
-                "PROVIDER_INTEGRITY_FAILED",
-                "Git listing has duplicate paths",
-              );
+              throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Git listing has duplicate paths");
             names.add(item.entry.path);
             if (item.entry.kind === "directory") directoryIds.set(item.entry.path, item.objectId);
           }
@@ -519,8 +512,7 @@ async function openGitSnapshot(
             const parent = split < 0 ? "" : item.entry.path.slice(0, split);
             const name = item.entry.path.slice(split + 1);
             const id = directoryIds.get(parent);
-            if (!id)
-              throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Git listing is incomplete");
+            if (!id) throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Git listing is incomplete");
             const items = children.get(parent) ?? [];
             items.push({ ...item, entry: { ...item.entry, path: name } });
             children.set(parent, items);
@@ -540,7 +532,7 @@ async function openGitSnapshot(
       checkAbort("Git tree", readSignal);
       const items = trees.get(id);
       if (!items)
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Git directory facts are missing");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Git directory facts are missing");
       return items;
     }
     async function directoryAt(revision: string, path: string, readSignal?: AbortSignal) {
@@ -563,7 +555,7 @@ async function openGitSnapshot(
     }
     const exclusive = <T>(run: () => Promise<T>, phase: string, methodSignal?: AbortSignal) => {
       if (closing)
-        return Promise.reject(new SkillCliError("PROVIDER_UNAVAILABLE", "Git snapshot is closed"));
+        return Promise.reject(new SkctlError("PROVIDER_UNAVAILABLE", "Git snapshot is closed"));
       const pending = queue.then(async () => {
         try {
           checkAbort(phase, methodSignal);
@@ -578,7 +570,7 @@ async function openGitSnapshot(
             active,
             phase,
             error,
-            error instanceof SkillCliError ? error.code : "PROVIDER_UNAVAILABLE",
+            error instanceof SkctlError ? error.code : "PROVIDER_UNAVAILABLE",
           );
         }
       });
@@ -600,7 +592,7 @@ async function openGitSnapshot(
       const item =
         parent && (await tree(parent, readSignal)).find((item) => item.entry.path === name);
       if (!item || (item.entry.kind !== "file" && item.entry.kind !== "symlink"))
-        throw new SkillCliError("RESOURCE_NOT_FOUND", `Resource not found: ${path}`);
+        throw new SkctlError("RESOURCE_NOT_FOUND", `Resource not found: ${path}`);
       return { ...item.entry, path };
     }
     async function readMany(paths: readonly string[], readSignal?: AbortSignal, maxBytes?: number) {
@@ -616,10 +608,7 @@ async function openGitSnapshot(
           if (needed.length) {
             const objectIds = needed.map((entry) => entry.objectId);
             if (objectIds.some((id) => !id || !oid(id)))
-              throw new SkillCliError(
-                "PROVIDER_INTEGRITY_FAILED",
-                "Git blob identity is malformed",
-              );
+              throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Git blob identity is malformed");
             const encodeIds = (ids: readonly (string | undefined)[]) =>
               new TextEncoder().encode(ids.join("\n") + "\n");
             const wants = encodeIds([...new Set(objectIds)]);
@@ -655,7 +644,7 @@ async function openGitSnapshot(
                 .trimEnd()
                 .split("\n");
               if (sizes.length !== uniqueIds.length)
-                throw new SkillCliError(
+                throw new SkctlError(
                   "PROVIDER_INTEGRITY_FAILED",
                   "Git blob size response is incomplete",
                 );
@@ -669,7 +658,7 @@ async function openGitSnapshot(
                   !/^(0|[1-9][0-9]*)$/u.test(fields[2] ?? "") ||
                   !Number.isSafeInteger(size)
                 )
-                  throw new SkillCliError(
+                  throw new SkctlError(
                     "PROVIDER_INTEGRITY_FAILED",
                     "Git blob size response is malformed",
                   );
@@ -691,26 +680,23 @@ async function openGitSnapshot(
                 !/^(0|[1-9][0-9]*)$/u.test(header[2] ?? "") ||
                 !Number.isSafeInteger(size)
               )
-                throw new SkillCliError(
-                  "PROVIDER_INTEGRITY_FAILED",
-                  "Git blob response is malformed",
-                );
+                throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Git blob response is malformed");
               offset = end + 1;
               const bytes = objects.slice(offset, offset + size);
               offset += size;
               if (bytes.length !== size || objects[offset++] !== 10)
-                throw new SkillCliError(
+                throw new SkctlError(
                   "PROVIDER_INTEGRITY_FAILED",
                   "Git blob response is malformed or truncated",
                 );
               if (
                 createHash("sha1").update(`blob ${size}\0`).update(bytes).digest("hex") !== objectId
               )
-                throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Git blob identity mismatch");
+                throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Git blob identity mismatch");
               blobs.set(objectId!, bytes);
             }
             if (offset !== objects.length)
-              throw new SkillCliError(
+              throw new SkctlError(
                 "PROVIDER_INTEGRITY_FAILED",
                 "Git blob response has trailing data",
               );
@@ -744,7 +730,7 @@ async function openGitSnapshot(
               (revision) => !fetched.has(revision),
             );
             if (missing.some((revision) => !oid(revision)))
-              throw new SkillCliError("INVALID_ARGUMENT", "Expected exact SHA-1 commit");
+              throw new SkctlError("INVALID_ARGUMENT", "Expected exact SHA-1 commit");
             if (missing.length) {
               for (let index = 0; index < missing.length; index += 128)
                 await git(
@@ -840,7 +826,7 @@ async function openGitSnapshot(
       active,
       "Git acquisition",
       error,
-      error instanceof SkillCliError ? error.code : "PROVIDER_UNAVAILABLE",
+      error instanceof SkctlError ? error.code : "PROVIDER_UNAVAILABLE",
     );
   }
 }
@@ -856,7 +842,7 @@ export async function resolveGitRef(
 ): Promise<string> {
   const legacy = /^git:(.+)#[0-9a-f]{40}(:.*)?$/u.exec(locator);
   if (!locator || typeof ref !== "string" || !ref)
-    throw new SkillCliError("INVALID_ARGUMENT", "Invalid Git ref update");
+    throw new SkctlError("INVALID_ARGUMENT", "Invalid Git ref update");
   const source = legacy?.[1] ?? locator,
     url = gitUrl(transport?.(source) ?? source);
   const owned = operation === undefined;

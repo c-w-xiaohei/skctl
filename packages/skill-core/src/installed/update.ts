@@ -12,7 +12,7 @@ import type { CoreOptions } from "../shared";
 
 import type { OperationResult } from "../shared";
 
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { decodeStrictText, parseSkillMetadata, type SkillMetadata } from "../content/text";
 import { type GitTreeIdentity } from "../source/schema";
 import type { DiscoveredSkillCandidate } from "../source/types";
@@ -71,26 +71,23 @@ export function compareRoots(
 ) {
   const roots = new Map(target.map((root) => [root.path, root]));
   if (roots.size !== target.length)
-    throw new SkillCliError(
-      "PROVIDER_INTEGRITY_FAILED",
-      "Remote Root inspection has duplicate paths",
-    );
+    throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Remote Root inspection has duplicate paths");
   const changed: InstalledMaterialization[] = [],
     removed: InstalledMaterialization[] = [],
     unchanged: InstalledMaterialization[] = [];
   for (const item of installed) {
     const root = roots.get(item.path);
     if (!root)
-      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Remote Root inspection is incomplete");
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Remote Root inspection is incomplete");
     if (root.status !== "present") {
       removed.push(item);
       continue;
     }
     if (!root.tree)
-      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Present Root has no tree identity");
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Present Root has no tree identity");
     const old = previous.get(item.path);
     if (!old)
-      throw new SkillCliError(
+      throw new SkctlError(
         "PINNED_COMMIT_UNAVAILABLE",
         "Installed Root has no exact comparison evidence",
       );
@@ -111,8 +108,7 @@ export function assertOwner(state: PrivateState, binding: InternalSourceBinding)
               [binding.root, item.path].filter(Boolean).join("/"))) ||
         (item.kind === "local" && item.root !== resolve(binding.origin, binding.root, item.path))),
   );
-  if (drifted)
-    throw new SkillCliError("CONFIG_CONFLICT", "Installed Skill owner binding has drifted");
+  if (drifted) throw new SkctlError("CONFIG_CONFLICT", "Installed Skill owner binding has drifted");
 }
 
 async function updateBaseline(
@@ -171,15 +167,15 @@ async function captureUpdateBaseline(
   const coordinator = new StateCoordinator();
   return coordinator.withLock(async () => {
     const { binding: currentBinding } = await sourceFor(options, source, signal).catch((error) => {
-      if (error instanceof SkillCliError && error.code === "SOURCE_NOT_FOUND")
-        throw new SkillCliError(
+      if (error instanceof SkctlError && error.code === "SOURCE_NOT_FOUND")
+        throw new SkctlError(
           "CONFIG_CONFLICT",
           "Source binding disappeared while reading update baseline",
         );
       throw error;
     });
     if (currentBinding.bindingDigest !== binding.bindingDigest)
-      throw new SkillCliError(
+      throw new SkctlError(
         "CONFIG_CONFLICT",
         "Source binding changed while reading update baseline",
       );
@@ -199,21 +195,21 @@ export async function previewUpdate(
 ): Promise<OperationResult<UpdatePreview>> {
   const coordinator = new StateCoordinator();
 
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Update preview cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Update preview cancelled");
   validPaths([request.path]);
   if (!request.expectedBaseline)
-    throw new SkillCliError("INVALID_ARGUMENT", "Check updates before previewing");
+    throw new SkctlError("INVALID_ARGUMENT", "Check updates before previewing");
   const { binding, network: policy } = await sourceFor(options, request.source, operation?.signal);
   const captured = await captureUpdateBaseline(options, request.source, binding, operation?.signal);
   if (captured.baseline !== request.expectedBaseline)
-    throw new SkillCliError(
+    throw new SkctlError(
       "TRANSACTION_CONFLICT",
       "Installed comparison changed; check updates again",
     );
   const item = captured.state.installed.find(
     (item) => item.source === request.source && item.path === request.path,
   );
-  if (!item) throw new SkillCliError("SKILL_NOT_FOUND", "Installed Skill not found");
+  if (!item) throw new SkctlError("SKILL_NOT_FOUND", "Installed Skill not found");
   const address = { source: request.source, path: request.path };
   if (item.kind === "local")
     return {
@@ -221,10 +217,7 @@ export async function previewUpdate(
       diagnostics: [],
     };
   if (!request.exactRevision || !/^[a-f0-9]{40}$/.test(request.exactRevision))
-    throw new SkillCliError(
-      "INVALID_ARGUMENT",
-      "Remote preview requires the checked exact revision",
-    );
+    throw new SkctlError("INVALID_ARGUMENT", "Remote preview requires the checked exact revision");
   const revision = request.exactRevision;
   const network = createSourceOperation({
     ...policy,
@@ -235,7 +228,7 @@ export async function previewUpdate(
   try {
     return await coordinator.withInstalledRoot(address, async (installed) => {
       if (installed.item.kind !== "remote" || installed.item.digest !== item.digest)
-        throw new SkillCliError(
+        throw new SkctlError(
           "TRANSACTION_CONFLICT",
           "Installed comparison changed; check updates again",
         );
@@ -244,7 +237,7 @@ export async function previewUpdate(
         const inspections = await snapshot.inspectRoots([request.path], network.signal);
         const target = inspections.find((root) => root.path === request.path);
         if (!target)
-          throw new SkillCliError(
+          throw new SkctlError(
             "PROVIDER_INTEGRITY_FAILED",
             "Update target inspection is incomplete",
           );
@@ -263,7 +256,7 @@ export async function previewUpdate(
           operation?.signal,
         );
         if (current.baseline !== captured.baseline)
-          throw new SkillCliError(
+          throw new SkctlError(
             "TRANSACTION_CONFLICT",
             "Installed comparison changed during preview; check updates again",
           );
@@ -296,7 +289,7 @@ export async function checkUpdate(
 ): Promise<OperationResult<UpdateObservation>> {
   const coordinator = new StateCoordinator();
 
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   const { binding, network: policy } = await sourceFor(options, request.source, operation?.signal);
   const checked = await captureUpdateBaseline(options, request.source, binding, operation?.signal);
   const { state, baseline } = checked;
@@ -350,7 +343,7 @@ export async function checkUpdate(
     operation?.signal,
   );
   if (completed.baseline !== baseline)
-    throw new SkillCliError(
+    throw new SkctlError(
       "TRANSACTION_CONFLICT",
       "Installed comparison baseline changed during update check",
     );
@@ -374,7 +367,7 @@ export async function getUpdateBaseline(
   request: { readonly source: string },
   operation?: OperationOptions,
 ): Promise<OperationResult<string>> {
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   const { binding } = await sourceFor(options, request.source, operation?.signal);
   return {
     value: (await captureUpdateBaseline(options, request.source, binding, operation?.signal))
@@ -391,15 +384,15 @@ export async function updateSkills(
 ): Promise<OperationResult<void>> {
   const coordinator = new StateCoordinator();
 
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   const { binding, network: policy } = await sourceFor(options, request.source, operation?.signal);
   if (binding.kind === "local" && request.exactRevision)
-    throw new SkillCliError("INVALID_ARGUMENT", "Local Source does not accept a revision");
+    throw new SkctlError("INVALID_ARGUMENT", "Local Source does not accept a revision");
   if (
     binding.kind !== "local" &&
     (!request.exactRevision || !/^[a-f0-9]{40}$/u.test(request.exactRevision))
   )
-    throw new SkillCliError("INVALID_ARGUMENT", "Remote Source requires an exact revision");
+    throw new SkctlError("INVALID_ARGUMENT", "Remote Source requires an exact revision");
   const remove = request.remove ?? [];
   validPaths(request.paths);
   validPaths(remove);
@@ -410,9 +403,9 @@ export async function updateSkills(
     request.paths.some((path) => remove.includes(path)) ||
     [...request.paths, ...remove].some((path) => !installed.some((item) => item.path === path))
   )
-    throw new SkillCliError("INVALID_ARGUMENT", "Updates must select owned Installed Skills");
+    throw new SkctlError("INVALID_ARGUMENT", "Updates must select owned Installed Skills");
   if (request.expectedBaseline !== undefined && request.expectedBaseline !== checked.baseline)
-    throw new SkillCliError(
+    throw new SkctlError(
       "TRANSACTION_CONFLICT",
       "Installed comparison baseline changed before update",
     );
@@ -424,14 +417,14 @@ export async function updateSkills(
         const root = await localRoot(binding, path, coordinator);
         if (remove.includes(path)) {
           if (root.status === "present")
-            throw new SkillCliError(
+            throw new SkctlError(
               "INVALID_ARGUMENT",
               "Cannot remove a present valid Skill Root through update",
             );
         } else {
           const item = installed.find((item) => item.path === path)!;
           if (root.status !== "present" || root.digest === item.digest)
-            throw new SkillCliError(
+            throw new SkctlError(
               "INVALID_ARGUMENT",
               "Updates must explicitly select changed Installed Skills",
             );
@@ -445,7 +438,7 @@ export async function updateSkills(
         signal: operation?.signal,
       });
       try {
-        stage = await mkdtemp(join(tmpdir(), "skill-cli-update-"));
+        stage = await mkdtemp(join(tmpdir(), "skctl-update-"));
         const prepared = await materializeUpdateRoots(
           binding,
           options,
@@ -458,7 +451,7 @@ export async function updateSkills(
         );
         for (const path of remove)
           if (prepared.inspections.find((root) => root.path === path)?.status === "present")
-            throw new SkillCliError(
+            throw new SkctlError(
               "INVALID_ARGUMENT",
               "Cannot remove a present valid Skill Root through update",
             );
@@ -469,7 +462,7 @@ export async function updateSkills(
             parsed = parseSkillMetadata(decodeStrictText(bytes));
           } catch (error) {
             if (
-              !(error instanceof SkillCliError) ||
+              !(error instanceof SkctlError) ||
               !["CONFIG_INVALID", "INVALID_ARGUMENT", "INVALID_UTF8", "TEXT_TOO_LARGE"].includes(
                 error.code,
               )
@@ -478,7 +471,7 @@ export async function updateSkills(
             const file = [root.path, "SKILL.md"].filter(Boolean).join("/");
             // This receipt is issued only here, before the publication hook,
             // Snapshot publication or state replacement can be attempted.
-            throw new SkillCliError(
+            throw new SkctlError(
               "INVALID_ARGUMENT",
               `Invalid SKILL.md at ${file}: ${error.message}`,
               [
@@ -503,16 +496,16 @@ export async function updateSkills(
           const item = installed.find((item) => item.path === candidate.path)!;
           const tree = knownTree(item, binding);
           if (sameTree(tree, candidate.tree))
-            throw new SkillCliError(
+            throw new SkctlError(
               "INVALID_ARGUMENT",
               "Updates must explicitly select changed Installed Skills",
             );
           if (!tree) {
             if (item.kind !== "remote")
-              throw new SkillCliError("CONFIG_CONFLICT", "Remote owner has Local materialization");
+              throw new SkctlError("CONFIG_CONFLICT", "Remote owner has Local materialization");
             await coordinator.withRemoteUse(item.digest, async () => {});
             if (digest === item.digest)
-              throw new SkillCliError("INVALID_ARGUMENT", "Selected legacy Root is unchanged");
+              throw new SkctlError("INVALID_ARGUMENT", "Selected legacy Root is unchanged");
           }
           preparedByPath.set(candidate.path, { candidate, digest });
         }
@@ -522,24 +515,24 @@ export async function updateSkills(
       }
     }
     await invokePublicationHook();
-    if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+    if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
     await coordinator.withLock(async () => {
       const { binding: currentBinding } = await sourceFor(
         options,
         request.source,
         operation?.signal,
       ).catch((error) => {
-        if (error instanceof SkillCliError && error.code === "SOURCE_NOT_FOUND")
-          throw new SkillCliError("CONFIG_CONFLICT", "Source binding disappeared during update");
+        if (error instanceof SkctlError && error.code === "SOURCE_NOT_FOUND")
+          throw new SkctlError("CONFIG_CONFLICT", "Source binding disappeared during update");
         throw error;
       });
       if (currentBinding.bindingDigest !== binding.bindingDigest)
-        throw new SkillCliError("CONFIG_CONFLICT", "Source binding changed during update");
+        throw new SkctlError("CONFIG_CONFLICT", "Source binding changed during update");
       const current = await coordinator.read();
       const installed = await installedForMutation(options, coordinator, current);
       assertOwner(current, currentBinding);
       if (checked.baseline !== (await updateBaseline(coordinator, currentBinding, current)))
-        throw new SkillCliError(
+        throw new SkctlError(
           "TRANSACTION_CONFLICT",
           "Installed comparison baseline changed during update",
         );
@@ -555,7 +548,7 @@ export async function updateSkills(
                 root.candidate.name !== prepared?.candidate.name ||
                 root.candidate.description !== prepared?.candidate.description
           )
-            throw new SkillCliError("TRANSACTION_CONFLICT", "Local Root changed during update");
+            throw new SkctlError("TRANSACTION_CONFLICT", "Local Root changed during update");
         }
       }
       const workspace = await readWorkspaceUnlocked(options, coordinator);
@@ -569,7 +562,7 @@ export async function updateSkills(
             ),
         )
       )
-        throw new SkillCliError(
+        throw new SkctlError(
           "CONFIG_CONFLICT",
           "Installed Skill has direct Membership dependencies",
         );
@@ -606,7 +599,7 @@ export async function updateSkills(
         { ...current, installed: next },
         coordinator,
       );
-      if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+      if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
       if (stage)
         for (const path of request.paths) {
           const { candidate, digest } = preparedByPath.get(path)!;

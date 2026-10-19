@@ -22,14 +22,12 @@ const legacyLocal = {
 };
 
 test("requires an absolute state override and uses the state-home fallback", () => {
-  expect(() => resolveStateRoot({ SKILL_CLI_STATE_DIR: "relative" })).toThrow();
-  expect(resolveStateRoot({ XDG_STATE_HOME: "/state", HOME: "/home/test" })).toBe(
-    "/state/skill-cli",
-  );
+  expect(() => resolveStateRoot({ SKCTL_STATE_DIR: "relative" })).toThrow();
+  expect(resolveStateRoot({ XDG_STATE_HOME: "/state", HOME: "/home/test" })).toBe("/state/skctl");
 });
 
 test("coordinator rejects symlinked managed entries and writes a private state file", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-state-security-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-state-security-"));
   try {
     const coordinator = new StateCoordinator(root);
     await coordinator.withLock(async () => {
@@ -48,7 +46,7 @@ test("coordinator rejects symlinked managed entries and writes a private state f
 });
 
 test("coordinator rejects a symlink in an existing lexical state-root parent", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-state-parent-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-state-parent-"));
   try {
     await symlink(root, join(root, "linked"));
     await expect(
@@ -60,7 +58,7 @@ test("coordinator rejects a symlink in an existing lexical state-root parent", a
 });
 
 test("state accepts only exact Local and Remote materialization facts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-state-shape-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-state-shape-"));
   const state = join(root, "state.json");
   const valid = {
     version: 1 as const,
@@ -121,7 +119,7 @@ test("state accepts only exact Local and Remote materialization facts", async ()
 });
 
 test("state reads literal v1 bytes without rewriting and requires exact v2 identity evidence", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-state-v2-shape-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-state-v2-shape-"));
   const state = join(root, "state.json");
   const legacy = `${JSON.stringify({
     version: 1,
@@ -178,7 +176,7 @@ test("state reads literal v1 bytes without rewriting and requires exact v2 ident
 });
 
 test("state publishes a derived v1 migration atomically with one generation advance", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-state-migration-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-state-migration-"));
   const state = join(root, "state.json");
   try {
     await writeFile(
@@ -218,7 +216,7 @@ test("state publishes a derived v1 migration atomically with one generation adva
 });
 
 test("v3 persists exact Root tree evidence and retains literal legacy records without read migration", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-state-v3-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-state-v3-"));
   const file = join(root, "state.json");
   const identityEvidence = {
     status: "known" as const,
@@ -339,7 +337,7 @@ test("v3 persists exact Root tree evidence and retains literal legacy records wi
 });
 
 test("STA-LOCK-ABA stale observer cannot detach a replacement owner", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-stale-lock-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-stale-lock-"));
   try {
     await mkdir(root, { recursive: true });
     await writeFile(
@@ -383,7 +381,7 @@ test("STA-LOCK-ABA stale observer cannot detach a replacement owner", async () =
 });
 
 test("stale lock reclaimers serialize and clean their unique fences", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-guard-prepare-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-guard-prepare-"));
   try {
     let active = 0;
     let maximum = 0;
@@ -406,7 +404,7 @@ test("stale lock reclaimers serialize and clean their unique fences", async () =
 });
 
 test("live and unverifiable locks time out without removing ownership", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-live-guard-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-live-guard-"));
   try {
     await mkdir(root, { recursive: true });
     await writeFile(
@@ -425,7 +423,7 @@ test("live and unverifiable locks time out without removing ownership", async ()
 });
 
 test("non-Linux process tokens allow normal use cleanup and retain unverifiable owners", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-portable-token-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-portable-token-"));
   const source = join(root, "source");
   try {
     await mkdir(source);

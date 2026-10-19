@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { type UpdateFileChange } from "./types";
 import { decodeStrictText, SourceContentLimitError, textLimit } from "../content/text";
 import { parseResourcePath } from "../content/path";
@@ -11,7 +11,7 @@ import type { RemoteSnapshot } from "../source/snapshot";
 const fileLimit = 10_000;
 const previewLimit = 4 * textLimit;
 const abort = (signal?: AbortSignal) => {
-  if (signal?.aborted) throw new SkillCliError("CANCELLED", "Update preview cancelled");
+  if (signal?.aborted) throw new SkctlError("CANCELLED", "Update preview cancelled");
 };
 type File = { readonly bytes: number; readonly executable: boolean; readonly objectId: string };
 
@@ -22,26 +22,23 @@ async function installedFiles(root: string, signal?: AbortSignal) {
   const visit = async (directory: string, prefix: string, depth: number) => {
     abort(signal);
     if (depth > 32)
-      throw new SkillCliError("TEXT_TOO_LARGE", "Update preview directory limit exceeded");
+      throw new SkctlError("TEXT_TOO_LARGE", "Update preview directory limit exceeded");
     for (const name of await readdir(directory)) {
       abort(signal);
       if (++entries > fileLimit)
-        throw new SkillCliError("TEXT_TOO_LARGE", "Update preview entry limit exceeded");
+        throw new SkctlError("TEXT_TOO_LARGE", "Update preview entry limit exceeded");
       const path = prefix ? `${prefix}/${name}` : name;
       parseResourcePath(path);
       const absolute = join(directory, name),
         stat = await lstat(absolute);
       if (stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory()))
-        throw new SkillCliError(
-          "PROVIDER_INTEGRITY_FAILED",
-          "Installed snapshot has an unsafe entry",
-        );
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Installed snapshot has an unsafe entry");
       if (stat.isDirectory()) {
         await visit(absolute, path, depth + 1);
         continue;
       }
       if (files.size >= fileLimit)
-        throw new SkillCliError("TEXT_TOO_LARGE", "Update preview file limit exceeded");
+        throw new SkctlError("TEXT_TOO_LARGE", "Update preview file limit exceeded");
       const hash = createHash("sha1").update(`blob ${stat.size}\0`);
       for await (const chunk of createReadStream(absolute)) {
         abort(signal);
@@ -73,14 +70,14 @@ export async function previewUpdateFiles(
       abort(signal);
       if (entry.kind === "directory") continue;
       if (entry.kind !== "file" || !entry.objectId || (path && !entry.path.startsWith(`${path}/`)))
-        throw new SkillCliError(
+        throw new SkctlError(
           "PROVIDER_INTEGRITY_FAILED",
           "Update target has an unsafe or incomplete entry",
         );
       const relative = path ? entry.path.slice(path.length + 1) : entry.path;
       parseResourcePath(relative);
       if (after.size >= fileLimit || after.has(relative))
-        throw new SkillCliError("TEXT_TOO_LARGE", "Update preview file limit exceeded");
+        throw new SkctlError("TEXT_TOO_LARGE", "Update preview file limit exceeded");
       after.set(relative, {
         bytes: entry.size,
         executable: entry.executable,
@@ -134,7 +131,7 @@ export async function previewUpdateFiles(
             reason: error.byteLength > textLimit ? "too-large" : "preview-limit",
           };
         } else {
-          if (!(error instanceof SkillCliError) || error.code !== "INVALID_UTF8") throw error;
+          if (!(error instanceof SkctlError) || error.code !== "INVALID_UTF8") throw error;
           content = { kind: "unavailable", reason: "binary" };
         }
       }

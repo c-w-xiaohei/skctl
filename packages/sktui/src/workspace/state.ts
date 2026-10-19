@@ -1,0 +1,706 @@
+import { batch, createMemo, createSignal } from "solid-js";
+import type { WorkspaceView } from "@skctl/core";
+import {
+  skillAddressKey,
+  sameSkillAddress,
+  type ConfigSection,
+  type NarrowLevel,
+  type SkillsView,
+  type WorkspaceSection,
+} from "../types";
+import { filterSkills } from "../skills-filter";
+import { exposurePathKey, unassignedSkills, type ExposurePath } from "../collections/state";
+import { deriveAgentAccessTree, isAgentAccessPathValid } from "../collections/agent-access-tree";
+import type { ConfigDeclarationOwner, Diagnostic } from "@skctl/core";
+import type { SkillAddress } from "@skctl/core";
+
+export interface SourceBrowseView {
+  readonly detailsOpen?: boolean;
+  readonly currentSkill?: string;
+}
+
+export interface WorkspaceSnapshot {
+  readonly skillsView: SkillsView;
+  readonly section: WorkspaceSection;
+  readonly selectedSource?: string;
+  readonly selectedSkill?: SkillAddress;
+  readonly selectedProblem?: string;
+  readonly diagnosticDetail?: string;
+  readonly selectedSkills: readonly SkillAddress[];
+  readonly selectedExposurePath?: string;
+  readonly expandedExposurePaths: Readonly<Record<string, boolean>>;
+  readonly selectedCollectionPath?: string;
+  readonly expandedCollectionPaths?: Readonly<Record<string, boolean>>;
+  readonly collectionBrowserOpen?: boolean;
+  readonly readerOpen: boolean;
+  readonly query: string;
+  readonly filters: Readonly<Record<string, string>>;
+  readonly sourceFilter?: string;
+  readonly scrolls: Readonly<Record<string, number>>;
+  readonly sourceUpdatesSource?: string;
+  readonly sourceBrowseViews?: Readonly<Record<string, SourceBrowseView>>;
+}
+
+export interface ProblemRow {
+  readonly subject: string;
+  readonly message: string;
+  readonly severity: Diagnostic["severity"];
+  readonly code: string;
+  readonly location?: { readonly file: string; readonly pointer?: string };
+  readonly related?: readonly {
+    readonly message: string;
+    readonly file?: string;
+    readonly pointer?: string;
+  }[];
+  readonly suggestion?: string;
+  readonly context?: string;
+  readonly diagnosticSubject?: Diagnostic["subject"];
+  readonly diagnosticSkill?: string;
+  readonly intent?:
+    | {
+        readonly kind: "installed-skill";
+        readonly address: { readonly source: string; readonly path: string };
+      }
+    | {
+        readonly kind: "config-route";
+        readonly destination: ConfigDeclarationOwner["level"];
+        readonly section: ConfigSection;
+        readonly selection?: string;
+        readonly owner: ConfigDeclarationOwner;
+      }
+    | { readonly kind: "diagnostic-detail" };
+}
+
+export const problemRowKey = (row: ProblemRow) =>
+  JSON.stringify({
+    code: row.code,
+    severity: row.severity,
+    message: row.message,
+    location: row.location,
+    related: row.related,
+    suggestion: row.suggestion,
+    diagnosticSubject: row.diagnosticSubject,
+    diagnosticSkill: row.diagnosticSkill,
+    intent: row.intent,
+  });
+
+export const filterProblemRows = (
+  rows: readonly ProblemRow[],
+  query: string,
+  filters: Readonly<Record<string, string>> = {},
+) => {
+  const needle = query.toLocaleLowerCase();
+  return rows.filter((row) => {
+    const facts = `${row.subject} ${row.message} ${row.context ?? ""}`.toLocaleLowerCase();
+    return (
+      (!needle || facts.includes(needle)) &&
+      (!filters.Severity || row.severity === filters.Severity) &&
+      (!filters.Code || row.code === filters.Code)
+    );
+  });
+};
+
+export const problemFilterDimensions = ["Severity", "Code"] as const;
+export const problemFilterValues = (rows: readonly ProblemRow[], dimension: string) =>
+  [...new Set(rows.map((row) => (dimension === "Severity" ? row.severity : row.code)))].sort();
+
+export const problemRows = (projection: WorkspaceView): readonly ProblemRow[] => {
+  const ownerKey = (owner: ConfigDeclarationOwner) =>
+    `${owner.level}\u0000${owner.file}\u0000${owner.pointer}`;
+  const configRoute = (owner: ConfigDeclarationOwner): ProblemRow["intent"] => {
+    const direct = projection.configs.find((config) => config.level === owner.level)?.direct;
+    if (!direct) return undefined;
+    const source = direct.sources.find((item) => ownerKey(item.ref.owner) === ownerKey(owner));
+    if (source)
+      return {
+        kind: "config-route",
+        destination: owner.level,
+        section: "sources",
+        selection: source.id,
+        owner,
+      };
+    const configSource = direct.configSources.find(
+      (item) => ownerKey(item.owner) === ownerKey(owner),
+    );
+    if (configSource)
+      return {
+        kind: "config-route",
+        destination: owner.level,
+        section: "config-sources",
+        selection: configSource.owner.pointer,
+        owner,
+      };
+    const collection = direct.collections.find((item) => ownerKey(item.owner) === ownerKey(owner));
+    if (collection)
+      return {
+        kind: "config-route",
+        destination: owner.level,
+        section: "collections",
+        selection: collection.id,
+        owner,
+      };
+    const use = direct.collectionUse.find((item) => ownerKey(item.owner) === ownerKey(owner));
+    if (use)
+      return {
+        kind: "config-route",
+        destination: owner.level,
+        section: "collections",
+        selection: use.collection,
+        owner,
+      };
+    if (direct.integrations.some((item) => ownerKey(item.owner) === ownerKey(owner)))
+      return { kind: "config-route", destination: owner.level, section: "integrations", owner };
+    if (owner.contribution) {
+      const host = projection.configs
+        .find((config) => config.level === owner.contribution!.configSource.level)
+        ?.direct.configSources.find(
+          (item) => ownerKey(item.owner) === ownerKey(owner.contribution!.configSource),
+        );
+      if (host)
+        return {
+          kind: "config-route",
+          destination: host.owner.level,
+          section: "config-sources",
+          selection: host.owner.pointer,
+          owner,
+        };
+    }
+    return undefined;
+  };
+  const row = (fallback: string, problem: Diagnostic, skill?: string): ProblemRow => {
+    const routedIntent =
+      problem.subject?.kind === "installed-skill"
+        ? { kind: "installed-skill" as const, address: problem.subject.address }
+        : problem.subject?.kind === "config"
+          ? configRoute(problem.subject.owner)
+          : undefined;
+    const intent =
+      routedIntent ??
+      (problem.subject?.kind === "config" ? ({ kind: "diagnostic-detail" } as const) : undefined);
+    const subject =
+      intent?.kind === "installed-skill"
+        ? `Installed Skill ${intent.address.source}/${intent.address.path}`
+        : intent?.kind === "config-route"
+          ? `${intent.section} ${intent.selection ?? ""}`.trim()
+          : fallback;
+    const context = [
+      problem.severity,
+      problem.code,
+      problem.location && `${problem.location.file}${problem.location.pointer ?? ""}`,
+      ...(problem.related?.map(
+        (related) =>
+          `${related.message}${related.file ? ` ${related.file}${related.pointer ?? ""}` : ""}`,
+      ) ?? []),
+      problem.suggestion,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return {
+      subject,
+      message: problem.message,
+      severity: problem.severity,
+      code: problem.code,
+      ...(context ? { context } : {}),
+      ...(problem.location ? { location: problem.location } : {}),
+      ...(problem.related ? { related: problem.related } : {}),
+      ...(problem.suggestion ? { suggestion: problem.suggestion } : {}),
+      ...(problem.subject ? { diagnosticSubject: problem.subject } : {}),
+      ...(!problem.subject && skill ? { diagnosticSkill: skill } : {}),
+      ...(intent ? { intent } : {}),
+    };
+  };
+  const candidates: readonly {
+    readonly fallback: string;
+    readonly problem: Diagnostic;
+    readonly skill?: string;
+  }[] = [
+    ...projection.installedSkills.flatMap((skill) =>
+      skill.problems.map((problem) => ({
+        fallback: `Installed Skill ${skill.address.source}/${skill.address.path}`,
+        problem,
+        skill: skillAddressKey(skill.address),
+      })),
+    ),
+    ...projection.diagnostics.map((problem) => ({ fallback: "Workspace", problem })),
+    ...(projection.effective.status === "unavailable"
+      ? projection.effective.reasons.map((problem) => ({
+          fallback: "Effective projection",
+          problem,
+        }))
+      : []),
+    ...projection.effective.agent.reasons.map((problem) => ({
+      fallback: "Managed OpenCode",
+      problem,
+    })),
+  ];
+  const canonical = (candidate: (typeof candidates)[number]) =>
+    JSON.stringify({
+      code: candidate.problem.code,
+      severity: candidate.problem.severity,
+      message: candidate.problem.message,
+      location: candidate.problem.location,
+      related: candidate.problem.related,
+      suggestion: candidate.problem.suggestion,
+      subject: candidate.problem.subject,
+      ...(candidate.problem.subject ? {} : candidate.skill ? { skill: candidate.skill } : {}),
+    });
+  return [
+    ...new Map(
+      candidates.map((candidate) => [
+        canonical(candidate),
+        row(candidate.fallback, candidate.problem, candidate.skill),
+      ]),
+    ).values(),
+  ];
+};
+
+const nearestSkill = (
+  selected: SkillAddress | undefined,
+  values: readonly SkillAddress[],
+  previous: readonly SkillAddress[],
+) => {
+  if (selected && values.some((value) => sameSkillAddress(value, selected))) return selected;
+  const index = selected ? previous.findIndex((value) => sameSkillAddress(value, selected)) : -1;
+  return values[Math.min(values.length - 1, Math.max(0, index))];
+};
+
+const nearest = (
+  selected: string | undefined,
+  values: readonly string[],
+  previous: readonly string[],
+) => {
+  if (selected && values.includes(selected)) return selected;
+  const index = selected ? previous.indexOf(selected) : -1;
+  return values[Math.min(values.length - 1, Math.max(0, index))];
+};
+
+const expandedPathFromKey = (key: string): ExposurePath | undefined => {
+  try {
+    const values = JSON.parse(key) as unknown;
+    if (!Array.isArray(values) || !values.length) return undefined;
+    const segments = values.map((value) => {
+      if (!Array.isArray(value) || typeof value[0] !== "string") return undefined;
+      const reference = value[1];
+      return {
+        collection: value[0],
+        ...(reference && typeof reference === "object" ? { reference } : {}),
+      };
+    });
+    return segments.every(Boolean) ? { segments: segments as ExposurePath["segments"] } : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** Durable Workspace browser state captured and restored by the route owner. */
+export function createWorkspaceState(
+  onReconciledSkill?: (selectedSkill: SkillAddress | undefined) => void,
+) {
+  // Session preferences outlive route frames, which restore only the active Source.
+  const defaultSourceUpdatesPreference = { query: "", filter: "updates" as const };
+  const [sourceUpdatesPreferences, setSourceUpdatesPreferences] = createSignal<
+    ReadonlyMap<string, { readonly query: string; readonly filter: "all" | "updates" }>
+  >(new Map());
+  const [snapshot, setSnapshot] = createSignal<WorkspaceSnapshot>({
+    skillsView: "current-exposure",
+    section: "skills",
+    readerOpen: false,
+    selectedSkills: [],
+    query: "",
+    filters: {},
+    scrolls: {},
+    expandedExposurePaths: {},
+    expandedCollectionPaths: {},
+  });
+  const [narrowLevel, setNarrowLevel] = createSignal<NarrowLevel>("list");
+  const update = (change: (current: WorkspaceSnapshot) => WorkspaceSnapshot) =>
+    setSnapshot((current) => {
+      const next = change(current);
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+  const sourceUpdatesSource = createMemo(() => snapshot().sourceUpdatesSource);
+  const sourceUpdatesView = createMemo(() => {
+    const source = sourceUpdatesSource();
+    return source === undefined
+      ? undefined
+      : { source, ...(sourceUpdatesPreferences().get(source) ?? defaultSourceUpdatesPreference) };
+  });
+  return {
+    snapshot,
+    restore(next: WorkspaceSnapshot) {
+      setSnapshot(structuredClone(next));
+    },
+    skillsView: () => snapshot().skillsView,
+    section: () => snapshot().section,
+    selectedSource: () => snapshot().selectedSource,
+    selectedSkill: () => snapshot().selectedSkill,
+    selectedProblem: () => snapshot().selectedProblem,
+    diagnosticDetail: () => snapshot().diagnosticDetail,
+    selectedSkills: () => snapshot().selectedSkills,
+    selectedExposurePath: () => snapshot().selectedExposurePath,
+    expandedExposurePaths: () => snapshot().expandedExposurePaths,
+    selectedCollectionPath: () => snapshot().selectedCollectionPath,
+    expandedCollectionPaths: () => snapshot().expandedCollectionPaths ?? {},
+    collectionBrowserOpen: () => snapshot().collectionBrowserOpen ?? false,
+    readerOpen: () => snapshot().readerOpen,
+    query: () => snapshot().query,
+    filters: () => snapshot().filters,
+    sourceFilter: () => snapshot().sourceFilter,
+    sourceUpdatesView,
+    sourceBrowseView: (source: string): SourceBrowseView =>
+      snapshot().sourceBrowseViews?.[source] ?? {},
+    patchSourceBrowseView(source: string, patch: Partial<SourceBrowseView>) {
+      update((current) => ({
+        ...current,
+        sourceBrowseViews: {
+          ...current.sourceBrowseViews,
+          [source]: { ...current.sourceBrowseViews?.[source], ...patch },
+        },
+      }));
+    },
+    scroll: (surface: string) => snapshot().scrolls[surface] ?? 0,
+    narrowLevel,
+    openDetail() {
+      setNarrowLevel("detail");
+    },
+    openReader() {
+      update((current) => ({ ...current, readerOpen: true }));
+    },
+    closeReader() {
+      update((current) => ({ ...current, readerOpen: false }));
+    },
+    openTask() {
+      setNarrowLevel("task");
+    },
+    showList() {
+      setNarrowLevel("list");
+    },
+    showWorkArea() {
+      setNarrowLevel("work-area");
+    },
+    selectSection(section: WorkspaceSection) {
+      update((current) => ({
+        ...current,
+        section,
+        sourceFilter: section === "skills" ? current.sourceFilter : undefined,
+        readerOpen: false,
+      }));
+    },
+    selectSkillsView(skillsView: SkillsView) {
+      update((current) => ({
+        ...current,
+        skillsView,
+        section: "skills",
+        sourceFilter: skillsView === "all-installed-skills" ? current.sourceFilter : undefined,
+        filters:
+          skillsView === "problems"
+            ? Object.fromEntries(
+                Object.entries(current.filters).filter(([dimension]) =>
+                  ["Severity", "Code"].includes(dimension),
+                ),
+              )
+            : Object.fromEntries(
+                Object.entries(current.filters).filter(
+                  ([dimension]) => !["Severity", "Code"].includes(dimension),
+                ),
+              ),
+        readerOpen: false,
+      }));
+    },
+    land(section: WorkspaceSection, selection?: string | SkillAddress) {
+      update((current) => ({
+        ...current,
+        section,
+        readerOpen: section === "skills" && selection !== undefined ? current.readerOpen : false,
+        sourceFilter: section === "skills" ? current.sourceFilter : undefined,
+        ...(section === "sources" && typeof selection === "string"
+          ? { selectedSource: selection }
+          : {}),
+        ...(section === "skills" && selection && typeof selection !== "string"
+          ? { selectedSkill: selection }
+          : {}),
+      }));
+    },
+    selectSource(selectedSource?: string) {
+      update((current) => ({ ...current, selectedSource }));
+    },
+    selectSkill(selectedSkill?: SkillAddress) {
+      const current = snapshot();
+      if (
+        !sameSkillAddress(
+          current.selectedSkill ?? { source: "", path: "" },
+          selectedSkill ?? { source: "", path: "" },
+        )
+      )
+        setSnapshot({ ...current, selectedSkill });
+    },
+    selectProblem(selectedProblem?: string) {
+      update((current) => ({ ...current, selectedProblem }));
+    },
+    openDiagnosticDetail(key: string) {
+      update((current) => ({ ...current, diagnosticDetail: key }));
+    },
+    closeDiagnosticDetail() {
+      update((current) => ({ ...current, diagnosticDetail: undefined }));
+    },
+    selectExposurePath(selectedExposurePath?: string) {
+      update((current) => ({ ...current, selectedExposurePath }));
+    },
+    selectCollectionPath(selectedCollectionPath?: string) {
+      update((current) => ({ ...current, selectedCollectionPath }));
+    },
+    setCollectionBrowserOpen(collectionBrowserOpen: boolean) {
+      update((current) => ({ ...current, collectionBrowserOpen }));
+    },
+    setCollectionPathExpanded(key: string, expanded: boolean) {
+      update((current) => ({
+        ...current,
+        expandedCollectionPaths: { ...current.expandedCollectionPaths, [key]: expanded },
+      }));
+    },
+    toggleExposurePath(path: ExposurePath) {
+      const key = exposurePathKey(path);
+      update((current) => {
+        const expanded = current.expandedExposurePaths[key] ?? false;
+        const next = { ...current.expandedExposurePaths };
+        if (expanded) next[key] = false;
+        else next[key] = true;
+        return { ...current, expandedExposurePaths: next };
+      });
+    },
+    expandExposurePath(path: ExposurePath) {
+      const key = exposurePathKey(path);
+      update((current) => ({
+        ...current,
+        expandedExposurePaths: { ...current.expandedExposurePaths, [key]: true },
+      }));
+    },
+    isExposurePathExpanded(path: ExposurePath) {
+      return snapshot().expandedExposurePaths[exposurePathKey(path)] ?? false;
+    },
+    toggleSkill(address: SkillAddress) {
+      update((current) => ({
+        ...current,
+        selectedSkills: current.selectedSkills.some(
+          (value) => value.source === address.source && value.path === address.path,
+        )
+          ? current.selectedSkills.filter(
+              (value) => value.source !== address.source || value.path !== address.path,
+            )
+          : [...current.selectedSkills, address],
+      }));
+    },
+    clearSelectedSkills() {
+      update((current) =>
+        current.selectedSkills.length ? { ...current, selectedSkills: [] } : current,
+      );
+    },
+    setQuery(query: string) {
+      update((current) => ({ ...current, query }));
+    },
+    setFilter(dimension: string, value?: string) {
+      update((current) => ({
+        ...current,
+        filters: value
+          ? { ...current.filters, [dimension]: value }
+          : Object.fromEntries(
+              Object.entries(current.filters).filter(([key]) => key !== dimension),
+            ),
+      }));
+    },
+    clearFilters() {
+      update((current) => ({ ...current, filters: {} }));
+    },
+    showInstalledSkillsFromSource(source: string) {
+      update((current) => ({
+        ...current,
+        skillsView: "all-installed-skills",
+        section: "skills",
+        sourceFilter: source,
+        readerOpen: false,
+        collectionBrowserOpen: false,
+      }));
+    },
+    showSourceUpdates(source: string) {
+      update((current) => ({
+        ...current,
+        section: "updates",
+        readerOpen: false,
+        sourceUpdatesSource: source,
+      }));
+    },
+    clearSourceUpdatesView() {
+      update((current) => ({ ...current, sourceUpdatesSource: undefined }));
+    },
+    setSourceUpdatesQuery(query: string) {
+      const source = snapshot().sourceUpdatesSource;
+      if (source === undefined) return;
+      setSourceUpdatesPreferences((current) => {
+        const preference = current.get(source) ?? defaultSourceUpdatesPreference;
+        return preference.query === query
+          ? current
+          : new Map(current).set(source, { ...preference, query });
+      });
+    },
+    setSourceUpdatesFilter(filter: "all" | "updates") {
+      const source = snapshot().sourceUpdatesSource;
+      if (source === undefined) return;
+      setSourceUpdatesPreferences((current) => {
+        const preference = current.get(source) ?? defaultSourceUpdatesPreference;
+        return preference.filter === filter
+          ? current
+          : new Map(current).set(source, { ...preference, filter });
+      });
+    },
+    clearSourceFilter() {
+      update((current) => ({
+        ...current,
+        section: "sources",
+        sourceFilter: undefined,
+        readerOpen: false,
+      }));
+    },
+    setScroll(surface: string, scroll: number) {
+      const value = Math.max(0, Math.floor(scroll));
+      update((current) =>
+        current.scrolls[surface] === value
+          ? current
+          : { ...current, scrolls: { ...current.scrolls, [surface]: value } },
+      );
+    },
+    reconcile(previous: WorkspaceView | undefined, current: WorkspaceView) {
+      let reconciledSkill: SkillAddress | undefined;
+      let reconciled = false;
+      batch(() =>
+        update((state) => {
+          const options = {
+            query: state.query,
+            filters: state.filters,
+            source: state.sourceFilter,
+          };
+          const currentSkills =
+            state.skillsView === "unassigned" ? unassignedSkills(current) : current.installedSkills;
+          const previousSkills =
+            state.skillsView === "unassigned"
+              ? previous
+                ? unassignedSkills(previous)
+                : []
+              : (previous?.installedSkills ?? []);
+          const values = filterSkills(currentSkills, {
+            ...options,
+            agentStatus: current.effective.agent.status,
+            collectionViews:
+              current.effective.status === "complete"
+                ? current.effective.collectionsView
+                : undefined,
+          }).map((skill) => skill.address);
+          const prior = filterSkills(previousSkills, {
+            ...options,
+            agentStatus: previous?.effective.agent.status,
+            collectionViews:
+              previous?.effective.status === "complete"
+                ? previous.effective.collectionsView
+                : undefined,
+          }).map((skill) => skill.address);
+          const problemOptions = filterProblemRows(
+            problemRows(current),
+            state.query,
+            state.filters,
+          ).map(problemRowKey);
+          const priorProblems = previous
+            ? filterProblemRows(problemRows(previous), state.query, state.filters).map(
+                problemRowKey,
+              )
+            : [];
+          const nextProblem = nearest(state.selectedProblem, problemOptions, priorProblems);
+          const nextProblemRow = problemRows(current).find(
+            (problem) => problemRowKey(problem) === nextProblem,
+          );
+          const problemSkill =
+            nextProblemRow?.intent?.kind === "installed-skill"
+              ? nextProblemRow.intent.address
+              : undefined;
+          const exposure =
+            state.skillsView === "current-exposure"
+              ? deriveAgentAccessTree(current, state.expandedExposurePaths).rows.find(
+                  (row) => row.key === state.selectedExposurePath,
+                )
+              : undefined;
+          const nextSkill =
+            state.skillsView === "current-exposure"
+              ? exposure?.kind === "skill" && exposure.availability.status === "available"
+                ? exposure.address
+                : undefined
+              : state.skillsView === "problems"
+                ? problemSkill &&
+                  state.selectedSkill &&
+                  sameSkillAddress(state.selectedSkill, problemSkill)
+                  ? state.selectedSkill
+                  : problemSkill
+                : nearestSkill(state.selectedSkill, values, prior);
+          const next = {
+            ...state,
+            selectedSource: nearest(
+              state.selectedSource,
+              current.effective.sources.map((source) => source.id),
+              previous?.effective.sources.map((source) => source.id) ?? [],
+            ),
+            selectedSkill: nextSkill,
+            selectedProblem: nextProblem,
+            readerOpen:
+              state.readerOpen && (state.skillsView !== "problems" || problemSkill !== undefined),
+            selectedSkills: state.selectedSkills.filter((selected) =>
+              current.installedSkills.some((skill) => sameSkillAddress(skill.address, selected)),
+            ),
+            expandedExposurePaths: Object.fromEntries(
+              Object.entries(state.expandedExposurePaths).filter(([key]) => {
+                const path = expandedPathFromKey(key);
+                return !!path && isAgentAccessPathValid(current, path);
+              }),
+            ),
+          };
+          if (
+            !sameSkillAddress(
+              next.selectedSkill ?? { source: "", path: "" },
+              state.selectedSkill ?? { source: "", path: "" },
+            )
+          ) {
+            reconciledSkill = next.selectedSkill;
+            reconciled = true;
+          }
+          return next;
+        }),
+      );
+      if (reconciled) onReconciledSkill?.(reconciledSkill);
+    },
+  };
+}
+
+export type WorkspaceState = ReturnType<typeof createWorkspaceState>;
+export type WorkspaceReadonly = Pick<
+  WorkspaceState,
+  | "snapshot"
+  | "skillsView"
+  | "section"
+  | "selectedSource"
+  | "selectedSkill"
+  | "selectedProblem"
+  | "diagnosticDetail"
+  | "selectedSkills"
+  | "selectedExposurePath"
+  | "expandedExposurePaths"
+  | "selectedCollectionPath"
+  | "expandedCollectionPaths"
+  | "collectionBrowserOpen"
+  | "isExposurePathExpanded"
+  | "expandExposurePath"
+  | "toggleExposurePath"
+  | "readerOpen"
+  | "query"
+  | "filters"
+  | "sourceFilter"
+  | "sourceUpdatesView"
+  | "sourceBrowseView"
+  | "scroll"
+  | "narrowLevel"
+>;

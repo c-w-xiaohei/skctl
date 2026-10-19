@@ -8,5 +8,5 @@ const workspaceTmp = fileURLToPath(new URL("../../../tmp/", import.meta.url));
 // this executable location; callers own cleanup of the unique fixture directory.
 export async function createExecutableFixture() {
   await mkdir(workspaceTmp, { recursive: true });
-  return mkdtemp(join(workspaceTmp, "skill-cli-provider-shim-"));
+  return mkdtemp(join(workspaceTmp, "skctl-provider-shim-"));
 }

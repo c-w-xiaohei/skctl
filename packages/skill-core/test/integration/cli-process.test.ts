@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("CLI-002 process agent browse writes an agent-ready root catalog", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-process-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-process-"));
   const state = join(root, "state");
   const configHome = join(root, "config");
   try {
@@ -12,7 +12,7 @@ test("CLI-002 process agent browse writes an agent-ready root catalog", async ()
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: {
@@ -24,9 +24,9 @@ test("CLI-002 process agent browse writes an agent-ready root catalog", async ()
         use: ["c"],
       }),
     );
-    await mkdir(join(configHome, "skill-cli"), { recursive: true });
+    await mkdir(join(configHome, "skctl"), { recursive: true });
     await writeFile(
-      join(configHome, "skill-cli", "config.jsonc"),
+      join(configHome, "skctl", "config.jsonc"),
       JSON.stringify({ agents: { opencode: "managed" } }),
     );
     const setup = Bun.spawn({
@@ -42,16 +42,16 @@ test("CLI-002 process agent browse writes an agent-ready root catalog", async ()
     const command = Bun.spawn({
       cmd: [
         process.execPath,
-        join(import.meta.dir, "../../../skill-cli/src/main.ts"),
+        join(import.meta.dir, "../../../skctl/src/main.ts"),
         "agent",
         "browse",
       ],
       cwd: root,
       env: {
         ...process.env,
-        SKILL_CLI_STATE_DIR: state,
+        SKCTL_STATE_DIR: state,
         XDG_CONFIG_HOME: configHome,
-        SKILL_CLI_AGENT_VERSION: "1.18.4",
+        SKCTL_AGENT_VERSION: "1.18.4",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -62,8 +62,8 @@ test("CLI-002 process agent browse writes an agent-ready root catalog", async ()
     expect(stdout).toContain('<managed_skill_catalog scope="root">');
     expect(stdout).toContain("<id>c</id>");
     expect(stdout).toContain("<description>Code review workflows</description>");
-    expect(stdout).toContain("skill-cli agent browse <collection-id>");
-    expect(stdout).toContain("skill-cli agent load <selector>");
+    expect(stdout).toContain("skctl agent browse <collection-id>");
+    expect(stdout).toContain("skctl agent load <selector>");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -73,7 +73,7 @@ test("CLI-002 process agent browse rejects an inapplicable output option without
   const command = Bun.spawn({
     cmd: [
       process.execPath,
-      join(import.meta.dir, "../../../skill-cli/src/main.ts"),
+      join(import.meta.dir, "../../../skctl/src/main.ts"),
       "agent",
       "browse",
       "--output",

@@ -1,6 +1,6 @@
 import { mkdir, writeFile, chmod } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { type SkillProvenance, type SourceBindingView } from "./types";
 import { type CoreOptions } from "../shared";
 import { openGitSource, openGitRef, resolveGitRef, type RunGit } from "./git";
@@ -133,7 +133,7 @@ export async function openUpdateSource(
   );
   if (snapshot.kind !== "remote") {
     await snapshot.close();
-    throw new SkillCliError("INTERNAL", "Expected remote source");
+    throw new SkctlError("INTERNAL", "Expected remote source");
   }
   return snapshot;
 }
@@ -168,7 +168,7 @@ export async function inspectRemoteRoots(
         paths.push(item.path);
         legacy.set(item.revision, paths);
       } else
-        throw new SkillCliError(
+        throw new SkctlError(
           "PINNED_COMMIT_UNAVAILABLE",
           "Installed Root has no exact comparison revision",
         );
@@ -180,7 +180,7 @@ export async function inspectRemoteRoots(
     for (const result of recovered)
       for (const root of result.roots) {
         if (root.status !== "present" || !root.tree)
-          throw new SkillCliError(
+          throw new SkctlError(
             "PROVIDER_INTEGRITY_FAILED",
             "Installed comparison Root is not present at its adopted commit",
           );
@@ -212,14 +212,14 @@ export async function materializeUpdateRoots(
     for (const [index, path] of paths.entries()) {
       const inspection = inspections.find((root) => root.path === path);
       if (inspection?.status !== "present" || !inspection.tree)
-        throw new SkillCliError("INVALID_ARGUMENT", "Selected update is not a present Skill Root");
+        throw new SkctlError("INVALID_ARGUMENT", "Selected update is not a present Skill Root");
       const root = join(stage, String(index));
       await mkdir(root, { recursive: true });
       roots.push({ path, root, tree: inspection.tree });
       for await (const entry of snapshot.list(path, operation.signal)) {
         if (entry.kind === "directory") continue;
         if (entry.kind !== "file" || (path && !entry.path.startsWith(`${path}/`)))
-          throw new SkillCliError(
+          throw new SkctlError(
             "PROVIDER_INTEGRITY_FAILED",
             "Selected Root contains an unsafe entry",
           );
@@ -240,7 +240,7 @@ export async function materializeUpdateRoots(
       operation.throwIfAborted("materialization");
       const content = contents.get(entry.path);
       if (!content)
-        throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Selected content is incomplete");
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Selected content is incomplete");
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, content.bytes, { mode: entry.executable ? 0o700 : 0o600 });
       if (entry.executable) await chmod(target, 0o700);
@@ -273,7 +273,7 @@ export async function openSource(
   batchTrees = false,
 ): Promise<SourceSnapshot> {
   acquisitionTrap?.();
-  if (signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   switch (locator.origin) {
     case "local":
       return openLocalSource(sourceName, locator.path, provenance);
@@ -392,7 +392,7 @@ export async function discoverSnapshotSkills(
     names.add(skill.name);
   }
   if (duplicate.size)
-    throw new SkillCliError(
+    throw new SkctlError(
       "DUPLICATE_SKILL_NAME",
       `Duplicate Skill name: ${[...duplicate].sort().join(", ")}`,
     );

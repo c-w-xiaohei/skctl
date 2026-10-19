@@ -3,7 +3,7 @@ import { shellSelectionInvariants, TerminalScreen } from "./native-terminal";
 
 test("native shell selection checks whitespace contexts and bounded sidebar or compact cues", () => {
   const clipped =
-    "skill-cli [ Workspace   [ More actions… ]\n────\n[ Skills ] Collections\nWorkspace / Skills";
+    "skctl [ Workspace   [ More actions… ]\n────\n[ Skills ] Collections\nWorkspace / Skills";
   expect(shellSelectionInvariants(clipped)).toMatchObject({
     selectedContextCount: 1,
     selectedSectionCount: 1,
@@ -15,7 +15,7 @@ test("native shell selection checks whitespace contexts and bounded sidebar or c
     selectedContextCount: 0,
   });
   const wide =
-    " skill-cli [ Workspace ] Global\n────\n                     │ Workspace / Skills\n PAGES               │\n   ▶ Skills          │ ▶ Collections\n   Collections       │ [ Sources ]\nfooter\nfooter\nfooter";
+    " skctl [ Workspace ] Global\n────\n                     │ Workspace / Skills\n PAGES               │\n   ▶ Skills          │ ▶ Collections\n   Collections       │ [ Sources ]\nfooter\nfooter\nfooter";
   expect(shellSelectionInvariants(wide)).toMatchObject({
     selectedContextCount: 1,
     selectedSectionCount: 1,
@@ -26,7 +26,7 @@ test("native shell selection checks whitespace contexts and bounded sidebar or c
   ).toMatchObject({ selectedSectionCount: 2 });
   expect(
     shellSelectionInvariants(
-      "skill-cli [ Project ]\n────\n[ Sources ] Collections\nProject Config / Sources",
+      "skctl [ Project ]\n────\n[ Sources ] Collections\nProject Config / Sources",
     ),
   ).toMatchObject({
     selectedContextCount: 1,
@@ -34,21 +34,21 @@ test("native shell selection checks whitespace contexts and bounded sidebar or c
     sectionCue: "compact-navigation",
   });
   expect(shellSelectionInvariants("Resize your terminal")).toEqual({ resizeOrModal: true });
-  expect(shellSelectionInvariants("skill-cli [Workspace] [Local]\n────\n[Skills]")).toMatchObject({
+  expect(shellSelectionInvariants("skctl [Workspace] [Local]\n────\n[Skills]")).toMatchObject({
     selectedContextCount: 2,
   });
 });
 
 test("native shell selection accepts Updates in sidebar and compact navigation cues", () => {
   const sidebar =
-    " skill-cli [ Workspace ] Global\n────\n                     │ Workspace / Updates\n PAGES               │\n   ▶ Updates         │ ▶ Collections\nfooter\nfooter\nfooter";
+    " skctl [ Workspace ] Global\n────\n                     │ Workspace / Updates\n PAGES               │\n   ▶ Updates         │ ▶ Collections\nfooter\nfooter\nfooter";
   expect(shellSelectionInvariants(sidebar)).toMatchObject({
     selectedContextCount: 1,
     selectedSectionCount: 1,
     sectionCue: "sidebar",
   });
 
-  const compact = "skill-cli [ Workspace ]\n────\n[ Updates ] Collections\nWorkspace / Updates";
+  const compact = "skctl [ Workspace ]\n────\n[ Updates ] Collections\nWorkspace / Updates";
   expect(shellSelectionInvariants(compact)).toMatchObject({
     selectedContextCount: 1,
     selectedSectionCount: 1,
@@ -59,7 +59,7 @@ test("native shell selection accepts Updates in sidebar and compact navigation c
 test("text-only terminal evidence does not invent selection counts for color-only tabs", () => {
   expect(
     shellSelectionInvariants(
-      "skill-cli  Workspace  Global\n────\nSkills  Collections\nWorkspace / Skills",
+      "skctl  Workspace  Global\n────\nSkills  Collections\nWorkspace / Skills",
     ),
   ).toMatchObject({
     selectedContextCount: null,
@@ -68,7 +68,7 @@ test("text-only terminal evidence does not invent selection counts for color-onl
   });
   expect(
     shellSelectionInvariants(
-      "skill-cli  Workspace  Global\n────\n │ Workspace / Skills\n PAGES               │\n   ▶ Skills          │\nfooter\nfooter\nfooter",
+      "skctl  Workspace  Global\n────\n │ Workspace / Skills\n PAGES               │\n   ▶ Skills          │\nfooter\nfooter\nfooter",
     ),
   ).toMatchObject({
     selectedContextCount: null,

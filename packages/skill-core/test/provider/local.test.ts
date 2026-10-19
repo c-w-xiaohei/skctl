@@ -6,7 +6,7 @@ import * as localModule from "../../src/source/local";
 import { openLocalSource } from "../../src/source/local";
 
 test("Local snapshots expose deterministic entries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-local-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-local-"));
   await mkdir(join(root, "nested"));
   await writeFile(join(root, "SKILL.md"), "---\nname: local\ndescription: Local\n---\n");
   await writeFile(join(root, "nested", "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
@@ -29,7 +29,7 @@ test("Local snapshots expose deterministic entries", async () => {
 });
 
 test("Local snapshots expose initialized submodule files, retain uninitialized gitlink directories, and never invoke Git", async () => {
-  const fixture = await mkdtemp(join(tmpdir(), "skill-cli-submodule-"));
+  const fixture = await mkdtemp(join(tmpdir(), "skctl-submodule-"));
   const nested = join(fixture, "nested-repository");
   const parent = join(fixture, "parent-repository");
   const initialized = join(fixture, "initialized-parent");
@@ -47,16 +47,16 @@ test("Local snapshots expose initialized submodule files, retain uninitialized g
 
   try {
     await git(["init", nested]);
-    await git(["config", "user.email", "test@skill-cli.invalid"], nested);
-    await git(["config", "user.name", "skill-cli test"], nested);
+    await git(["config", "user.email", "test@skctl.invalid"], nested);
+    await git(["config", "user.name", "skctl test"], nested);
     await writeFile(join(nested, "SKILL.md"), "---\nname: nested\ndescription: Nested\n---\n");
     await writeFile(join(nested, "helper.txt"), "present on host\n");
     await git(["add", "."], nested);
     await git(["commit", "-m", "nested skill"], nested);
 
     await git(["init", parent]);
-    await git(["config", "user.email", "test@skill-cli.invalid"], parent);
-    await git(["config", "user.name", "skill-cli test"], parent);
+    await git(["config", "user.email", "test@skctl.invalid"], parent);
+    await git(["config", "user.name", "skctl test"], parent);
     await mkdir(join(parent, "source"));
     await git(
       ["-c", "protocol.file.allow=always", "submodule", "add", nested, "source/nested"],

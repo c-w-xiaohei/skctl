@@ -1,7 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { sourceBindingSchema } from "../source/schema";
 import { collectionSchema } from "../collection/schema";
-export const schemaId = "https://skill-cli.dev/schema.json";
+export const schemaId = "https://skctl.dev/schema.json";
 const declarationProperties = {
   sources: Type.Optional(Type.Record(Type.String(), sourceBindingSchema)),
   collections: Type.Optional(Type.Record(Type.String(), collectionSchema)),

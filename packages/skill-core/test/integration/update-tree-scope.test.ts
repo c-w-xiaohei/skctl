@@ -17,19 +17,19 @@ const reviewPath = "group/review";
 const origin = "https://example.test/tree-scope.git";
 async function localReviewFixture() {
   const root = await mkdtemp(join(tmpdir(), "w3-local-review-"));
-  const saved = process.env.SKILL_CLI_STATE_DIR;
+  const saved = process.env.SKCTL_STATE_DIR;
   const localOrigin = join(root, "origin");
   const boundary = join(localOrigin, "library", "skills");
   const stateFile = join(root, "state", "state.json");
   async function cleanup() {
-    if (saved === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = saved;
+    if (saved === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = saved;
     await rm(root, { recursive: true, force: true });
   }
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    process.env.SKCTL_STATE_DIR = join(root, "state");
     const core = { cwd: root, userConfigPath: join(root, "user.jsonc") };
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     for (const path of ["one", "two"]) {
       await mkdir(join(boundary, path), { recursive: true });
       await writeFile(
@@ -51,9 +51,9 @@ async function localReviewFixture() {
   }
 }
 async function fixture(ref = "main") {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-update-tree-scope-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-update-tree-scope-"));
   const saved = new Map(
-    ["PATH", "SKILL_CLI_STATE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"].map(
+    ["PATH", "SKCTL_STATE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"].map(
       (key) => [key, process.env[key]] as const,
     ),
   );
@@ -110,17 +110,17 @@ async function fixture(ref = "main") {
     return JSON.parse(await readFile(stateFile, "utf8"));
   }
   try {
-    process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+    process.env.SKCTL_STATE_DIR = join(root, "state");
     process.env.GIT_CONFIG_GLOBAL = join(root, "gitconfig");
     process.env.GIT_CONFIG_NOSYSTEM = "1";
     await writeFile(process.env.GIT_CONFIG_GLOBAL, "");
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await put(`${reviewPath}/SKILL.md`, "---\nname: review\ndescription: First\n---\n");
     await put(`${reviewPath}/scripts/run.sh`, "#!/bin/sh\necho first\n");
     await put("other/SKILL.md", "---\nname: other\ndescription: Other\n---\n");
     await put("other/resource.txt", "unselected resource\n");
     await git("init", "-b", "main");
-    await git("config", "user.email", "test@skill-cli.invalid");
+    await git("config", "user.email", "test@skctl.invalid");
     await git("config", "user.name", "Skill CLI");
     await git("config", "core.filemode", "true");
     await git("init", "--bare", bare);
@@ -601,9 +601,7 @@ test("W3 same-commit shortcut rejoins final binding guard and present-valid remo
       }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
     expect(await readFile(value.stateFile, "utf8")).toBe(before);
-    setManagementUpdateCheckHookForTest(() =>
-      writeFile(join(value.root, "skill-cli.jsonc"), "{}\n"),
-    );
+    setManagementUpdateCheckHookForTest(() => writeFile(join(value.root, "skctl.jsonc"), "{}\n"));
     await expect(api.checkUpdate(value.core, { source: "remote" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
@@ -649,15 +647,15 @@ test("W3 legacy missing-tree recovery uses retrievable old metadata without rewr
 });
 test("W3 Local checks target installed Roots, tolerate malformed status, and guard removal revival", async () => {
   const root = await mkdtemp(join(tmpdir(), "w3-local-scope-"));
-  const saved = process.env.SKILL_CLI_STATE_DIR;
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  const saved = process.env.SKCTL_STATE_DIR;
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   const skill = join(root, "skills", "group", "review");
   const unrelated = join(root, "skills", "unrelated");
   try {
     await mkdir(skill, { recursive: true });
     await mkdir(unrelated);
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: First\n---\n");
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     const core = { cwd: root, userConfigPath: join(root, "user.jsonc") };
     await api.registerSource(core, {
       level: "project",
@@ -690,8 +688,8 @@ test("W3 Local checks target installed Roots, tolerate malformed status, and gua
     expect((await api.checkUpdate(core, { source: "local" })).value.removed).toHaveLength(1);
   } finally {
     setManagementPublicationHookForTest();
-    if (saved === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = saved;
+    if (saved === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = saved;
     await chmod(unrelated, 0o700);
     await rm(root, { recursive: true, force: true });
   }
@@ -707,9 +705,7 @@ test("W3 empty Installed Source checks have no remote work but still rejoin the 
       added: [],
     });
     expect(await readFile(value.trace, "utf8")).toBe("");
-    setManagementUpdateCheckHookForTest(() =>
-      writeFile(join(value.root, "skill-cli.jsonc"), "{}\n"),
-    );
+    setManagementUpdateCheckHookForTest(() => writeFile(join(value.root, "skctl.jsonc"), "{}\n"));
     await expect(api.checkUpdate(value.core, { source: "remote" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });

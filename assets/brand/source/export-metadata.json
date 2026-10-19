@@ -1,0 +1,89 @@
+{
+  "date": "2026-10-19",
+  "generator": {
+    "cli": "gptx v0.2.7",
+    "model": "gpt-image-2",
+    "quality": "high",
+    "requestedSize": "1024x1024",
+    "job": "job_20261019T063143_8803215bd48a65d1",
+    "returnedSize": [1254, 1254]
+  },
+  "source": {
+    "file": "source/generated-mark.png",
+    "sha256": "c4a1442b749941dd4f39a4d0e92bd3944ca38af827bc97a1b87e07c92104f16d"
+  },
+  "processing": {
+    "tool": "ffmpeg 4.4.2",
+    "sourceCrop": {
+      "x": 60,
+      "y": 59,
+      "width": 1136,
+      "height": 1136
+    },
+    "compactCrop": {
+      "x": 148,
+      "y": 147,
+      "width": 960,
+      "height": 960
+    },
+    "alphaCleanup": "values below 16 become 0; above 240 become 255; other values retained",
+    "geometry": "Generated silhouette preserved; colors normalized from theme.ts; resize only.",
+    "compact16Alpha": "After area reduction, alpha below 128 becomes 0; all remaining pixels become 255.",
+    "readmeBackgrounds": {
+      "logo-readme-light.png": "#ffffff",
+      "logo-readme-dark.png": "#0d1117"
+    }
+  },
+  "files": {
+    "logo-light.png": {
+      "size": [512, 512],
+      "bytes": 7555,
+      "sha256": "bb5ce24f57c9083ab9fdd0a1664caa327e9d65b44317c30b05c2bb14d7e45dca"
+    },
+    "logo-dark.png": {
+      "size": [512, 512],
+      "bytes": 7565,
+      "sha256": "4f4fbc9452817a023a16e288e3c2b2fe4779fd4193f354f9ce61af3228673a5d"
+    },
+    "logo-black.png": {
+      "size": [512, 512],
+      "bytes": 7170,
+      "sha256": "4e961d88fae1e94c780467d9c4af78e0a35a9c3419e9f74be6154ef1463cad17"
+    },
+    "logo-white.png": {
+      "size": [512, 512],
+      "bytes": 7942,
+      "sha256": "8075371155fb0a23a8fe3837254d62f337c27614de054f0a434b3938d2a2ea52"
+    },
+    "icon-16.png": {
+      "size": [16, 16],
+      "bytes": 116,
+      "sha256": "b15975900fbf59ec00bec1cb5379c3e8a294527070d0a201085782d3b370444d"
+    },
+    "icon-32.png": {
+      "size": [32, 32],
+      "bytes": 278,
+      "sha256": "2ec614306adf66b79a4c64771aa5608e9e4a2e51882339d7bbe9471705bffe5d"
+    },
+    "icon-48.png": {
+      "size": [48, 48],
+      "bytes": 422,
+      "sha256": "82373dd1e840c0598d72a93b9d430003515763c73bd2be2b96c8e7e7f955655f"
+    },
+    "avatar.png": {
+      "size": [512, 512],
+      "bytes": 11173,
+      "sha256": "23f3722c8227a19f7842a85f4c55011082567cdad6fa832eb7d6971b05ea6de3"
+    },
+    "logo-readme-light.png": {
+      "size": [512, 512],
+      "bytes": 8143,
+      "sha256": "806ee6753692f324e7f001c211f94132f28ad66248d95d0764d86f37f8da2cc6"
+    },
+    "logo-readme-dark.png": {
+      "size": [512, 512],
+      "bytes": 7832,
+      "sha256": "f4138f4b847d4639a217c6b77c24a284d70356eb6c9a3ddf21a747757be9df98"
+    }
+  }
+}

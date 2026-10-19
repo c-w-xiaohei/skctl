@@ -1,4 +1,4 @@
-import * as api from "@skill-cli/core";
+import * as api from "@skctl/core";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { testRender } from "@opentui/solid";
@@ -8,8 +8,8 @@ import {
   type CapturedFrame,
   type RGBA,
 } from "@opentui/core";
-import { selectScrollOffset } from "../packages/skill-tui/src/select-scroll";
-import { App } from "../packages/skill-tui/src/app";
+import { selectScrollOffset } from "../packages/sktui/src/select-scroll";
+import { App } from "../packages/sktui/src/app";
 // A bounded visual preview, not a test-suite runner. It reads a real Core projection
 // and mounts production App. No mutation, build, network fixture, or assertion suite.
 // Readiness follows parsed input, including the native standalone-Esc delay.
@@ -19,23 +19,23 @@ const core = { cwd: project, project };
 const startedAt = new Date().toISOString();
 const sources = await Promise.all(
   [
-    "packages/skill-tui/src/app.tsx",
-    "packages/skill-tui/src/workspace-page.tsx",
-    "packages/skill-tui/src/ui/route-shell.tsx",
-    "packages/skill-tui/src/ui/pane.tsx",
-    "packages/skill-tui/src/ui/data-list.tsx",
-    "packages/skill-tui/src/ui/list-text.ts",
-    "packages/skill-tui/src/collections-page.tsx",
-    "packages/skill-tui/src/config-page.tsx",
-    "packages/skill-tui/src/select-scroll.ts",
-    "packages/skill-tui/src/components/section-tabs.tsx",
-    "packages/skill-tui/src/workspace/state.ts",
-    "packages/skill-tui/src/route.ts",
-    "packages/skill-tui/src/navigation.ts",
-    "packages/skill-tui/src/reader.tsx",
-    "packages/skill-tui/src/ui/theme.ts",
-    "packages/skill-tui/src/command-control.tsx",
-    "packages/skill-tui/package.json",
+    "packages/sktui/src/app.tsx",
+    "packages/sktui/src/workspace-page.tsx",
+    "packages/sktui/src/ui/route-shell.tsx",
+    "packages/sktui/src/ui/pane.tsx",
+    "packages/sktui/src/ui/data-list.tsx",
+    "packages/sktui/src/ui/list-text.ts",
+    "packages/sktui/src/collections-page.tsx",
+    "packages/sktui/src/config-page.tsx",
+    "packages/sktui/src/select-scroll.ts",
+    "packages/sktui/src/components/section-tabs.tsx",
+    "packages/sktui/src/workspace/state.ts",
+    "packages/sktui/src/route.ts",
+    "packages/sktui/src/navigation.ts",
+    "packages/sktui/src/reader.tsx",
+    "packages/sktui/src/ui/theme.ts",
+    "packages/sktui/src/command-control.tsx",
+    "packages/sktui/package.json",
     "packages/skill-core/package.json",
     "package.json",
     "bun.lock",
@@ -355,7 +355,7 @@ try {
 await writeFile(join(output, "interaction-traces.json"), JSON.stringify(interactions, null, 2));
 await writeFile(
   join(output, "preview.html"),
-  `<!doctype html><meta charset="utf-8"><title>skill-cli UI preview</title><style>body{background:#101317;color:#b8c0cc;padding:24px;font:14px system-ui}pre{display:inline-block;background:#1b2025;padding:12px;font:14px/20px monospace;white-space:pre}section{margin-bottom:32px;overflow:auto}h2{font-size:16px}</style><h1>Production App — bounded renderer preview</h1><p>Real Core snapshot; no mutations. Captured OpenTUI cells, not a native terminal screenshot or human approval.</p>${samples.map((sample) => `<section><h2>${sample.label}</h2><pre>${sample.html}</pre></section>`).join("")}`,
+  `<!doctype html><meta charset="utf-8"><title>skctl UI preview</title><style>body{background:#101317;color:#b8c0cc;padding:24px;font:14px system-ui}pre{display:inline-block;background:#1b2025;padding:12px;font:14px/20px monospace;white-space:pre}section{margin-bottom:32px;overflow:auto}h2{font-size:16px}</style><h1>Production App — bounded renderer preview</h1><p>Real Core snapshot; no mutations. Captured OpenTUI cells, not a native terminal screenshot or human approval.</p>${samples.map((sample) => `<section><h2>${sample.label}</h2><pre>${sample.html}</pre></section>`).join("")}`,
 );
 console.log(`Saved ${samples.length} UI previews to ${output}`);
 await writeFile(

@@ -9,7 +9,7 @@ import {
 } from "../../src/config/document";
 
 const userProject = {
-  $schema: "https://skill-cli.dev/schema.json",
+  $schema: "https://skctl.dev/schema.json",
   agents: { opencode: "managed" },
   sources: { team: { kind: "local", path: "../skills", root: "" } },
   collections: { development: { members: { review: { source: "team", path: "review" } } } },
@@ -114,10 +114,10 @@ describe("persisted JSONC v1 schema", () => {
 
   test("has deterministic generated schema data and detects drift", async () => {
     expect(schemaJson).toEndWith("\n");
-    expect(schemaJson).toContain('"$id": "https://skill-cli.dev/schema.json"');
+    expect(schemaJson).toContain('"$id": "https://skctl.dev/schema.json"');
     expect(schemaJson).toContain('"$schema": "https://json-schema.org/draft/2020-12/schema"');
     expect(JSON.parse(schemaJson)).toEqual(
-      JSON.parse(await Bun.file("packages/skill-core/schema/skill-cli.schema.json").text()),
+      JSON.parse(await Bun.file("packages/skill-core/schema/skctl.schema.json").text()),
     );
   });
 });

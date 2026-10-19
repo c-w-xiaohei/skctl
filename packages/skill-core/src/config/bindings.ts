@@ -3,7 +3,7 @@ import type { ConfigLevel, ConfigSourceContributionRef } from "./types";
 import type { SourceBinding } from "../source/schema";
 import type { SourceBindingView } from "../source/types";
 import type { InternalSourceBinding } from "../source/identity";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { bindingDigest, canonicalLocalOrigin, canonicalRemoteOrigin } from "../source/identity";
 import { parseQualifiedName } from "../collection/names";
 import { bindingProblemPointer, document, pointerSegment, validateSourceRoot } from "./document";
@@ -38,7 +38,7 @@ export function sourceView(
     .flatMap((part) => part!.split("/").filter((segment) => segment && segment !== "."));
   const inheritedRoot = remoteRelative ? remoteParts.join("/") : undefined;
   if (remoteParts.some((part) => part === ".."))
-    throw new SkillCliError("CONFIG_INVALID", "Remote Config Source escapes its repository");
+    throw new SkctlError("CONFIG_INVALID", "Remote Config Source escapes its repository");
   const kind = remoteRelative ? "git" : value.kind;
   const origin = remoteRelative
     ? inherited.origin
@@ -100,8 +100,8 @@ export function contributedSourceBindings(
       try {
         source = sourceView(namespace(id), item, declarationFile, level, inherited);
       } catch (error) {
-        if (!(error instanceof SkillCliError) || error.code !== "CONFIG_INVALID") throw error;
-        throw new SkillCliError("CONFIG_INVALID", error.message, [
+        if (!(error instanceof SkctlError) || error.code !== "CONFIG_INVALID") throw error;
+        throw new SkctlError("CONFIG_INVALID", error.message, [
           {
             code: error.code,
             severity: "warning",
@@ -186,6 +186,6 @@ export async function cachedConfig(
 ): Promise<ReusableConfigDocument> {
   const applied = state.configs[id];
   if (!applied)
-    throw new SkillCliError("CONFIG_INVALID", `Remote Config Source is not adopted: ${id}`);
+    throw new SkctlError("CONFIG_INVALID", `Remote Config Source is not adopted: ${id}`);
   return document(join(coordinator.root, "configs", applied.digest, "config.jsonc"), "reusable");
 }

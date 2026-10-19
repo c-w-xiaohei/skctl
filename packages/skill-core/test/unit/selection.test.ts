@@ -7,8 +7,8 @@ import { readWorkspace } from "../../src/workspace/capture";
 import { resolveCollectionUse, resolveCollections } from "../../src/collection/graph";
 
 test("rejects legacy declarations rather than importing or shadowing them", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-selection-"));
-  const config = join(root, "skill-cli.jsonc");
+  const root = await mkdtemp(join(tmpdir(), "skctl-selection-"));
+  const config = join(root, "skctl.jsonc");
   try {
     await writeFile(config, '{ "profiles": { "old": [] } }');
     const workspace = (await readWorkspace({ cwd: root })).value;

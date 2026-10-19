@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateCoordinator } from "../../src/storage/state";
 test("PROJ-016 reports managed catalog unavailable for absent, empty, or incomplete Use", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-catalog-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-catalog-"));
   const state = join(root, "state");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({ agents: { opencode: "managed" }, use: [] }),
     );
     const core = { cwd: root };
@@ -18,7 +18,7 @@ test("PROJ-016 reports managed catalog unavailable for absent, empty, or incompl
       value: { status: "unavailable", reason: expect.any(String) },
     });
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         agents: { opencode: "managed" },
         collections: { c: { members: { review: { source: "source", path: "review" } } } },
@@ -29,12 +29,12 @@ test("PROJ-016 reports managed catalog unavailable for absent, empty, or incompl
       value: { status: "unavailable", reason: expect.any(String) },
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("PROJ-015/016 projects root and collection nodes without aliases or graph terms", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-catalog-records-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-catalog-records-"));
   const state = join(root, "state");
   const global = join(root, "global.jsonc");
   try {
@@ -42,7 +42,7 @@ test("PROJ-015/016 projects root and collection nodes without aliases or graph t
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: {
@@ -57,7 +57,7 @@ test("PROJ-015/016 projects root and collection nodes without aliases or graph t
         agents: { opencode: "managed" },
       }),
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await writeFile(global, "{}\n");
     await new StateCoordinator(state).installLocal("source", "review", skill);
     const core = { cwd: root, userConfigPath: global };
@@ -128,12 +128,12 @@ test("PROJ-015/016 projects root and collection nodes without aliases or graph t
       value: { results: [{ selector: "zeta:again", name: "review", description: "Review" }] },
     });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("Collection inspection does not match colliding source/path concatenations", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-catalog-address-collision-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-catalog-address-collision-"));
   const state = join(root, "state");
   const global = join(root, "global.jsonc");
   try {
@@ -141,7 +141,7 @@ test("Collection inspection does not match colliding source/path concatenations"
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "---\nname: guide\ndescription: Guide\n---\n");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: {
           team: { kind: "local", path: "./skills", root: "" },
@@ -154,7 +154,7 @@ test("Collection inspection does not match colliding source/path concatenations"
         agents: { opencode: "managed" },
       }),
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await writeFile(global, "{}\n");
     const core = { cwd: root, userConfigPath: global };
     await api.installSkills(core, { source: "team", paths: ["main/guide"] });
@@ -163,7 +163,7 @@ test("Collection inspection does not match colliding source/path concatenations"
     expect(inspection.value.members[0]?.address).toEqual({ source: "team/main", path: "guide" });
     expect(inspection.value.catalogPreview.skills).toBe(0);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,4 +1,4 @@
-import { SkillCliError, type OperationOptions, type OperationResult } from "../shared";
+import { SkctlError, type OperationOptions, type OperationResult } from "../shared";
 import { type ConfigLevel } from "../config/types";
 import { type CollectionInspection } from "./types";
 import { type CoreOptions } from "../shared";
@@ -13,10 +13,10 @@ export async function inspectCollection(
   const workspace = await readWorkspace({ ...options, signal: operation?.signal });
   const effective = workspace.value.effective;
   if (effective.status !== "complete")
-    throw new SkillCliError("REFERENCE_NOT_FOUND", `Collection not found: ${request.collection}`);
+    throw new SkctlError("REFERENCE_NOT_FOUND", `Collection not found: ${request.collection}`);
   const view = effective.collectionsView.find((item) => item.id === request.collection);
   if (!view)
-    throw new SkillCliError("REFERENCE_NOT_FOUND", `Collection not found: ${request.collection}`);
+    throw new SkctlError("REFERENCE_NOT_FOUND", `Collection not found: ${request.collection}`);
   const reachable = reachableCollections(effective.collectionsView, effective.use);
   const installed = new Set(
     workspace.value.installedSkills

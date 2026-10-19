@@ -5,7 +5,7 @@ import { createProcessClient, type ChildProcess, type ProcessRunner } from "../s
 const encoder = new TextEncoder();
 const catalog =
   '<managed_skill_catalog scope="root"><collection id="team">Team workflows</collection>\n' +
-  "Use `skill-cli agent browse <collection-id>` to inspect a Collection and `skill-cli agent load <selector>` to load a Skill.\n" +
+  "Use `skctl agent browse <collection-id>` to inspect a Collection and `skctl agent load <selector>` to load a Skill.\n" +
   "</managed_skill_catalog>\n";
 
 function stream(...chunks: string[]): ReadableStream<Uint8Array> {
@@ -35,21 +35,21 @@ describe("process client", () => {
     const calls: unknown[][] = [];
     const client = createProcessClient({
       path: "/tools:/bin",
-      exists: (path) => path === "/tools/skill-cli",
+      exists: (path) => path === "/tools/skctl",
       runner: runner(calls, child),
       env: { KEEP: "yes", PATH: "/tools:/bin", TOKEN: "ambient" },
     });
 
     await expect(client.browse("/project")).resolves.toBe(catalog);
     expect(calls).toHaveLength(1);
-    expect(calls[0]![0]).toEqual(["/tools/skill-cli", "agent", "browse"]);
+    expect(calls[0]![0]).toEqual(["/tools/skctl", "agent", "browse"]);
     expect(calls[0]![1]).toEqual(
       expect.objectContaining({
         cwd: "/project",
         env: expect.objectContaining({
           KEEP: "yes",
           TOKEN: "ambient",
-          SKILL_CLI_AGENT: "opencode",
+          SKCTL_AGENT: "opencode",
           NO_COLOR: "1",
           GIT_TERMINAL_PROMPT: "0",
         }),
@@ -74,27 +74,27 @@ describe("process client", () => {
       path: "C:\\Tools;D:\\bin",
       env: { PATHEXT: ".COM;.EXE;.BAT;.CMD" },
       platform: "win32",
-      exists: (path) => path === "C:\\Tools\\skill-cli.CMD",
+      exists: (path) => path === "C:\\Tools\\skctl.CMD",
       runner: runner(windowsCalls, child),
     });
     await windows.browse("C:\\project");
-    expect(windowsCalls[0]![0]).toEqual(["C:\\Tools\\skill-cli.CMD", "agent", "browse"]);
+    expect(windowsCalls[0]![0]).toEqual(["C:\\Tools\\skctl.CMD", "agent", "browse"]);
 
     const relativeCalls: unknown[][] = [];
     const tools = resolve("tools");
     const relative = createProcessClient({
       path: "tools",
-      exists: (path) => path === `${tools}/skill-cli`,
+      exists: (path) => path === `${tools}/skctl`,
       runner: runner(relativeCalls, child),
     });
     await relative.browse("/project");
-    expect(relativeCalls[0]![0]).toEqual([`${tools}/skill-cli`, "agent", "browse"]);
+    expect(relativeCalls[0]![0]).toEqual([`${tools}/skctl`, "agent", "browse"]);
   });
 
   test("rejects missing executables, failed commands, empty output, and invalid UTF-8", async () => {
     await expect(
       createProcessClient({ path: "/tools", exists: () => false }).browse("/project"),
-    ).rejects.toMatchObject({ code: "SKILL_CLI_NOT_FOUND" });
+    ).rejects.toMatchObject({ code: "SKCTL_NOT_FOUND" });
     await expect(
       createProcessClient({
         path: "/tools",

@@ -2,12 +2,12 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runMain } from "../../../skill-cli/src/main";
+import { runMain } from "../../../skctl/src/main";
 import { StateCoordinator } from "../../src/storage/state";
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-reference-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-reference-"));
   const state = join(root, "state");
-  process.env.SKILL_CLI_STATE_DIR = state;
+  process.env.SKCTL_STATE_DIR = state;
   const global = join(root, "global.jsonc");
   for (const name of ["router", "specialist", "private"]) {
     const skill = join(root, "skills", name);
@@ -19,7 +19,7 @@ async function fixture() {
   }
   await writeFile(global, JSON.stringify({ agents: { opencode: "managed" } }));
   await writeFile(
-    join(root, "skill-cli.jsonc"),
+    join(root, "skctl.jsonc"),
     JSON.stringify({
       sources: { source: { kind: "local", path: "./skills", root: "" } },
       collections: {
@@ -62,7 +62,7 @@ async function command(
   return { code, stdout, stderr };
 }
 test("agent browse returns only Use roots before progressively disclosing collection contents", async () => {
-  const previousState = process.env.SKILL_CLI_STATE_DIR;
+  const previousState = process.env.SKCTL_STATE_DIR;
   const { root, global } = await fixture();
   try {
     const result = await command(root, global, ["browse"]);
@@ -71,8 +71,8 @@ test("agent browse returns only Use roots before progressively disclosing collec
     expect(result.stdout).toContain('<managed_skill_catalog scope="root">');
     expect(result.stdout).toContain("<id>gingiris</id>");
     expect(result.stdout).toContain("Routing and specialist skills");
-    expect(result.stdout).toContain("skill-cli agent browse <collection-id>");
-    expect(result.stdout).toContain("skill-cli agent load <selector>");
+    expect(result.stdout).toContain("skctl agent browse <collection-id>");
+    expect(result.stdout).toContain("skctl agent load <selector>");
     expect(result.stdout).not.toContain("gingiris:router");
     const collection = await command(root, global, ["browse", "gingiris"]);
     expect(collection.stdout).toContain('<managed_skill_catalog scope="collection" id="gingiris">');
@@ -86,18 +86,18 @@ test("agent browse returns only Use roots before progressively disclosing collec
     expect(collection.stdout).not.toContain("reference");
     expect(collection.stdout).not.toContain("provenance");
   } finally {
-    if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previousState;
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("agent browse uses a global catalog outside a project", async () => {
-  const previousState = process.env.SKILL_CLI_STATE_DIR;
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-global-"));
+  const previousState = process.env.SKCTL_STATE_DIR;
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-global-"));
   const state = join(root, "state");
   const global = join(root, "global.jsonc");
   const outside = join(root, "outside");
-  process.env.SKILL_CLI_STATE_DIR = state;
+  process.env.SKCTL_STATE_DIR = state;
   try {
     const skill = join(root, "skills", "router");
     await mkdir(skill, { recursive: true });
@@ -125,13 +125,13 @@ test("agent browse uses a global catalog outside a project", async () => {
     expect(result.stdout).toContain("<selector>catalog:router</selector>");
     expect(result.stdout).toContain("<description>router skill</description>");
   } finally {
-    if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previousState;
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("agent browse and load permit a reference-reachable category but reject an inaccessible collection", async () => {
-  const previousState = process.env.SKILL_CLI_STATE_DIR;
+  const previousState = process.env.SKCTL_STATE_DIR;
   const { root, global } = await fixture();
   try {
     const listed = await command(root, global, ["browse", "category"]);
@@ -173,13 +173,13 @@ test("agent browse and load permit a reference-reachable category but reject an 
       ],
     });
   } finally {
-    if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previousState;
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("agent read reports a missing resource directory as not found", async () => {
-  const previousState = process.env.SKILL_CLI_STATE_DIR;
+  const previousState = process.env.SKCTL_STATE_DIR;
   const { root, global } = await fixture();
   try {
     const result = await command(root, global, ["read", "gingiris:router", "docs/missing.md"]);
@@ -187,24 +187,24 @@ test("agent read reports a missing resource directory as not found", async () =>
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("Resource not found\n");
   } finally {
-    if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previousState;
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("agent loads a ready child Skill without requiring unrelated child members", async () => {
-  const previousState = process.env.SKILL_CLI_STATE_DIR;
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-partial-child-"));
+  const previousState = process.env.SKCTL_STATE_DIR;
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-partial-child-"));
   const state = join(root, "state");
   const global = join(root, "global.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const ready = join(root, "skills", "ready");
     await mkdir(ready, { recursive: true });
     await writeFile(join(ready, "SKILL.md"), "---\nname: ready\ndescription: Ready\n---\n");
     await writeFile(global, JSON.stringify({ agents: { opencode: "managed" } }));
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: {
@@ -238,24 +238,24 @@ test("agent loads a ready child Skill without requiring unrelated child members"
       stderr: "",
     });
   } finally {
-    if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previousState;
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("agent refuses content when the host Use is incomplete", async () => {
-  const previousState = process.env.SKILL_CLI_STATE_DIR;
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-incomplete-root-"));
+  const previousState = process.env.SKCTL_STATE_DIR;
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-incomplete-root-"));
   const state = join(root, "state");
   const global = join(root, "global.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const ready = join(root, "skills", "ready");
     await mkdir(ready, { recursive: true });
     await writeFile(join(ready, "SKILL.md"), "---\nname: ready\ndescription: Ready\n---\n");
     await writeFile(global, JSON.stringify({ agents: { opencode: "managed" } }));
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: {
@@ -277,24 +277,24 @@ test("agent refuses content when the host Use is incomplete", async () => {
     expect(loaded.code).toBe(1);
     expect(loaded.stderr).toContain("Collection Use is incomplete");
   } finally {
-    if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previousState;
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("agent search includes each Use-root selector for one installed Skill", async () => {
-  const previousState = process.env.SKILL_CLI_STATE_DIR;
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-multiple-use-"));
+  const previousState = process.env.SKCTL_STATE_DIR;
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-multiple-use-"));
   const state = join(root, "state");
   const global = join(root, "global.jsonc");
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const skill = join(root, "skills", "review");
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
     await writeFile(global, JSON.stringify({ agents: { opencode: "managed" } }));
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: {
@@ -315,8 +315,8 @@ test("agent search includes each Use-root selector for one installed Skill", asy
       ],
     });
   } finally {
-    if (previousState === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-    else process.env.SKILL_CLI_STATE_DIR = previousState;
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
     await rm(root, { recursive: true, force: true });
   }
 });

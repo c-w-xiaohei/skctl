@@ -11,7 +11,7 @@ function remoteBindingDigest(origin: string, root = "") {
   return bindingDigest({ kind: "git", origin: canonicalRemoteOrigin(origin), root, ref: "main" });
 }
 test("AGT-001/AGT-002/CNT-001 uses only exposed installed Local content across all operations", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-"));
   const state = join(root, "state");
   try {
     const skill = join(root, "skills", "review");
@@ -19,7 +19,7 @@ test("AGT-001/AGT-002/CNT-001 uses only exposed installed Local content across a
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\nbody\n");
     await writeFile(join(skill, "nested", "note.txt"), "note");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: { engineering: { members: { review: { source: "source", path: "review" } } } },
@@ -28,8 +28,8 @@ test("AGT-001/AGT-002/CNT-001 uses only exposed installed Local content across a
       }),
     );
     await new StateCoordinator(state).installLocal("source", "review", skill);
-    const previous = process.env.SKILL_CLI_STATE_DIR;
-    process.env.SKILL_CLI_STATE_DIR = state;
+    const previous = process.env.SKCTL_STATE_DIR;
+    process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     const selector = "engineering:review";
     expect((await api.loadSkill(core, { selector })).text).toContain("body");
@@ -43,14 +43,14 @@ test("AGT-001/AGT-002/CNT-001 uses only exposed installed Local content across a
     await expect(api.loadSkill(core, { selector: "source:review" })).rejects.toMatchObject({
       code: "SKILL_NOT_FOUND",
     });
-    process.env.SKILL_CLI_STATE_DIR = previous;
+    process.env.SKCTL_STATE_DIR = previous;
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("MGMT-033 browse refresh and Agent projection remain offline for Local and Remote materializations", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-trap-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-trap-"));
   const state = join(root, "state");
   const local = join(root, "skills", "local");
   const remote = join(root, "acquired");
@@ -63,7 +63,7 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
     await writeFile(join(remote, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     await writeFile(join(remote, "note.txt"), "remote");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: {
           local: { kind: "local", path: "./skills", root: "" },
@@ -81,7 +81,7 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
         agents: { opencode: "managed" },
       }),
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     await new StateCoordinator(state).installLocal("local", "local", local);
     const digest = await new StateCoordinator(state).snapshotDigest(remote);
@@ -121,12 +121,12 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
   } finally {
     setAcquisitionTrapForTest();
     globalThis.fetch = fetch;
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("CNT-001 rejects invalid and oversized installed text without side effects", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-text-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-text-"));
   const state = join(root, "state");
   try {
     const skill = join(root, "skills", "review");
@@ -134,7 +134,7 @@ test("CNT-001 rejects invalid and oversized installed text without side effects"
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\nok\n");
     await writeFile(join(skill, "bad.txt"), Buffer.from([0xc3, 0x28]));
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: { engineering: { members: { review: { source: "source", path: "review" } } } },
@@ -143,7 +143,7 @@ test("CNT-001 rejects invalid and oversized installed text without side effects"
       }),
     );
     await new StateCoordinator(state).installLocal("source", "review", skill);
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await writeFile(join(skill, "large.txt"), Buffer.alloc(1048577, "x"));
     const core = isolatedCore(root);
     await expect(
@@ -153,12 +153,12 @@ test("CNT-001 rejects invalid and oversized installed text without side effects"
       api.readResource(core, { selector: "engineering:review", path: "large.txt" }),
     ).rejects.toMatchObject({ code: "TEXT_TOO_LARGE" });
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remote Snapshot only", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-remote-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-remote-"));
   const state = join(root, "state");
   const source = join(root, "acquired");
   const output = join(root, "download.txt");
@@ -171,7 +171,7 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
     );
     await writeFile(join(source, "nested", "note.txt"), "note");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: {
           remote: { kind: "git", origin: "https://example.test/skills", root: "", ref: "main" },
@@ -181,7 +181,7 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
         agents: { opencode: "managed" },
       }),
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     const digest = await new StateCoordinator(state).snapshotDigest(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
@@ -231,19 +231,19 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
     });
     expect(await Bun.file(join(state, "uses")).exists()).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-remote-missing-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-remote-missing-"));
   const state = join(root, "state");
   const source = join(root, "acquired");
   try {
     await mkdir(source);
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: {
           remote: { kind: "git", origin: "https://example.test/skills", root: "", ref: "main" },
@@ -253,7 +253,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
         agents: { opencode: "managed" },
       }),
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     const digest = await new StateCoordinator(state).snapshotDigest(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
@@ -293,12 +293,12 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
       true,
     );
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("USE-001 rejects a live Remote Snapshot digest change before creating a use record", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-remote-tamper-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-remote-tamper-"));
   const state = join(root, "state");
   const source = join(root, "acquired");
   const release = join(root, "release");
@@ -309,7 +309,7 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
       "---\nname: remote\ndescription: Remote\n---\noriginal\n",
     );
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: {
           remote: { kind: "git", origin: "https://example.test/repo", root: "", ref: "main" },
@@ -319,7 +319,7 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
         agents: { opencode: "managed" },
       }),
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     const digest = await new StateCoordinator(state).snapshotDigest(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
@@ -342,9 +342,9 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
       cmd: [process.execPath, "--eval", script],
       env: {
         ...process.env,
-        SKILL_CLI_STATE_DIR: state,
-        SKILL_CLI_TEST_BARRIER_AT: "use-verify-before",
-        SKILL_CLI_TEST_BARRIER_RELEASE: release,
+        SKCTL_STATE_DIR: state,
+        SKCTL_TEST_BARRIER_AT: "use-verify-before",
+        SKCTL_TEST_BARRIER_RELEASE: release,
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -377,12 +377,12 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
     ).rejects.toMatchObject({ code: "PROVIDER_INTEGRITY_FAILED" });
     expect(await Bun.file(join(state, "uses")).exists()).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failure, and cleans run roots", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-agent-safety-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-agent-safety-"));
   const state = join(root, "state");
   const skill = join(root, "skills", "review");
   try {
@@ -390,7 +390,7 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\nok\n");
     await writeFile(join(skill, "nested", "note.txt"), "note");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: { engineering: { members: { review: { source: "source", path: "review" } } } },
@@ -399,7 +399,7 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
       }),
     );
     await new StateCoordinator(state).installLocal("source", "review", skill);
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     await expect(
       api.readResource(core, { selector: "engineering:review", path: "../SKILL.md" }),
@@ -445,16 +445,16 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
     ).rejects.toMatchObject({ code: "SPAWN_FAILED" });
     expect(await Bun.file(join(state, "runs")).exists()).toBe(false);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("CNT-001 cancellation escalates a resistant child and removes its run root", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-run-cancel-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-run-cancel-"));
   const state = join(root, "state");
   const skill = join(root, "skills", "review");
   const ready = join(root, "child-ready.json");
-  const previous = process.env.SKILL_CLI_STATE_DIR;
+  const previous = process.env.SKCTL_STATE_DIR;
   const controller = new AbortController();
   const core = isolatedCore(root);
   let run: ReturnType<typeof api.runSkill> | undefined;
@@ -462,7 +462,7 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { source: { kind: "local", path: "./skills", root: "" } },
         collections: { c: { members: { review: { source: "source", path: "review" } } } },
@@ -470,7 +470,7 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
         agents: { opencode: "managed" },
       }),
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     await new StateCoordinator(state).installLocal("source", "review", skill);
     run = api.runSkill(
       core,
@@ -527,14 +527,14 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
       // Do not remove fixture bytes while this test's run is still pending.
       if (run) await run;
     } finally {
-      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-      else process.env.SKILL_CLI_STATE_DIR = previous;
+      if (previous === undefined) delete process.env.SKCTL_STATE_DIR;
+      else process.env.SKCTL_STATE_DIR = previous;
       await rm(root, { recursive: true, force: true });
     }
   }
 }, 15000);
 test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote runs without mutating content", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-run-tree-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-run-tree-"));
   const state = join(root, "state");
   const local = join(root, "skills", "local");
   const remote = join(root, "acquired");
@@ -549,7 +549,7 @@ test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote run
         `---\nname: ${skill === local ? "local" : "remote"}\ndescription: Test\n---\n`,
       );
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: {
           local: { kind: "local", path: "./skills", root: "" },
@@ -567,7 +567,7 @@ test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote run
         agents: { opencode: "managed" },
       }),
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     const coordinator = new StateCoordinator(state);
     await coordinator.installLocal("local", "local", local);
@@ -594,12 +594,12 @@ test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote run
       before,
     );
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });
 test("CNT-001 rejects gitlinks before Snapshot publication and Local run copying without state mutation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-gitlink-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-gitlink-"));
   const state = join(root, "state");
   const skill = join(root, "skills", "review");
   try {
@@ -607,7 +607,7 @@ test("CNT-001 rejects gitlinks before Snapshot publication and Local run copying
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
     await writeFile(join(skill, ".git", "config"), "gitdir");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         sources: { local: { kind: "local", path: "./skills", root: "" } },
         collections: { c: { members: { review: { source: "local", path: "review" } } } },
@@ -615,7 +615,7 @@ test("CNT-001 rejects gitlinks before Snapshot publication and Local run copying
         agents: { opencode: "managed" },
       }),
     );
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     const coordinator = new StateCoordinator(state);
     await coordinator.installLocal("local", "review", skill);
@@ -631,7 +631,7 @@ test("CNT-001 rejects gitlinks before Snapshot publication and Local run copying
     ).toBe(false);
     expect(await Bun.file(join(state, "state.json")).text()).toBe(before);
   } finally {
-    delete process.env.SKILL_CLI_STATE_DIR;
+    delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
 });

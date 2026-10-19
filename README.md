@@ -1,135 +1,122 @@
-# skill-cli
+<div align="center">
 
-Manage installed Agent Skills, Sources and Collections through a command line or an independent terminal workbench.
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/logo-readme-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/brand/logo-readme-light.png">
+    <img src="assets/brand/logo-readme-light.png" alt="skctl logo: three index cards with the middle card pulled to the right" width="128" height="128">
+  </picture>
 
-## Programs
+# skctl
 
-- **`skill-cli`** provides human-management commands and the installed-only Agent protocol.
-- **`skill-tui`** provides the interactive workbench. It is installed separately and uses the same configuration and transaction storage as the CLI.
+**Manage your skills. Choose what agents discover.**
 
-Put the binaries for your platform on `PATH`, or keep the matching release-named binaries in the same directory. For example, on Linux x64:
+An Agent Skill manager with a CLI and terminal workbench.
+
+[Get started](#get-started) · [Use cases](#use-cases) · [Configuration](#configuration-paths) · [Development](#development)
+
+</div>
+
+---
+
+skctl means Skill Control. Maintain third-party Skills, tool documentation and
+Skills you write yourself across projects. Install and update by Source, organize
+discovery with Collections, and choose what agents can discover through global
+and project configuration. The current agent integration is OpenCode.
+
+## Use cases
+
+### Maintain Skills by source
+
+Related Skills often ship together in one Git repository. A Source records where
+they come from and owns their updates. Check a Source for changes, review the
+affected installed Skills and update them together or select a subset.
+
+### Organize what agents discover
+
+A Collection groups Skills behind a descriptive entry. For example, a Lark
+Collection can introduce the tool without putting every operation's Skill
+description into the initial catalog. An agent browses that Collection when
+the task needs it, then loads the relevant instructions and resources.
+
+Collections can follow a tool's suite or regroup Skills from several Sources.
+Adding a Skill to another Collection reuses the same installation. Catalog
+discovery and loading the full instructions are separate steps.
+
+### Reuse Skills across projects
+
+Maintain one installed Skill and select its Collections in the projects that
+need it. Global, project and local root selections combine additively. To expose
+a Collection only in selected projects, declare it in those projects and leave
+it out of global roots.
+
+Projects using the same Installed Skill see the same current content, including
+updates to that installation.
+
+### Validate local edits in another project
+
+Register the directory where you write a Skill as a local Source, then expose it
+through a Collection in another project. Instructions and resources reflect local
+edits. After changing a Skill's name or description, apply an explicit update to
+refresh its discovery metadata.
+
+### Share configuration through Git
+
+Put reusable Sources and Collections in a Config repository for your own projects
+or a team. Review changes in Git and select the required Collection roots in each
+host Config.
+
+Shared configuration describes Sources and Collections. Each machine maintains
+its own installed Skills and versions.
+
+<a id="programs"></a>
+
+## Get started
+
+- **`skctl`** manages Skills, Sources and Collections from the command line.
+- **`sktui`** provides the interactive terminal workbench. It is installed separately
+  and shares configuration and installed Skills with the CLI.
+
+Install matching versions of the binaries for your platform. Put them on `PATH`,
+or keep the release-named binaries in the same directory. For example, on Linux x64:
 
 ```text
-skill-cli-linux-x64
-skill-tui-linux-x64
+skctl-linux-x64
+sktui-linux-x64
 ```
 
-They may also be renamed to `skill-cli` and `skill-tui` (`.exe` on Windows). CLI searches for an installed TUI next to its compiled executable before searching `PATH`. It never downloads or installs a missing TUI automatically.
+Rename them to `skctl` and `sktui` to use the commands below. On Windows, keep
+the `.exe` extension.
 
 ```sh
-skill-cli --help
-skill-cli agent --help
-skill-cli tui
-skill-tui --project /path/to/project
+skctl --help
+skctl tui
+sktui --project /path/to/project
 ```
 
-Without a command, `skill-cli` starts the installed TUI when both input and output are terminals; otherwise it prints CLI help. Explicit TUI launch requires a terminal. `--project` selects the same project context for either program.
+Running `skctl` without a command in an interactive terminal opens the installed
+workbench. Use `--project /path/to/project` with either program to select a project.
+The compiled binaries do not require Bun.
 
-The two programs call the same Core implementation directly in their own processes. They do not communicate through a daemon or business RPC. Install matching release versions; no cross-version state compatibility is promised by the package split.
+## Configuration paths
 
-## Workspace
+Both programs read the same configuration and installed state:
 
-| Package                     | Responsibility                                                                   |
-| --------------------------- | -------------------------------------------------------------------------------- |
-| `packages/skill-core`       | Shared business capabilities, configuration, content, providers and transactions |
-| `packages/skill-cli`        | Argument parsing, human/Agent output and installed-TUI process launch            |
-| `packages/skill-tui`        | Solid/OpenTUI presentation and terminal lifecycle                                |
-| `packages/opencode-adapter` | Existing OpenCode process-and-prompt integration                                 |
+| Scope          | Path                                                                                |
+| -------------- | ----------------------------------------------------------------------------------- |
+| Global Config  | `$XDG_CONFIG_HOME/skctl/config.jsonc`, defaulting to `~/.config/skctl/config.jsonc` |
+| Project Config | `skctl.jsonc` in the project root                                                   |
+| Local Config   | `skctl.local.jsonc` in the project root                                             |
+| Linux state    | `$XDG_STATE_HOME/skctl`, defaulting to `~/.local/state/skctl`                       |
+| macOS state    | `~/Library/Application Support/skctl`                                               |
+| Windows state  | `%LOCALAPPDATA%\skctl`                                                              |
 
-Core exposes `@skill-cli/core` as its public workspace entry. Frontends do not import its storage or provider internals. Workspace packages are private; this repository currently builds native release artifacts rather than publishing npm packages.
+`SKCTL_STATE_DIR` overrides the state directory and requires an absolute path.
+Configuration files can declare `"$schema": "https://skctl.dev/schema.json"`.
 
-## Development
-
-Use Bun **1.4.3**, with the dependency versions pinned in `bun.lock`. The Bun
-types and CI setup are aligned to that version. Compiled CLI/TUI executables
-embed their build runtime; running them does not require upgrading the host's
-Bun installation. Explicit source proxy use requires embedded/source Bun 1.4.3
-or newer. This toolchain pin does not by itself establish native artifact
-compatibility; packaged verification remains a separate gate.
-
-```sh
-bun install --frozen-lockfile
-bun run typecheck
-bun run lint
-bun run schema:check
-bun run build:cli
-bun run build:tui
-bun run pack:plugin
-```
-
-`build:native` is the convenience build for both native executables. CLI builds do not load the UI build plugin. Core and CLI do not promise Node compatibility: Core currently uses Bun APIs.
-
-```sh
-bun run test:unit
-bun run test:providers
-bun run test:integration
-bun run test:cli
-bun run test:tui
-bun run dev:tui
-```
-
-UI preloads are scoped to the TUI commands, not the root Bun configuration. Run a selected TUI test through the bounded Docker runner:
-
-```sh
-scripts/resource-run.sh bun test --preload @opentui/solid/preload \
-  --preload ./packages/skill-tui/test/test-renderer-preload.ts \
-  packages/skill-tui/test/live-filter-popup.test.tsx --max-concurrency=1 --isolate
-```
-
-Run resource-heavy tests and native builds serially through `scripts/resource-run.sh`.
-See [AGENTS.md](AGENTS.md) for repository working rules,
-[CONTEXT.md](CONTEXT.md) for the domain model, [TECH.md](TECH.md) for technical
-architecture and safety, and [DESIGN.md](DESIGN.md) for TUI component and interaction
-standards. Design targets are not claims about the currently deployed UI.
-
-## Agent output contract
-
-Root browse supplies the usage instructions needed for system-prompt injection;
-subsequent commands disclose the requested metadata or content:
-
-| Command                                            | Default result                                                                                                                                                  |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent browse [collection-id]`                     | System-prompt-ready XML containing root Collection discovery instructions, or the immediate contents of the requested Collection without the repeated tutorial. |
-| `agent search <query>`                             | At most 10 metadata results; `truncated: true` only when more matches exist. `--in` searches one Collection; default search does not traverse References.       |
-| `agent load <selector>`                            | Complete, unwrapped `SKILL.md` text.                                                                                                                            |
-| `agent read <selector> <path>`                     | Unwrapped UTF-8 resource text.                                                                                                                                  |
-| `agent download <selector> <path> --output <path>` | JSON containing the absolute output path only. `--force` permits replacement of a regular file.                                                                 |
-| `agent run <selector> -- <command> [args...]`      | Child stdout/stderr and exit status; no result JSON suffix.                                                                                                     |
-
-Use `skill-cli --project <path> agent ...` to select project context. `--help` and
-`-h` explain each subcommand; flags after the `run` delimiter belong to the child.
-
-Run uses a temporary copy of the Skill Root, removed after exit. Write persistent
-outputs to absolute paths. It is **not a sandbox**: the command can access the
-host and network. Other Agent content operations use locally installed material
-without provider acquisition. When Core reports the catalog unavailable, browse
-returns fallback guidance on stdout with exit status 0. Command errors use stderr
-and a nonzero status; the adapter reports subprocess failures and continues without
-injecting a catalog.
-
-Root browse output includes the discovery/loading tutorial and Collection metadata;
-Collection browse output contains only that Collection's immediate contents. The
-OpenCode adapter passes browse output through unchanged for chat and compaction,
-without duplicating an identical prompt already present in the supplied output list.
-
-Browse relevant branches, load matching Skills, and read resources according to the
-current task and the Skill's conditions. Reuse applicable results and full instructions
-still in context; reload needed content if missing after compaction or no longer current.
-References can revisit a Collection, so another incoming reference alone does not
-require another browse. An empty Collection reports only its own available contents.
-
-Give exposed Collections descriptions that explain when to enter them. References
-defer another Collection's members until it is browsed; Links merge members into the
-current Collection. Keep these routing descriptions distinct from Skill instructions.
-
-Local Skill content is read live, while discovery metadata reflects the last install
-or explicit update. After editing a Local Skill, check for updates and apply the changed
-Skill to synchronize its catalog description; checking alone does not update metadata.
-
-## Source network
+### Proxy
 
 Set an optional proxy in the **user** Config at
-`~/.config/skill-cli/config.jsonc` (or `$XDG_CONFIG_HOME/skill-cli/config.jsonc`
+`~/.config/skctl/config.jsonc` (or `$XDG_CONFIG_HOME/skctl/config.jsonc`
 when `XDG_CONFIG_HOME` is set):
 
 ```jsonc
@@ -140,86 +127,42 @@ when `XDG_CONFIG_HOME` is set):
 }
 ```
 
-Omitting it preserves inherited environment and Git settings. An explicit HTTP
-or HTTPS proxy overrides inherited proxy and bypass settings for Source HTTP(S)
-acquisition, including Git, GitHub API, raw downloads and eligible provider
-fallback. TLS verification remains enabled. This setting is not accepted in
-project, local or reusable Configs; it does not change Source identity or proxy
-SSH traffic.
+This setting applies to HTTP(S) Source downloads and update checks, and belongs
+only in the user Config. SSH uses its own configuration. If omitted, skctl uses
+existing environment and Git proxy settings.
 
-Remote checks share a 30-second preparation budget; content acquisition shares
-120 seconds across ref resolution, requests and eligible fallback. Cancellation
-waits for owned acquisition work to settle. The network budget ends before
-publication and never interrupts an atomic transaction. Agent operations on
-installed content remain offline.
+## Terminal workbench
 
-## TUI workspace
+The Skills page opens in **Agent access**, showing the Collections available to
+your agent. Expand a Collection and select a Skill to read it. **All Skills**
+shows your full installed inventory.
 
-The Skills page starts in **Agent access** with folded Collection roots. Enter or click a
-disclosure button to expand; selecting a Skill reads its installed SKILL.md
-immediately. Enter moves into the Reader and Escape returns to the same browser.
-Tab moves between regions; arrows stay inside the Tree.
+- Use Tab to move between regions and arrow keys to browse.
+- Press Enter to move into the Reader and Escape to return.
+- Use **Scope** to switch configuration contexts.
+- Open **Details** for Skill management or press Ctrl+P for **Actions**.
 
-**All Skills** includes the full installed inventory. Its Collection tree and
-Filter share one condition, including Reference descendants. On compact windows,
-use **Collections** to reveal the same hierarchy and **Back to Skills** to return.
-Page navigation and the **Scope** selector live at the top; management commands
-remain available through Details or Ctrl+P Actions.
+### Updates
 
-## TUI updates
+The workbench checks installed Sources for updates on startup. Use **Check updates**
+to refresh the results. Checking does not install, update or remove Skills.
 
-The TUI checks installed Sources in the background on startup. A successful Source
-check is reused for up to eight hours across restarts when its binding and installed
-comparison baseline still match. Checks only read sources; they never automatically
-install, update, or remove Skills. **Check updates** forces a new check for the current
-scope, while sharing an already-running check for the same Source.
+In **Updates**, open a Source, select the Skills you want with Space, then apply
+the updates. Stopping an update leaves already applied updates in place.
 
-Remote update checks compare already-installed Skill Roots using their Git tree
-identities; new candidates require separate discovery. The public check result
-retains an empty `added` array for compatibility. Applying an update obtains and
-validates only the selected complete Roots at the exact reviewed commit, even if
-the tracked ref subsequently moves. A changed tree is upstream evidence, not a
-guarantee that the complete target content will pass installation validation.
+## Development
 
-Observation caching belongs to the TUI, not Core or the CLI. The cache retains
-its v1 format, eight-hour successful lifetime and sixteen-hour stale retention.
-Core's opaque comparison baseline invalidates observations from the older
-discovery semantics without a cache-format migration. Both TUI review paths pass
-the captured baseline to Core when supplied; callers that omit it still receive
-Core's invocation-baseline guard. A timeout is a failed check, not cancellation,
-and does not renew the previous success timestamp.
-
-In Updates, Enter opens a Source's installed Skills. Space selects individual eligible
-Skills in that Source; the update action submits only those selected addresses. Opening
-a Source from a Collection's Updates does not widen the original Collection draft.
-Back restores the originating scope and browsing state. Searching or filtering does
-not change selected update targets; hidden selections are indicated before submission.
-
-Expired results and failed refreshes are not treated as current update authorization.
-Installation or Source-binding changes invalidate the comparison baseline. Stop is
-cooperative and does not roll back updates that already committed.
-
-The Agent protocol uses XML for browse and raw text for `load` and `read`; `run`
-passes through child stdout/stderr and exit status. Protocol migration applies to
-`load/read/run` only; do not parse their output as a JSON envelope.
-
-## Packaged verification
-
-The default packaged smoke verifies CLI-only operation, missing/installed TUI
-handoff, isolated fixture management and Agent commands, direct Reader/Back and
-focused Reader resizing at 144×40, 100×24, 80×24 and 43×13. It also exercises
-compact Collection hierarchy/filter/return and Agent Tree direct reading without
-changing the fixture Config. It does not replace human usability acceptance or
-cover every historical UI journey. Extended journeys remain opt-in:
+Use Bun **1.4.3** and Docker. Install dependencies, check the source and build:
 
 ```sh
-bun run smoke:packaged -- \
-  --artifact /absolute/path/to/skill-cli-linux-x64 \
-  --tui-artifact /absolute/path/to/skill-tui-linux-x64 \
-  --output-root /absolute/path/to/fresh-fixture-root \
-  --legacy-journeys
+bun install --frozen-lockfile
+bun run typecheck
+bun run lint
+bun run schema:check
+bun run build:native
+bun run pack:plugin
 ```
 
-This repository still has legacy UI assertions that reflect older navigation and
-a provider fixture affected by local Git blob-filtering behavior. A passing
-bounded release smoke is not a claim that the full repository suite passes.
+Build outputs are written to `dist/`. Run `bun run dev:tui` to work on the TUI
+from source. Builds and resource-heavy tests use the
+[bounded Docker runner](scripts/resource-run.md).

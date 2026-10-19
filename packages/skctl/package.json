@@ -1,0 +1,10 @@
+{
+  "name": "@skctl/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@skctl/core": "workspace:*",
+    "commander": "15.0.0"
+  }
+}

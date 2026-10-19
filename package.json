@@ -1,15 +1,15 @@
 {
-  "name": "skill-cli-workspace",
+  "name": "skctl-workspace",
   "private": true,
   "workspaces": [
     "packages/skill-core",
-    "packages/skill-cli",
-    "packages/skill-tui",
+    "packages/skctl",
+    "packages/sktui",
     "packages/opencode-adapter"
   ],
   "scripts": {
     "format:check": "oxfmt --check",
-    "typecheck": "./scripts/resource-run.sh sh -c 'bun node_modules/typescript/bin/tsc -p packages/skill-core/tsconfig.json --noEmit && bun node_modules/typescript/bin/tsc -p packages/skill-cli/tsconfig.json --noEmit && bun node_modules/typescript/bin/tsc -p packages/skill-tui/tsconfig.json --noEmit && bun node_modules/typescript/bin/tsc -p packages/opencode-adapter/tsconfig.json --noEmit'",
+    "typecheck": "./scripts/resource-run.sh sh -c 'bun node_modules/typescript/bin/tsc -p packages/skill-core/tsconfig.json --noEmit && bun node_modules/typescript/bin/tsc -p packages/skctl/tsconfig.json --noEmit && bun node_modules/typescript/bin/tsc -p packages/sktui/tsconfig.json --noEmit && bun node_modules/typescript/bin/tsc -p packages/opencode-adapter/tsconfig.json --noEmit'",
     "lint": "oxlint --deny-warnings",
     "schema:write": "bun scripts/schema.ts write",
     "schema:check": "bun scripts/schema.ts check",
@@ -19,9 +19,9 @@
     "test:unit": "bun test packages/skill-core/test/unit",
     "test:providers": "bun test packages/skill-core/test/provider",
     "test:integration": "bun test packages/skill-core/test/integration",
-    "test:cli": "bun test packages/skill-cli/test",
-    "test:tui": "./scripts/resource-run.sh bun test --max-concurrency=1 --preload @opentui/solid/preload --preload ./packages/skill-tui/test/test-renderer-preload.ts packages/skill-tui/test",
-    "dev:tui": "bun --preload @opentui/solid/preload packages/skill-tui/src/main.ts",
+    "test:cli": "bun test packages/skctl/test",
+    "test:tui": "./scripts/resource-run.sh bun test --max-concurrency=1 --preload @opentui/solid/preload --preload ./packages/sktui/test/test-renderer-preload.ts packages/sktui/test",
+    "dev:tui": "bun --preload @opentui/solid/preload packages/sktui/src/main.ts",
     "test:interfaces": "bun run test:cli && bun run test:tui && bun test packages/opencode-adapter/test",
     "test:packaged": "bun test verification/packaged",
     "smoke:packaged": "bun verification/packaged/smoke.ts",

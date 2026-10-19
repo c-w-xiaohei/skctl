@@ -1,7 +1,7 @@
 import type { CoreOptions } from "../shared";
 
 import type { SourceBindingView } from "./types";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 
 import {
   discoverSnapshotSkills,
@@ -53,7 +53,7 @@ export async function openRemote(
   );
   if (snapshot.kind !== "remote") {
     await snapshot.close();
-    throw new SkillCliError("INTERNAL", "Expected Remote acquisition");
+    throw new SkctlError("INTERNAL", "Expected Remote acquisition");
   }
   return snapshot;
 }

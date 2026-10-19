@@ -17,7 +17,7 @@ import type { SourceBinding } from "../source/schema";
 import type { ReusableConfigDocument } from "./schema";
 import type { OperationResult } from "../shared";
 
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 
 import { bindingDigest, canonicalLocalOrigin, canonicalRemoteOrigin } from "../source/identity";
 import {
@@ -119,7 +119,7 @@ async function acquireConfig(
   const coordinator = new StateCoordinator();
 
   if (declared.binding.kind === "local")
-    throw new SkillCliError("INVALID_ARGUMENT", "Expected Remote Config Source");
+    throw new SkctlError("INVALID_ARGUMENT", "Expected Remote Config Source");
   const network = createSourceOperation({
     ...(policy ?? (await readUserNetwork(options, coordinator))),
     source: id,
@@ -184,7 +184,7 @@ async function previewConfigImpact(
   const source = workspace.value.configs
     .flatMap((config) => config.direct.configSources)
     .find((item) => item.id === id);
-  if (!source) throw new SkillCliError("SOURCE_NOT_FOUND", `Config Source not found: ${id}`);
+  if (!source) throw new SkctlError("SOURCE_NOT_FOUND", `Config Source not found: ${id}`);
   const state = capturedWorkspace(workspace.value)?.state;
   const currentAppliedCommit = state?.configs[id]?.commit;
   let contributions: ConfigSourceContributionImpact = { sources: [], collections: [] };
@@ -197,12 +197,9 @@ async function previewConfigImpact(
     );
   if (kind === "config-source-adopt") {
     if (declared.binding.kind === "local")
-      throw new SkillCliError("INVALID_ARGUMENT", "Local Config Sources do not accept a revision");
+      throw new SkctlError("INVALID_ARGUMENT", "Local Config Sources do not accept a revision");
     if (!exactRevision || !/^[a-f0-9]{40}$/u.test(exactRevision))
-      throw new SkillCliError(
-        "INVALID_ARGUMENT",
-        "Remote Config Source requires an exact revision",
-      );
+      throw new SkctlError("INVALID_ARGUMENT", "Remote Config Source requires an exact revision");
     proposedReusable = (
       await acquireConfig(
         options,
@@ -352,7 +349,7 @@ export async function previewConfigAdoption(
       result.value.contributions,
     )
   )
-    throw new SkillCliError(
+    throw new SkctlError(
       "CONFIG_CONFLICT",
       "Config Source observation does not match exact revision",
     );
@@ -392,7 +389,7 @@ export async function forgetConfig(
   request: { readonly id: string },
   operation?: OperationOptions,
 ): Promise<OperationResult<void>> {
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   await forgetConfigSource(options, request.id);
   return { value: undefined, diagnostics: [] };
 }
@@ -404,12 +401,12 @@ export async function adoptConfigSource(
 ): Promise<OperationResult<void>> {
   const coordinator = new StateCoordinator();
 
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   const declared = await declaredConfigSource(options, request.id);
   if (declared.binding.kind === "local")
-    throw new SkillCliError("INVALID_ARGUMENT", "Local Config Sources do not accept a revision");
+    throw new SkctlError("INVALID_ARGUMENT", "Local Config Sources do not accept a revision");
   if (!request.exactRevision || !/^[a-f0-9]{40}$/u.test(request.exactRevision))
-    throw new SkillCliError("INVALID_ARGUMENT", "Remote Config Source requires an exact revision");
+    throw new SkctlError("INVALID_ARGUMENT", "Remote Config Source requires an exact revision");
   const revision = request.exactRevision;
   const { bytes, reusable } = await acquireConfig(
     options,
@@ -427,21 +424,21 @@ export async function adoptConfigSource(
       contributionImpact(request.id, declared.binding, declared, reusable, revision),
     )
   )
-    throw new SkillCliError(
+    throw new SkctlError(
       "CONFIG_CONFLICT",
       "Config Source observation does not match exact revision",
     );
   await invokePublicationHook();
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   await coordinator.withLock(async () => {
     const current = await declaredConfigSource(options, request.id).catch((error) => {
-      if (error instanceof SkillCliError && error.code === "SOURCE_NOT_FOUND") return undefined;
+      if (error instanceof SkctlError && error.code === "SOURCE_NOT_FOUND") return undefined;
       throw error;
     });
     if (!current || current.file !== declared.file || current.binding.kind === "local")
-      throw new SkillCliError("CONFIG_CONFLICT", "Config Source changed during adoption");
+      throw new SkctlError("CONFIG_CONFLICT", "Config Source changed during adoption");
     if (configBindingFingerprint(current) !== configBindingFingerprint(declared))
-      throw new SkillCliError("CONFIG_CONFLICT", "Config Source changed during adoption");
+      throw new SkctlError("CONFIG_CONFLICT", "Config Source changed during adoption");
     const state = await coordinator.read();
     const installed = await installedForMutation(options, coordinator, state);
     const proposed = contributedSourceBindings(
@@ -475,7 +472,7 @@ export async function adoptConfigSource(
         collections: removedCollections,
       }).length
     )
-      throw new SkillCliError(
+      throw new SkctlError(
         "CONFIG_CONFLICT",
         "Config adoption would orphan effective graph dependencies",
       );
@@ -485,16 +482,16 @@ export async function adoptConfigSource(
       value: reusable,
     });
     if (proposedWorkspace.value.effective.status !== "complete")
-      throw new SkillCliError("CONFIG_CONFLICT", "Config adoption is incomplete");
+      throw new SkctlError("CONFIG_CONFLICT", "Config adoption is incomplete");
     for (const item of installed.filter((item) => item.source.startsWith(`${request.id}/`))) {
       const next = proposed.get(item.source);
       if (!next || next.bindingDigest !== item.bindingDigest)
-        throw new SkillCliError(
+        throw new SkctlError(
           "CONFIG_CONFLICT",
           "Config adoption would change an Installed Skill owner",
         );
     }
-    if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+    if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
     await coordinator.publishRemoteConfig(request.id, revision, bytes, installed);
   });
   return { value: undefined, diagnostics: [] };
@@ -505,13 +502,10 @@ export async function observeConfigSource(
   request: { readonly id: string },
   operation?: OperationOptions,
 ): Promise<OperationResult<ConfigSourceObservation>> {
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   const declared = await declaredConfigSource(options, request.id);
   if (declared.binding.kind === "local")
-    throw new SkillCliError(
-      "INVALID_ARGUMENT",
-      "Local Config Sources do not have an exact revision",
-    );
+    throw new SkctlError("INVALID_ARGUMENT", "Local Config Sources do not have an exact revision");
   const { revision: exactRevision, reusable: config } = await acquireConfig(
     options,
     request.id,
@@ -541,7 +535,7 @@ export async function removeConfig(
   request: { readonly id: string; readonly level?: ConfigLevel },
   operation?: OperationOptions,
 ): Promise<OperationResult<void>> {
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   // The configuration owner performs the atomic JSONC/state publication; management owns this lifecycle entry point.
   const { removeConfigSource } = await import("./adoption");
   const declared = await declaredConfigSource(options, request.id, request.level);
@@ -550,8 +544,8 @@ export async function removeConfig(
   try {
     await removeConfigSource(options, request.id, expected, request.level);
   } catch (error) {
-    if (error instanceof SkillCliError && error.code === "SOURCE_NOT_FOUND")
-      throw new SkillCliError("CONFIG_CONFLICT", "Config Source changed during removal");
+    if (error instanceof SkctlError && error.code === "SOURCE_NOT_FOUND")
+      throw new SkctlError("CONFIG_CONFLICT", "Config Source changed during removal");
     throw error;
   }
   return { value: undefined, diagnostics: [] };

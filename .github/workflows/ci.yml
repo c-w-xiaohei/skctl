@@ -30,14 +30,14 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-latest
-            artifact: skill-cli-linux-x64
-            tui: skill-tui-linux-x64
+            artifact: skctl-linux-x64
+            tui: sktui-linux-x64
           - runner: macos-14
-            artifact: skill-cli-darwin-arm64
-            tui: skill-tui-darwin-arm64
+            artifact: skctl-darwin-arm64
+            tui: sktui-darwin-arm64
           - runner: windows-latest
-            artifact: skill-cli-windows-x64.exe
-            tui: skill-tui-windows-x64.exe
+            artifact: skctl-windows-x64.exe
+            tui: sktui-windows-x64.exe
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +54,7 @@ jobs:
       - name: Test packaged orchestration
         run: bun run test:packaged
       - name: Run packaged smoke checks
-        run: bun run smoke:packaged -- --artifact ${{ github.workspace }}/dist/${{ matrix.artifact }} --tui-artifact ${{ github.workspace }}/dist/${{ matrix.tui }} --output-root ${{ runner.temp }}/skill-cli-packaged
+        run: bun run smoke:packaged -- --artifact ${{ github.workspace }}/dist/${{ matrix.artifact }} --tui-artifact ${{ github.workspace }}/dist/${{ matrix.tui }} --output-root ${{ runner.temp }}/skctl-packaged
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

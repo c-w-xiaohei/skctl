@@ -28,22 +28,22 @@ async function installRemoteReview(
   });
 }
 async function fixture(config = "{}\n") {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-impact-"));
-  const previous = process.env.SKILL_CLI_STATE_DIR;
+  const root = await mkdtemp(join(tmpdir(), "skctl-impact-"));
+  const previous = process.env.SKCTL_STATE_DIR;
   const state = join(root, "state");
   const cleanup = async () => {
     try {
-      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-      else process.env.SKILL_CLI_STATE_DIR = previous;
+      if (previous === undefined) delete process.env.SKCTL_STATE_DIR;
+      else process.env.SKCTL_STATE_DIR = previous;
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   };
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     const global = join(root, "global.jsonc");
     await mkdir(join(root, "skills", "review"), { recursive: true });
-    await writeFile(join(root, "skill-cli.jsonc"), config);
+    await writeFile(join(root, "skctl.jsonc"), config);
     await writeFile(global, "{}\n");
     await writeFile(
       join(root, "skills", "review", "SKILL.md"),
@@ -114,7 +114,7 @@ test("MGMT-002 removes a direct zero-installed Source while preserving other dec
       .text()
       .catch(() => undefined);
     await api.removeSource(value.core, { source: "local" });
-    const config = JSON.parse(await readFile(join(value.root, "skill-cli.jsonc"), "utf8"));
+    const config = JSON.parse(await readFile(join(value.root, "skctl.jsonc"), "utf8"));
     expect(config.sources.local).toBeUndefined();
     expect(config.sources.other).toBeDefined();
     expect(
@@ -134,12 +134,12 @@ test("MGMT-003 stale Source removal rejects newly installed owners then permits 
       true,
     );
     await api.installSkills(value.core, { source: "local", paths: ["review"] });
-    const configBefore = await readFile(join(value.root, "skill-cli.jsonc"), "utf8");
+    const configBefore = await readFile(join(value.root, "skctl.jsonc"), "utf8");
     const stateBefore = await readFile(join(value.state, "state.json"), "utf8");
     await expect(api.removeSource(value.core, { source: "local" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
-    expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toBe(configBefore);
+    expect(await readFile(join(value.root, "skctl.jsonc"), "utf8")).toBe(configBefore);
     expect(await readFile(join(value.state, "state.json"), "utf8")).toBe(stateBefore);
     const source = await api.previewSourceRemoval(value.core, { source: "local" });
     expect(source.value).toMatchObject({
@@ -155,9 +155,7 @@ test("MGMT-003 stale Source removal rejects newly installed owners then permits 
     assertPublicImpact(source.value);
     await api.uninstallSkills(value.core, { source: "local", paths: ["review"] });
     await api.removeSource(value.core, { source: "local" });
-    expect(JSON.parse(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).sources).toEqual(
-      {},
-    );
+    expect(JSON.parse(await readFile(join(value.root, "skctl.jsonc"), "utf8")).sources).toEqual({});
   } finally {
     await value.cleanup();
   }
@@ -205,7 +203,7 @@ test("MGMT-010 Uninstall impact preserves repository-derived and Link origin pat
     await api.uninstallSkills(value.core, { source: "remote", paths: ["review"] });
     expect((await api.getWorkspace(value.core)).value.installedSkills).toEqual([]);
     expect(
-      JSON.parse(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).sources.remote,
+      JSON.parse(await readFile(join(value.root, "skctl.jsonc"), "utf8")).sources.remote,
     ).toBeDefined();
   } finally {
     await value.cleanup();
@@ -242,12 +240,12 @@ test("MGMT-011 stale Uninstall rejects a new direct Membership without changing 
       directMemberships: [{ level: "project", pointer: "/collections/team/members/review" }],
     });
     const before = await readFile(join(value.root, "state", "state.json"), "utf8");
-    const blockedConfig = await readFile(join(value.root, "skill-cli.jsonc"), "utf8");
+    const blockedConfig = await readFile(join(value.root, "skctl.jsonc"), "utf8");
     await expect(
       api.uninstallSkills(value.core, { source: "local", paths: ["review"] }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(join(value.root, "state", "state.json"), "utf8")).toBe(before);
-    expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toBe(blockedConfig);
+    expect(await readFile(join(value.root, "skctl.jsonc"), "utf8")).toBe(blockedConfig);
     await api.removeMember(value.core, {
       level: "project",
       collection: "team",
@@ -373,7 +371,7 @@ test("MGMT-020 Collection Use reports selected-owner deltas, completeness, and a
   try {
     await registerLocalSource(value.core);
     await api.installSkills(value.core, { source: "local", paths: ["review"] });
-    await writeFile(join(value.root, "skill-cli.local.jsonc"), JSON.stringify({ use: ["other"] }));
+    await writeFile(join(value.root, "skctl.local.jsonc"), JSON.stringify({ use: ["other"] }));
     const impact = await api.previewCollectionUse(value.core, {
       level: "project",
       collections: ["other"],
@@ -495,11 +493,11 @@ test("MGMT-021 Collection removal execution revalidates outgoing Links without c
         })
       ).value.allowed,
     ).toBe(false);
-    const blocked = await readFile(join(value.root, "skill-cli.jsonc"), "utf8");
+    const blocked = await readFile(join(value.root, "skctl.jsonc"), "utf8");
     await expect(
       api.removeCollection(value.core, { level: "project", collection: "source" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
-    expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toBe(blocked);
+    expect(await readFile(join(value.root, "skctl.jsonc"), "utf8")).toBe(blocked);
     await api.setLink(value.core, {
       level: "project",
       collection: "source",
@@ -520,11 +518,11 @@ test("MGMT-021 Collection removal execution revalidates outgoing Links without c
       target: "target",
       linked: true,
     });
-    const stale = await readFile(join(value.root, "skill-cli.jsonc"), "utf8");
+    const stale = await readFile(join(value.root, "skctl.jsonc"), "utf8");
     await expect(
       api.removeCollection(value.core, { level: "project", collection: "source" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
-    expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).toBe(stale);
+    expect(await readFile(join(value.root, "skctl.jsonc"), "utf8")).toBe(stale);
     await api.setLink(value.core, {
       level: "project",
       collection: "source",
@@ -532,7 +530,7 @@ test("MGMT-021 Collection removal execution revalidates outgoing Links without c
       linked: false,
     });
     await api.removeCollection(value.core, { level: "project", collection: "source" });
-    expect(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).not.toContain('"source"');
+    expect(await readFile(join(value.root, "skctl.jsonc"), "utf8")).not.toContain('"source"');
   } finally {
     await value.cleanup();
   }
@@ -790,7 +788,7 @@ test("MGMT-013 distinguishes direct contributed derived and composed Add-to-Coll
       JSON.stringify({ collections: { contributed: {} } }),
     );
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       JSON.stringify({
         sources: {
           remote: {
@@ -882,7 +880,7 @@ test("MGMT-015 removes only direct Memberships while derived and via-Link origin
       expectedAddress: { source: "local", path: "review" },
     });
     expect(
-      JSON.parse(await readFile(join(value.root, "skill-cli.jsonc"), "utf8")).collections.direct
+      JSON.parse(await readFile(join(value.root, "skctl.jsonc"), "utf8")).collections.direct
         .members,
     ).toEqual({});
   } finally {
@@ -995,7 +993,7 @@ test("MGMT-021 refuses contributed and repository-derived Collection removal as 
     await mkdir(module);
     await writeFile(join(module, "config.jsonc"), JSON.stringify({ collections: { team: {} } }));
     await writeFile(
-      join(value.root, "skill-cli.jsonc"),
+      join(value.root, "skctl.jsonc"),
       JSON.stringify({
         sources: {
           remote: {
@@ -1038,7 +1036,7 @@ test("MGMT-033 explicit observations remain caller-owned and absent from declara
     const checked = await api.checkUpdate(value.core, { source: "local" });
     expect(discovered.value.candidates).toHaveLength(1);
     expect(checked.value.unchanged.map((item) => item.path)).toEqual(["review"]);
-    const persisted = `${await readFile(join(value.root, "skill-cli.jsonc"), "utf8")}\n${await readFile(join(value.state, "state.json"), "utf8")}`;
+    const persisted = `${await readFile(join(value.root, "skctl.jsonc"), "utf8")}\n${await readFile(join(value.state, "state.json"), "utf8")}`;
     for (const field of ["candidates", "changed", "added", "removed", "unchanged", "exactRevision"])
       expect(persisted).not.toContain(`"${field}"`);
   } finally {

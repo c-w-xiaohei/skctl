@@ -2,13 +2,13 @@
 set -Eeuo pipefail
 
 readonly image="node:22.23.2-bookworm"
-readonly owner_label="io.skill-cli.resource-run=skill-cli"
-readonly lock_file="/tmp/opencode/skill-cli-resource-run.lock"
+readonly owner_label="io.skctl.resource-run=skctl"
+readonly lock_file="/tmp/opencode/skctl-resource-run.lock"
 readonly workspace="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly uid="$(id -u)"
 readonly gid="$(id -g)"
-readonly container_name="skill-cli-resource-run-$(date +%s)-$$-${RANDOM}"
-readonly container_label="io.skill-cli.resource-run.id=${container_name}"
+readonly container_name="skctl-resource-run-$(date +%s)-$$-${RANDOM}"
+readonly container_label="io.skctl.resource-run.id=${container_name}"
 docker_cli() {
   timeout --foreground --kill-after=1s 5s docker "$@"
 }

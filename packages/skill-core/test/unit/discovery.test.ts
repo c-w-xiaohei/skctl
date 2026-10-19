@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { discoverLocalSkills } from "../../src/source/discovery";
 
 test("discovers deterministic skill roots and stops below a valid root", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-discovery-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-discovery-"));
   await mkdir(join(root, "z"), { recursive: true });
   await mkdir(join(root, "a", "nested"), { recursive: true });
   await writeFile(join(root, "z", "SKILL.md"), "---\nname: z\ndescription: Z\n---\n");
@@ -19,7 +19,7 @@ test("discovers deterministic skill roots and stops below a valid root", async (
 });
 
 test("diagnoses malformed frontmatter and does not follow directory symlinks", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-discovery-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-discovery-"));
   await mkdir(join(root, "bad"));
   await mkdir(join(root, "outside"));
   await writeFile(join(root, "bad", "SKILL.md"), "---\nname: [not scalar]\n---\n");

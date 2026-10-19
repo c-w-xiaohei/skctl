@@ -1,4 +1,4 @@
-# skill-cli
+# skctl
 
 ## 文档
 

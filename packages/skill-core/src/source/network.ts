@@ -1,4 +1,4 @@
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import type { ConfigDocument } from "../config/schema";
 
 export type SourceNetwork = Readonly<NonNullable<ConfigDocument["network"]>>;
@@ -22,7 +22,7 @@ export function createSourceOperation(
 ): SourceOperation {
   const budgetMs = input.budgetMs ?? sourceContentBudgetMs;
   if (!Number.isFinite(budgetMs) || budgetMs <= 0)
-    throw new SkillCliError("INVALID_ARGUMENT", "Source operation budget must be positive");
+    throw new SkctlError("INVALID_ARGUMENT", "Source operation budget must be positive");
   const controller = new AbortController();
   const callerSignal = input.signal;
   const expiresAt = Date.now() + budgetMs;
@@ -147,9 +147,9 @@ export function sourceNetworkError(
   operation: Pick<SourceOperation, "source" | "proxy">,
   phase: string,
   reason: unknown,
-  code: SkillCliError["code"] = "PROVIDER_UNAVAILABLE",
+  code: SkctlError["code"] = "PROVIDER_UNAVAILABLE",
   secrets: readonly string[] = [],
-): SkillCliError {
+): SkctlError {
   const credentials = [...secrets];
   if (operation.proxy) {
     try {
@@ -191,5 +191,5 @@ export function sourceNetworkError(
     0,
     635,
   );
-  return new SkillCliError(code, `${label}: ${detail}`);
+  return new SkctlError(code, `${label}: ${detail}`);
 }

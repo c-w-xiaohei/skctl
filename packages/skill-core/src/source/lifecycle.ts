@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 import type { CoreOptions } from "../shared";
 
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { assertDeclarationOwner } from "../config/write";
 
 import { discoverLocalSkills } from "./discovery";
@@ -31,13 +31,13 @@ export async function previewSourceRemoval(
 ): Promise<OperationResult<SourceRemovalImpact>> {
   const workspace = await readWorkspace({ ...options, signal: operation?.signal });
   if (workspace.value.effective.status !== "complete")
-    throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
+    throw new SkctlError("CONFIG_INVALID", "Configuration is incomplete");
   const binding = capturedWorkspace(workspace.value)?.sources.get(request.source);
-  if (!binding) throw new SkillCliError("SOURCE_NOT_FOUND", `Source not found: ${request.source}`);
+  if (!binding) throw new SkctlError("SOURCE_NOT_FOUND", `Source not found: ${request.source}`);
   if (binding.contribution)
-    throw new SkillCliError("INVALID_ARGUMENT", "Config Source contributions are immutable");
+    throw new SkctlError("INVALID_ARGUMENT", "Config Source contributions are immutable");
   if (request.level && binding.provenance.level !== request.level)
-    throw new SkillCliError("SOURCE_NOT_FOUND", "Source is not declared at requested scope");
+    throw new SkctlError("SOURCE_NOT_FOUND", "Source is not declared at requested scope");
   assertDeclarationOwner(
     binding.provenance as import("../config/types").ConfigDeclarationOwner,
     request.expectedOwner,
@@ -67,7 +67,7 @@ export async function removeSource(
   request: SourceRemovalRequest,
   operation?: OperationOptions,
 ): Promise<OperationResult<void>> {
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   await removeDirectSource(
     { ...options, signal: operation?.signal },
     request.source,
@@ -84,7 +84,7 @@ export async function discoverSkills(
 ): Promise<OperationResult<DiscoveryObservation>> {
   const coordinator = new StateCoordinator();
 
-  if (operation?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (operation?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   const { binding, network: policy } = await sourceFor(options, request.source, operation?.signal);
   await coordinator.withLock(async () => assertOwner(await coordinator.read(), binding));
   let exactRevision: string | undefined;

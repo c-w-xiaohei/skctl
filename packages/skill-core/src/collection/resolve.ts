@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import type { WorkspaceView } from "../workspace/types";
 import { resolveCollections, type CollectionContribution } from "./graph";
 import { type SkillAddress } from "../source/schema";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { canonicalLocalOrigin } from "../source/identity";
 import { parseQualifiedName } from "./names";
 import { StateCoordinator } from "../storage/state";
@@ -23,15 +23,14 @@ export async function resolveInstalledSelector(
 }> {
   const [collection, name, extra] = selector.split(":");
   if (!collection || !name || extra)
-    throw new SkillCliError("INVALID_ARGUMENT", "Invalid Skill Selector");
+    throw new SkctlError("INVALID_ARGUMENT", "Invalid Skill Selector");
   const workspace = await readWorkspaceUnlocked(options);
   const effective = workspace.value.effective;
   if (effective.status !== "complete")
-    throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
-  if (!effective.managed)
-    throw new SkillCliError("CONFIG_INVALID", "agents.opencode must be managed");
+    throw new SkctlError("CONFIG_INVALID", "Configuration is incomplete");
+  if (!effective.managed) throw new SkctlError("CONFIG_INVALID", "agents.opencode must be managed");
   if (effective.agent.status !== "available")
-    throw new SkillCliError(
+    throw new SkctlError(
       "CONFIG_INVALID",
       effective.agent.reasons[0]?.message ?? "Catalog unavailable",
     );
@@ -47,17 +46,16 @@ export async function resolveInstalledSelector(
       pending.push(reference.collection);
   }
   if (!reachable.has(collection))
-    throw new SkillCliError("SKILL_NOT_FOUND", `Skill Selector is not exposed: ${selector}`);
+    throw new SkctlError("SKILL_NOT_FOUND", `Skill Selector is not exposed: ${selector}`);
   const address = resolved.members.get(collection)?.get(name);
-  if (!address)
-    throw new SkillCliError("SKILL_NOT_FOUND", `Installed Skill not found: ${selector}`);
+  if (!address) throw new SkctlError("SKILL_NOT_FOUND", `Installed Skill not found: ${selector}`);
   const item = state.installed.find(
     (candidate) => candidate.source === address.source && candidate.path === address.path,
   );
-  if (!item) throw new SkillCliError("SKILL_NOT_FOUND", `Installed Skill not found: ${selector}`);
+  if (!item) throw new SkctlError("SKILL_NOT_FOUND", `Installed Skill not found: ${selector}`);
   const owner = capturedWorkspace(workspace.value)?.sources.get(item.source);
   if (!owner || owner.bindingDigest !== item.bindingDigest)
-    throw new SkillCliError("CONFIG_CONFLICT", "Installed Skill owner is not healthy");
+    throw new SkctlError("CONFIG_CONFLICT", "Installed Skill owner is not healthy");
   return { address, item };
 }
 export async function resolveEffectiveCollections(
@@ -109,7 +107,7 @@ export async function resolveEffectiveCollections(
     }
   }
   if (workspace.effective.status !== "complete")
-    throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
+    throw new SkctlError("CONFIG_INVALID", "Configuration is incomplete");
   return resolveCollections(
     declarations,
     installedCollectionInputs(state, capturedWorkspace(workspace)?.sources ?? new Map()),

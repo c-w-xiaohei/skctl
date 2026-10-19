@@ -11,13 +11,13 @@ async function git(cwd: string, ...args: string[]) {
 }
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "update-preview-"));
-  const prior = process.env.SKILL_CLI_STATE_DIR;
-  process.env.SKILL_CLI_STATE_DIR = join(root, "state");
+  const prior = process.env.SKCTL_STATE_DIR;
+  process.env.SKCTL_STATE_DIR = join(root, "state");
   const work = join(root, "work"),
     bare = join(root, "remote.git");
   const skill = join(work, "skills", "review");
   await mkdir(skill, { recursive: true });
-  await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+  await writeFile(join(root, "skctl.jsonc"), "{}\n");
   await writeFile(
     join(skill, "SKILL.md"),
     "---\nname: review\ndescription: Review\n---\nOld instructions\n",
@@ -26,7 +26,7 @@ async function fixture() {
   await writeFile(join(skill, "mode.sh"), "echo stable\n");
   await writeFile(join(skill, "image.bin"), Buffer.from([0, 1, 2]));
   await git(work, "init", "-b", "main");
-  await git(work, "config", "user.email", "test@skill-cli.invalid");
+  await git(work, "config", "user.email", "test@skctl.invalid");
   await git(work, "config", "user.name", "Skill CLI");
   await git(work, "add", ".");
   await git(work, "commit", "-m", "installed");
@@ -67,8 +67,8 @@ async function fixture() {
     core,
     commit,
     dispose: async () => {
-      if (prior === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-      else process.env.SKILL_CLI_STATE_DIR = prior;
+      if (prior === undefined) delete process.env.SKCTL_STATE_DIR;
+      else process.env.SKCTL_STATE_DIR = prior;
       await rm(root, { recursive: true, force: true });
     },
   };
@@ -87,7 +87,7 @@ test("preview compares installed bytes to the checked commit, covers every chang
     await chmod(join(f.skill, "mode.sh"), 0o755);
     await f.commit();
     const checked = (await api.checkUpdate(f.core, { source: "team" })).value;
-    const config = await readFile(join(f.root, "skill-cli.jsonc"));
+    const config = await readFile(join(f.root, "skctl.jsonc"));
     const state = await readFile(join(f.root, "state", "state.json"));
     await writeFile(
       join(f.skill, "SKILL.md"),
@@ -132,7 +132,7 @@ test("preview compares installed bytes to the checked commit, covers every chang
       status: "added",
       content: { kind: "text", before: "", after: "" },
     });
-    expect(await readFile(join(f.root, "skill-cli.jsonc"))).toEqual(config);
+    expect(await readFile(join(f.root, "skctl.jsonc"))).toEqual(config);
     expect(await readFile(join(f.root, "state", "state.json"))).toEqual(state);
     expect(
       (await api.loadInstalledSkill(f.core, { address: { source: "team", path: "review" } }))

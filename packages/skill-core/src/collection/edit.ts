@@ -1,4 +1,4 @@
-import { SkillCliError, type OperationOptions } from "../shared";
+import { SkctlError, type OperationOptions } from "../shared";
 import { type CoreOptions } from "../shared";
 import type {
   AddMemberRequest,
@@ -46,7 +46,7 @@ export function createCollection(
     (edit) => {
       parseQualifiedName(request.collection);
       if (edit.document().collections?.[request.collection])
-        throw new SkillCliError("CONFIG_CONFLICT", "Collection already exists");
+        throw new SkctlError("CONFIG_CONFLICT", "Collection already exists");
       edit.set(["collections", request.collection], {});
       return {};
     },
@@ -68,7 +68,7 @@ export function removeCollection(
         edit.coordinator,
       );
       if (workspace.effective.status !== "complete")
-        throw new SkillCliError("CONFIG_INVALID", "Configuration is incomplete");
+        throw new SkctlError("CONFIG_INVALID", "Configuration is incomplete");
       const dependent =
         (declaration.links?.length ?? 0) > 0 ||
         workspace.configs.some((config) =>
@@ -83,7 +83,7 @@ export function removeCollection(
         dependent ||
         !workspace.effective.collectionsView.some((item) => item.id === request.collection)
       )
-        throw new SkillCliError("CONFIG_CONFLICT", "Collection has declaration dependencies");
+        throw new SkctlError("CONFIG_CONFLICT", "Collection has declaration dependencies");
       edit.set(["collections", request.collection], undefined);
       return {};
     },
@@ -102,7 +102,7 @@ export function addMember(
       parseNameSegment(request.name);
       const current = collection(edit, request).members?.[request.name];
       if (current && !sameSkillAddress(current, request.address))
-        throw new SkillCliError("CONFIG_CONFLICT", "Membership entry name is already in use");
+        throw new SkctlError("CONFIG_CONFLICT", "Membership entry name is already in use");
       edit.set(["collections", request.collection, "members", request.name], request.address);
       return {};
     },
@@ -121,12 +121,12 @@ export function removeMember(
       parseNameSegment(request.name);
       const member = collection(edit, request, request.name).members?.[request.name];
       if (!member)
-        throw new SkillCliError(
+        throw new SkctlError(
           "INVALID_ARGUMENT",
           `Membership "${request.name}" is not directly declared in Collection "${request.collection}" at ${request.level} scope in ${edit.file}`,
         );
       if (request.expectedAddress && !sameSkillAddress(member, request.expectedAddress))
-        throw new SkillCliError("CONFIG_CONFLICT", "Membership changed after preview");
+        throw new SkctlError("CONFIG_CONFLICT", "Membership changed after preview");
       edit.set(["collections", request.collection, "members", request.name], undefined);
       return {};
     },
@@ -157,7 +157,7 @@ export async function editMembers(
         { file: edit.file, value: edit.proposed() },
       );
       if (!sameMembershipAffected(request.reviewedAffected, affected))
-        throw new SkillCliError("CONFIG_CONFLICT", "Membership impact changed after review");
+        throw new SkctlError("CONFIG_CONFLICT", "Membership impact changed after review");
       return {};
     },
     operation,
@@ -183,14 +183,14 @@ export function importMembers(
       );
       const source = resolved.members.get(request.from);
       if (!source)
-        throw new SkillCliError("REFERENCE_NOT_FOUND", `Collection not found: ${request.from}`);
+        throw new SkctlError("REFERENCE_NOT_FOUND", `Collection not found: ${request.from}`);
       const target = edit.collection(request.into).members ?? {};
       const delta = importDelta(
         target,
         [...source].map(([name, address]) => ({ name, address })),
       );
       if (delta.conflicts.length)
-        throw new SkillCliError(
+        throw new SkctlError(
           "EXPOSURE_CONFLICT",
           `Collection member conflict: ${delta.conflicts[0]!.name}`,
         );
@@ -213,7 +213,7 @@ export function addReference(
       parseQualifiedName(request.target);
       parseNameSegment(request.name);
       if (collection(edit, request).references?.[request.name])
-        throw new SkillCliError("CONFIG_CONFLICT", "Reference name already exists");
+        throw new SkctlError("CONFIG_CONFLICT", "Reference name already exists");
       edit.set(["collections", request.collection, "references", request.name], {
         collection: request.target,
         description: request.description,
@@ -234,13 +234,13 @@ export function removeReference(
     (edit) => {
       parseNameSegment(request.name);
       const reference = collection(edit, request).references?.[request.name];
-      if (!reference) throw new SkillCliError("REFERENCE_NOT_FOUND", "Reference not found");
+      if (!reference) throw new SkctlError("REFERENCE_NOT_FOUND", "Reference not found");
       if (
         request.expected &&
         (reference.collection !== request.expected.collection ||
           reference.description !== request.expected.description)
       )
-        throw new SkillCliError("CONFIG_CONFLICT", "Reference changed after preview");
+        throw new SkctlError("CONFIG_CONFLICT", "Reference changed after preview");
       edit.set(["collections", request.collection, "references", request.name], undefined);
       return {};
     },

@@ -24,7 +24,7 @@ import { readWorkspaceUnlocked } from "../../src/workspace/capture";
 import { validateConfigBytes } from "../../src/config/document";
 const test = bunTest.serial;
 test("reviewed global Source removal works outside a project", async () => {
-  const { root, cleanup } = await configResources("skill-cli-global-source-owner-");
+  const { root, cleanup } = await configResources("skctl-global-source-owner-");
   const file = join(root, "config.jsonc");
   try {
     await writeFile(
@@ -45,8 +45,8 @@ test("reviewed global Source removal works outside a project", async () => {
   }
 });
 test("relation edits enforce the selected collection declaration at preview and publication", async () => {
-  const { root, cleanup } = await configResources("skill-cli-relation-owner-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-relation-owner-");
+  const file = join(root, "skctl.jsonc");
   try {
     await writeFile(
       file,
@@ -104,7 +104,7 @@ test("relation edits enforce the selected collection declaration at preview and 
   }
 });
 test("global Link preview and publication work outside a project", async () => {
-  const { root, cleanup } = await configResources("skill-cli-global-link-");
+  const { root, cleanup } = await configResources("skctl-global-link-");
   const file = join(root, "config.jsonc");
   try {
     await writeFile(file, JSON.stringify({ collections: { source: {}, target: {} } }));
@@ -123,8 +123,8 @@ test("global Link preview and publication work outside a project", async () => {
   }
 });
 test("cancellation during configuration validation prevents publication", async () => {
-  const { root, cleanup } = await configResources("skill-cli-cancel-edit-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-cancel-edit-");
+  const file = join(root, "skctl.jsonc");
   const controller = new AbortController();
   try {
     await writeFile(file, "{}\n");
@@ -143,9 +143,9 @@ test("cancellation during configuration validation prevents publication", async 
   }
 });
 test("single member preview uses the same strict name input as execution", async () => {
-  const { root, cleanup } = await configResources("skill-cli-member-name-");
+  const { root, cleanup } = await configResources("skctl-member-name-");
   try {
-    const file = join(root, "skill-cli.jsonc");
+    const file = join(root, "skctl.jsonc");
     await writeFile(file, JSON.stringify({ collections: { team: {} } }));
     const core = { cwd: root };
     const request = {
@@ -166,8 +166,8 @@ test("single member preview uses the same strict name input as execution", async
   }
 });
 test("qualified Collection IDs do not change declaration owner interpretation", async () => {
-  const { root, cleanup } = await configResources("skill-cli-qualified-owner-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-qualified-owner-");
+  const file = join(root, "skctl.jsonc");
   const collection = "team/members/docs";
   try {
     await writeFile(file, JSON.stringify({ collections: { [collection]: {}, target: {} } }));
@@ -200,8 +200,8 @@ test("qualified Collection IDs do not change declaration owner interpretation", 
   }
 });
 test("successful configuration publication does not depend on a later projection read", async () => {
-  const { root, cleanup } = await configResources("skill-cli-committed-result-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-committed-result-");
+  const file = join(root, "skctl.jsonc");
   try {
     await writeFile(file, "{}\n");
     let published = false;
@@ -231,10 +231,10 @@ test("successful configuration publication does not depend on a later projection
   }
 });
 test("empty Use preview distinguishes a valid edit from an unavailable catalog", async () => {
-  const { root, cleanup } = await configResources("skill-cli-empty-use-");
+  const { root, cleanup } = await configResources("skctl-empty-use-");
   try {
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({ collections: { team: {} }, use: ["team"] }),
     );
     const core = { cwd: root };
@@ -254,8 +254,8 @@ test("empty Use preview distinguishes a valid edit from an unavailable catalog",
   }
 });
 test("import preview reports adding direct members even when an equal Link already exposes them", async () => {
-  const { root, cleanup } = await configResources("skill-cli-direct-import-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-direct-import-");
+  const file = join(root, "skctl.jsonc");
   try {
     const address = { source: "local", path: "review" };
     await writeFile(
@@ -281,8 +281,8 @@ test("import preview reports adding direct members even when an equal Link alrea
   }
 });
 test("reviewed declaration locations are checked at publication without changing bytes", async () => {
-  const { root, cleanup } = await configResources("skill-cli-reviewed-owner-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-reviewed-owner-");
+  const file = join(root, "skctl.jsonc");
   try {
     await writeFile(
       file,
@@ -337,18 +337,18 @@ test("reviewed declaration locations are checked at publication without changing
 });
 async function configResources(prefix: string) {
   const root = await mkdtemp(join(tmpdir(), prefix));
-  const previous = process.env.SKILL_CLI_STATE_DIR;
+  const previous = process.env.SKCTL_STATE_DIR;
   const state = join(root, "state");
   const cleanup = async () => {
     try {
-      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-      else process.env.SKILL_CLI_STATE_DIR = previous;
+      if (previous === undefined) delete process.env.SKCTL_STATE_DIR;
+      else process.env.SKCTL_STATE_DIR = previous;
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   };
   try {
-    process.env.SKILL_CLI_STATE_DIR = state;
+    process.env.SKCTL_STATE_DIR = state;
     return { root, state, cleanup };
   } catch (error) {
     try {
@@ -360,12 +360,12 @@ async function configResources(prefix: string) {
   }
 }
 test("config resources restore state and remove their root after a thrown operation", async () => {
-  const previous = process.env.SKILL_CLI_STATE_DIR;
-  process.env.SKILL_CLI_STATE_DIR = "outer-state";
+  const previous = process.env.SKCTL_STATE_DIR;
+  process.env.SKCTL_STATE_DIR = "outer-state";
   const failure = new Error("operation failed");
   let root: string | undefined;
   try {
-    const resources = await configResources("skill-cli-cleanup-proof-");
+    const resources = await configResources("skctl-cleanup-proof-");
     root = resources.root;
     try {
       throw failure;
@@ -376,21 +376,21 @@ test("config resources restore state and remove their root after a thrown operat
     expect(error).toBe(failure);
   } finally {
     try {
-      expect(process.env.SKILL_CLI_STATE_DIR).toBe("outer-state");
+      expect(process.env.SKCTL_STATE_DIR).toBe("outer-state");
       await expect(lstat(root!)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      if (previous === undefined) delete process.env.SKILL_CLI_STATE_DIR;
-      else process.env.SKILL_CLI_STATE_DIR = previous;
+      if (previous === undefined) delete process.env.SKCTL_STATE_DIR;
+      else process.env.SKCTL_STATE_DIR = previous;
     }
   }
 });
 test("network is rejected by actual Project Local and reusable readers", async () => {
-  const { root, cleanup } = await configResources("skill-cli-network-scopes-");
+  const { root, cleanup } = await configResources("skctl-network-scopes-");
   const text = '{"network":{"proxy":"http://proxy.test:7890"}}';
   try {
     expect(() => validateConfigBytes(Buffer.from(text))).toThrow();
-    for (const name of ["skill-cli.jsonc", "skill-cli.local.jsonc"]) {
-      await writeFile(join(root, "skill-cli.jsonc"), "{}");
+    for (const name of ["skctl.jsonc", "skctl.local.jsonc"]) {
+      await writeFile(join(root, "skctl.jsonc"), "{}");
       await writeFile(join(root, name), text);
       expect(
         (await getWorkspace({ cwd: root, userConfigPath: join(root, "absent") })).value.effective
@@ -401,7 +401,7 @@ test("network is rejected by actual Project Local and reusable readers", async (
     await mkdir(join(root, "module"));
     await writeFile(join(root, "module", "config.jsonc"), text);
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{"configSources":{"module":{"kind":"local","path":"./module","root":""}}}',
     );
     expect(
@@ -409,7 +409,7 @@ test("network is rejected by actual Project Local and reusable readers", async (
         .status,
     ).toBe("unavailable");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{"configSources":{"module":{"kind":"git","origin":"https://example.test/module.git","root":"","ref":"main"}}}',
     );
     const coordinator = new StateCoordinator();
@@ -427,10 +427,10 @@ test("network is rejected by actual Project Local and reusable readers", async (
   }
 });
 test("both manual Config state writers emit v3 and retain unrelated Remote tree evidence", async () => {
-  const { root, cleanup } = await configResources("skill-cli-config-state-v3-");
+  const { root, cleanup } = await configResources("skctl-config-state-v3-");
   try {
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{"configSources":{"one":{"kind":"git","origin":"https://example.test/one.git","root":"","ref":"main"},"two":{"kind":"git","origin":"https://example.test/two.git","root":"","ref":"main"}}}',
     );
     const options = { cwd: root, userConfigPath: join(root, "missing") };
@@ -484,10 +484,10 @@ test("both manual Config state writers emit v3 and retain unrelated Remote tree 
   }
 });
 test("missing user document inherits but inaccessible user parent fails closed", async () => {
-  const { root, cleanup } = await configResources("skill-cli-network-permissions-");
+  const { root, cleanup } = await configResources("skctl-network-permissions-");
   const parent = join(root, "private");
   try {
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     await mkdir(parent);
     const options = { cwd: root, userConfigPath: join(parent, "policy.jsonc") };
     expect((await getWorkspace(options)).value.effective.status).toBe("complete");
@@ -507,11 +507,11 @@ test("missing user document inherits but inaccessible user parent fails closed",
   }
 });
 test("user proxy survives JSONC declaration edits and never enters Workspace or binding facts", async () => {
-  const { root, cleanup } = await configResources("skill-cli-user-network-");
+  const { root, cleanup } = await configResources("skctl-user-network-");
   const global = join(root, "user", "config.jsonc");
   try {
     await mkdir(join(root, "user"));
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     const proxy = "http://user:secret@proxy.test:7890";
     await writeFile(
       global,
@@ -548,10 +548,10 @@ test("user proxy survives JSONC declaration edits and never enters Workspace or 
   }
 });
 test("MGMT-001 creates only the selected Global Project or Local Source target with exact bindings", async () => {
-  const { root, cleanup } = await configResources("skill-cli-source-targets-");
+  const { root, cleanup } = await configResources("skctl-source-targets-");
   const global = join(root, "global", "config.jsonc");
   try {
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     const core = { cwd: root, userConfigPath: global };
     const cases = [
       {
@@ -563,7 +563,7 @@ test("MGMT-001 creates only the selected Global Project or Local Source target w
       {
         level: "project" as const,
         id: "project",
-        file: join(root, "skill-cli.jsonc"),
+        file: join(root, "skctl.jsonc"),
         binding: {
           kind: "git" as const,
           origin: "https://example.test/project.git",
@@ -574,7 +574,7 @@ test("MGMT-001 creates only the selected Global Project or Local Source target w
       {
         level: "local" as const,
         id: "local",
-        file: join(root, "skill-cli.local.jsonc"),
+        file: join(root, "skctl.local.jsonc"),
         binding: {
           kind: "github" as const,
           origin: "https://github.com/acme/local",
@@ -603,9 +603,9 @@ test("MGMT-001 creates only the selected Global Project or Local Source target w
   }
 });
 test("GitHub Source shorthand remains readable after registration", async () => {
-  const { root, cleanup } = await configResources("skill-cli-github-source-");
+  const { root, cleanup } = await configResources("skctl-github-source-");
   try {
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     const core = { cwd: root };
     await api.registerSource(core, {
       level: "project",
@@ -626,10 +626,10 @@ test("GitHub Source shorthand remains readable after registration", async () => 
   }
 });
 test("Use changes are atomic, report their locked delta, and reject duplicate set entries", async () => {
-  const { root, cleanup } = await configResources("skill-cli-use-changes-");
+  const { root, cleanup } = await configResources("skctl-use-changes-");
   try {
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({ collections: { alpha: {}, beta: {} }, use: [] }),
     );
     const core = { cwd: root, userConfigPath: join(root, "global.jsonc") };
@@ -637,7 +637,7 @@ test("Use changes are atomic, report their locked delta, and reject duplicate se
       api.addUse(core, { level: "project", collection: "alpha" }),
       api.addUse(core, { level: "project", collection: "beta" }),
     ]);
-    expect(JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).use.sort()).toEqual([
+    expect(JSON.parse(await readFile(join(root, "skctl.jsonc"), "utf8")).use.sort()).toEqual([
       "alpha",
       "beta",
     ]);
@@ -648,7 +648,7 @@ test("Use changes are atomic, report their locked delta, and reject duplicate se
     expect([...(removedAlpha.value.use?.before ?? [])].sort()).toEqual(["alpha", "beta"]);
     expect(removedAlpha.value.use?.after).toEqual(["beta"]);
     expect(removedBeta.value.use).toEqual({ before: ["beta"], after: [] });
-    expect(JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).use).toEqual([]);
+    expect(JSON.parse(await readFile(join(root, "skctl.jsonc"), "utf8")).use).toEqual([]);
     await expect(
       api.setUse(core, { level: "project", collections: ["alpha", "alpha"] }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
@@ -657,7 +657,7 @@ test("Use changes are atomic, report their locked delta, and reject duplicate se
   }
 });
 test("global mutations work without a project but project targets remain strict", async () => {
-  const { root, cleanup } = await configResources("skill-cli-global-only-edit-");
+  const { root, cleanup } = await configResources("skctl-global-only-edit-");
   const cwd = join(root, "outside-project");
   const global = join(root, "global", "config.jsonc");
   try {
@@ -694,7 +694,7 @@ test("global mutations work without a project but project targets remain strict"
   }
 });
 test("global mutations without an explicit project do not start Git", async () => {
-  const { root, cleanup } = await configResources("skill-cli-global-no-git-");
+  const { root, cleanup } = await configResources("skctl-global-no-git-");
   const cwd = join(root, "outside-project");
   const global = join(root, "global", "config.jsonc");
   const bin = join(root, "bin");
@@ -726,10 +726,10 @@ test("global mutations without an explicit project do not start Git", async () =
   }
 });
 test("global mutations ignore an invalid project config", async () => {
-  const { root, cleanup } = await configResources("skill-cli-global-only-project-config-");
+  const { root, cleanup } = await configResources("skctl-global-only-project-config-");
   const global = join(root, "global", "config.jsonc");
   try {
-    await writeFile(join(root, "skill-cli.jsonc"), '{ "unknown": true }\n');
+    await writeFile(join(root, "skctl.jsonc"), '{ "unknown": true }\n');
     await api.createCollection(
       { cwd: root, userConfigPath: global },
       {
@@ -743,7 +743,7 @@ test("global mutations ignore an invalid project config", async () => {
   }
 });
 test("collection declaration errors identify the collection, scope, and target config", async () => {
-  const { root, cleanup } = await configResources("skill-cli-collection-declaration-error-");
+  const { root, cleanup } = await configResources("skctl-collection-declaration-error-");
   const global = join(root, "global", "config.jsonc");
   try {
     await expect(
@@ -762,7 +762,7 @@ test("collection declaration errors identify the collection, scope, and target c
   }
 });
 test("member removal distinguishes a missing Collection from a missing membership", async () => {
-  const { root, cleanup } = await configResources("skill-cli-member-removal-error-");
+  const { root, cleanup } = await configResources("skctl-member-removal-error-");
   const global = join(root, "global", "config.jsonc");
   try {
     await mkdir(join(root, "global"));
@@ -794,7 +794,7 @@ test("member removal distinguishes a missing Collection from a missing membershi
   }
 });
 test("local mutations remain strict without a project", async () => {
-  const { root, cleanup } = await configResources("skill-cli-local-no-project-");
+  const { root, cleanup } = await configResources("skctl-local-no-project-");
   const cwd = join(root, "outside-project");
   try {
     await mkdir(cwd);
@@ -806,7 +806,7 @@ test("local mutations remain strict without a project", async () => {
   }
 });
 test("global mutations respect global Config Source contributions", async () => {
-  const { root, cleanup } = await configResources("skill-cli-global-contribution-owner-");
+  const { root, cleanup } = await configResources("skctl-global-contribution-owner-");
   const cwd = join(root, "outside-project");
   const global = join(root, "global", "config.jsonc");
   const module = join(root, "module");
@@ -837,9 +837,7 @@ test("global mutations respect global Config Source contributions", async () => 
   }
 });
 test("global mutations respect adopted Remote Config Source contributions", async () => {
-  const { root, state, cleanup } = await configResources(
-    "skill-cli-global-remote-contribution-owner-",
-  );
+  const { root, state, cleanup } = await configResources("skctl-global-remote-contribution-owner-");
   const cwd = join(root, "outside-project");
   const global = join(root, "global", "config.jsonc");
   try {
@@ -888,8 +886,8 @@ async function privateTree(root: string) {
   return output;
 }
 test("selected-target declaration edits preserve unrelated JSONC comments", async () => {
-  const { root, cleanup } = await configResources("skill-cli-edit-");
-  const config = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-edit-");
+  const config = join(root, "skctl.jsonc");
   try {
     const initial = '{\n  // retain me\n  "collections": {}\n}\n';
     await writeFile(config, initial);
@@ -911,8 +909,8 @@ test("selected-target declaration edits preserve unrelated JSONC comments", asyn
   }
 });
 test("direct qualified Source IDs remain editable while actual Config Source contributions are immutable", async () => {
-  const { root, cleanup } = await configResources("skill-cli-config-owner-");
-  const config = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-config-owner-");
+  const config = join(root, "skctl.jsonc");
   try {
     await writeFile(config, "{}\n");
     await api.registerSource(
@@ -949,9 +947,9 @@ test("direct qualified Source IDs remain editable while actual Config Source con
   }
 });
 test("Source Roots reject absolute, empty-interior, and escaping paths before publication", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-root-validation-"));
+  const root = await mkdtemp(join(tmpdir(), "skctl-root-validation-"));
   try {
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     for (const sourceRoot of ["/outside", "../outside", "one//two", "one/./two", ".", "one\\two"]) {
       await expect(
         api.registerSource(
@@ -963,15 +961,15 @@ test("Source Roots reject absolute, empty-interior, and escaping paths before pu
           },
         ),
       ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
-      expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe("{}\n");
+      expect(await readFile(join(root, "skctl.jsonc"), "utf8")).toBe("{}\n");
     }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 test("Config Source Roots reject invalid paths before publication", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skill-cli-config-source-root-validation-"));
-  const config = join(root, "skill-cli.jsonc");
+  const root = await mkdtemp(join(tmpdir(), "skctl-config-source-root-validation-"));
+  const config = join(root, "skctl.jsonc");
   try {
     await writeFile(config, "{}\n");
     for (const sourceRoot of ["/outside", "../outside", "one//two", "one/./two", ".", "one\\two"]) {
@@ -997,8 +995,8 @@ test("Config Source Roots reject invalid paths before publication", async () => 
   }
 });
 test("invalid pre-existing host Config Source Roots block unrelated mutations", async () => {
-  const { root, cleanup } = await configResources("skill-cli-existing-config-source-root-");
-  const config = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-existing-config-source-root-");
+  const config = join(root, "skctl.jsonc");
   try {
     for (const binding of [
       { kind: "local" as const, path: "./module", root: "." },
@@ -1027,8 +1025,8 @@ test("invalid pre-existing host Config Source Roots block unrelated mutations", 
   }
 });
 test("rejected configuration reads and edits leave declaration bytes untouched", async () => {
-  const { root, state, cleanup } = await configResources("skill-cli-edit-reject-");
-  const config = join(root, "skill-cli.jsonc");
+  const { root, state, cleanup } = await configResources("skctl-edit-reject-");
+  const config = join(root, "skctl.jsonc");
   try {
     await mkdir(join(state, "snapshots"), { recursive: true });
     await mkdir(join(state, "configs"));
@@ -1061,8 +1059,8 @@ test("rejected configuration reads and edits leave declaration bytes untouched",
   }
 });
 test("invalid UTF-8 and oversized declarations are rejected without rewriting them", async () => {
-  const { root, state, cleanup } = await configResources("skill-cli-config-text-");
-  const config = join(root, "skill-cli.jsonc");
+  const { root, state, cleanup } = await configResources("skctl-config-text-");
+  const config = join(root, "skctl.jsonc");
   try {
     await mkdir(join(state, "snapshots"), { recursive: true });
     await mkdir(join(state, "configs"));
@@ -1093,20 +1091,20 @@ test("invalid UTF-8 and oversized declarations are rejected without rewriting th
   }
 });
 test("MGMT-014 creates a real empty Collection and rejects duplicate creation atomically", async () => {
-  const { root, cleanup } = await configResources("skill-cli-collection-edit-");
+  const { root, cleanup } = await configResources("skctl-collection-edit-");
   try {
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     const core = { cwd: root };
     await api.createCollection(core, { level: "project", collection: "source" });
     await api.createCollection(core, { level: "project", collection: "target" });
-    const parsed = JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8"));
+    const parsed = JSON.parse(await readFile(join(root, "skctl.jsonc"), "utf8"));
     expect(parsed.collections.source).toEqual({});
     expect(parsed.collections.source.members).toBeUndefined();
-    const duplicateBytes = await readFile(join(root, "skill-cli.jsonc"), "utf8");
+    const duplicateBytes = await readFile(join(root, "skctl.jsonc"), "utf8");
     await expect(
       api.createCollection(core, { level: "project", collection: "source" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
-    expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(duplicateBytes);
+    expect(await readFile(join(root, "skctl.jsonc"), "utf8")).toBe(duplicateBytes);
     await api.addReference(core, {
       level: "project",
       collection: "source",
@@ -1134,22 +1132,22 @@ test("MGMT-014 creates a real empty Collection and rejects duplicate creation at
     });
     await api.removeCollection(core, { level: "project", collection: "target" });
     expect(
-      JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).collections.target,
+      JSON.parse(await readFile(join(root, "skctl.jsonc"), "utf8")).collections.target,
     ).toBeUndefined();
   } finally {
     await cleanup();
   }
 });
 test("MGMT-014 creates empty Collections only at selected Global Project and Local levels", async () => {
-  const { root, cleanup } = await configResources("skill-cli-collection-levels-");
+  const { root, cleanup } = await configResources("skctl-collection-levels-");
   const global = join(root, "global", "config.jsonc");
   try {
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     const core = { cwd: root, userConfigPath: global };
     for (const [level, collection, file] of [
       ["global", "global", global],
-      ["project", "project", join(root, "skill-cli.jsonc")],
-      ["local", "local", join(root, "skill-cli.local.jsonc")],
+      ["project", "project", join(root, "skctl.jsonc")],
+      ["local", "local", join(root, "skctl.local.jsonc")],
     ] as const) {
       await api.createCollection(core, { level, collection });
       expect(JSON.parse(await readFile(file, "utf8")).collections[collection]).toEqual({});
@@ -1159,10 +1157,10 @@ test("MGMT-014 creates empty Collections only at selected Global Project and Loc
   }
 });
 test("MGMT-017 adds and removes a named direct Reference with zero member exposure", async () => {
-  const { root, cleanup } = await configResources("skill-cli-reference-edit-");
+  const { root, cleanup } = await configResources("skctl-reference-edit-");
   try {
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({ collections: { source: {}, target: {} } }),
     );
     const core = { cwd: root };
@@ -1191,8 +1189,7 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
       expected: { collection: "target", description: "Docs" },
     });
     expect(
-      JSON.parse(await readFile(join(root, "skill-cli.jsonc"), "utf8")).collections.source
-        .references,
+      JSON.parse(await readFile(join(root, "skctl.jsonc"), "utf8")).collections.source.references,
     ).toEqual({});
     const module = join(root, "module");
     await mkdir(module);
@@ -1208,7 +1205,7 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
       }),
     );
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         configSources: { shared: { kind: "local", path: "./module", root: "" } },
         collections: { target: {} },
@@ -1232,7 +1229,7 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
       referencedCollection: "shared/contributed",
       allowed: true,
     });
-    const hostBytes = await readFile(join(root, "skill-cli.jsonc"), "utf8");
+    const hostBytes = await readFile(join(root, "skctl.jsonc"), "utf8");
     await expect(
       api.removeReference(core, {
         level: "project",
@@ -1240,26 +1237,26 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
         name: "docs",
       }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
-    expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(hostBytes);
+    expect(await readFile(join(root, "skctl.jsonc"), "utf8")).toBe(hostBytes);
   } finally {
     await cleanup();
   }
 });
 test("MGMT-027 enables and disables managed OpenCode only at the selected Config level", async () => {
-  const { root, cleanup } = await configResources("skill-cli-managed-levels-");
+  const { root, cleanup } = await configResources("skctl-managed-levels-");
   const global = join(root, "global", "config.jsonc");
   try {
     await mkdir(join(root, "global"));
     await writeFile(global, "{}\n");
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({ collections: { team: {} }, use: ["team"] }),
     );
     const core = { cwd: root, userConfigPath: global };
     for (const [level, file] of [
       ["global", global],
-      ["project", join(root, "skill-cli.jsonc")],
-      ["local", join(root, "skill-cli.local.jsonc")],
+      ["project", join(root, "skctl.jsonc")],
+      ["local", join(root, "skctl.local.jsonc")],
     ] as const) {
       await api.setManagedOpenCode(core, { level, managed: true });
       expect(JSON.parse(await readFile(file, "utf8")).agents).toEqual({ opencode: "managed" });
@@ -1277,9 +1274,9 @@ test("MGMT-027 enables and disables managed OpenCode only at the selected Config
   }
 });
 test("MGMT-028 blocks invalid target and sibling graph edits while preserving unknown bytes and state", async () => {
-  const { root, cleanup } = await configResources("skill-cli-invalid-mutation-");
-  const project = join(root, "skill-cli.jsonc");
-  const local = join(root, "skill-cli.local.jsonc");
+  const { root, cleanup } = await configResources("skctl-invalid-mutation-");
+  const project = join(root, "skctl.jsonc");
+  const local = join(root, "skctl.local.jsonc");
   try {
     const unknown = Buffer.from([0xff, 0xfe, 0xfd]);
     await writeFile(project, "{ invalid\n");
@@ -1317,9 +1314,9 @@ test("MGMT-028 blocks invalid target and sibling graph edits while preserving un
   }
 });
 test("MGMT-032 configuration mutations return focused facts and never embed Workspace", async () => {
-  const { root, cleanup } = await configResources("skill-cli-focused-result-");
+  const { root, cleanup } = await configResources("skctl-focused-result-");
   try {
-    await writeFile(join(root, "skill-cli.jsonc"), "{}\n");
+    await writeFile(join(root, "skctl.jsonc"), "{}\n");
     const result = await api.createCollection(
       { cwd: root },
       {
@@ -1329,7 +1326,7 @@ test("MGMT-032 configuration mutations return focused facts and never embed Work
     );
     expect(result.value).toEqual({
       level: "project",
-      file: join(root, "skill-cli.jsonc"),
+      file: join(root, "skctl.jsonc"),
       changed: true,
     });
     expect("workspace" in result.value).toBe(false);
@@ -1338,10 +1335,10 @@ test("MGMT-032 configuration mutations return focused facts and never embed Work
   }
 });
 test("MGMT-015/018/020/021 revalidate direct ownership and dependencies under the mutation lock", async () => {
-  const { root, cleanup } = await configResources("skill-cli-collection-stale-");
+  const { root, cleanup } = await configResources("skctl-collection-stale-");
   try {
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         collections: {
           source: {},
@@ -1350,11 +1347,11 @@ test("MGMT-015/018/020/021 revalidate direct ownership and dependencies under th
       }),
     );
     const core = { cwd: root };
-    const beforeMember = await readFile(join(root, "skill-cli.jsonc"), "utf8");
+    const beforeMember = await readFile(join(root, "skctl.jsonc"), "utf8");
     await expect(
       api.removeMember(core, { level: "project", collection: "source", name: "review" }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
-    expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(beforeMember);
+    expect(await readFile(join(root, "skctl.jsonc"), "utf8")).toBe(beforeMember);
     await api.addReference(core, {
       level: "project",
       collection: "source",
@@ -1362,18 +1359,18 @@ test("MGMT-015/018/020/021 revalidate direct ownership and dependencies under th
       target: "target",
       description: "late dependency",
     });
-    const beforeRemoval = await readFile(join(root, "skill-cli.jsonc"), "utf8");
+    const beforeRemoval = await readFile(join(root, "skctl.jsonc"), "utf8");
     await expect(
       api.removeCollection(core, { level: "project", collection: "target" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
-    expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(beforeRemoval);
+    expect(await readFile(join(root, "skctl.jsonc"), "utf8")).toBe(beforeRemoval);
   } finally {
     await cleanup();
   }
 });
 test("MGMT-015/016/017 reject stale member, import, and Reference definitions without publishing bytes", async () => {
-  const { root, cleanup } = await configResources("skill-cli-operation-stale-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-operation-stale-");
+  const file = join(root, "skctl.jsonc");
   try {
     await writeFile(
       file,
@@ -1423,8 +1420,8 @@ test("MGMT-015/016/017 reject stale member, import, and Reference definitions wi
   }
 });
 test("MGMT-016 import validates all current source members atomically", async () => {
-  const { root, cleanup } = await configResources("skill-cli-import-stale-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-import-stale-");
+  const file = join(root, "skctl.jsonc");
   try {
     await writeFile(
       file,
@@ -1460,8 +1457,8 @@ test("MGMT-016 import validates all current source members atomically", async ()
   }
 });
 test("MGMT-019 Link execution revalidates a stale preview without publishing conflicting bytes", async () => {
-  const { root, cleanup } = await configResources("skill-cli-link-stale-");
-  const config = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-link-stale-");
+  const config = join(root, "skctl.jsonc");
   try {
     await writeFile(
       config,
@@ -1507,8 +1504,8 @@ test("MGMT-019 Link execution revalidates a stale preview without publishing con
   }
 });
 test("MGMT-019 Link removal revalidates current alternatives and exact Link ownership", async () => {
-  const { root, cleanup } = await configResources("skill-cli-link-remove-stale-");
-  const config = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-link-remove-stale-");
+  const config = join(root, "skctl.jsonc");
   try {
     await writeFile(
       config,
@@ -1567,8 +1564,8 @@ test("MGMT-019 Link removal revalidates current alternatives and exact Link owne
   }
 });
 test("MGMT-019 Link execution uses current graph facts after a preview is blocked or becomes cyclic", async () => {
-  const { root, cleanup } = await configResources("skill-cli-link-current-");
-  const config = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-link-current-");
+  const config = join(root, "skctl.jsonc");
   try {
     await writeFile(
       config,
@@ -1658,8 +1655,8 @@ test("MGMT-019 Link execution uses current graph facts after a preview is blocke
   }
 });
 test("MGMT-029 Collection Use rejects a newly incomplete graph unchanged then succeeds from current repaired facts", async () => {
-  const { root, cleanup } = await configResources("skill-cli-use-stale-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-use-stale-");
+  const file = join(root, "skctl.jsonc");
   try {
     const complete = JSON.stringify({ collections: { team: {} } });
     await writeFile(file, complete);
@@ -1688,8 +1685,8 @@ test("MGMT-029 Collection Use rejects a newly incomplete graph unchanged then su
   }
 });
 test("MGMT-029 Collection removal rejects a newly introduced dependency unchanged then succeeds after removal", async () => {
-  const { root, cleanup } = await configResources("skill-cli-collection-remove-stale-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-collection-remove-stale-");
+  const file = join(root, "skctl.jsonc");
   try {
     const independent = JSON.stringify({ collections: { source: {}, target: {} } });
     await writeFile(file, independent);
@@ -1721,8 +1718,8 @@ test("MGMT-029 Collection removal rejects a newly introduced dependency unchange
   }
 });
 test("membership batches preview and publish one direct Collection delta atomically", async () => {
-  const { root, cleanup } = await configResources("skill-cli-membership-batch-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-membership-batch-");
+  const file = join(root, "skctl.jsonc");
   try {
     await writeFile(
       file,
@@ -1831,13 +1828,13 @@ test("membership batches preview and publish one direct Collection delta atomica
   }
 });
 test("membership batches reject duplicate request names and contributed Collection ownership", async () => {
-  const { root, cleanup } = await configResources("skill-cli-membership-batch-blocked-");
+  const { root, cleanup } = await configResources("skctl-membership-batch-blocked-");
   const module = join(root, "module");
   try {
     await mkdir(module);
     await writeFile(join(module, "config.jsonc"), '{ "collections": { "team": {} } }\n');
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       '{ "configSources": { "shared": { "kind": "local", "path": "./module", "root": "" } } }\n',
     );
     const core = { cwd: root };
@@ -1851,11 +1848,11 @@ test("membership batches reject duplicate request names and contributed Collecti
       decision: { kind: "contributed" },
       allowed: false,
     });
-    const before = await readFile(join(root, "skill-cli.jsonc"), "utf8");
+    const before = await readFile(join(root, "skctl.jsonc"), "utf8");
     await expect(api.editMembers(core, { ...request, reviewedAffected: [] })).rejects.toMatchObject(
       { code: "INVALID_ARGUMENT" },
     );
-    expect(await readFile(join(root, "skill-cli.jsonc"), "utf8")).toBe(before);
+    expect(await readFile(join(root, "skctl.jsonc"), "utf8")).toBe(before);
     await expect(
       api.previewMembershipBatch(core, {
         ...request,
@@ -1871,10 +1868,10 @@ test("membership batches reject duplicate request names and contributed Collecti
   }
 });
 test("membership batch preview includes direct and incoming Link selector deltas", async () => {
-  const { root, cleanup } = await configResources("skill-cli-membership-batch-links-");
+  const { root, cleanup } = await configResources("skctl-membership-batch-links-");
   try {
     await writeFile(
-      join(root, "skill-cli.jsonc"),
+      join(root, "skctl.jsonc"),
       JSON.stringify({
         collections: {
           parent: { links: ["team"] },
@@ -1907,10 +1904,8 @@ test("membership batch preview includes direct and incoming Link selector deltas
   }
 });
 test("membership batch rejects a Link introduced after review without publishing bytes or state", async () => {
-  const { root, state, cleanup } = await configResources(
-    "skill-cli-membership-batch-reviewed-impact-",
-  );
-  const file = join(root, "skill-cli.jsonc");
+  const { root, state, cleanup } = await configResources("skctl-membership-batch-reviewed-impact-");
+  const file = join(root, "skctl.jsonc");
   try {
     await writeFile(file, JSON.stringify({ collections: { parent: {}, team: {} } }));
     const core = { cwd: root };
@@ -1944,8 +1939,8 @@ test("membership batch rejects a Link introduced after review without publishing
   }
 });
 test("membership batch accepts an unrelated graph change after review", async () => {
-  const { root, cleanup } = await configResources("skill-cli-membership-batch-unrelated-impact-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-membership-batch-unrelated-impact-");
+  const file = join(root, "skctl.jsonc");
   try {
     await writeFile(file, JSON.stringify({ collections: { other: {}, parent: {}, team: {} } }));
     const core = { cwd: root };
@@ -1970,10 +1965,10 @@ test("membership batch accepts an unrelated graph change after review", async ()
   }
 });
 test("membership batch preview blocks unavailable effective management despite a direct owner", async () => {
-  const { root, cleanup } = await configResources("skill-cli-membership-batch-unavailable-");
+  const { root, cleanup } = await configResources("skctl-membership-batch-unavailable-");
   try {
-    await writeFile(join(root, "skill-cli.jsonc"), '{ "collections": { "team": {} } }\n');
-    await writeFile(join(root, "skill-cli.local.jsonc"), "{ invalid\n");
+    await writeFile(join(root, "skctl.jsonc"), '{ "collections": { "team": {} } }\n');
+    await writeFile(join(root, "skctl.local.jsonc"), "{ invalid\n");
     const preview = await api.previewMembershipBatch(
       { cwd: root },
       {
@@ -1993,8 +1988,8 @@ test("membership batch preview blocks unavailable effective management despite a
   }
 });
 test("membership batches normalize names and leave effectless deltas unpublished", async () => {
-  const { root, state, cleanup } = await configResources("skill-cli-membership-batch-noop-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, state, cleanup } = await configResources("skctl-membership-batch-noop-");
+  const file = join(root, "skctl.jsonc");
   try {
     const normalized = "caf\u00e9";
     const decomposed = "cafe\u0301";
@@ -2037,8 +2032,8 @@ test("membership batches normalize names and leave effectless deltas unpublished
   }
 });
 test("membership batches preserve all bytes for mixed valid and invalid changes", async () => {
-  const { root, cleanup } = await configResources("skill-cli-membership-batch-mixed-failure-");
-  const file = join(root, "skill-cli.jsonc");
+  const { root, cleanup } = await configResources("skctl-membership-batch-mixed-failure-");
+  const file = join(root, "skctl.jsonc");
   try {
     await writeFile(
       file,

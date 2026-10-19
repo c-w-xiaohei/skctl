@@ -13,7 +13,7 @@ import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 import type { ConfigLevel } from "./types";
 import type { SourceBinding } from "../source/schema";
 import type { Diagnostic } from "../shared";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { canonicalLocalOrigin, canonicalRemoteOrigin } from "../source/identity";
 import { parseQualifiedName } from "../collection/names";
 import { textLimit } from "../content/text";
@@ -79,19 +79,16 @@ export async function document(path: string, scope: DocumentScope): Promise<Conf
   );
   if (!stat) return {};
   if (!stat.isFile() || stat.isSymbolicLink())
-    throw new SkillCliError(
-      "CONFIG_SYMLINK",
-      `Configuration file is not an ordinary file: ${path}`,
-    );
+    throw new SkctlError("CONFIG_SYMLINK", `Configuration file is not an ordinary file: ${path}`);
   const bytes = await readFile(path);
   configReadHook?.(path);
   if (bytes.byteLength > textLimit)
-    throw new SkillCliError("TEXT_TOO_LARGE", "Configuration exceeds text limit");
+    throw new SkctlError("TEXT_TOO_LARGE", "Configuration exceeds text limit");
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    throw new SkillCliError("INVALID_UTF8", "Configuration is not UTF-8");
+    throw new SkctlError("INVALID_UTF8", "Configuration is not UTF-8");
   }
   return parseDocument(text, path, scope);
 }
@@ -127,8 +124,8 @@ export function invalidConfig(
   message: string,
   pointer?: string,
   related?: Diagnostic["related"],
-): SkillCliError {
-  return new SkillCliError("CONFIG_INVALID", message, [
+): SkctlError {
+  return new SkctlError("CONFIG_INVALID", message, [
     {
       code: "CONFIG_INVALID",
       severity: "warning",
@@ -145,7 +142,7 @@ export function validateDocumentNames(value: ConfigDocument, path: string): void
     } catch (error) {
       throw invalidConfig(
         path,
-        error instanceof SkillCliError ? error.message : "Invalid qualified name",
+        error instanceof SkctlError ? error.message : "Invalid qualified name",
         pointer,
       );
     }
@@ -176,7 +173,7 @@ function validateBinding(binding: SourceBinding, file: string, pointer: string):
       canonicalRemoteOrigin(origin);
     }
   } catch (error) {
-    if (!(error instanceof SkillCliError)) throw error;
+    if (!(error instanceof SkctlError)) throw error;
     const location =
       error.message === "Source Root must be a relative normalized path"
         ? `${pointer}/root`
@@ -195,7 +192,7 @@ export function validateDocumentBindings(
       try {
         validateSourceRoot(binding.root);
       } catch (error) {
-        if (!(error instanceof SkillCliError)) throw error;
+        if (!(error instanceof SkctlError)) throw error;
         throw invalidConfig(file, error.message, `${pointer}/root`);
       }
     } else validateBinding(binding, file, pointer);
@@ -210,7 +207,7 @@ export function validateSourceRoot(root: string): void {
     root.includes("\\") ||
     root.split("/").some((part) => part === "." || part === ".." || (part === "" && root !== ""))
   )
-    throw new SkillCliError("CONFIG_INVALID", "Source Root must be a relative normalized path");
+    throw new SkctlError("CONFIG_INVALID", "Source Root must be a relative normalized path");
 }
 export function validateConfigBytes(bytes: Uint8Array): ReusableConfigDocument {
   const text = decodeConfig(bytes, "Remote Config");
@@ -223,7 +220,7 @@ export function validateConfigBytes(bytes: Uint8Array): ReusableConfigDocument {
     Array.isArray(value) ||
     !configModuleValidator(value)
   )
-    throw new SkillCliError("CONFIG_INVALID", "Invalid Remote Config");
+    throw new SkctlError("CONFIG_INVALID", "Invalid Remote Config");
   validateDocumentNames(value, "Remote Config");
   validateDocumentBindings(value, "Remote Config", true);
   return value;
@@ -236,10 +233,10 @@ export function edit(text: string, path: (string | number)[], value: unknown) {
 }
 export function decodeConfig(bytes: Uint8Array, path: string) {
   if (bytes.byteLength > textLimit)
-    throw new SkillCliError("TEXT_TOO_LARGE", "Configuration exceeds text limit");
+    throw new SkctlError("TEXT_TOO_LARGE", "Configuration exceeds text limit");
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    throw new SkillCliError("INVALID_UTF8", `Configuration is not UTF-8: ${path}`);
+    throw new SkctlError("INVALID_UTF8", `Configuration is not UTF-8: ${path}`);
   }
 }

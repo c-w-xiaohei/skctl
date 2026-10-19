@@ -16,7 +16,7 @@ import type { CoreOptions } from "../shared";
 import type { OperationOptions } from "../shared";
 import type { SkillAddress } from "../source/schema";
 import type { ResourceDescriptor } from "./types";
-import { SkillCliError } from "../shared";
+import { SkctlError } from "../shared";
 import { decodeStrictText, parseSkillFrontmatter, parseSkillMetadata, textLimit } from "./text";
 import { parseNameSegment } from "../collection/names";
 import { parseResourcePath } from "./path";
@@ -46,7 +46,7 @@ async function target(factory: CoreOptions, selector: string) {
       stat.isSymbolicLink() ||
       !(await Bun.file(join(root, "SKILL.md")).exists())
     )
-      throw new SkillCliError("PROVIDER_INTEGRITY_FAILED", "Installed snapshot is unavailable");
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Installed snapshot is unavailable");
     const workspace = await readWorkspace(factory);
     const source =
       workspace.value.effective.status === "complete"
@@ -66,12 +66,12 @@ async function target(factory: CoreOptions, selector: string) {
   });
 }
 function cancelled(options?: OperationOptions) {
-  if (options?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (options?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
 }
 async function safeFile(root: string, path: string) {
   const { candidate, stat } = await safeEntry(root, path);
   if (!stat?.isFile() || stat.isSymbolicLink())
-    throw new SkillCliError("RESOURCE_NOT_FOUND", "Resource not found");
+    throw new SkctlError("RESOURCE_NOT_FOUND", "Resource not found");
   return candidate;
 }
 
@@ -79,15 +79,15 @@ async function safeEntry(root: string, path: string) {
   parseResourcePath(path);
   const candidate = resolve(root, path);
   if (relative(root, candidate).startsWith(".."))
-    throw new SkillCliError("INVALID_RESOURCE_PATH", "Resource escapes Skill root");
+    throw new SkctlError("INVALID_RESOURCE_PATH", "Resource escapes Skill root");
   let current = root;
   const parts = path.split("/");
   for (const part of parts.slice(0, -1)) {
     current = join(current, part);
     const stat = await lstat(current).catch(() => undefined);
-    if (!stat) throw new SkillCliError("RESOURCE_NOT_FOUND", "Resource not found");
+    if (!stat) throw new SkctlError("RESOURCE_NOT_FOUND", "Resource not found");
     if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw new SkillCliError("UNSUPPORTED_ENTRY", "Resource has an unsafe path");
+      throw new SkctlError("UNSUPPORTED_ENTRY", "Resource has an unsafe path");
   }
   return { candidate, stat: await lstat(candidate).catch(() => undefined) };
 }
@@ -106,17 +106,17 @@ function installedSkillText(
   fallback: { readonly name: string; readonly description: string },
 ) {
   if (rawText.startsWith("---") && !/^---\r?\n/u.test(rawText))
-    throw new SkillCliError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
+    throw new SkctlError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(rawText);
   if (rawText.startsWith("---") && !frontmatter)
-    throw new SkillCliError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
+    throw new SkctlError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
   if (!frontmatter) return { ...fallback, rawText, markdownText: rawText };
   const values = parseSkillFrontmatter(frontmatter[1]!);
   const field = (name: "name" | "description", fallbackValue: string) => {
     const value = values[name];
     if (value === undefined) return fallbackValue;
     if (typeof value !== "string" || !value.trim())
-      throw new SkillCliError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
+      throw new SkctlError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
     return name === "name" ? parseNameSegment(value.trim()) : value.trim();
   };
   return {
@@ -131,25 +131,25 @@ async function safeTree(root: string): Promise<void> {
     const path = join(root, entry.name);
     const stat = await lstat(path);
     if (entry.name === ".git")
-      throw new SkillCliError("UNSUPPORTED_ENTRY", "Skill contains a gitlink");
+      throw new SkctlError("UNSUPPORTED_ENTRY", "Skill contains a gitlink");
     if (stat.isSymbolicLink()) {
       const target = await readlink(path);
       if (!target || target.includes("\0") || target.startsWith("/"))
-        throw new SkillCliError("UNSUPPORTED_ENTRY", "Skill contains an unsafe link");
+        throw new SkctlError("UNSUPPORTED_ENTRY", "Skill contains an unsafe link");
       const resolved = resolve(join(path, ".."), target);
       if (relative(root, resolved).startsWith(".."))
-        throw new SkillCliError("UNSUPPORTED_ENTRY", "Skill contains an unsafe link");
+        throw new SkctlError("UNSUPPORTED_ENTRY", "Skill contains an unsafe link");
       const targetStat = await lstat(resolved).catch(() => undefined);
       if (
         !targetStat ||
         targetStat.isSymbolicLink() ||
         (!targetStat.isFile() && !targetStat.isDirectory())
       )
-        throw new SkillCliError("UNSUPPORTED_ENTRY", "Skill contains an unsafe link");
+        throw new SkctlError("UNSUPPORTED_ENTRY", "Skill contains an unsafe link");
       continue;
     }
     if (!stat.isFile() && !stat.isDirectory())
-      throw new SkillCliError("UNSUPPORTED_ENTRY", "Skill contains an unsafe entry");
+      throw new SkctlError("UNSUPPORTED_ENTRY", "Skill contains an unsafe entry");
     if (stat.isDirectory()) await safeTree(path);
   }
 }
@@ -173,7 +173,7 @@ export async function loadInstalledSkill(
     const file = await safeFile(found.root, "SKILL.md");
     cancelled(options);
     const metadata = await lstat(file);
-    if (metadata.size > textLimit) throw new SkillCliError("TEXT_TOO_LARGE", "Text exceeds limit");
+    if (metadata.size > textLimit) throw new SkctlError("TEXT_TOO_LARGE", "Text exceeds limit");
     await contentSignal("reader-before-read");
     cancelled(options);
     const rawText = decodeStrictText(await readFile(file));
@@ -197,7 +197,7 @@ export async function listInstalledResources(
   const visit = async (root: string, prefix = "", depth = 0): Promise<void> => {
     cancelled(options);
     if (depth > resourceDepthLimit)
-      throw new SkillCliError("TEXT_TOO_LARGE", "Resource traversal exceeds depth limit");
+      throw new SkctlError("TEXT_TOO_LARGE", "Resource traversal exceeds depth limit");
     const entries = await readdir(root, { withFileTypes: true });
     cancelled(options);
     for (const entry of entries.sort((left, right) =>
@@ -206,25 +206,25 @@ export async function listInstalledResources(
       cancelled(options);
       work += Buffer.byteLength(entry.name) + 64;
       if (work > resourceWorkLimit)
-        throw new SkillCliError("TEXT_TOO_LARGE", "Resource traversal exceeds work limit");
+        throw new SkctlError("TEXT_TOO_LARGE", "Resource traversal exceeds work limit");
       if (output.length >= resourceLimit)
-        throw new SkillCliError("TEXT_TOO_LARGE", "Resource list exceeds limit");
+        throw new SkctlError("TEXT_TOO_LARGE", "Resource list exceeds limit");
       const path = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (path === "SKILL.md") continue;
       const stat = await lstat(join(root, entry.name));
       cancelled(options);
       work += 128;
       if (work > resourceWorkLimit)
-        throw new SkillCliError("TEXT_TOO_LARGE", "Resource traversal exceeds work limit");
+        throw new SkctlError("TEXT_TOO_LARGE", "Resource traversal exceeds work limit");
       if (entry.name === ".git")
-        throw new SkillCliError("UNSUPPORTED_ENTRY", "Skill contains a gitlink");
+        throw new SkctlError("UNSUPPORTED_ENTRY", "Skill contains a gitlink");
       if (stat.isSymbolicLink())
-        throw new SkillCliError("UNSUPPORTED_ENTRY", "Skill contains a symlink");
+        throw new SkctlError("UNSUPPORTED_ENTRY", "Skill contains a symlink");
       if (stat.isDirectory()) {
         output.push({ path, kind: "directory" });
         await visit(join(root, entry.name), path, depth + 1);
       } else if (stat.isFile()) output.push(descriptor(path, stat));
-      else throw new SkillCliError("UNSUPPORTED_ENTRY", "Skill contains an unsafe entry");
+      else throw new SkctlError("UNSUPPORTED_ENTRY", "Skill contains an unsafe entry");
     }
   };
   return coordinator.withInstalledRoot(request.address, async (found) => {
@@ -246,7 +246,7 @@ export async function readInstalledResource(
     cancelled(options);
     const { candidate: file, stat: metadata } = await safeEntry(found.root, request.path);
     cancelled(options);
-    if (!metadata) throw new SkillCliError("RESOURCE_NOT_FOUND", "Resource not found");
+    if (!metadata) throw new SkctlError("RESOURCE_NOT_FOUND", "Resource not found");
     const notText = (
       reason: "unsupported" | "too-large" | "binary",
       metadata: ResourceDescriptor,
@@ -276,7 +276,7 @@ export async function readInstalledResource(
         format: request.path.endsWith(".md") ? ("markdown" as const) : ("text" as const),
       };
     } catch (error) {
-      if (error instanceof SkillCliError && error.code === "INVALID_UTF8")
+      if (error instanceof SkctlError && error.code === "INVALID_UTF8")
         return notText("binary", resource);
       throw error;
     }
@@ -327,12 +327,12 @@ export async function downloadResource(
   const parent = resolve(output, "..");
   const parentStat = await lstat(parent).catch(() => undefined);
   if (!parentStat?.isDirectory() || parentStat.isSymbolicLink())
-    throw new SkillCliError("WRITE_FAILED", "Output parent is unsafe");
+    throw new SkctlError("WRITE_FAILED", "Output parent is unsafe");
   if (!relative(found.root, output).startsWith(".."))
-    throw new SkillCliError("WRITE_FAILED", "Output cannot replace installed content");
+    throw new SkctlError("WRITE_FAILED", "Output cannot replace installed content");
   const existing = await lstat(output).catch(() => undefined);
   if (existing && (!request.force || !existing.isFile() || existing.isSymbolicLink()))
-    throw new SkillCliError("DESTINATION_EXISTS", "Output already exists");
+    throw new SkctlError("DESTINATION_EXISTS", "Output already exists");
   const temporary = join(parent, `.${crypto.randomUUID()}.tmp`);
   const handle = await open(temporary, "wx", 0o600);
   try {
@@ -361,7 +361,7 @@ export async function runSkill(
   request: RunSkillRequest,
   options?: OperationOptions,
 ): Promise<RunSkillResult> {
-  if (options?.signal?.aborted) throw new SkillCliError("CANCELLED", "Operation cancelled");
+  if (options?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
   const found = await target(factory, request.selector);
   return found.coordinator.withRunRoot(async (runRoot) => {
     const copy = async () => {
@@ -386,7 +386,7 @@ export async function runSkill(
         stderr: "inherit",
       });
     } catch {
-      throw new SkillCliError("SPAWN_FAILED", "Unable to spawn skill command");
+      throw new SkctlError("SPAWN_FAILED", "Unable to spawn skill command");
     }
     let abort: (() => void) | undefined;
     const waitForExit = async (milliseconds: number) =>
@@ -400,7 +400,7 @@ export async function runSkill(
             if ((await waitForExit(250)) === undefined) {
               child.kill("SIGKILL");
               if ((await waitForExit(250)) === undefined)
-                throw new SkillCliError(
+                throw new SkctlError(
                   "CLEANUP_FAILED",
                   "Skill process did not exit after cancellation",
                 );
