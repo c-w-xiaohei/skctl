@@ -979,6 +979,12 @@ export function WorkspacePage(props: WorkspacePageProps) {
       const row = selectedRow();
       return row?.kind === "reference" && row.target !== row.name ? row.target : undefined;
     };
+    const previewInstructions = createMemo(() => {
+      const row = selectedRow();
+      if (!row || row.kind === "skill" || row.missingReason) return undefined;
+      const id = row.kind === "reference" ? row.target : row.collection;
+      return collectionViews()?.find((collection) => collection.id === id)?.instructions;
+    });
     const previewContext = () => {
       const row = selectedRow();
       return !row
@@ -1058,6 +1064,18 @@ export function WorkspacePage(props: WorkspacePageProps) {
                   selectedRow()?.description ??
                   "Description unavailable."}
               </text>
+              <Show when={previewInstructions()}>
+                {(instructions) => (
+                  <>
+                    <text marginTop={1} wrapMode="word" fg={tokens().colors.mutedForeground}>
+                      Instructions · disclosed on entry
+                    </text>
+                    <text id="agent-node-instructions" width="100%" maxWidth={88} wrapMode="word">
+                      {instructions()}
+                    </text>
+                  </>
+                )}
+              </Show>
             </scrollbox>
           </box>
         }

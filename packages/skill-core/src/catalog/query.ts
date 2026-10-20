@@ -108,7 +108,15 @@ export async function browseCatalog(
     })),
   );
   return {
-    value: { status: "available", scope: { kind: "collection", id: requested }, items },
+    value: {
+      status: "available",
+      scope: {
+        kind: "collection",
+        id: requested,
+        ...(collection.instructions !== undefined ? { instructions: collection.instructions } : {}),
+      },
+      items,
+    },
     diagnostics: value.workspace.diagnostics,
   };
 }

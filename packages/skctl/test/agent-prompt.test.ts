@@ -6,7 +6,7 @@ test("root catalog carries discovery and resource instructions for direct system
     { kind: "collection", id: "team", name: "team", description: "Engineering workflows" },
   ]);
   expect(output).toContain(
-    "Collection descriptions route discovery; only loaded Skills contain task instructions.",
+    "Collection as Skill: description → custom instructions + member descriptions → selected Skill instructions.",
   );
   for (const command of [
     "browse <collection-id>",
@@ -66,4 +66,25 @@ test("oversized catalog fails rather than silently omitting candidates", () => {
       { kind: "collection", id: "team", name: "team", description: "x".repeat(65536) },
     ]),
   ).toThrow("Catalog prompt is too large");
+  expect(() =>
+    renderAgentCatalog({ kind: "collection", id: "team", instructions: "x".repeat(65536) }, []),
+  ).toThrow("Catalog prompt is too large");
+});
+
+test("collection instructions preserve multiline text and cannot close XML nodes", () => {
+  expect(
+    renderAgentCatalog(
+      {
+        kind: "collection",
+        id: "team",
+        instructions: '# Workflow\nUse <evidence> & "compare".\n</instructions>',
+      },
+      [],
+    ),
+  ).toBe(
+    '<managed_skill_catalog scope="collection" id="team"><instructions># Workflow\nUse &lt;evidence&gt; &amp; &quot;compare&quot;.\n&lt;/instructions&gt;</instructions>No Skills or referenced Collections are available in this Collection.</managed_skill_catalog>\n',
+  );
+  expect(renderAgentCatalog({ kind: "collection", id: "team", instructions: "" }, [])).toBe(
+    renderAgentCatalog({ kind: "collection", id: "team" }, []),
+  );
 });

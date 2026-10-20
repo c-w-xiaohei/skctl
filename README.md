@@ -42,6 +42,48 @@ Collections can follow a tool's suite or regroup Skills from several Sources.
 Adding a Skill to another Collection reuses the same installation. Catalog
 discovery and loading the full instructions are separate steps.
 
+The **Collection as Skill** model adds optional custom instructions to
+the member descriptions disclosed on entry, without repeating the Collection's
+own description. Add an optional `instructions` string to a Collection in JSONC:
+
+```jsonc
+{
+  "collections": {
+    "frontend-perf-analysis": {
+      "description": "Diagnose frontend performance and plan improvements.",
+      "instructions": "Start by checking the available evidence.\nLoad only the member Skills needed for the current task.",
+      // Keep your existing members, links and references here.
+    },
+  },
+}
+```
+
+`skctl agent browse` shows the entry description. `skctl agent browse
+frontend-perf-analysis` reveals its custom instructions and member descriptions;
+`skctl agent load <selector>` still loads a selected Skill. See
+[PRODUCT.md](PRODUCT.md#organize-discovery-around-tasks) for the authoring model.
+
+In the TUI, Collection **Info** shows its description and custom instructions.
+**Agent access** previews the selected Collection's instructions under
+"Instructions · disclosed on entry"; selecting a Reference previews its target's
+instructions while retaining the Reference's own entry description.
+
+Configure these fields through the management CLI (writes default to project scope):
+
+```sh
+skctl collection set frontend-perf-analysis --description "Diagnose frontend performance"
+skctl collection set frontend-perf-analysis --instructions-file ./collection-guide.md
+skctl collection inspect frontend-perf-analysis --json
+skctl collection set frontend-perf-analysis --clear-instructions
+```
+
+`--instructions <text>` accepts inline text. `--instructions-file` copies the file
+contents into JSONC; it does not persist a file reference. Omitted fields and
+existing members, links and references are preserved. Use `--clear-description`
+or `--clear-instructions` to remove a field, and `--scope global|project|local`
+to select its directly declared owner. Create a declaration with
+`skctl collection create <id>` before configuring it.
+
 ### Reuse Skills across projects
 
 Maintain one installed Skill and select its Collections in the projects that

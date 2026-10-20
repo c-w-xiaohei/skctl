@@ -27,6 +27,7 @@ export const qualifiedNameSchema = v.pipe(
 export const referenceSchema = v.strictObject({ collection: v.string(), description: v.string() });
 export const collectionSchema = v.strictObject({
   description: v.optional(v.pipe(v.string(), v.minLength(1))),
+  instructions: v.optional(v.string()),
   members: v.optional(v.record(v.string(), skillAddressSchema)),
   links: v.optional(v.array(v.string())),
   references: v.optional(v.record(v.string(), referenceSchema)),

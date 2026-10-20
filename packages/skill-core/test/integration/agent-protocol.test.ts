@@ -25,13 +25,17 @@ async function fixture() {
       collections: {
         gingiris: {
           description: "Routing and specialist skills",
+          instructions: "Choose the router first; load specialists only when needed.",
           members: { router: { source: "source", path: "router" } },
           references: {
             category: { collection: "category", description: "Specialists" },
             alsoCategory: { collection: "category", description: "Also specialists" },
           },
         },
-        category: { members: { specialist: { source: "source", path: "specialist" } } },
+        category: {
+          instructions: "Check the specialist evidence.",
+          members: { specialist: { source: "source", path: "specialist" } },
+        },
         hidden: { members: { private: { source: "source", path: "private" } } },
       },
       use: ["gingiris"],
@@ -75,9 +79,16 @@ test("agent browse returns only Use roots before progressively disclosing collec
     expect(result.stdout).toContain("skctl agent browse <collection-id>");
     expect(result.stdout).toContain("skctl agent load <selector>");
     expect(result.stdout).not.toContain("gingiris:router");
+    expect(result.stdout).not.toContain("Choose the router first");
+    expect(result.stdout).not.toContain("Check the specialist evidence");
     const collection = await command(root, global, ["browse", "gingiris"]);
     expect(collection.stdout).toContain('<managed_skill_catalog scope="collection" id="gingiris">');
     expect(collection.stdout).not.toContain("Managed Skills");
+    expect(collection.stdout).toContain(
+      "<instructions>Choose the router first; load specialists only when needed.</instructions>",
+    );
+    expect(collection.stdout).not.toContain("Routing and specialist skills");
+    expect(collection.stdout).not.toContain("Check the specialist evidence");
     expect(collection.stdout.trim().split("\n")).toHaveLength(1);
     expect(collection.stdout).toContain("<selector>gingiris:router</selector>");
     expect(collection.stdout).toContain("<id>category</id>");
@@ -143,6 +154,7 @@ test("agent browse and load permit a reference-reachable category but reject an 
     expect(listed.stdout).toContain('<managed_skill_catalog scope="collection" id="category">');
     expect(listed.stdout).toContain("<selector>category:specialist</selector>");
     expect(listed.stdout).toContain("<description>specialist skill</description>");
+    expect(listed.stdout).toContain("<instructions>Check the specialist evidence.</instructions>");
     const loaded = await command(root, global, ["load", "category:specialist"]);
     expect(loaded.code).toBe(0);
     expect(loaded.stdout).toBe("---\nname: specialist\ndescription: specialist skill\n---\n");

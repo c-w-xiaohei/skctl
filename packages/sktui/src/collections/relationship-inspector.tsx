@@ -375,7 +375,20 @@ export function RelationshipInspector(props: {
         <Show when={props.contextIssue}>
           <text wrapMode="word">{props.contextIssue}</text>
         </Show>
+        <text fg={tokens().colors.mutedForeground}>Description</text>
         <text wrapMode="word">{props.collection.description || "No description provided."}</text>
+        <Show when={props.collection.instructions}>
+          {(instructions) => (
+            <>
+              <text marginTop={1} fg={tokens().colors.mutedForeground}>
+                Instructions
+              </text>
+              <text id="collection-info-instructions" wrapMode="word">
+                {instructions()}
+              </text>
+            </>
+          )}
+        </Show>
       </scrollbox>
       <Actions commands={[]} />
     </>

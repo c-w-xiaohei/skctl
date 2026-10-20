@@ -17,6 +17,7 @@
             "additionalProperties": false,
             "properties": {
               "description": { "minLength": 1, "type": "string" },
+              "instructions": { "type": "string" },
               "links": { "items": { "type": "string" }, "type": "array" },
               "members": {
                 "additionalProperties": {
@@ -153,6 +154,7 @@
             "additionalProperties": false,
             "properties": {
               "description": { "minLength": 1, "type": "string" },
+              "instructions": { "type": "string" },
               "links": { "items": { "type": "string" }, "type": "array" },
               "members": {
                 "additionalProperties": {
@@ -282,6 +284,7 @@
             "additionalProperties": false,
             "properties": {
               "description": { "minLength": 1, "type": "string" },
+              "instructions": { "type": "string" },
               "links": { "items": { "type": "string" }, "type": "array" },
               "members": {
                 "additionalProperties": {
@@ -375,6 +378,7 @@
             "additionalProperties": false,
             "properties": {
               "description": { "minLength": 1, "type": "string" },
+              "instructions": { "type": "string" },
               "links": { "items": { "type": "string" }, "type": "array" },
               "members": {
                 "additionalProperties": {

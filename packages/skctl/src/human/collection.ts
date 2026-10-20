@@ -1,11 +1,24 @@
-import type { Command } from "commander";
+import { Option, type Command } from "commander";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { CommandContext } from "../command-context";
 import { formatChange, formatObservation, scope, scopeOptions } from "./shared";
-export function collectionCommand(parent: Command, { api, environment, stdout }: CommandContext) {
+export function collectionCommand(
+  parent: Command,
+  { api, environment, stdout, cwd }: CommandContext,
+) {
   const collection = parent
     .command("collection")
     .description(
-      "Create Collections and compose installed Skills with memberships, References, and Links.",
+      "Configure Collection descriptions and instructions; compose installed Skills with memberships, References, and Links.",
+    )
+    .addHelpText(
+      "after",
+      "\nCollection as Skill:\n" +
+        "  Write it like a Skill referring to other Skills: description for when to enter;\n" +
+        "  instructions for roles, workflows, and guidance. skctl adds member descriptions;\n" +
+        "  full member instructions load on demand.\n" +
+        "\nAuthoring: skctl collection set --help. Discovery: skctl agent --help.\n",
     );
   scopeOptions(collection.command("create <id>"))
     .description("Create an empty Collection declaration at one configuration level.")
@@ -15,6 +28,56 @@ export function collectionCommand(parent: Command, { api, environment, stdout }:
         collection,
       });
       stdout.write(formatChange(value));
+    });
+  scopeOptions(collection.command("set <id>"))
+    .description(
+      "Set or clear a directly declared Collection's description and instructions. Omitted fields are preserved.",
+    )
+    .addOption(
+      new Option("--description <text>", "Set the entry description").conflicts("clearDescription"),
+    )
+    .option("--clear-description", "Remove the entry description")
+    .addOption(
+      new Option("--instructions <text>", "Set custom instructions").conflicts([
+        "instructionsFile",
+        "clearInstructions",
+      ]),
+    )
+    .addOption(
+      new Option(
+        "--instructions-file <path>",
+        "Copy UTF-8 file contents into inline instructions",
+      ).conflicts("clearInstructions"),
+    )
+    .option("--clear-instructions", "Remove custom instructions")
+    .addHelpText(
+      "after",
+      "\nWriting Collection content:\n" +
+        "  description: when to enter. Optional instructions: roles, workflows, and guidance.\n" +
+        "  Do not repeat description or copy member descriptions; skctl supplies member entries.\n" +
+        "\nExamples:\n" +
+        '  skctl collection set frontend-perf-analysis --description "Diagnose frontend performance"\n' +
+        "  skctl collection set frontend-perf-analysis --instructions-file ./collection-guide.md\n" +
+        "  skctl agent browse frontend-perf-analysis\n" +
+        "\n--instructions-file copies text into JSONC once; it does not keep a live file reference.\n",
+    )
+    .action(async (collection, flags, action) => {
+      const instructions = flags.clearInstructions
+        ? null
+        : flags.instructionsFile !== undefined
+          ? await readFile(resolve(cwd, flags.instructionsFile), "utf8")
+          : flags.instructions;
+      const { value } = await api.setCollectionContent(environment(action), {
+        level: scope(flags)!,
+        collection,
+        ...(flags.clearDescription
+          ? { description: null }
+          : flags.description !== undefined
+            ? { description: flags.description }
+            : {}),
+        ...(instructions !== undefined ? { instructions } : {}),
+      });
+      stdout.write(formatChange(value, `Updated content for collection "${collection}"`));
     });
   scopeOptions(collection.command("remove <id>"))
     .description("Remove an unreferenced, directly declared Collection.")
@@ -37,6 +100,8 @@ export function collectionCommand(parent: Command, { api, environment, stdout }:
       stdout.write(
         formatObservation(result, !!flags.json, [
           `collection ${result.id}`,
+          ...(result.description !== undefined ? [`description ${result.description}`] : []),
+          ...(result.instructions !== undefined ? [`instructions\n${result.instructions}`] : []),
           `declared ${result.declared.map((owner) => `${owner.level}:${owner.file}`).join(", ") || "none"}`,
           `members ${result.members.length}`,
           `references ${result.references.length}`,

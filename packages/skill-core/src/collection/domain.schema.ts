@@ -5,7 +5,7 @@ import {
   configWriteResultSchema,
 } from "../config/schema";
 import { skillAddressSchema as address } from "../source/schema";
-import { referenceSchema } from "./schema";
+import { collectionSchema, referenceSchema } from "./schema";
 
 export const memberOriginPathSchema = v.variant("kind", [
   v.object({
@@ -52,6 +52,7 @@ const members = v.pipe(
 export const collectionViewSchema = v.object({
   id: v.string(),
   description: v.optional(v.string()),
+  instructions: collectionSchema.entries.instructions,
   declared: v.pipe(v.array(owner), v.readonly()),
   repository,
   members,
@@ -96,6 +97,11 @@ export const collectionRequestSchema = v.object({
   level: configLevelSchema,
   collection: v.string(),
   expectedOwner: v.optional(owner),
+});
+export const setCollectionContentRequestSchema = v.object({
+  ...collectionRequestSchema.entries,
+  description: v.optional(v.nullable(v.unwrap(collectionSchema.entries.description))),
+  instructions: v.optional(v.nullable(v.unwrap(collectionSchema.entries.instructions))),
 });
 export const addMemberRequestSchema = v.object({
   ...collectionRequestSchema.entries,
@@ -265,7 +271,15 @@ export const collectionRemovalImpactSchema = v.object({
   allowed: v.boolean(),
 });
 export const collectionInspectionSchema = v.object({
-  ...v.pick(collectionViewSchema, ["id", "declared", "members", "references", "links"]).entries,
+  ...v.pick(collectionViewSchema, [
+    "id",
+    "description",
+    "instructions",
+    "declared",
+    "members",
+    "references",
+    "links",
+  ]).entries,
   catalogPreview: v.object({
     skills: v.number(),
     linkedSkills: v.number(),

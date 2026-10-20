@@ -6,7 +6,7 @@ export function browseCommand(parent: Command, { api, environment, stdout }: Com
   return parent
     .command("browse")
     .description(
-      "Return a system-prompt-ready XML catalog. Root browse includes loading instructions; collection browse returns immediate Skills and child Collections.",
+      "Return XML: root descriptions and usage guidance, or a Collection's custom instructions and immediate entry descriptions. No repeated Collection description or member bodies.",
     )
     .addArgument(
       new Argument("[collection-id]", "Collection ID, not a Skill selector").argParser(

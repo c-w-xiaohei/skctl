@@ -19,7 +19,13 @@ export function agentCommand(
     .addHelpCommand(true)
     .addHelpText(
       "after",
-      "\nCollection IDs address browse; Skill selectors (<collection-id>:<entry-name>) address content. Use displayed addresses.\nRun executes host commands; download writes the requested file.\n",
+      "\nCollection as Skill: description tells when to enter; its body contains custom\n" +
+        "instructions and member descriptions. Follow the guidance; load members as needed.\n" +
+        "\n  browse                  Root Collection descriptions\n" +
+        "  browse <collection-id>  Collection body and child entries; no repeated description\n" +
+        "  load <selector>         Selected Skill's full instructions\n" +
+        "\nUse displayed Collection IDs and Skill selectors (<collection-id>:<entry-name>).\n" +
+        "run executes host commands; download writes a file. Configuration: skctl collection --help.\n",
     )
     .action(() => {
       if (agent.args.length) agent.error(`unknown command '${agent.args[0]}'`);

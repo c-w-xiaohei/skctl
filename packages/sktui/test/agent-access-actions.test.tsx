@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
+import { ScrollBoxRenderable, SelectRenderable, TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import type { TuiCore } from "../src/session";
@@ -185,6 +185,72 @@ test("RENDER Agent access Reference Enter stays in the tree and optional Details
     expect(update).toMatchObject({ enabled: true });
     expect(update.description).toContain("child");
     expect(update.description).not.toContain("root");
+    expect(contentLoads).toBe(0);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+test("RENDER Collection instructions follow the selected target and remain readable in Info", async () => {
+  const base = projection();
+  const childInstructions = "Child guidance only.\n" + "Check the available evidence.\n".repeat(30);
+  const snapshot = {
+    ...base,
+    effective: {
+      ...base.effective,
+      collectionsView: base.effective.collectionsView.map((collection) => ({
+        ...collection,
+        instructions: collection.id === "root" ? "Root guidance only." : childInstructions,
+        references: collection.references.map((reference) => ({
+          ...reference,
+          description: "Enter the child workflow.",
+        })),
+      })),
+    },
+  };
+  let contentLoads = 0;
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(snapshot, {
+          loadInstalledSkill: async () => {
+            contentLoads++;
+            throw new Error("Collection previews must not load member instructions");
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 144, height: 24 },
+  );
+  try {
+    await openAgentAccess(setup);
+    expect((live(setup, "agent-node-instructions") as TextRenderable).plainText).toBe(
+      "Root guidance only.",
+    );
+    expect(setup.captureCharFrame()).toContain("Instructions · disclosed on entry");
+    await focusLive(setup, "current-exposure-browser");
+    await press(setup, "ARROW_RIGHT");
+    await press(setup, "ARROW_DOWN");
+    expect(selected(setup, referencePathKey)).toBe(true);
+    expect((live(setup, "agent-node-instructions") as TextRenderable).plainText).toBe(
+      childInstructions,
+    );
+    expect(setup.captureCharFrame()).toContain("Enter the child workflow.");
+    expect(setup.captureCharFrame()).not.toContain("Root guidance only.");
+    expect(setup.captureCharFrame()).not.toContain("Child Collection description");
+    await enterLive(setup, "agent-access-collection-details");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-about"));
+    await enterLive(setup, "collection-about");
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("collection-info-instructions"),
+    );
+    expect((live(setup, "collection-info-instructions") as TextRenderable).plainText).toBe(
+      childInstructions,
+    );
+    expect(setup.captureCharFrame()).toContain("Child Collection description");
+    await focusLive(setup, "collection-info");
+    await press(setup, "\u001b[6~");
+    expect((live(setup, "collection-info") as ScrollBoxRenderable).scrollTop).toBeGreaterThan(0);
     expect(contentLoads).toBe(0);
   } finally {
     setup.renderer.destroy();

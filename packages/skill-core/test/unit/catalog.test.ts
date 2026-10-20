@@ -166,3 +166,88 @@ test("Collection inspection does not match colliding source/path concatenations"
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("reusable Collection instructions are disclosed on entry but not inherited through Links", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skctl-collection-instructions-"));
+  const previousState = process.env.SKCTL_STATE_DIR;
+  try {
+    process.env.SKCTL_STATE_DIR = join(root, "state");
+    const global = join(root, "global.jsonc");
+    const reusable = join(root, "shared");
+    await mkdir(join(reusable, "skills", "review"), { recursive: true });
+    await writeFile(
+      join(reusable, "skills", "review", "SKILL.md"),
+      "---\nname: review\ndescription: Review changes\n---\nReview body\n",
+    );
+    await writeFile(global, "{}");
+    await writeFile(
+      join(reusable, "config.jsonc"),
+      JSON.stringify({
+        sources: { local: { kind: "local", path: "./skills", root: "" } },
+        collections: {
+          base: {
+            description: "Base entry",
+            instructions: "Base guidance",
+            members: { review: { source: "local", path: "review" } },
+          },
+          combined: {
+            description: "Combined entry",
+            instructions: "Combined guidance",
+            links: ["base"],
+            references: { base: { collection: "base", description: "Enter base" } },
+          },
+          plain: { links: ["base"] },
+        },
+      }),
+    );
+    await writeFile(
+      join(root, "skctl.jsonc"),
+      JSON.stringify({
+        configSources: { shared: { kind: "local", path: "./shared", root: "" } },
+        agents: { opencode: "managed" },
+        use: ["shared/combined", "shared/plain"],
+      }),
+    );
+    const core = { cwd: root, userConfigPath: global };
+    await api.installSkills(core, { source: "shared/local", paths: ["review"] });
+    expect((await api.browseCatalog(core, {})).value).toEqual({
+      status: "available",
+      scope: { kind: "root" },
+      items: [
+        {
+          kind: "collection",
+          id: "shared/combined",
+          name: "shared/combined",
+          description: "Combined entry",
+        },
+        { kind: "collection", id: "shared/plain", name: "shared/plain" },
+      ],
+    });
+    expect((await api.browseCatalog(core, { collection: "shared/combined" })).value).toEqual({
+      status: "available",
+      scope: { kind: "collection", id: "shared/combined", instructions: "Combined guidance" },
+      items: [
+        {
+          kind: "skill",
+          selector: "shared/combined:review",
+          name: "review",
+          description: "Review changes",
+        },
+        { kind: "collection", id: "shared/base", name: "base", description: "Enter base" },
+      ],
+    });
+    const plain = (await api.browseCatalog(core, { collection: "shared/plain" })).value;
+    if (plain.status !== "available") throw new Error("Expected available catalog");
+    expect(plain.scope).toEqual({ kind: "collection", id: "shared/plain" });
+    expect((await api.browseCatalog(core, { collection: "shared/base" })).value).toMatchObject({
+      scope: { kind: "collection", id: "shared/base", instructions: "Base guidance" },
+    });
+    expect((await api.loadSkill(core, { selector: "shared/combined:review" })).text).toContain(
+      "Review body",
+    );
+  } finally {
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
+    await rm(root, { recursive: true, force: true });
+  }
+});

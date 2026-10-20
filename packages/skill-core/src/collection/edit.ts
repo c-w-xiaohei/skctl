@@ -1,4 +1,6 @@
 import { SkctlError, type OperationOptions } from "../shared";
+import * as v from "valibot";
+import { setCollectionContentRequestSchema } from "./domain.schema";
 import { type CoreOptions } from "../shared";
 import type {
   AddMemberRequest,
@@ -9,6 +11,7 @@ import type {
   RemoveReferenceRequest,
   ReviewedMemberEditRequest,
   SetLinkRequest,
+  SetCollectionContentRequest,
 } from "./types";
 
 import { sameSkillAddress } from "./graph";
@@ -53,6 +56,31 @@ export function createCollection(
     operation,
   );
 }
+export function setCollectionContent(
+  options: CoreOptions,
+  request: SetCollectionContentRequest,
+  operation?: OperationOptions,
+) {
+  const parsed = v.safeParse(setCollectionContentRequestSchema, request);
+  if (!parsed.success) throw new SkctlError("INVALID_ARGUMENT", "Invalid Collection content");
+  const content = parsed.output;
+  if (content.description === undefined && content.instructions === undefined)
+    throw new SkctlError("INVALID_ARGUMENT", "Specify a description or instructions change");
+  return writeConfig(
+    options,
+    content.level,
+    (edit) => {
+      collection(edit, content);
+      for (const field of ["description", "instructions"] as const) {
+        if (content[field] !== undefined)
+          edit.set(["collections", content.collection, field], content[field] ?? undefined);
+      }
+      return {};
+    },
+    operation,
+  );
+}
+
 export function removeCollection(
   options: CoreOptions,
   request: CollectionRequest,

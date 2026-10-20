@@ -37,6 +37,12 @@ export async function inspectCollection(
   return {
     value: {
       id: view.id,
+      ...(declared.length && view.description !== undefined
+        ? { description: view.description }
+        : {}),
+      ...(declared.length && view.instructions !== undefined
+        ? { instructions: view.instructions }
+        : {}),
       declared,
       members: view.members,
       references,

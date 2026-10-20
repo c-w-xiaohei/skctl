@@ -2,6 +2,7 @@ import * as v from "valibot";
 import { configDeclarationOwnerSchema } from "../config/schema";
 import { diagnosticSchema } from "../shared";
 import { discoveredSkillCandidateSchema } from "../source/domain.schema";
+import { collectionSchema } from "../collection/schema";
 
 export const catalogSkillSchema = v.object({
   ...v.omit(discoveredSkillCandidateSchema, ["path"]).entries,
@@ -37,7 +38,11 @@ export const agentBrowseProjectionSchema = v.variant("status", [
     status: v.literal("available"),
     scope: v.variant("kind", [
       v.object({ kind: v.literal("root") }),
-      v.object({ kind: v.literal("collection"), id: v.string() }),
+      v.object({
+        kind: v.literal("collection"),
+        id: v.string(),
+        instructions: collectionSchema.entries.instructions,
+      }),
     ]),
     items: v.pipe(v.array(agentCatalogItemSchema), v.readonly()),
   }),

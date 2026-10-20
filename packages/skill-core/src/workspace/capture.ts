@@ -508,6 +508,9 @@ export async function readWorkspaceUnlocked(
             ...(declaredContributions[0]?.declaration.description
               ? { description: declaredContributions[0].declaration.description }
               : {}),
+            ...(declaredContributions[0]?.declaration.instructions !== undefined
+              ? { instructions: declaredContributions[0].declaration.instructions }
+              : {}),
             declared: declaredContributions.map((item) => item.owner!),
             repository: {
               derived: [...(resolved.origins.get(id)?.values() ?? [])].some((paths) =>

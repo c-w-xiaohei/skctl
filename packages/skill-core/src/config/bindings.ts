@@ -124,6 +124,7 @@ export function contributedCollection(
   const namespace = (id: string) => `${configId}/${parseQualifiedName(id)}`;
   return {
     ...(declaration.description ? { description: declaration.description } : {}),
+    ...(declaration.instructions !== undefined ? { instructions: declaration.instructions } : {}),
     ...(declaration.members
       ? {
           members: Object.fromEntries(
