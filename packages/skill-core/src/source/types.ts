@@ -1,70 +1,21 @@
-import type { ImpactBlocker } from "../collection/types";
-import type {
-  ConfigLevel,
-  DeclarationProvenance,
-  ConfigSourceContributionRef,
-  ConfigDeclarationOwner,
-} from "../config/types";
+import type * as v from "valibot";
+import type * as schema from "./domain.schema";
 
-import type { SkillAddress, SourceBinding } from "./schema";
-import type { SkillMetadata } from "../content/text";
-
-export interface SourceBindingView {
-  readonly id: string;
-  readonly kind: SourceBinding["kind"];
-  readonly origin: string;
-  readonly root: string;
-  readonly ref?: string;
-  readonly provenance: DeclarationProvenance;
-  readonly contribution?: ConfigSourceContributionRef;
-  readonly selectors: readonly string[];
-}
-
-export interface SkillProvenance {
-  readonly source: string;
-  readonly origin: "local" | "git";
-  readonly declaration?: DeclarationProvenance;
-  readonly stability: "mutable-local" | "immutable";
-  readonly revision?: string;
-}
-
-export interface SkillSourceRef {
-  readonly id: string;
-  readonly owner: ConfigDeclarationOwner;
-}
-
-export interface DiscoveredSkillCandidate extends SkillMetadata {
-  readonly path: string;
-}
-
-export interface DiscoveryObservation {
-  readonly source: string;
-  readonly kind: SourceBinding["kind"];
-  readonly exactRevision?: string;
-  readonly candidates: readonly DiscoveredSkillCandidate[];
-}
-
-export interface RegisterSourceRequest {
-  readonly level: ConfigLevel;
-  readonly id: string;
-  readonly binding: SourceBinding;
-}
-
-export interface SourceRemovalRequest {
-  readonly source: string;
-  readonly level?: ConfigLevel;
-  readonly expectedOwner?: ConfigDeclarationOwner;
-}
-
-export interface SourceRemovalImpact {
-  readonly kind: "source-removal";
-  readonly source: string;
-  readonly owner?: ConfigDeclarationOwner;
-  readonly installed: readonly SkillAddress[];
-  readonly repairs: readonly {
-    readonly address: SkillAddress;
-    readonly actions: readonly ["rebind", "uninstall"];
-  }[];
-  readonly blockers: readonly ImpactBlocker[];
-  readonly allowed: boolean;
-}
+export type SourceNetwork = Readonly<v.InferOutput<typeof schema.sourceNetworkSchema>>;
+export type SourceBindingView = Readonly<v.InferOutput<typeof schema.sourceBindingViewSchema>>;
+export type SkillProvenance = Readonly<v.InferOutput<typeof schema.skillProvenanceSchema>>;
+export type SkillSourceRef = Readonly<v.InferOutput<typeof schema.skillSourceRefSchema>>;
+export type DiscoveredSkillCandidate = Readonly<
+  v.InferOutput<typeof schema.discoveredSkillCandidateSchema>
+>;
+export type DiscoveryObservation = Readonly<
+  v.InferOutput<typeof schema.discoveryObservationSchema>
+>;
+export type SourceFileChange = Readonly<v.InferOutput<typeof schema.sourceFileChangeSchema>>;
+export type RegisterSourceRequest = Readonly<
+  v.InferOutput<typeof schema.registerSourceRequestSchema>
+>;
+export type SourceRemovalRequest = Readonly<
+  v.InferOutput<typeof schema.sourceRemovalRequestSchema>
+>;
+export type SourceRemovalImpact = Readonly<v.InferOutput<typeof schema.sourceRemovalImpactSchema>>;

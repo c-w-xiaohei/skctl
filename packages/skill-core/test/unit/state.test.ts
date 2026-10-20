@@ -3,11 +3,10 @@ import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  resolveStateRoot,
-  setCoordinatorHookForTest,
-  StateCoordinator,
-} from "../../src/storage/state";
+import { resolveStateRoot, StateCoordinator } from "../../src/storage/state";
+import { digestDirectory } from "../../src/content/directory";
+import { withFileLock } from "../../src/storage/file-lock";
+import { processStatus, runProcess } from "../../src/runtime/process";
 import type { InstalledMaterialization } from "../../src/storage/schema";
 
 const legacyLocal = {
@@ -37,7 +36,7 @@ test("coordinator rejects symlinked managed entries and writes a private state f
     expect(JSON.parse(await readFile(join(root, "state.json"), "utf8")).generation).toBe(1);
     await rm(join(root, "staging"), { recursive: true });
     await symlink(root, join(root, "staging"));
-    await expect(coordinator.withLock(async () => coordinator.recover())).rejects.toMatchObject({
+    await expect(coordinator.withLock(() => coordinator.read())).rejects.toMatchObject({
       code: "CONFIG_SYMLINK",
     });
   } finally {
@@ -186,16 +185,22 @@ test("state publishes a derived v1 migration atomically with one generation adva
     const coordinator = new StateCoordinator(root);
     await coordinator.withLock(async () => {
       const current = await coordinator.read();
-      await coordinator.migrateLegacy(current, [
+      await coordinator.write(
         {
-          ...legacyLocal,
-          identityEvidence: {
-            status: "known",
-            canonicalOrigin: "/skills",
-            originRelativeSkillRoot: "review",
-          },
-        } satisfies InstalledMaterialization,
-      ]);
+          configs: current.configs,
+          installed: [
+            {
+              ...legacyLocal,
+              identityEvidence: {
+                status: "known",
+                canonicalOrigin: "/skills",
+                originRelativeSkillRoot: "review",
+              },
+            } satisfies InstalledMaterialization,
+          ],
+        },
+        current.generation,
+      );
     });
     expect(JSON.parse(await readFile(state, "utf8"))).toMatchObject({
       version: 3,
@@ -344,38 +349,21 @@ test("STA-LOCK-ABA stale observer cannot detach a replacement owner", async () =
       join(root, "mutation.lock"),
       JSON.stringify({ pid: 999_999_999, nonce: "stale" }),
     );
-    let observed = false;
-    let release!: () => void;
-    const paused = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    setCoordinatorHookForTest(async (name) => {
-      if (name !== "lock-stale-observed" || observed) return;
-      observed = true;
-      await paused;
-    });
-    let active = 0;
-    let maximum = 0;
-    const staleObserver = new StateCoordinator(root).withLock(async () => {
-      active += 1;
-      maximum = Math.max(maximum, active);
-      active -= 1;
-    });
-    for (let i = 0; i < 100 && !observed; i += 1) await Bun.sleep(5);
-    expect(observed).toBe(true);
-    const replacement = new StateCoordinator(root).withLock(async () => {
-      active += 1;
-      maximum = Math.max(maximum, active);
-      await Bun.sleep(25);
-      active -= 1;
-    });
-    await Bun.sleep(10);
-    release();
-    await Promise.all([staleObserver, replacement]);
-    expect(maximum).toBe(1);
+    const module = join(import.meta.dir, "../../src/storage/file-lock.ts");
+    const script = `import {withFileLock} from ${JSON.stringify(module)};
+      import {open,rm} from 'node:fs/promises';
+      await withFileLock(${JSON.stringify(join(root, "mutation.lock"))},async()=>{
+        const guard=${JSON.stringify(join(root, "exclusive"))};
+        const file=await open(guard,'wx');
+        try {await Bun.sleep(25)} finally {await file.close();await rm(guard)}
+      });`;
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () => runProcess({ cmd: [process.execPath, "-e", script] })),
+    );
+    for (const result of results) if (result.status) throw new Error(result.stderr.toString());
+    expect(results.map((result) => result.status)).toEqual([0, 0, 0, 0]);
     expect(await Bun.file(join(root, "mutation.lock")).exists()).toBe(false);
   } finally {
-    setCoordinatorHookForTest();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -396,9 +384,12 @@ test("stale lock reclaimers serialize and clean their unique fences", async () =
       ),
     );
     expect(maximum).toBe(1);
-    expect(await readdir(join(root, "locks"))).toEqual([]);
+    expect(
+      (await readdir(root)).filter(
+        (name) => name.includes("owner") || name.includes("fence") || name.endsWith(".election"),
+      ),
+    ).toEqual([]);
   } finally {
-    setCoordinatorHookForTest();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -412,9 +403,7 @@ test("live and unverifiable locks time out without removing ownership", async ()
       JSON.stringify({ pid: process.pid, nonce: "live" }),
     );
     await expect(
-      new StateCoordinator(root, { platform: "darwin", lockTimeoutMs: 20 }).withLock(
-        async () => undefined,
-      ),
+      withFileLock(join(root, "mutation.lock"), async () => undefined, { timeoutMs: 20 }),
     ).rejects.toMatchObject({ code: "LOCK_TIMEOUT" });
     expect(await Bun.file(join(root, "mutation.lock")).exists()).toBe(true);
   } finally {
@@ -422,14 +411,14 @@ test("live and unverifiable locks time out without removing ownership", async ()
   }
 });
 
-test("non-Linux process tokens allow normal use cleanup and retain unverifiable owners", async () => {
+test("PID-only ownership is unprovable while normal use records are removed", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-portable-token-"));
   const source = join(root, "source");
   try {
     await mkdir(source);
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
-    const coordinator = new StateCoordinator(root, { platform: "darwin" });
-    const digest = await coordinator.snapshotDigest(source);
+    const coordinator = new StateCoordinator(root);
+    const digest = await digestDirectory(source);
     await coordinator.publishSnapshot(digest, source);
     let record: Record<string, unknown> | undefined;
     await coordinator.withRemoteUse(digest, async () => {
@@ -439,8 +428,8 @@ test("non-Linux process tokens allow normal use cleanup and retain unverifiable 
       record = JSON.parse(await Bun.file(join(root, "uses", name!)).text());
     });
     expect(record).toMatchObject({ digest, pid: process.pid });
-    expect(record?.startToken).toBeUndefined();
-    expect(await Bun.file(join(root, "uses")).exists()).toBe(false);
+    expect(await processStatus({ pid: process.pid })).toBe("unknown");
+    expect(await readdir(join(root, "uses"))).toEqual([]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

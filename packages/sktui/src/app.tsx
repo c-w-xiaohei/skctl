@@ -31,12 +31,12 @@ import {
   type ActionId,
 } from "./actions";
 import {
-  createTuiEffects,
+  createTuiSession,
   type SourceRemovalReview,
   type DiscoveryReview,
   type InstalledSkillReview,
   type TuiCore,
-} from "./effects";
+} from "./session";
 import type { UpdateScopeEntry } from "./updates/scope";
 import {
   destinations,
@@ -117,6 +117,7 @@ import { DataList } from "./ui/data-list";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { selectScrollOffset } from "./select-scroll";
 import { SkillsFilterPopup } from "./skills-filter-popup";
+import { ModalBody, ModalShell } from "./operations/modal";
 import { createPanelNavigation, isMounted } from "./panel-navigation";
 import {
   createModalControlRegistry,
@@ -133,6 +134,7 @@ const topOptions = () =>
 /** Context is chosen explicitly; moving through the menu never changes the route. */
 function ScopeChoices(props: {
   readonly current: Destination;
+  readonly targets?: readonly api.ConfigLevelView[];
   readonly onSelect: (destination: Destination) => void;
   readonly onClose: () => void;
 }) {
@@ -154,7 +156,7 @@ function ScopeChoices(props: {
   return (
     <box flexDirection="column" minHeight={0}>
       <box flexDirection="row" height={1}>
-        <DialogTitle flexGrow={1}>Scope</DialogTitle>
+        <DialogTitle flexGrow={1}>{props.targets ? "Write configuration to" : "Scope"}</DialogTitle>
         <ModalCommand
           id="scope-close"
           order={20}
@@ -176,15 +178,23 @@ function ScopeChoices(props: {
           choices = target;
           register(target);
         }}
-        options={topOptions().map((option) => ({
+        options={(props.targets
+          ? props.targets.map((item) => ({ label: item.level, value: item.level }))
+          : topOptions()
+        ).map((option) => ({
           name: `${option.value === props.current ? "✓ " : "  "}${option.label}`,
           description:
-            option.value === "workspace" ? "Effective workspace" : "Configuration declarations",
+            props.targets?.find((item) => item.level === option.value)?.file.file ??
+            (option.value === "workspace" ? "Effective workspace" : "Configuration declarations"),
           value: option.value,
         }))}
-        selectedIndex={destinations.indexOf(props.current)}
-        height={4}
-        showDescription={false}
+        selectedIndex={
+          props.targets
+            ? props.targets.findIndex((item) => item.level === props.current)
+            : destinations.indexOf(props.current)
+        }
+        height={props.targets ? props.targets.length * 2 : 4}
+        showDescription={!!props.targets}
         onSelect={(_index, option) => {
           if (option && destinations.includes(option.value)) props.onSelect(option.value);
         }}
@@ -194,38 +204,18 @@ function ScopeChoices(props: {
 }
 const configBindingLine = (binding: ConfigSourceImpact["binding"]) =>
   `${binding.kind} ${binding.kind === "local" ? binding.path : binding.origin} ${binding.root}`;
-type CollectionReview = import("./effects").CollectionReview;
-type CollectionDraft =
-  | Extract<
-      import("./effects").CollectionIntent,
-      {
-        readonly kind: "collection-import";
-      }
-    >
-  | Extract<
-      import("./effects").CollectionIntent,
-      {
-        readonly kind: "reference-add";
-      }
-    >
-  | Extract<
-      import("./effects").CollectionIntent,
-      {
-        readonly kind: "reference-remove";
-      }
-    >
-  | Extract<
-      import("./effects").CollectionIntent,
-      {
-        readonly kind: "link-change";
-      }
-    >
-  | Extract<
-      import("./effects").CollectionIntent,
-      {
-        readonly kind: "collection-use";
-      }
-    >;
+type CollectionReview = import("./session").CollectionReview;
+type CollectionDraft = Extract<
+  import("./session").CollectionIntent,
+  {
+    readonly kind:
+      | "collection-import"
+      | "reference-add"
+      | "reference-remove"
+      | "link-change"
+      | "collection-use";
+  }
+>;
 type AppOverlayPayload =
   | {
       readonly family: "source-removal";
@@ -265,6 +255,7 @@ type AppOverlayPayload =
     }
   | {
       readonly family: "diagnostic-log";
+      readonly title?: string;
       readonly text: string;
     }
   | {
@@ -272,6 +263,7 @@ type AppOverlayPayload =
     }
   | {
       readonly family: "scope-selection";
+      readonly action?: "enable-agent" | "choose-collections";
     }
   | {
       readonly family: "collection-choices";
@@ -599,7 +591,7 @@ export function App(props: {
       ? (`command:${id}` as const)
       : ("command:source.details.toggle" as const);
   };
-  let effects!: ReturnType<typeof createTuiEffects>;
+  let effects!: ReturnType<typeof createTuiSession>;
   route = createRoute(
     {
       workspace: workspaceState,
@@ -702,7 +694,7 @@ export function App(props: {
     const current = projection.workspace();
     if (current) collectionsState.reconcile(current, current);
   };
-  effects = createTuiEffects(
+  effects = createTuiSession(
     props.core,
     operation,
     {
@@ -1235,13 +1227,25 @@ export function App(props: {
   };
   const beginManagedOperation = (level: "global" | "project" | "local") => {
     const config = projection.workspace()?.configs.find((item) => item.level === level);
-    if (!config || config.file.status !== "valid") return;
+    if (!config || !["valid", "missing"].includes(config.file.status)) return;
     openSession("confirm", {
       family: "config-operation",
       kind: "managed",
       level,
       file: config.file.file,
       enabled: true,
+    });
+  };
+  const beginCollectionUse = (level: api.ConfigLevel) => {
+    const config = projection.workspace()?.configs.find((item) => item.level === level);
+    if (!config || !["valid", "missing"].includes(config.file.status)) return;
+    openSession("form", {
+      family: "collection-draft",
+      draft: {
+        kind: "collection-use",
+        level,
+        collections: config.direct.collectionUse.map((item) => item.collection),
+      },
     });
   };
   const explicitSkillDetail = () =>
@@ -1308,13 +1312,6 @@ export function App(props: {
       "disable-managed-opencode",
     ]);
     const descriptor = actions().find((action) => action.id === id);
-    // The cold-start primary action reaches the same Source registration form before commands exist.
-    const coldStartAddSource =
-      id === "add-source" &&
-      route.snapshot().destination === "workspace" &&
-      workspaceState.section() === "skills" &&
-      !workspaceState.sourceFilter() &&
-      workspace.installedSkills.length === 0;
     // Stale palette IDs must not start a write flow after the selected Config becomes invalid.
     if (
       destination !== "workspace" &&
@@ -1323,7 +1320,7 @@ export function App(props: {
       currentConfig?.file.status !== "missing"
     )
       return;
-    if (!descriptor?.enabled && !coldStartAddSource) {
+    if (!descriptor?.enabled) {
       if (descriptor?.disabledReason)
         operation.report({
           code: "INVALID_ARGUMENT",
@@ -1334,7 +1331,7 @@ export function App(props: {
     }
     if (id === "enable-managed-opencode" || id === "disable-managed-opencode") {
       if (destination === "workspace") return;
-      if (!currentConfig || currentConfig.file.status !== "valid") return;
+      if (!currentConfig || !["valid", "missing"].includes(currentConfig.file.status)) return;
       if (id === "enable-managed-opencode") beginManagedOperation(destination);
       else
         openSession("confirm", {
@@ -1366,7 +1363,11 @@ export function App(props: {
       openSession("form", {
         family: "collection-create",
         ...(destination === "workspace"
-          ? { allowedLevels: ["global", "project", "local"] as const }
+          ? {
+              allowedLevels: workspace.configs
+                .filter((config) => ["valid", "missing"].includes(config.file.status))
+                .map((config) => config.level),
+            }
           : { level: destination }),
       });
       return;
@@ -1528,16 +1529,7 @@ export function App(props: {
     }
     if (id === "set-collection-use") {
       const destination = route.snapshot().destination;
-      const config = workspace.configs.find((item) => item.level === destination);
-      if (!config || destination === "workspace") return;
-      openSession("form", {
-        family: "collection-draft",
-        draft: {
-          kind: "collection-use",
-          level: destination,
-          collections: config.direct.collectionUse.map((item) => item.collection),
-        },
-      });
+      if (destination !== "workspace") beginCollectionUse(destination);
       return;
     }
     if (id === "check-updates") {
@@ -1723,20 +1715,20 @@ export function App(props: {
       return;
     }
     if (id === "collection-check-updates") {
-      const exposure =
-        workspaceState.skillsView() === "current-exposure"
-          ? deriveAgentAccessTree(workspace, workspaceState.expandedExposurePaths()).rows.find(
-              (row) => row.key === workspaceState.selectedExposurePath(),
-            )
-          : undefined;
-      const collection =
-        workspaceState.skillsView() === "current-exposure"
-          ? exposure?.kind === "collection"
-            ? exposure.collection
-            : exposure?.kind === "reference"
-              ? exposure.target
-              : undefined
-          : collectionsState.selected();
+      const agentAccess =
+        workspaceState.section() === "skills" && workspaceState.skillsView() === "current-exposure";
+      const exposure = agentAccess
+        ? deriveAgentAccessTree(workspace, workspaceState.expandedExposurePaths()).rows.find(
+            (row) => row.key === workspaceState.selectedExposurePath(),
+          )
+        : undefined;
+      const collection = agentAccess
+        ? exposure?.kind === "collection"
+          ? exposure.collection
+          : exposure?.kind === "reference"
+            ? exposure.target
+            : undefined
+        : collectionsState.selected();
       if (collection) openUpdates({ kind: "collection", collection }, true);
       return;
     }
@@ -2127,7 +2119,9 @@ export function App(props: {
     event.preventDefault();
     event.stopPropagation();
   };
+  let startupInteracted = false;
   useKeyboard((event) => {
+    startupInteracted = true;
     if (event.defaultPrevented) return;
     if (layout.tooSmall()) {
       consume(event);
@@ -2173,6 +2167,11 @@ export function App(props: {
       tab: () => {
         if (blockedSurface || key.name !== "tab" || !isPlainNavKey({ ...key, shift: false }))
           return "declined";
+        if (
+          focused?.id.startsWith("skills-setup-") &&
+          focusRegistry.dispatchMode(focused, key) === "consumed"
+        )
+          return "consumed";
         const owner = panels.next(focused, key.shift);
         if (owner) requestFocus(owner);
         return "consumed";
@@ -2270,8 +2269,20 @@ export function App(props: {
   });
   onMount(() => {
     resize(renderer.width, renderer.height);
+    const startupFocus = renderer.currentFocusedRenderable;
     void effects.refresh().then(() => {
       const workspace = projection.workspace();
+      if (
+        !overlayKind() &&
+        !startupInteracted &&
+        route.snapshot().destination === "workspace" &&
+        workspaceState.section() === "skills" &&
+        (!renderer.currentFocusedRenderable ||
+          renderer.currentFocusedRenderable === startupFocus ||
+          physicalFocusOwner() === "local-nav") &&
+        commandRegistry.mounted().has("skills.setup")
+      )
+        requestFocus("command:skills.setup");
       // Do not await: browsing and focus are available as soon as the initial
       // projection arrives; cache policy determines which Sources are checked.
       if (workspace) void effects.startUpdateChecks(workspace);
@@ -3299,6 +3310,8 @@ export function App(props: {
                         mode={layout.mode()}
                         narrowLevel={workspaceState.narrowLevel()}
                         projection={projection.workspace}
+                        failure={projection.diagnostic}
+                        onRefresh={() => void effects.refresh()}
                         focusRegistry={focusRegistry}
                         registerCommand={registerPageCommand}
                         onRequestFocus={requestFocus}
@@ -3428,7 +3441,20 @@ export function App(props: {
                         }
                         previewUpdate={props.core.previewUpdate}
                         environment={environment}
-                        onFirstSkill={() => void dispatchAction("add-source")}
+                        onBrowseSources={() => {
+                          const sources = projection.workspace()?.effective.sources ?? [];
+                          routeSource({
+                            destination: "workspace",
+                            section: "sources",
+                            ...(sources.length === 1
+                              ? {
+                                  selection: sources[0]!.id,
+                                  surface: "inspector" as const,
+                                  focus: "command:add-skills" as const,
+                                }
+                              : {}),
+                          });
+                        }}
                         onDetail={() => {
                           if (workspaceState.section() === "sources") {
                             const source = workspaceState.selectedSource();
@@ -3565,20 +3591,30 @@ export function App(props: {
                           workspaceState.setCollectionPathExpanded(path, expanded)
                         }
                         onToggleExposurePath={(path) => workspaceState.toggleExposurePath(path)}
-                        onRepairCurrentExposure={(level, section, collection) => {
-                          // Preserve the mounted repair control as the route-back focus before navigation.
-                          requestFocus("work-area");
-                          focusRegistry.target("work-area")?.focus();
-                          routeSource({
-                            destination: level,
-                            section,
-                            ...(collection ? { selection: collection } : {}),
-                            ...(!collection && section === "collections"
-                              ? { focus: "command:new-collection" as const }
-                              : {}),
-                          });
+                        onSetup={(action) => {
+                          const snapshot = projection.workspace();
+                          if (!snapshot) return;
+                          if (action !== "configuration")
+                            openSession("selection", { family: "scope-selection", action });
+                          else {
+                            openSession("help", {
+                              family: "diagnostic-log",
+                              title: "Recovery options",
+                              text: [
+                                "Restore configuration",
+                                `${snapshot.installedSkills.length} installed records are retained. This action does not overwrite files or reinstall Skills.`,
+                                ...snapshot.configs.map(
+                                  (item) =>
+                                    `${item.level}: ${item.file.file} (${item.file.status})`,
+                                ),
+                                ...snapshot.diagnostics
+                                  .filter((item) => item.code === "PREVIOUS_DATA_FOUND")
+                                  .map((item) => item.message),
+                                "Restore your saved Source and Collection declarations to the matching Config file, then Refresh. Keep the original copy; do not overwrite a non-empty target.",
+                              ].join("\n\n"),
+                            });
+                          }
                         }}
-                        onEnableManagedOpenCode={beginManagedOperation}
                         onClearSourceFilter={() => {
                           if (route.canReturn()) routeBack();
                           else {
@@ -3827,20 +3863,7 @@ export function App(props: {
                             return;
                           }
                           if (intent.kind === "collection-use-edit") {
-                            const config = projection
-                              .workspace()
-                              ?.configs.find((item) => item.level === intent.owner.level);
-                            if (config)
-                              openSession("form", {
-                                family: "collection-draft",
-                                draft: {
-                                  kind: "collection-use",
-                                  level: intent.owner.level,
-                                  collections: config.direct.collectionUse.map(
-                                    (item) => item.collection,
-                                  ),
-                                },
-                              });
+                            beginCollectionUse(intent.owner.level);
                             return;
                           }
                           if (intent.kind === "collection-producer") {
@@ -4333,11 +4356,32 @@ export function App(props: {
                   backdropColor="transparent"
                 >
                   <ScopeChoices
-                    current={route.snapshot().destination}
+                    current={
+                      payload("scope-selection")?.action
+                        ? projection.workspace()?.configs.some((item) => item.level === "project")
+                          ? "project"
+                          : "global"
+                        : route.snapshot().destination
+                    }
+                    targets={
+                      payload("scope-selection")?.action
+                        ? projection
+                            .workspace()
+                            ?.configs.filter((item) =>
+                              ["valid", "missing"].includes(item.file.status),
+                            )
+                        : undefined
+                    }
                     onClose={closeOverlay}
                     onSelect={(destination) => {
-                      closeOverlay();
-                      selectDestination(destination);
+                      const action = payload("scope-selection")?.action;
+                      if (action && destination !== "workspace") {
+                        if (action === "enable-agent") beginManagedOperation(destination);
+                        else beginCollectionUse(destination);
+                      } else {
+                        closeOverlay();
+                        selectDestination(destination);
+                      }
                     }}
                   />
                 </DialogContent>
@@ -4346,7 +4390,7 @@ export function App(props: {
             <Show when={sessionPayload()?.family === "diagnostic-log" && sessionPayload()} keyed>
               {(payload) =>
                 payload.family === "diagnostic-log" ? (
-                  <DiagnosticLog text={payload.text} onClose={closeOverlay} />
+                  <DiagnosticLog title={payload.title} text={payload.text} onClose={closeOverlay} />
                 ) : null
               }
             </Show>
@@ -4441,6 +4485,10 @@ export function App(props: {
                       ? { allowedLevels: create.allowedLevels }
                       : { level: create.level! })}
                     collection={create.fixedCollection ? create.afterCreate!.collection : ""}
+                    configFile={(level) =>
+                      projection.workspace()?.configs.find((config) => config.level === level)?.file
+                        .file
+                    }
                     fixed={create.fixedCollection}
                     pending={overlaySession().phase === "executing"}
                     error={operation.problem()}
@@ -4615,6 +4663,10 @@ export function App(props: {
               <SourceRegistrationOverlay
                 kind={sourceRegistration()!.kind}
                 level={sourceRegistration()!.level}
+                configFile={(level) =>
+                  projection.workspace()?.configs.find((config) => config.level === level)?.file
+                    .file
+                }
                 pending={overlaySession().phase === "executing"}
                 error={operation.problem()}
                 onCancel={closeOverlay}
@@ -4707,6 +4759,10 @@ export function App(props: {
               {(draft) => (
                 <CollectionUseOverlay
                   level={draft().level}
+                  file={
+                    projection.workspace()?.configs.find((config) => config.level === draft().level)
+                      ?.file.file
+                  }
                   collections={draft().collections}
                   currentCollection={collectionDraftPayload()?.useCurrent}
                   onCurrentChange={(useCurrent) => {
@@ -4746,15 +4802,8 @@ export function App(props: {
               {(operation) => {
                 const impact = operation.impact;
                 return (
-                  <box
-                    position="absolute"
-                    left={0}
-                    top={0}
-                    width="100%"
-                    height="100%"
-                    backgroundColor={tokens().colors.background}
-                  >
-                    <box border borderStyle="rounded" margin={2} padding={1} flexDirection="column">
+                  <ModalShell>
+                    <ModalBody controls={modalControls}>
                       <text>
                         {operation.kind === "managed"
                           ? `${operation.enabled ? "Enable" : "Disable"} Managed OpenCode`
@@ -4765,6 +4814,9 @@ export function App(props: {
                           ? `Target: ${operation.file} /agents/opencode`
                           : `Config Source: ${operation.id}`}
                       </text>
+                      {operation.kind === "managed" && (
+                        <text>{`Config level: ${operation.level}. This does not install Skills or select Collections.`}</text>
+                      )}
                       {operation.kind === "adopt" && (
                         <text>{`Exact revision: ${operation.observation?.exactRevision}`}</text>
                       )}
@@ -4881,8 +4933,8 @@ export function App(props: {
                         )}
                       </box>
                       <text>Cancel is selected by default</text>
-                    </box>
-                  </box>
+                    </ModalBody>
+                  </ModalShell>
                 );
               }}
             </Show>

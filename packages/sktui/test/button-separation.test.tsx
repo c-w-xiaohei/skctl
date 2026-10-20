@@ -77,8 +77,8 @@ async function capture(setup: ReaderSetup, name: string) {
 async function mount(width: number, height = 24, adoptedConfig = false) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/button-separation-");
-  const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const base = collectionsSourcesProjection();
   const projection: WorkspaceView = adoptedConfig
     ? {
@@ -130,8 +130,8 @@ async function mount(width: number, height = 24, adoptedConfig = false) {
     setup,
     async dispose() {
       setup.renderer.destroy();
-      if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+      if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
       await rm(cache, { recursive: true, force: true });
     },
   };

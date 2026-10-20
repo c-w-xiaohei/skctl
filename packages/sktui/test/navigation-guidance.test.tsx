@@ -15,8 +15,8 @@ import {
 async function mount(width = 100, height = 30) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/navigation-guidance-");
-  const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const setup = await testRender(
     () => (
       <App
@@ -47,8 +47,8 @@ async function mount(width = 100, height = 30) {
     setup,
     async dispose() {
       setup.renderer.destroy();
-      if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+      if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
       await rm(cache, { recursive: true, force: true });
     },
   };

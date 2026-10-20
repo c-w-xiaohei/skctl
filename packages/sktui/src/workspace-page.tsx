@@ -1,4 +1,4 @@
-import type { WorkspaceView } from "@skctl/core";
+import type { Diagnostic, WorkspaceView } from "@skctl/core";
 import type { SkillAddress } from "@skctl/core";
 import {
   InputRenderable,
@@ -16,6 +16,8 @@ import {
   For,
   onCleanup,
   Show,
+  Switch,
+  Match,
   untrack,
 } from "solid-js";
 import type { ActionRecord } from "./actions";
@@ -65,6 +67,7 @@ import { DataTable } from "./ui/data-table";
 import { Tree } from "./ui/tree";
 import { formatColumns, inlineNameColumnWidth } from "./ui/list-text";
 import { SourceUpdatesPage, UpdatesPage } from "./updates/page";
+import { skillsStatus } from "./workspace/skills-status";
 import type { UpdateAddress } from "./updates/scope";
 import type { UpdatesState, UpdateRun } from "./updates/state";
 export interface WorkspacePageProps {
@@ -76,6 +79,8 @@ export interface WorkspacePageProps {
   readonly mode: LayoutMode;
   readonly narrowLevel: NarrowLevel;
   readonly projection: () => WorkspaceView | undefined;
+  readonly failure?: () => Diagnostic | undefined;
+  readonly onRefresh?: () => void;
   readonly focusRegistry?: FocusRegistry;
   /** App owns deferred focus across page transitions; the page only requests a region. */
   readonly onRequestFocus?: (owner: FocusOwner) => void;
@@ -88,15 +93,10 @@ export interface WorkspacePageProps {
   readonly onSourceRelationship: (value: string) => void;
   readonly onOpenSourceSkills?: (source: string) => void;
   readonly onSourceBrowseView?: (source: string, patch: Partial<SourceBrowseView>) => void;
-  readonly onFirstSkill: () => void;
+  readonly onBrowseSources: () => void;
   readonly onDetail: () => void;
   readonly onSkillsView: (view: SkillsView) => void;
-  readonly onRepairCurrentExposure: (
-    level: "global" | "project" | "local",
-    section: "collections",
-    collection?: string,
-  ) => void;
-  readonly onEnableManagedOpenCode: (level: "global" | "project" | "local") => void;
+  readonly onSetup: (action: "configuration" | "enable-agent" | "choose-collections") => void;
   readonly onClearSourceFilter: () => void;
   readonly onQuery: (value: string) => void;
   readonly onOpenFilter: () => void;
@@ -305,6 +305,20 @@ export function WorkspacePage(props: WorkspacePageProps) {
             return "consumed";
           }
           if (
+            target.id.startsWith("skills-setup-") &&
+            ["left", "right", "up", "down", "tab"].includes(key.name)
+          ) {
+            const controls = detailControls("skills-setup-pane");
+            const index = controls.indexOf(target);
+            const step = key.shift || ["left", "up"].includes(key.name) ? -1 : 1;
+            const next = controls[index + step];
+            if (next) {
+              focusControl(next);
+              return "consumed";
+            }
+            return "declined";
+          }
+          if (
             toolbarControls().includes(owner) &&
             section() === "skills" &&
             renderer.root.findDescendantById("skills-list-pane")?.findDescendantById(target.id) ===
@@ -388,7 +402,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
         )
       : null;
   };
-  const empty = (title: string, message: string, addSource = false) => (
+  const empty = (title: string, message: string) => (
     <box flexDirection="column" padding={1}>
       <text>
         <strong>{title}</strong>
@@ -396,14 +410,88 @@ export function WorkspacePage(props: WorkspacePageProps) {
       <text wrapMode="word" fg={tokens().colors.mutedForeground}>
         {message}
       </text>
-      <Show when={addSource}>
-        {(() => {
-          const record = props.actions.find((candidate) => candidate.id === "add-source");
-          return record ? command("empty-workspace-action", record, props.onFirstSkill) : null;
-        })()}
-      </Show>
     </box>
   );
+  const status = createMemo(() =>
+    skillsStatus(
+      props.projection(),
+      props.failure?.(),
+      workspace.skillsView() === "current-exposure",
+    ),
+  );
+  const SkillsSetup = () => {
+    const commandFor = () => {
+      switch (status()?.action) {
+        case "add-source":
+          return { label: "Add a Source", run: () => props.onDetailsAction("add-source") };
+        case "browse-sources":
+          return { label: "Browse Sources", run: props.onBrowseSources };
+        case "configuration":
+          return {
+            label: "Review recovery options",
+            run: () => props.onSetup("configuration"),
+          };
+        case "enable-agent":
+          return { label: "Set up Agent catalog…", run: () => props.onSetup("enable-agent") };
+        case "choose-collections":
+          return {
+            label: "Choose Collections…",
+            run: () => props.onSetup("choose-collections"),
+          };
+        case "create-collection":
+          return {
+            label: "Create a Collection…",
+            run: () => props.onDetailsAction("new-collection"),
+          };
+        case "problems":
+          return {
+            label: "View configuration error",
+            run: () => {
+              props.onSkillsView("problems");
+              props.onRequestFocus?.("browser");
+            },
+          };
+        case "retry":
+          return { label: "Retry", run: () => props.onRefresh?.() };
+      }
+    };
+    return (
+      <Pane id="skills-setup-pane" borderTitle="Skills">
+        <scrollbox
+          flexGrow={1}
+          minHeight={0}
+          contentOptions={{ flexDirection: "column", padding: 1, gap: 1 }}
+        >
+          <text wrapMode="word">
+            <strong>{status()?.title}</strong>
+          </text>
+          <text wrapMode="word" fg={tokens().colors.mutedForeground}>
+            {status()?.message}
+          </text>
+          <box id="skills-setup-actions" flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}>
+            <Show when={commandFor()} keyed>
+              {(control) =>
+                action("skills-setup-primary", control.label, "skills.setup", control.run, "", {
+                  intent: "primary",
+                })
+              }
+            </Show>
+            <Show when={allSkills().length && workspace.skillsView() === "current-exposure"}>
+              {action("skills-setup-inventory", "View All Skills", "skills.inventory", () => {
+                props.onSkillsView("all-installed-skills");
+                props.onRequestFocus?.("browser");
+              })}
+            </Show>
+            <Show when={status()?.action === "problems"}>
+              {action("skills-setup-retry", "Retry", "workspace.refresh", () =>
+                props.onRefresh?.(),
+              )}
+            </Show>
+          </box>
+        </scrollbox>
+      </Pane>
+    );
+  };
   const search = (
     id: string,
     value: () => string,
@@ -468,8 +556,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
     const scopeActive = () =>
       ["all-installed-skills", "unassigned"].includes(workspace.skillsView());
     const title = () => `Skills · ${skills().length} / ${scopeSkills().length}`;
-    const emptyTitle = () =>
-      allSkills().length ? "No matching Skills" : "Your Skill library is empty";
     const nameCounts = createMemo(() => {
       const counts = new Map<string, number>();
       for (const candidate of skills())
@@ -624,20 +710,9 @@ export function WorkspacePage(props: WorkspacePageProps) {
         <Show
           when={skills().length}
           fallback={
-            <Show
-              when={terminal().height <= 18}
-              fallback={empty(
-                emptyTitle(),
-                allSkills().length
-                  ? "Change your search or clear the filters."
-                  : "Add a Source, discover its Skills, then install the ones you need.",
-                false,
-              )}
-            >
-              <text id="skills-empty-state" flexShrink={0} wrapMode="word">
-                {emptyTitle()}
-              </text>
-            </Show>
+            <text id="skills-empty-state" flexShrink={0} wrapMode="word">
+              No matching Skills. Change your search or clear the filters.
+            </text>
           }
         >
           <DataList
@@ -895,22 +970,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
     const pathForRow = (row: AgentAccessTreeRow) => row.nodeId.path;
     const leftVisible = () => split() || !detail();
     const rightVisible = () => split() || detail();
-    const unavailable = () => {
-      const value = tree();
-      return value.status === "unavailable" ? value.reason : undefined;
-    };
-    const config = () =>
-      props
-        .projection()
-        ?.configs.find(
-          (candidate) => candidate.level === "project" && candidate.file.status === "valid",
-        ) ?? props.projection()?.configs.find((candidate) => candidate.file.status === "valid");
-    const direct = () =>
-      props.projection()?.configs.flatMap((candidate) => candidate.direct.collections)[0];
-    const enableManagedTarget = () => {
-      const effective = props.projection()?.effective;
-      return effective?.status === "complete" && !effective.managed ? config() : undefined;
-    };
     const activate = (row: AgentAccessTreeRow) => {
       if (row.kind === "skill" && row.availability.status === "available")
         props.onSkill(row.address, "open");
@@ -1027,60 +1086,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
               <text height={1} flexShrink={0} wrapMode="none" fg={tokens().colors.mutedForeground}>
                 Enter or ▸/▾ to expand/fold
               </text>
-            </Show>
-            <Show when={tree().status !== "available" || rows().length === 0}>
-              <scrollbox
-                minHeight={0}
-                flexGrow={1}
-                contentOptions={{ flexDirection: "column", padding: 1 }}
-              >
-                {empty(
-                  tree().status === "unavailable"
-                    ? "Agent access is unavailable"
-                    : "No Collections in Use",
-                  unavailable() ??
-                    "Choose a Collection in Config to make it available to your agent.",
-                )}
-                <box
-                  id="agent-access-recovery-actions"
-                  flexDirection="column"
-                  gap={1}
-                  flexShrink={0}
-                >
-                  <Show when={tree().status === "available"}>
-                    {action(
-                      "current-exposure-repair",
-                      "Choose a Collection",
-                      "current-exposure.repair",
-                      () =>
-                        props.onRepairCurrentExposure(
-                          direct()?.owner.level ?? "project",
-                          "collections",
-                          direct()?.id,
-                        ),
-                    )}
-                  </Show>
-                  <Show when={tree().status === "unavailable" && enableManagedTarget()}>
-                    {(validConfig) =>
-                      action(
-                        "current-exposure-enable-managed-opencode",
-                        "Enable Managed OpenCode",
-                        "managed-opencode.enable",
-                        () => props.onEnableManagedOpenCode(validConfig().level),
-                      )
-                    }
-                  </Show>
-                  {action(
-                    "current-exposure-problems",
-                    "View Problems",
-                    "workspace.problems",
-                    () => {
-                      props.onSkillsView("problems");
-                      props.onRequestFocus?.("browser");
-                    },
-                  )}
-                </box>
-              </scrollbox>
             </Show>
             <Show when={tree().status === "available" && rows().length > 0}>
               <Tree
@@ -1340,7 +1345,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
                 {empty(
                   "No Sources yet",
                   "Sources tell skctl where to discover and install Skills.",
-                  false,
                 )}
               </Show>
             </Pane>
@@ -1644,135 +1648,127 @@ export function WorkspacePage(props: WorkspacePageProps) {
         />
       </Show>
       <box flexDirection="column" flexGrow={1} minHeight={0} paddingTop={0}>
-        <Show
-          when={section() === "sources"}
-          fallback={
-            <Show
-              when={section() === "updates" && props.updates?.()}
-              fallback={
-                <Show
-                  when={section() === "collections"}
-                  fallback={
-                    <Show
-                      when={
-                        props.surface === "reader" &&
-                        !["all-installed-skills", "unassigned"].includes(workspace.skillsView())
-                      }
-                      fallback={
-                        <Show
-                          when={workspace.skillsView() === "problems"}
-                          fallback={
-                            <Show
-                              when={workspace.skillsView() === "current-exposure"}
-                              fallback={
-                                <box flexDirection="row" flexGrow={1} minHeight={0}>
-                                  <box
-                                    visible={
-                                      (terminal().width >= 132 || compactCollections()) &&
-                                      (split() || !detail())
-                                    }
-                                    width={compactCollections() ? "100%" : "26%"}
-                                    flexShrink={0}
-                                    minWidth={0}
-                                    minHeight={0}
-                                  >
-                                    <CollectionBrowser />
-                                  </box>
-                                  <box
-                                    visible={!compactCollections() && (split() || !detail())}
-                                    width={
-                                      split()
-                                        ? terminal().width >= 132 &&
-                                          (workspace.skillsView() === "all-installed-skills" ||
-                                            workspace.skillsView() === "unassigned")
-                                          ? "32%"
-                                          : "35%"
-                                        : "100%"
-                                    }
-                                    flexShrink={0}
-                                    minWidth={0}
-                                    minHeight={0}
-                                  >
-                                    <SkillList />
-                                  </box>
-                                  <box
-                                    visible={!compactCollections() && (split() || detail())}
-                                    width={split() ? "auto" : "100%"}
-                                    flexGrow={split() ? 1 : 0}
-                                    flexShrink={split() ? 1 : 0}
-                                    minWidth={0}
-                                    minHeight={0}
-                                  >
-                                    <Pane id="skill-reader-pane">
-                                      <Show
-                                        when={
-                                          skill() &&
-                                          skills().some((candidate) =>
-                                            sameSkillAddress(candidate.address, skill()!.address),
-                                          )
-                                        }
-                                        fallback={
-                                          <text fg={tokens().colors.mutedForeground}>
-                                            Select a Skill to read its instructions.
-                                          </text>
-                                        }
-                                      >
-                                        <ReaderSurface />
-                                      </Show>
-                                    </Pane>
-                                  </box>
-                                </box>
-                              }
-                            >
-                              <AgentAccess />
-                            </Show>
-                          }
-                        >
-                          <Problems />
-                        </Show>
-                      }
-                    >
-                      <ReaderSurface />
-                    </Show>
-                  }
-                >
-                  <CollectionsPage
-                    active={!props.overlay?.()}
-                    collections={props.collections}
-                    mode={props.mode}
-                    surface={detail() ? "detail" : "browser"}
-                    projection={props.projection}
-                    focusRegistry={props.focusRegistry}
-                    onWorkAreaTarget={(target) => {
-                      const dispose = props.focusRegistry?.register("work-area", target);
-                      target.once("destroyed", () => dispose?.());
-                    }}
-                    registerCommand={props.registerCommand}
-                    executeCommand={props.executeCommand}
-                    actions={props.actions}
-                    onAction={props.onDetailsAction}
-                    onProblems={() => props.onSkillsView("problems")}
-                    onSelect={props.onSelectCollection}
-                    onQuery={props.onCollectionQuery}
-                    onFilter={props.onCollectionFilter}
-                    onClear={props.onClearCollectionFilter}
-                    onClearAll={props.onClearAllCollectionFilters}
-                    onFilterOpen={props.onCollectionFilterOpen}
-                    onFilterDimension={props.onCollectionFilterDimension}
-                    onFilterSearch={props.onCollectionFilterSearch}
-                    onFilterClose={props.onCollectionFilterClose}
-                    onTab={props.onCollectionTab}
-                    onInspectorFocus={props.onInspectorFocus}
-                    onDetail={props.onCollectionDetail}
-                    onRelationship={props.onCollectionRelationship}
-                    onToggleOrigin={props.onToggleCollectionOrigin}
-                    onToggleOrigins={props.onToggleCollectionOrigins}
-                    onRemoveOrigins={props.onRemoveCollectionOrigins}
-                    onScroll={props.onCollectionScroll}
-                  />
-                </Show>
-              }
-            >
+        <Switch>
+          <Match when={section() === "sources"}>
+            <Sources />
+          </Match>
+          <Match when={section() === "collections"}>
+            <CollectionsPage
+              active={!props.overlay?.()}
+              collections={props.collections}
+              mode={props.mode}
+              surface={detail() ? "detail" : "browser"}
+              projection={props.projection}
+              focusRegistry={props.focusRegistry}
+              onWorkAreaTarget={(target) => {
+                const dispose = props.focusRegistry?.register("work-area", target);
+                target.once("destroyed", () => dispose?.());
+              }}
+              registerCommand={props.registerCommand}
+              executeCommand={props.executeCommand}
+              actions={props.actions}
+              onAction={props.onDetailsAction}
+              onProblems={() => props.onSkillsView("problems")}
+              onSelect={props.onSelectCollection}
+              onQuery={props.onCollectionQuery}
+              onFilter={props.onCollectionFilter}
+              onClear={props.onClearCollectionFilter}
+              onClearAll={props.onClearAllCollectionFilters}
+              onFilterOpen={props.onCollectionFilterOpen}
+              onFilterDimension={props.onCollectionFilterDimension}
+              onFilterSearch={props.onCollectionFilterSearch}
+              onFilterClose={props.onCollectionFilterClose}
+              onTab={props.onCollectionTab}
+              onInspectorFocus={props.onInspectorFocus}
+              onDetail={props.onCollectionDetail}
+              onRelationship={props.onCollectionRelationship}
+              onToggleOrigin={props.onToggleCollectionOrigin}
+              onToggleOrigins={props.onToggleCollectionOrigins}
+              onRemoveOrigins={props.onRemoveCollectionOrigins}
+              onScroll={props.onCollectionScroll}
+            />
+          </Match>
+          <Match when={section() === "skills"}>
+            <Switch>
+              <Match when={workspace.skillsView() === "problems"}>
+                <Problems />
+              </Match>
+              <Match when={status()}>
+                <SkillsSetup />
+              </Match>
+              <Match
+                when={
+                  props.surface === "reader" &&
+                  !["all-installed-skills", "unassigned"].includes(workspace.skillsView())
+                }
+              >
+                <ReaderSurface />
+              </Match>
+              <Match when={workspace.skillsView() === "current-exposure"}>
+                <AgentAccess />
+              </Match>
+              <Match when={true}>
+                <box flexDirection="row" flexGrow={1} minHeight={0}>
+                  <box
+                    visible={
+                      (terminal().width >= 132 || compactCollections()) && (split() || !detail())
+                    }
+                    width={compactCollections() ? "100%" : "26%"}
+                    flexShrink={0}
+                    minWidth={0}
+                    minHeight={0}
+                  >
+                    <CollectionBrowser />
+                  </box>
+                  <box
+                    visible={!compactCollections() && (split() || !detail())}
+                    width={
+                      split()
+                        ? terminal().width >= 132 &&
+                          (workspace.skillsView() === "all-installed-skills" ||
+                            workspace.skillsView() === "unassigned")
+                          ? "32%"
+                          : "35%"
+                        : "100%"
+                    }
+                    flexShrink={0}
+                    minWidth={0}
+                    minHeight={0}
+                  >
+                    <SkillList />
+                  </box>
+                  <box
+                    visible={!compactCollections() && (split() || detail())}
+                    width={split() ? "auto" : "100%"}
+                    flexGrow={split() ? 1 : 0}
+                    flexShrink={split() ? 1 : 0}
+                    minWidth={0}
+                    minHeight={0}
+                  >
+                    <Pane id="skill-reader-pane">
+                      <Show
+                        when={
+                          skill() &&
+                          skills().some((candidate) =>
+                            sameSkillAddress(candidate.address, skill()!.address),
+                          )
+                        }
+                        fallback={
+                          <text fg={tokens().colors.mutedForeground}>
+                            Select a Skill to read its instructions.
+                          </text>
+                        }
+                      >
+                        <ReaderSurface />
+                      </Show>
+                    </Pane>
+                  </box>
+                </box>
+              </Match>
+            </Switch>
+          </Match>
+          <Match when={section() === "updates"}>
+            <Show when={props.updates?.()}>
               {(state) => (
                 <Show
                   when={props.sourceUpdates?.()}
@@ -1837,10 +1833,8 @@ export function WorkspacePage(props: WorkspacePageProps) {
                 </Show>
               )}
             </Show>
-          }
-        >
-          <Sources />
-        </Show>
+          </Match>
+        </Switch>
       </box>
     </box>
   );

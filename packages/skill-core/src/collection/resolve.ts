@@ -7,8 +7,9 @@ import { canonicalLocalOrigin } from "../source/identity";
 import { parseQualifiedName } from "./names";
 import { StateCoordinator } from "../storage/state";
 import type { PrivateState, StateContents } from "../storage/schema";
-import { document, validatorFor, invalidConfig } from "../config/document";
-import { type ConfigDocument } from "../config/schema";
+import { document, invalidConfig } from "../config/document";
+import { configSchemaFor, type ConfigDocument } from "../config/schema";
+import * as v from "valibot";
 import { configInputs, type ReadWorkspaceOptions } from "../config/inputs";
 import { cachedConfig, contributedCollection, installedCollectionInputs } from "../config/bindings";
 import { capturedWorkspace, readWorkspaceUnlocked } from "../workspace/capture";
@@ -74,7 +75,8 @@ export async function resolveEffectiveCollections(
     let host: ConfigDocument;
     if (override?.file === file) {
       host = override.value;
-      if (!validatorFor(level)(host)) throw invalidConfig(file, "Invalid declaration override");
+      if (!v.is(configSchemaFor(level), host))
+        throw invalidConfig(file, "Invalid declaration override");
     } else {
       host = await document(file, level);
     }

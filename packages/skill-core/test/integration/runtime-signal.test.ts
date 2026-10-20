@@ -3,7 +3,6 @@ import { expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
-import { StateCoordinator } from "../../src/storage/state";
 test.serial(
   "content.run normalizes runtime signal numbers without changing named strings or null",
   async () => {
@@ -24,8 +23,8 @@ test.serial(
         }),
       );
       process.env.SKCTL_STATE_DIR = state;
-      await new StateCoordinator(state).installLocal("local", "review", skill);
       const core = { cwd: root, userConfigPath: join(root, "global.jsonc") };
+      await api.installSkills(core, { source: "local", paths: ["review"] });
       const cases = [
         { reported: constants.signals.SIGTERM, expected: "SIGTERM", cancelled: false },
         { reported: constants.signals.SIGKILL, expected: "SIGKILL", cancelled: false },
@@ -91,7 +90,8 @@ test.skipIf(process.platform !== "linux")(
         }),
       );
       process.env.SKCTL_STATE_DIR = state;
-      await new StateCoordinator(state).installLocal("local", "review", skill);
+      const core = { cwd: root, userConfigPath: join(root, "global.jsonc") };
+      await api.installSkills(core, { source: "local", paths: ["review"] });
       // Linux x64 signal 35 is a real-time signal, not in Node's named constants.
       expect(Object.values(constants.signals)).not.toContain(35);
       const control = Bun.spawn(["/bin/sh", "-c", "kill -35 $$"], {
@@ -100,7 +100,6 @@ test.skipIf(process.platform !== "linux")(
       });
       expect(await control.exited).toBe(163);
       expect<unknown>(control.signalCode).toBe(35);
-      const core = { cwd: root, userConfigPath: join(root, "global.jsonc") };
       const result = await api.runSkill(core, {
         selector: "c:review",
         argv: ["/bin/sh", "-c", "kill -35 $$"],

@@ -1,11 +1,20 @@
 import * as api from "../../src/index";
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateCoordinator } from "../../src/storage/state";
-import { setManagementPublicationHookForTest } from "../../src/installed/update";
+import * as service from "../../src/source/service";
 import { createExecutableFixture } from "../executable-fixture";
+let cacheRoot: string;
+beforeEach(async () => {
+  cacheRoot = await mkdtemp(join(tmpdir(), "skctl-config-cache-"));
+  process.env.SKCTL_SOURCE_CACHE_DIR = cacheRoot;
+});
+afterEach(async () => {
+  delete process.env.SKCTL_SOURCE_CACHE_DIR;
+  await rm(cacheRoot, { recursive: true, force: true });
+});
 function assertPublicConfigImpact(value: unknown) {
   const forbidden = new Set([
     "weight",
@@ -152,7 +161,12 @@ test("MGMT contains adopted reusable Config bindings that escape their remote ho
       code: "CONFIG_INVALID",
       message: "Remote Config Source escapes its repository",
     });
-    await new StateCoordinator(state).publishRemoteConfig("shared", revision, bytes);
+    const coordinator = new StateCoordinator(state),
+      digest = await coordinator.publishConfig(bytes);
+    await coordinator.write(
+      { installed: [], configs: { shared: { commit: revision, digest } } },
+      0,
+    );
     const workspace = (await api.getWorkspace(core)).value;
     const invalid = workspace.configs.find((config) => config.level === "project")!;
     expect(invalid.file).toMatchObject({
@@ -183,6 +197,15 @@ test("MGMT-029 Config Source Adopt rejects a declaration changed after preview w
   const root = await mkdtemp(join(tmpdir(), "skctl-config-adopt-barrier-"));
   const state = join(root, "state");
   const remote = join(root, "remote");
+  const read = service.readSourceConfig;
+  let change = false;
+  const changedBytes =
+    '{ "configSources": { "module": { "kind": "local", "path": "./module", "root": "changed" } } }\n';
+  const acquisition = spyOn(service, "readSourceConfig").mockImplementation(async (...args) => {
+    const result = await read(...args);
+    if (change) await writeFile(join(root, "skctl.jsonc"), changedBytes);
+    return result;
+  });
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
@@ -198,9 +221,6 @@ test("MGMT-029 Config Source Adopt rejects a declaration changed after preview w
     );
     process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root, sourceTransport: () => remote };
-    const changedBytes =
-      '{ "configSources": { "module": { "kind": "local", "path": "./module", "root": "changed" } } }\n';
-    setManagementPublicationHookForTest(() => writeFile(join(root, "skctl.jsonc"), changedBytes));
     const observation = await api.observeConfigSource(core, { id: "remote" });
     expect(
       (
@@ -210,6 +230,7 @@ test("MGMT-029 Config Source Adopt rejects a declaration changed after preview w
         })
       ).value.allowed,
     ).toBe(true);
+    change = true;
     await expect(
       api.adoptConfigSource(core, {
         id: "remote",
@@ -221,7 +242,7 @@ test("MGMT-029 Config Source Adopt rejects a declaration changed after preview w
     expect(await Bun.file(join(state, "state.json")).exists()).toBe(false);
     expect(await Bun.file(join(state, "configs")).exists()).toBe(false);
     expect(await Bun.file(join(root, "skctl.jsonc")).text()).toBe(changedBytes);
-    setManagementPublicationHookForTest();
+    change = false;
     await writeFile(
       join(root, "skctl.jsonc"),
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
@@ -234,7 +255,7 @@ test("MGMT-029 Config Source Adopt rejects a declaration changed after preview w
       observation.value.exactRevision!,
     );
   } finally {
-    setManagementPublicationHookForTest();
+    acquisition.mockRestore();
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
@@ -243,6 +264,14 @@ test("Config adoption cancellation before publication preserves state and cache"
   const root = await mkdtemp(join(tmpdir(), "skctl-config-adopt-cancel-"));
   const state = join(root, "state");
   const remote = join(root, "remote");
+  const controller = new AbortController(),
+    read = service.readSourceConfig;
+  let cancel = false;
+  const acquisition = spyOn(service, "readSourceConfig").mockImplementation(async (...args) => {
+    const result = await read(...args);
+    if (cancel) controller.abort();
+    return result;
+  });
   try {
     await mkdir(remote, { recursive: true });
     await git(remote, "init", "-b", "main");
@@ -259,8 +288,7 @@ test("Config adoption cancellation before publication preserves state and cache"
     process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root, sourceTransport: () => remote };
     const observation = await api.observeConfigSource(core, { id: "remote" });
-    const controller = new AbortController();
-    setManagementPublicationHookForTest(() => controller.abort());
+    cancel = true;
     await expect(
       api.adoptConfigSource(
         core,
@@ -271,7 +299,7 @@ test("Config adoption cancellation before publication preserves state and cache"
     expect(await Bun.file(join(state, "state.json")).exists()).toBe(false);
     expect(await Bun.file(join(state, "configs")).exists()).toBe(false);
   } finally {
-    setManagementPublicationHookForTest();
+    acquisition.mockRestore();
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
@@ -394,9 +422,9 @@ test("MGMT-024 and MGMT-025 reject Config Source lifecycle changes that orphan a
     await writeFile(join(remote, "config.jsonc"), "{}\n");
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "remove owner");
-    const changed = await api.observeConfigSource(core, { id: "remote" });
+    const revision = await git(remote, "rev-parse", "HEAD");
     await expect(
-      api.adoptConfigSource(core, { id: "remote", exactRevision: changed.value.exactRevision! }),
+      api.adoptConfigSource(core, { id: "remote", exactRevision: revision }),
     ).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
@@ -589,6 +617,13 @@ test("MGMT-029 declaration removal rejects stale host bytes and leaves execution
   const root = await mkdtemp(join(tmpdir(), "skctl-config-remove-stale-"));
   const state = join(root, "state");
   const module = join(root, "module");
+  const read = service.readSourceConfig;
+  let change = true;
+  const acquisition = spyOn(service, "readSourceConfig").mockImplementation(async (...args) => {
+    const result = await read(...args);
+    if (change) await writeFile(join(root, "skctl.jsonc"), "{}\n");
+    return result;
+  });
   try {
     await mkdir(module);
     await writeFile(join(module, "config.jsonc"), "{}\n");
@@ -597,19 +632,20 @@ test("MGMT-029 declaration removal rejects stale host bytes and leaves execution
     await writeFile(join(root, "skctl.jsonc"), host);
     process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root };
+    change = false;
     await api.previewConfigRemoval(core, { id: "module" });
-    setManagementPublicationHookForTest(() => writeFile(join(root, "skctl.jsonc"), "{}\n"));
+    change = true;
     await expect(api.removeConfig(core, { id: "module" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
     expect(await Bun.file(join(root, "skctl.jsonc")).text()).toBe("{}\n");
     expect(await Bun.file(join(state, "state.json")).exists()).toBe(false);
-    setManagementPublicationHookForTest();
+    change = false;
     await writeFile(join(root, "skctl.jsonc"), host);
     await api.removeConfig(core, { id: "module" });
     expect(await Bun.file(join(root, "skctl.jsonc")).text()).not.toContain('"module"');
   } finally {
-    setManagementPublicationHookForTest();
+    acquisition.mockRestore();
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
@@ -795,6 +831,11 @@ test("MGMT-023 re-adoption compares current immutable contributions with the pro
     );
     await git(remote, "add", ".");
     await git(remote, "commit", "-m", "second");
+    const key = new Bun.CryptoHasher("sha256").update("https://example.test/config").digest("hex");
+    const indexPath = join(cacheRoot, "origins", key, "cache.json");
+    const index = JSON.parse(await readFile(indexPath, "utf8"));
+    index.refs.main.observedAt -= 31_000;
+    await writeFile(indexPath, JSON.stringify(index));
     const second = await api.observeConfigSource(core, { id: "remote" });
     const preview = await api.previewConfigAdoption(core, {
       id: "remote",

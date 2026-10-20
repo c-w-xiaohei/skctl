@@ -1,12 +1,17 @@
 import { expect, test } from "bun:test";
-import { SelectRenderable, TextBufferRenderable } from "@opentui/core";
+import { SelectRenderable, TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
 import { selectScrollOffset } from "../src/select-scroll";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { focusLive, openAllInstalledSkills, parsedEnter } from "./reader-test-controls";
+import {
+  focusLive,
+  openAllInstalledSkills,
+  parsedEnter,
+  waitForReaderBody,
+} from "./reader-test-controls";
 function projectionWithSkills(count: number): WorkspaceView {
   const projection = readerProjection();
   const template = projection.installedSkills[0]!;
@@ -23,19 +28,7 @@ function projectionWithSkills(count: number): WorkspaceView {
     }),
   };
 }
-function textBuffers(node: { getChildren(): readonly unknown[] }): TextBufferRenderable[] {
-  return node.getChildren().flatMap((child) => {
-    if (child instanceof TextBufferRenderable) return [child];
-    if (child && typeof child === "object" && "getChildren" in child)
-      return textBuffers(
-        child as {
-          getChildren(): readonly unknown[];
-        },
-      );
-    return [];
-  });
-}
-test("All Installed Skills inspector follows the browser's native arrow selection", async () => {
+test("All Installed Skills Reader follows native arrow selection without an Inspector", async () => {
   const loads: {
     source: string;
     path: string;
@@ -65,8 +58,7 @@ test("All Installed Skills inspector follows the browser's native arrow selectio
   );
   try {
     await openAllInstalledSkills(setup);
-    await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skill-inspector-address"));
+    await waitForReaderBody(setup, "skill-000");
     await focusLive(setup, "installed-skill-browser");
     setup.mockInput.pressArrow("down");
     await setup.waitFor(() => {
@@ -76,20 +68,18 @@ test("All Installed Skills inspector follows the browser's native arrow selectio
         current.getSelectedOption()?.value === '["team-main","skill-001"]'
       );
     });
-    const address = setup.renderer.root.findDescendantById("skill-inspector-address");
-    expect(address).toBeInstanceOf(TextBufferRenderable);
-    await setup.waitFor(() =>
-      (address as TextBufferRenderable).plainText.includes("team-main/skill-001"),
-    );
-    const inspector = setup.renderer.root.findDescendantById("skill-inspector");
-    expect(inspector).toBeDefined();
-    await setup.waitFor(() =>
-      textBuffers(inspector!).some((text) => text.plainText === "skill-001"),
-    );
-    await focusLive(setup, "skill-inspector-open-reader");
+    await waitForReaderBody(setup, "skill-001");
+    const identity = setup.renderer.root.findDescendantById("reader-identity");
+    expect(identity).toBeInstanceOf(TextRenderable);
+    expect((identity as TextRenderable).plainText).toContain("skill-001");
+    expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeUndefined();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
     await parsedEnter(setup);
-    await setup.waitFor(() => loads.length === 1);
-    expect(loads).toEqual([{ source: "team-main", path: "skill-001" }]);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
+    expect(loads).toEqual([
+      { source: "team-main", path: "skill-000" },
+      { source: "team-main", path: "skill-001" },
+    ]);
   } finally {
     setup.renderer.destroy();
   }
@@ -123,16 +113,13 @@ test("clicking a visible installed skill after native scrolling opens that row",
     expect(target).toBeDefined();
     await setup.mockMouse.click(activeBrowser.screenX + 2, activeBrowser.screenY + visibleRow);
     const [, selectedPath] = JSON.parse(target.value) as [string, string];
-    const address = setup.renderer.root.findDescendantById("skill-inspector-address");
-    expect(address).toBeInstanceOf(TextBufferRenderable);
-    await setup.waitFor(() =>
-      (address as TextBufferRenderable).plainText.includes(`team-main/${selectedPath}`),
-    );
-    const inspector = setup.renderer.root.findDescendantById("skill-inspector");
-    expect(inspector).toBeDefined();
-    await setup.waitFor(() =>
-      textBuffers(inspector!).some((text) => text.plainText === selectedPath),
-    );
+    await waitForReaderBody(setup, selectedPath);
+    const identity = setup.renderer.root.findDescendantById("reader-identity");
+    expect(identity).toBeInstanceOf(TextRenderable);
+    expect((identity as TextRenderable).plainText).toContain(selectedPath);
+    expect(activeBrowser.getSelectedOption()?.value).toBe(target.value);
+    expect(setup.renderer.currentFocusedRenderable).toBe(activeBrowser);
+    expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
   }

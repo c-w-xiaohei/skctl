@@ -1,687 +1,409 @@
-import { expect, test as bunTest } from "bun:test";
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openSource } from "../../src/source/snapshot";
-import { openGitHubSource, resolveGitHubApi } from "../../src/source/github";
+import { discoverSource, withPreparedSkills } from "../../src/source/service";
+import { withRepository } from "../../src/source/service/remote/cache";
+import { GitHubTransfer } from "../../src/source/service/remote/github";
+import { GitObjects } from "../../src/source/service/remote/objects";
+import * as network from "../../src/source/service/remote/network";
+import { sourceTree } from "../../src/source/service/skills";
 import { createExecutableFixture } from "../executable-fixture";
+import { repositoryFixture, serveRepository } from "./repository-fixture";
 
-const test = bunTest.serial;
-const commit = "a".repeat(40);
-const runBytes = new TextEncoder().encode("#!/bin/sh");
-const runObject = createHash("sha1")
-  .update(`blob ${runBytes.byteLength}\0`)
-  .update(runBytes)
-  .digest("hex");
-const provenance = {
-  source: "github",
-  origin: "git" as const,
-  declaration: { level: "project" as const },
-  stability: "immutable" as const,
-  revision: commit,
+const origin = "https://github.com/acme/skills";
+const binding = {
+  id: "github",
+  kind: "github" as const,
+  origin,
+  root: "",
+  ref: "main",
+  selectors: [],
+  provenance: { level: "project" as const },
 };
-
-async function git(cwd: string, ...args: string[]) {
-  const child = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
-  const output = await new Response(child.stdout).text();
-  if (await child.exited) throw new Error(await new Response(child.stderr).text());
-  return output.trim();
+let root: string, saved: Record<string, string | undefined>;
+let roots: string[];
+beforeEach(async () => {
+  saved = Object.fromEntries(
+    ["PATH", "GITHUB_TOKEN", "GH_TOKEN", "SKCTL_SOURCE_CACHE_DIR"].map((key) => [
+      key,
+      process.env[key],
+    ]),
+  );
+  root = await mkdtemp(join(tmpdir(), "skctl-github-cache-"));
+  roots = [root];
+  process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
+});
+afterEach(async () => {
+  mock.restore();
+  for (const [key, value] of Object.entries(saved)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  for (const path of roots) await rm(path, { recursive: true, force: true });
+});
+async function fixture(files?: Readonly<Record<string, string>>) {
+  const value = await repositoryFixture(files);
+  roots.push(value.root);
+  return value;
 }
 
-async function bareFixture() {
-  const root = await mkdtemp(join(tmpdir(), "skctl-github-"));
-  const work = join(root, "work");
-  const bare = join(root, "remote.git");
-  await mkdir(work);
-  await git(work, "init");
-  await git(work, "config", "user.email", "test@example.test");
-  await git(work, "config", "user.name", "Test");
-  await writeFile(join(work, "SKILL.md"), "---\nname: fallback\ndescription: Fallback\n---\n");
-  await git(work, "add", ".");
-  await git(work, "commit", "-m", "initial");
-  const pinned = await git(work, "rev-parse", "HEAD");
-  await git(root, "init", "--bare", bare);
-  await git(root, `--git-dir=${bare}`, "config", "uploadpack.allowFilter", "true");
-  await git(root, `--git-dir=${bare}`, "config", "uploadpack.allowReachableSHA1InWant", "true");
-  await git(work, "remote", "add", "origin", bare);
-  await git(work, "push", "origin", "HEAD:main");
-  return { bare, pinned };
-}
-
-test("GitHub reads pinned tree metadata and requested blob bytes through its API", async () => {
-  const requests: string[] = [];
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      requests.push(path);
-      if (path === `/repos/acme/skills/commits/${commit}`)
-        return Response.json({ sha: commit, commit: { tree: { sha: "b".repeat(40) } } });
-      if (path === `/repos/acme/skills/git/trees/${"b".repeat(40)}`)
-        return Response.json({
-          sha: "b".repeat(40),
-          truncated: false,
-          tree: [{ path: "nested", mode: "040000", type: "tree", sha: "c".repeat(40) }],
-        });
-      if (path === `/repos/acme/skills/git/trees/${"c".repeat(40)}`)
-        return Response.json({
-          sha: "c".repeat(40),
-          truncated: false,
-          tree: [
-            {
-              path: "SKILL.md",
-              mode: "100644",
-              type: "blob",
-              sha: "d".repeat(40),
-              size: 35,
-            },
-            { path: "run", mode: "100755", type: "blob", sha: runObject, size: 9 },
-            { path: "link", mode: "120000", type: "blob", sha: "f".repeat(40), size: 6 },
-            { path: "module", mode: "160000", type: "commit", sha: "1".repeat(40) },
-            {
-              path: "pointer",
-              mode: "100644",
-              type: "blob",
-              sha: "2".repeat(40),
-              size: 73,
-            },
-          ],
-        });
-      if (path === `/repos/acme/skills/git/blobs/${runObject}`)
-        return Response.json({
-          sha: runObject,
-          encoding: "base64",
-          content: Buffer.from("#!/bin/sh").toString("base64"),
-        });
-      return Response.json({ message: "not found" }, { status: 404 });
-    },
+test("GitHub verifies recursive tree metadata and requested blob bytes including executable, link and gitlink modes", async () => {
+  const value = await fixture({
+    "nested/SKILL.md": "---\nname: nested\ndescription: Nested\n---\n",
+    "nested/run": "#!/bin/sh",
+    "nested/link": "target",
+    "nested/pointer": "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 1\n",
+  });
+  const run = await value.git("rev-parse", "HEAD:nested/run"),
+    link = await value.git("rev-parse", "HEAD:nested/link");
+  await value.git("update-index", "--cacheinfo", "100755", run, "nested/run");
+  await value.git("update-index", "--cacheinfo", "120000", link, "nested/link");
+  await value.git("update-index", "--add", "--cacheinfo", "160000", value.commit, "nested/module");
+  await value.git("commit", "-m", "modes");
+  const commit = await value.git("rev-parse", "HEAD"),
+    tree = await value.git("rev-parse", "HEAD^{tree}");
+  const nested = await value.git("rev-parse", "HEAD:nested");
+  const entries = [
+    { path: "nested", mode: "040000", type: "tree", sha: nested },
+    ...value.entries
+      .filter((entry) => entry.type === "blob")
+      .map((entry) => ({
+        ...entry,
+        mode:
+          entry.path === "nested/run"
+            ? "100755"
+            : entry.path === "nested/link"
+              ? "120000"
+              : entry.mode,
+      })),
+    { path: "nested/module", mode: "160000", type: "commit", sha: value.commit },
+  ];
+  const api = serveRepository(value, (request) => {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith(`/commits/${commit}`))
+      return Response.json({ sha: commit, commit: { tree: { sha: tree } } });
+    if (path.endsWith(`/git/trees/${tree}`))
+      return Response.json({ sha: tree, truncated: false, tree: entries });
   });
   try {
-    const snapshot = await openSource(
-      "github",
-      {
-        origin: "git",
-        url: "https://github.com/acme/skills.git",
-        commit,
-        path: "",
-        text: "",
+    await withRepository(
+      { ...binding, githubApiBaseUrl: api.server.url.toString() },
+      async (reader) => {
+        const revision = await reader.revision({ commit });
+        const boundary = await sourceTree(revision!, "nested");
+        expect(
+          (await revision!.readTree(boundary!)).map((entry) => [entry.path, entry.mode]),
+        ).toEqual([
+          ["SKILL.md", "100644"],
+          ["link", "120000"],
+          ["module", "160000"],
+          ["pointer", "100644"],
+          ["run", "100755"],
+        ]);
+        expect(Buffer.from((await revision!.blobs([run])).get(run)!).toString()).toBe("#!/bin/sh");
       },
-      provenance,
-      undefined,
-      undefined,
-      server.url.toString(),
     );
-    expect(await Array.fromAsync(snapshot.list("nested"))).toEqual([
-      {
-        kind: "file",
-        path: "nested/SKILL.md",
-        size: 35,
-        executable: false,
-        objectId: "d".repeat(40),
-      },
-      { kind: "symlink", path: "nested/link", size: 6, objectId: "f".repeat(40) },
-      { kind: "gitlink", path: "nested/module", commit: "1".repeat(40) },
-      {
-        kind: "file",
-        path: "nested/pointer",
-        size: 73,
-        executable: false,
-        objectId: "2".repeat(40),
-      },
-      { kind: "file", path: "nested/run", size: 9, executable: true, objectId: runObject },
-    ]);
-    expect(await snapshot.read("nested/run")).toEqual({
-      entry: { kind: "file", path: "nested/run", size: 9, executable: true, objectId: runObject },
-      bytes: runBytes,
-    });
-    expect(requests).toEqual([
+    expect(api.requests).toEqual([
       `/repos/acme/skills/commits/${commit}`,
-      `/repos/acme/skills/git/trees/${"b".repeat(40)}`,
-      `/repos/acme/skills/git/trees/${"c".repeat(40)}`,
-      `/repos/acme/skills/git/blobs/${runObject}`,
+      `/repos/acme/skills/git/trees/${tree}?recursive=1`,
+      `/repos/acme/skills/git/blobs/${run}`,
     ]);
-    await snapshot.close();
   } finally {
-    server.stop(true);
+    await api.server.stop(true);
   }
 });
 
-test("GitHub reads only the declared Source Root tree", async () => {
-  const requests: string[] = [];
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      requests.push(path);
-      if (path === `/repos/acme/skills/commits/${commit}`)
-        return Response.json({ sha: commit, commit: { tree: { sha: "a".repeat(40) } } });
-      if (path === `/repos/acme/skills/git/trees/${"a".repeat(40)}`)
-        return Response.json({
-          sha: "a".repeat(40),
-          truncated: false,
-          tree: [{ path: "skills", mode: "040000", type: "tree", sha: "b".repeat(40) }],
-        });
-      if (path === `/repos/acme/skills/git/trees/${"b".repeat(40)}`)
-        return Response.json({
-          sha: "b".repeat(40),
-          truncated: false,
-          tree: [{ path: "only", mode: "040000", type: "tree", sha: "d".repeat(40) }],
-        });
-      if (path === `/repos/acme/skills/git/trees/${"d".repeat(40)}`)
-        return Response.json({
-          sha: "d".repeat(40),
-          truncated: false,
-          tree: [
-            {
-              path: "SKILL.md",
-              mode: "100644",
-              type: "blob",
-              sha: "c".repeat(40),
-              size: 35,
-            },
-          ],
-        });
-      return Response.json({ message: "not found" }, { status: 404 });
-    },
+test("GitHub discovery respects the Source boundary and never reads sibling marker bytes", async () => {
+  const value = await fixture({
+    "SKILL.md": "outside boundary",
+    "skills/only/SKILL.md": "---\nname: only\ndescription: Only\n---\n",
+    "other/resource.txt": "unselected",
   });
+  const api = serveRepository(value);
   try {
-    const snapshot = await openSource(
-      "github",
-      { origin: "git", url: "https://github.com/acme/skills.git", commit, path: "skills" },
-      provenance,
-      undefined,
-      undefined,
-      server.url.toString(),
-    );
-    expect(await Array.fromAsync(snapshot.list(""))).toEqual([
-      { kind: "directory", path: "only" },
-      {
-        kind: "file",
-        path: "only/SKILL.md",
-        size: 35,
-        executable: false,
-        objectId: "c".repeat(40),
-      },
-    ]);
-    expect(requests).toEqual([
-      `/repos/acme/skills/commits/${commit}`,
-      `/repos/acme/skills/git/trees/${"a".repeat(40)}`,
-      `/repos/acme/skills/git/trees/${"b".repeat(40)}`,
-      `/repos/acme/skills/git/trees/${"d".repeat(40)}`,
-    ]);
-    await snapshot.close();
-  } finally {
-    server.stop(true);
-  }
-});
-
-test("GitHub fallback is eligible only for incomplete or unavailable API operations", async () => {
-  const { classifyGitHubFailure } = await import("../../src/source/github");
-  expect(classifyGitHubFailure(403, "rate limit")).toBe("fallback");
-  expect(classifyGitHubFailure(503, "unavailable")).toBe("fallback");
-  expect(classifyGitHubFailure(401, "bad credentials")).toBe("auth");
-  expect(classifyGitHubFailure(404, "not found")).toBe("not-found");
-  expect(classifyGitHubFailure(200, "integrity mismatch")).toBe("integrity");
-});
-
-test("GitHub.com auth token child is cancelled and drained", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skctl-gh-abort-"));
-  const shimRoot = await createExecutableFixture();
-  const bin = join(shimRoot, "bin");
-  const ready = join(root, "ready");
-  const pid = join(root, "pid");
-  const previousPath = process.env.PATH;
-  const previousGitHubToken = process.env.GITHUB_TOKEN;
-  const previousGhToken = process.env.GH_TOKEN;
-  const controller = new AbortController();
-  let pending: Promise<unknown> | undefined;
-  try {
-    await mkdir(bin);
-    await writeFile(
-      join(bin, "gh"),
-      `#!/bin/sh
-: > "${ready}"
-printf '%s' "$$" > "${pid}"
-trap '' TERM
-i=0; while [ "$i" -lt 8192 ]; do printf 'blocked stderr %s\\n' "$i" >&2; i=$((i + 1)); done
-while :; do sleep 1; done
-`,
-      { mode: 0o755 },
-    );
-    process.env.PATH = `${bin}:${previousPath}`;
-    delete process.env.GITHUB_TOKEN;
-    delete process.env.GH_TOKEN;
-    pending = resolveGitHubApi("https://github.com/acme/skills", controller.signal);
-    for (let attempt = 0; attempt < 50; attempt++) {
-      if (
-        await readFile(ready)
-          .then(() => true)
-          .catch(() => false)
-      )
-        break;
-      await Bun.sleep(10);
-    }
     expect(
-      await readFile(ready)
-        .then(() => true)
-        .catch(() => false),
-    ).toBe(true);
+      (
+        await discoverSource({
+          binding: { ...binding, root: "skills", ref: value.commit },
+          githubApiBaseUrl: api.server.url.toString(),
+        })
+      ).candidates,
+    ).toEqual([{ path: "only", name: "only", description: "Only" }]);
+    const blobs = api.requests.filter((path) => path.includes("/git/blobs/"));
+    expect(blobs).toEqual([
+      `/repos/acme/skills/git/blobs/${await value.git("rev-parse", "HEAD:skills/only/SKILL.md")}`,
+    ]);
+  } finally {
+    await api.server.stop(true);
+  }
+});
+
+test("GitHub.com credential child is cancelled, escalated and drained", async () => {
+  const executable = await createExecutableFixture();
+  roots.push(executable);
+  await mkdir(join(executable, "bin"));
+  const ready = join(root, "ready"),
+    pid = join(root, "pid"),
+    controller = new AbortController();
+  await writeFile(
+    join(executable, "bin", "gh"),
+    `#!/bin/sh\n: > '${ready}'\nprintf '%s' "$$" > '${pid}'\ntrap '' TERM\ni=0; while [ "$i" -lt 8192 ]; do printf 'blocked stderr %s\\n' "$i" >&2; i=$((i + 1)); done\nwhile :; do sleep 1; done\n`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${executable}/bin:${saved.PATH}`;
+  delete process.env.GITHUB_TOKEN;
+  delete process.env.GH_TOKEN;
+  const operation = network.createSourceOperation({ source: "github", signal: controller.signal });
+  const pending = GitHubTransfer.create(
+    origin,
+    new GitObjects(join(root, "objects.git")),
+    operation,
+  );
+  try {
+    for (let attempt = 0; attempt < 100 && !(await Bun.file(ready).exists()); attempt++)
+      await Bun.sleep(10);
+    expect(await Bun.file(ready).exists()).toBe(true);
     controller.abort();
-    await expect(pending).rejects.toMatchObject({ code: "CANCELLED" });
+    await expect(pending).rejects.toHaveProperty("code", "CANCELLED");
     const blockedPid = Number(await readFile(pid, "utf8"));
     expect(() => process.kill(blockedPid, 0)).toThrow();
   } finally {
-    process.env.PATH = previousPath;
-    if (previousGitHubToken === undefined) delete process.env.GITHUB_TOKEN;
-    else process.env.GITHUB_TOKEN = previousGitHubToken;
-    if (previousGhToken === undefined) delete process.env.GH_TOKEN;
-    else process.env.GH_TOKEN = previousGhToken;
     controller.abort();
-    await pending?.catch(() => {});
-    await rm(shimRoot, { recursive: true, force: true });
-    await rm(root, { recursive: true, force: true });
+    await pending.catch(() => {});
   }
 });
 
-test("GitHub.com resolves API tokens without exposing test APIs to gh", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skctl-gh-token-"));
-  const shimRoot = await createExecutableFixture();
-  const bin = join(shimRoot, "bin");
+test("GitHub.com uses GITHUB_TOKEN, GH_TOKEN then gh credentials; custom APIs never receive them", async () => {
+  const executable = await createExecutableFixture();
+  roots.push(executable);
+  await mkdir(join(executable, "bin"));
   const invocation = join(root, "invocation");
-  const previousPath = process.env.PATH;
-  const previousGitHubToken = process.env.GITHUB_TOKEN;
-  const previousGhToken = process.env.GH_TOKEN;
-  try {
-    await mkdir(bin);
-    await writeFile(
-      join(bin, "gh"),
-      `#!/bin/sh
-printf '%s\\n' "$*" >> "${invocation}"
-printf '%s\\n' gh-token
-`,
-      { mode: 0o755 },
+  await writeFile(
+    join(executable, "bin", "gh"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${invocation}'\nprintf '%s\\n' gh-token\n`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${executable}/bin:${saved.PATH}`;
+  const headers: string[] = [];
+  spyOn(network, "sourceFetch").mockReturnValue(async (_input, init) => {
+    headers.push(new Headers(init?.headers).get("authorization") ?? "");
+    return new Response("missing", { status: 404 });
+  });
+  const operation = network.createSourceOperation({ source: "credentials" });
+  for (const [github, gh, expected] of [
+    ["github-token", "gh-env-token", "token github-token"],
+    ["", "gh-env-token", "token gh-env-token"],
+    [undefined, "gh-env-token", "token gh-env-token"],
+    [undefined, "", "token gh-token"],
+  ] as const) {
+    if (github === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = github;
+    process.env.GH_TOKEN = gh;
+    const transfer = await GitHubTransfer.create(
+      origin,
+      new GitObjects(join(root, "objects.git")),
+      operation,
     );
-    process.env.PATH = `${bin}:${previousPath}`;
-    delete process.env.GITHUB_TOKEN;
-    delete process.env.GH_TOKEN;
-    await expect(resolveGitHubApi("https://github.com/acme/skills")).resolves.toEqual({
-      baseUrl: "https://api.github.com",
-      token: "gh-token",
-    });
-    expect(await readFile(invocation, "utf8")).toBe("auth token --hostname github.com\n");
-
-    await rm(invocation, { force: true });
-    process.env.GITHUB_TOKEN = "github-token";
-    process.env.GH_TOKEN = "gh-env-token";
-    await expect(resolveGitHubApi("https://github.com/acme/skills")).resolves.toEqual({
-      baseUrl: "https://api.github.com",
-      token: "github-token",
-    });
-    expect(
-      await readFile(invocation)
-        .then(() => true)
-        .catch(() => false),
-    ).toBe(false);
-
-    process.env.GITHUB_TOKEN = "";
-    process.env.GH_TOKEN = "gh-env-token";
-    await expect(resolveGitHubApi("https://github.com/acme/skills")).resolves.toEqual({
-      baseUrl: "https://api.github.com",
-      token: "gh-env-token",
-    });
-    expect(
-      await readFile(invocation)
-        .then(() => true)
-        .catch(() => false),
-    ).toBe(false);
-
-    delete process.env.GITHUB_TOKEN;
-    process.env.GH_TOKEN = "gh-env-token";
-    await expect(resolveGitHubApi("https://github.com/acme/skills")).resolves.toEqual({
-      baseUrl: "https://api.github.com",
-      token: "gh-env-token",
-    });
-    expect(
-      await readFile(invocation)
-        .then(() => true)
-        .catch(() => false),
-    ).toBe(false);
-
-    process.env.GH_TOKEN = "";
-    await expect(resolveGitHubApi("https://github.com/acme/skills")).resolves.toEqual({
-      baseUrl: "https://api.github.com",
-      token: "gh-token",
-    });
-    expect(await readFile(invocation, "utf8")).toBe("auth token --hostname github.com\n");
-
-    await writeFile(join(bin, "gh"), `#!/bin/sh\n: > "${invocation}"\nexit 1\n`, {
-      mode: 0o755,
-    });
-    await rm(invocation, { force: true });
-    delete process.env.GITHUB_TOKEN;
-    delete process.env.GH_TOKEN;
-    await expect(resolveGitHubApi("https://github.com/acme/skills")).resolves.toEqual({
-      baseUrl: "https://api.github.com",
-      token: undefined,
-    });
-    await rm(invocation, { force: true });
-
-    await expect(
-      resolveGitHubApi("https://github.com/acme/skills", undefined, "http://127.0.0.1:9876"),
-    ).resolves.toEqual({ baseUrl: "http://127.0.0.1:9876", token: undefined });
-    expect(
-      await readFile(invocation)
-        .then(() => true)
-        .catch(() => false),
-    ).toBe(false);
-  } finally {
-    process.env.PATH = previousPath;
-    if (previousGitHubToken === undefined) delete process.env.GITHUB_TOKEN;
-    else process.env.GITHUB_TOKEN = previousGitHubToken;
-    if (previousGhToken === undefined) delete process.env.GH_TOKEN;
-    else process.env.GH_TOKEN = previousGhToken;
-    await rm(shimRoot, { recursive: true, force: true });
-    await rm(root, { recursive: true, force: true });
+    await expect(transfer!.metadata("a".repeat(40))).rejects.toHaveProperty(
+      "code",
+      "SOURCE_NOT_FOUND",
+    );
+    expect(headers.at(-1)).toBe(expected);
   }
+  expect(await readFile(invocation, "utf8")).toBe("auth token --hostname github.com\n");
+  await rm(invocation);
+  process.env.GITHUB_TOKEN = "github-sentinel";
+  process.env.GH_TOKEN = "gh-sentinel";
+  const transfer = await GitHubTransfer.create(
+    origin,
+    new GitObjects(join(root, "objects.git")),
+    operation,
+    "http://127.0.0.1:9876",
+  );
+  await expect(transfer!.metadata("a".repeat(40))).rejects.toHaveProperty(
+    "code",
+    "SOURCE_NOT_FOUND",
+  );
+  expect(headers.at(-1)).toBe("");
+  expect(await Bun.file(invocation).exists()).toBe(false);
+  await writeFile(join(executable, "bin", "gh"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  delete process.env.GITHUB_TOKEN;
+  delete process.env.GH_TOKEN;
+  const anonymous = await GitHubTransfer.create(
+    origin,
+    new GitObjects(join(root, "objects.git")),
+    operation,
+  );
+  await expect(anonymous!.metadata("a".repeat(40))).rejects.toHaveProperty(
+    "code",
+    "SOURCE_NOT_FOUND",
+  );
+  expect(headers.at(-1)).toBe("");
 });
 
-test("GitHub test APIs never receive environment tokens", async () => {
-  const authorization: string[] = [];
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      authorization.push(request.headers.get("authorization") ?? "");
-      const path = new URL(request.url).pathname;
-      if (path === `/repos/acme/skills/commits/${commit}`)
-        return Response.json({ sha: commit, commit: { tree: { sha: "b".repeat(40) } } });
-      if (path === `/repos/acme/skills/git/trees/${"b".repeat(40)}`)
-        return Response.json({ sha: "b".repeat(40), truncated: false, tree: [] });
-      return Response.json({ message: "not found" }, { status: 404 });
-    },
-  });
-  const previousGitHubToken = process.env.GITHUB_TOKEN;
-  const previousGhToken = process.env.GH_TOKEN;
+test("custom GitHub HTTP APIs never receive environment tokens", async () => {
+  const value = await fixture(),
+    api = serveRepository(value);
   process.env.GITHUB_TOKEN = "github-sentinel";
   process.env.GH_TOKEN = "gh-sentinel";
   try {
-    const api = await resolveGitHubApi(
-      "https://github.com/acme/skills",
-      undefined,
-      server.url.toString(),
-    );
-    expect(api).toEqual({ baseUrl: server.url.toString(), token: undefined });
-    const snapshot = await openGitHubSource(
-      "github",
-      "https://github.com/acme/skills.git",
-      commit,
-      "",
-      provenance,
-      undefined,
-      api,
-    );
-    expect(await Array.fromAsync(snapshot.list(""))).toEqual([]);
-    await snapshot.close();
-    expect(authorization).toEqual(["", ""]);
+    await discoverSource({ binding, githubApiBaseUrl: api.server.url.toString() });
+    expect(api.authorization.length).toBeGreaterThan(2);
+    expect(api.authorization.every((value) => value === "")).toBe(true);
   } finally {
-    if (previousGitHubToken === undefined) delete process.env.GITHUB_TOKEN;
-    else process.env.GITHUB_TOKEN = previousGitHubToken;
-    if (previousGhToken === undefined) delete process.env.GH_TOKEN;
-    else process.env.GH_TOKEN = previousGhToken;
-    server.stop(true);
+    await api.server.stop(true);
   }
 });
 
-test("GitHub restarts incomplete or unavailable API operations through Generic Git", async () => {
-  for (const [_name, status, truncated] of [
-    ["truncated tree", 200, true],
-    ["server error", 503, false],
-    ["rate exhaustion", 429, false],
-  ] as const) {
-    const fixture = await bareFixture();
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const path = new URL(request.url).pathname;
-        if (path === `/repos/acme/skills/commits/${fixture.pinned}`)
-          return Response.json({
-            sha: fixture.pinned,
-            commit: { tree: { sha: "b".repeat(40) } },
-          });
-        if (path === `/repos/acme/skills/git/trees/${"b".repeat(40)}`)
-          return status === 200
-            ? Response.json({ sha: "b".repeat(40), truncated, tree: [] })
-            : Response.json({ message: "rate limit" }, { status });
-        return Response.json({ message: "not found" }, { status: 404 });
+test.each([
+  ["truncated", 200],
+  ["server error", 503],
+  ["rate exhaustion", 429],
+  ["rate-limit forbidden", 403],
+])("GitHub falls back for %s without replacing the pinned revision", async (name, status) => {
+  const value = await fixture();
+  const api = serveRepository(value, (request) =>
+    new URL(request.url).pathname.includes("/git/trees/")
+      ? status === 200
+        ? Response.json({ sha: value.tree, truncated: true, tree: [] })
+        : Response.json(
+            { message: name === "rate-limit forbidden" ? "rate limit exceeded" : "unavailable" },
+            { status },
+          )
+      : undefined,
+  );
+  try {
+    await withPreparedSkills(
+      { binding, githubApiBaseUrl: api.server.url.toString(), transport: () => value.bare },
+      [""],
+      value.commit,
+      async ([skill]) => {
+        expect(skill).toMatchObject({ kind: "remote", revision: value.commit });
       },
-    });
-    try {
-      const snapshot = await openSource(
-        "github",
-        {
-          origin: "git",
-          url: "https://github.com/acme/skills.git",
-          commit: fixture.pinned,
-          path: "",
-          text: "",
-        },
-        { ...provenance, revision: fixture.pinned },
-        undefined,
-        () => fixture.bare,
-        server.url.toString(),
-      );
-      expect((await Array.fromAsync(snapshot.list(""))).map((entry) => entry.path)).toEqual([
-        "SKILL.md",
-      ]);
-      await snapshot.close();
-    } finally {
-      server.stop(true);
-    }
+    );
+    // Fallback objects and exact-revision metadata survive; offline reuse needs no API.
+    const count = api.requests.length;
+    await withPreparedSkills(
+      { binding, githubApiBaseUrl: "http://127.0.0.1:1", transport: () => "/missing" },
+      [""],
+      value.commit,
+      async () => {},
+    );
+    expect(api.requests).toHaveLength(count);
+  } finally {
+    await api.server.stop(true);
   }
 });
 
-test("GitHub never falls back on authentication or verified not-found failures", async () => {
-  for (const [status, code] of [
-    [401, "PROVIDER_AUTH_FAILED"],
-    [404, "SOURCE_NOT_FOUND"],
-  ] as const) {
-    const server = Bun.serve({
-      port: 0,
-      fetch: () => Response.json({ message: "secret-token" }, { status }),
-    });
-    try {
-      const snapshot = await openSource(
-        "github",
-        { origin: "git", url: "https://github.com/acme/skills.git", commit, path: "", text: "" },
-        provenance,
-        undefined,
-        () => "https://invalid.test/no.git",
-        server.url.toString(),
-      );
-      await expect(Array.fromAsync(snapshot.list(""))).rejects.toMatchObject({
-        code,
-        message: expect.not.stringContaining("secret-token"),
+test.each([
+  [401, "PROVIDER_AUTH_FAILED"],
+  [403, "PROVIDER_AUTH_FAILED"],
+  [404, "SOURCE_NOT_FOUND"],
+] as const)("GitHub never falls back on HTTP %i", async (status, code) => {
+  const value = await fixture(),
+    api = serveRepository(value, () => Response.json({ message: "secret-token" }, { status }));
+  try {
+    const error = await discoverSource({
+      binding: { ...binding, ref: value.commit },
+      githubApiBaseUrl: api.server.url.toString(),
+      transport: () => "/missing",
+    }).catch((error: unknown) => error);
+    expect(error).toMatchObject({ code });
+    expect(String(error)).not.toContain("secret-token");
+  } finally {
+    await api.server.stop(true);
+  }
+});
+
+test.each([
+  "commit identity",
+  "tree identity",
+  "tree bytes",
+  "blob identity",
+  "blob bytes",
+  "JSON",
+])("GitHub rejects mismatched %s without fallback", async (failure) => {
+  const value = await fixture();
+  const api = serveRepository(value, (request) => {
+    const path = new URL(request.url).pathname;
+    if (failure === "JSON") return new Response("not-json");
+    if (failure === "commit identity" && path.includes("/commits/"))
+      return Response.json({ sha: "b".repeat(40), commit: { tree: { sha: value.tree } } });
+    if (failure === "tree identity" && path.includes("/git/trees/"))
+      return Response.json({ sha: "b".repeat(40), tree: [], truncated: false });
+    if (failure === "tree bytes" && path.includes("/git/trees/"))
+      return Response.json({ sha: value.tree, tree: [], truncated: false });
+    if (failure.startsWith("blob") && path.includes("/git/blobs/"))
+      return Response.json({
+        sha: failure === "blob identity" ? "b".repeat(40) : path.split("/").at(-1),
+        content: Buffer.from("wrong").toString("base64"),
+        encoding: "base64",
+        size: 5,
       });
-    } finally {
-      server.stop(true);
-    }
+  });
+  try {
+    await expect(
+      discoverSource({
+        binding,
+        githubApiBaseUrl: api.server.url.toString(),
+        transport: () => "/missing",
+      }),
+    ).rejects.toHaveProperty("code", "PROVIDER_INTEGRITY_FAILED");
+  } finally {
+    await api.server.stop(true);
   }
 });
 
-test("GitHub rejects a mismatched commit object without a Git fallback", async () => {
-  const server = Bun.serve({
-    port: 0,
-    fetch: () => Response.json({ sha: "b".repeat(40), commit: { tree: { sha: "c".repeat(40) } } }),
-  });
+test("GitHub fallback releases origin locks and preparation directories on business failure", async () => {
+  const value = await fixture(),
+    api = serveRepository(value, () => new Response("unavailable", { status: 503 }));
   try {
-    const snapshot = await openSource(
-      "github",
-      { origin: "git", url: "https://github.com/acme/skills.git", commit, path: "", text: "" },
-      provenance,
-      undefined,
-      () => "https://invalid.test/no.git",
-      server.url.toString(),
-    );
-    await expect(Array.fromAsync(snapshot.list(""))).rejects.toMatchObject({
-      code: "PROVIDER_INTEGRITY_FAILED",
-    });
+    let stage = "";
+    const context = {
+      binding,
+      githubApiBaseUrl: api.server.url.toString(),
+      transport: () => value.bare,
+    };
+    await expect(
+      withPreparedSkills(context, [""], value.commit, async ([skill]) => {
+        stage = skill!.directory;
+        throw new Error("business failure");
+      }),
+    ).rejects.toThrow("business failure");
+    expect(await Bun.file(join(stage, "SKILL.md")).exists()).toBe(false);
+    expect(await readdir(join(root, "cache", "locks"))).toEqual([]);
+    await expect(
+      withPreparedSkills(context, ["missing"], value.commit, async () => {}),
+    ).rejects.toHaveProperty("code", "SKILL_NOT_FOUND");
+    expect(await readdir(join(root, "cache", "locks"))).toEqual([]);
+    await withPreparedSkills(context, [""], value.commit, async () => {});
   } finally {
-    server.stop(true);
-  }
-});
-
-test("GitHub rejects a mismatched tree object without a Git fallback", async () => {
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      if (path === `/repos/acme/skills/commits/${commit}`)
-        return Response.json({ sha: commit, commit: { tree: { sha: "b".repeat(40) } } });
-      return Response.json({ sha: "c".repeat(40), truncated: false, tree: [] });
-    },
-  });
-  try {
-    const snapshot = await openSource(
-      "github",
-      { origin: "git", url: "https://github.com/acme/skills.git", commit, path: "", text: "" },
-      provenance,
-      undefined,
-      () => "https://invalid.test/no.git",
-      server.url.toString(),
-    );
-    await expect(Array.fromAsync(snapshot.list(""))).rejects.toMatchObject({
-      code: "PROVIDER_INTEGRITY_FAILED",
-    });
-  } finally {
-    server.stop(true);
-  }
-});
-
-test("GitHub treats malformed JSON as integrity failure without fallback", async () => {
-  const server = Bun.serve({
-    port: 0,
-    fetch: () => new Response("not-json", { headers: { "content-type": "application/json" } }),
-  });
-  try {
-    const snapshot = await openSource(
-      "github",
-      { origin: "git", url: "https://github.com/acme/skills.git", commit, path: "", text: "" },
-      provenance,
-      undefined,
-      () => "https://invalid.test/no.git",
-      server.url.toString(),
-    );
-    await expect(Array.fromAsync(snapshot.list(""))).rejects.toMatchObject({
-      code: "PROVIDER_INTEGRITY_FAILED",
-    });
-  } finally {
-    server.stop(true);
-  }
-});
-
-test("GitHub fallback closes its temporary Generic Git snapshot after a successful operation", async () => {
-  const fixture = await bareFixture();
-  const before = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("skctl-git-")));
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      if (path === `/repos/acme/skills/commits/${fixture.pinned}`)
-        return Response.json({ sha: fixture.pinned, commit: { tree: { sha: "b".repeat(40) } } });
-      return Response.json({ message: "unavailable" }, { status: 503 });
-    },
-  });
-  try {
-    const snapshot = await openSource(
-      "github",
-      {
-        origin: "git",
-        url: "https://github.com/acme/skills.git",
-        commit: fixture.pinned,
-        path: "",
-        text: "",
-      },
-      { ...provenance, revision: fixture.pinned },
-      undefined,
-      () => fixture.bare,
-      server.url.toString(),
-    );
-    await Array.fromAsync(snapshot.list(""));
-    await snapshot.close();
-    expect(
-      (await readdir(tmpdir())).filter(
-        (name) => name.startsWith("skctl-git-") && !before.has(name),
-      ),
-    ).toEqual([]);
-  } finally {
-    server.stop(true);
+    await api.server.stop(true);
   }
 });
 
 test("GitHub request timeout is authoritative and never falls back", async () => {
-  const fixture = await bareFixture();
-  const server = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
-  try {
-    const snapshot = await openGitHubSource(
-      "github",
-      "https://github.com/acme/skills.git",
-      fixture.pinned,
-      "",
-      { ...provenance, revision: fixture.pinned },
-      undefined,
-      { baseUrl: server.url.toString(), timeout: 25 },
-      fixture.bare,
-    );
-    await expect(Array.fromAsync(snapshot.list(""))).rejects.toMatchObject({
-      code: "PROVIDER_TIMEOUT",
-    });
-    await snapshot.close();
-  } finally {
-    server.stop(true);
-  }
-});
-
-test("GitHub fallback closes its temporary Generic Git snapshot after a failed operation", async () => {
-  const fixture = await bareFixture();
-  const before = new Set((await readdir(tmpdir())).filter((name) => name.startsWith("skctl-git-")));
   const server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      if (path === `/repos/acme/skills/commits/${fixture.pinned}`)
-        return Response.json({ sha: fixture.pinned, commit: { tree: { sha: "b".repeat(40) } } });
-      if (path === `/repos/acme/skills/git/trees/${"b".repeat(40)}`)
-        return Response.json({
-          sha: "b".repeat(40),
-          truncated: false,
-          tree: [{ path: "missing", mode: "100644", type: "blob", sha: "d".repeat(40), size: 1 }],
-        });
-      return Response.json({ message: "unavailable" }, { status: 503 });
-    },
+    fetch: () => new Promise<Response>(() => {}),
   });
   try {
-    const snapshot = await openSource(
-      "github",
-      {
-        origin: "git",
-        url: "https://github.com/acme/skills.git",
-        commit: fixture.pinned,
-        path: "",
-        text: "",
-      },
-      { ...provenance, revision: fixture.pinned },
-      undefined,
-      () => fixture.bare,
-      server.url.toString(),
-    );
-    await expect(snapshot.read("missing")).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
-    await snapshot.close();
-    expect(
-      (await readdir(tmpdir())).filter(
-        (name) => name.startsWith("skctl-git-") && !before.has(name),
+    await expect(
+      withRepository(
+        {
+          origin,
+          kind: "github",
+          ref: "main",
+          githubApiBaseUrl: server.url.toString(),
+          budgetMs: 250,
+          transport: () => "/missing",
+        },
+        async (reader) => reader.revision({ current: true }),
       ),
-    ).toEqual([]);
+    ).rejects.toHaveProperty("code", "PROVIDER_TIMEOUT");
   } finally {
-    server.stop(true);
+    await server.stop(true);
   }
 });

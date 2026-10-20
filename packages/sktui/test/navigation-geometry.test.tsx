@@ -65,8 +65,8 @@ test.each([
   async (width, height) => {
     await mkdir("/tmp/opencode", { recursive: true });
     const cache = await mkdtemp("/tmp/opencode/navigation-geometry-");
-    const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
-    process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+    const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
     const projection = readerProjection();
     let release!: () => void;
     const loading = new Promise<void>((resolve) => {
@@ -218,8 +218,8 @@ test.each([
     } finally {
       release();
       setup.renderer.destroy();
-      if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+      if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
       await rm(cache, { recursive: true, force: true });
     }
   },
@@ -229,8 +229,8 @@ test.each([144, 80])(
   async (width) => {
     await mkdir("/tmp/opencode", { recursive: true });
     const cache = await mkdtemp("/tmp/opencode/navigation-reader-");
-    const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
-    process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+    const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
     const setup = await testRender(
       () => (
         <App
@@ -279,8 +279,8 @@ test.each([144, 80])(
       expect(geometry(setup)).toEqual(shell);
     } finally {
       setup.renderer.destroy();
-      if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+      if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
       await rm(cache, { recursive: true, force: true });
     }
   },

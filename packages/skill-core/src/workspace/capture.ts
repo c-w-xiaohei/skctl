@@ -1,5 +1,5 @@
 import { lstat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { ConfigDeclarationOwner, DeclarationProvenance } from "../config/types";
 import type { Diagnostic, OperationResult } from "../shared";
 import type { ManagedAgentView } from "../catalog/types";
@@ -17,8 +17,10 @@ import { canonicalLocalOrigin, canonicalRemoteOrigin } from "../source/identity"
 import { parseQualifiedName } from "../collection/names";
 import { StateCoordinator } from "../storage/state";
 import type { InstalledMaterialization, PrivateState } from "../storage/schema";
-import type { SourceNetwork } from "../source/network";
-import { configModuleValidator, document, invalidConfig, pointerSegment } from "../config/document";
+import type { SourceNetwork } from "../source/types";
+import { document, invalidConfig, pointerSegment } from "../config/document";
+import { reusableConfigSchema } from "../config/schema";
+import * as v from "valibot";
 import { type ConfigDocument, type ReusableConfigDocument } from "../config/schema";
 import {
   configInputs,
@@ -62,6 +64,57 @@ export async function readWorkspace(
 ): Promise<OperationResult<WorkspaceView>> {
   const coordinator = new StateCoordinator();
   return coordinator.withLock(() => readWorkspaceUnlocked(options, coordinator));
+}
+/** A binding and its policy come from the same coherent declaration/state capture. */
+export async function captureSource(
+  options: ReadWorkspaceOptions,
+  id: string,
+  coordinator = new StateCoordinator(),
+) {
+  return coordinator.withLock(async () => {
+    if (options.signal?.aborted) throw new SkctlError("CANCELLED", "Source capture cancelled");
+    const result = await readWorkspaceUnlocked(options, coordinator);
+    const captured = capturedWorkspace(result.value);
+    if (result.value.effective.status !== "complete" || !captured?.network)
+      throw new SkctlError("CONFIG_INVALID", "Configuration is incomplete", result.diagnostics);
+    const binding = captured.sources.get(id);
+    if (!binding) {
+      if (captured.state.installed.some((item) => item.source === id))
+        throw new SkctlError("CONFIG_CONFLICT", "Installed Skill owner is missing");
+      throw new SkctlError("SOURCE_NOT_FOUND", `Source not found: ${id}`);
+    }
+    return {
+      binding,
+      network: captured.network,
+      state: captured.state,
+      workspace: result.value,
+      diagnostics: result.diagnostics,
+    };
+  });
+}
+export async function captureConfigSource(
+  options: ReadWorkspaceOptions,
+  id: string,
+  coordinator = new StateCoordinator(),
+) {
+  return coordinator.withLock(async () => {
+    if (options.signal?.aborted) throw new SkctlError("CANCELLED", "Config capture cancelled");
+    const result = await readWorkspaceUnlocked(options, coordinator);
+    const captured = capturedWorkspace(result.value);
+    if (!captured?.network)
+      throw new SkctlError("CONFIG_INVALID", "User network policy is unavailable");
+    const source = result.value.configs
+      .flatMap((item) => item.direct.configSources)
+      .find((item) => item.id === id);
+    if (!source) throw new SkctlError("SOURCE_NOT_FOUND", `Config Source not found: ${id}`);
+    return {
+      source,
+      state: captured.state,
+      network: captured.network,
+      workspace: result.value,
+      diagnostics: result.diagnostics,
+    };
+  });
 }
 export async function readWorkspaceUnlocked(
   options: ReadWorkspaceOptions & { readonly globalOnly?: boolean },
@@ -156,7 +209,7 @@ export async function readWorkspaceUnlocked(
     for (const [id, binding] of Object.entries(value.configSources ?? {})) {
       try {
         const override = remoteConfigOverride?.id === id ? remoteConfigOverride : undefined;
-        if (override && !configModuleValidator(override.value))
+        if (override && !v.is(reusableConfigSchema, override.value))
           throw invalidConfig(input.file, "Invalid reusable Config override");
         const reusable =
           binding.kind === "local"
@@ -365,7 +418,7 @@ export async function readWorkspaceUnlocked(
                 : {
                     kind: binding.kind,
                     origin: canonicalRemoteOrigin(
-                      binding.kind === "github"
+                      binding.kind === "github" && binding.owner && binding.repository
                         ? `https://github.com/${binding.owner}/${binding.repository}`
                         : binding.origin,
                     ),
@@ -402,6 +455,38 @@ export async function readWorkspaceUnlocked(
           .sort((left, right) => left.localeCompare(right)),
       },
     });
+  }
+  // A renamed default directory is not a new empty library. Report paths only;
+  // never read, migrate or merge the previous installation during capture.
+  if (!incomplete && !sources.size && !state.installed.length) {
+    const globalFile = userConfigFile(options);
+    const previous = [
+      ...(!options.userConfigPath && basename(dirname(globalFile)) === "skctl"
+        ? [join(dirname(dirname(globalFile)), "skill-cli", "config.jsonc")]
+        : []),
+      ...(!process.env.SKCTL_STATE_DIR && basename(coordinator.root) === "skctl"
+        ? [join(dirname(coordinator.root), "skill-cli", "state.json")]
+        : []),
+      ...(project.resolution !== "global-only"
+        ? [join(project.root, "skill-cli.jsonc"), join(project.root, "skill-cli.local.jsonc")]
+        : []),
+    ];
+    const found: string[] = [];
+    for (const file of previous) {
+      const stat = await lstat(file).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT" || error.code === "ENOTDIR") return undefined;
+        throw error;
+      });
+      if (stat?.isFile() && !stat.isSymbolicLink()) found.push(file);
+    }
+    if (found.length)
+      diagnostics.push({
+        code: "PREVIOUS_DATA_FOUND",
+        severity: "warning",
+        message: `Previous installation data exists at:\n${found.join("\n")}\nIt has not been imported into the current configuration or state directory.`,
+        suggestion:
+          "Review the original files and restore them without overwriting existing data. Do not reinstall or initialize over them.",
+      });
   }
   const resolved = incomplete
     ? undefined

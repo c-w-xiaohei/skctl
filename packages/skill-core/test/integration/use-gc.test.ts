@@ -1,9 +1,10 @@
 import * as api from "../../src/index";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateCoordinator } from "../../src/storage/state";
+import { digestDirectory } from "../../src/content/directory";
 import { bindingDigest, canonicalRemoteOrigin } from "../../src/source/identity";
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skctl-use-"));
@@ -11,7 +12,7 @@ async function fixture() {
   const state = new StateCoordinator(join(root, "state"));
   await mkdir(source);
   await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\nbody\n");
-  const digest = await state.snapshotDigest(source);
+  const digest = await digestDirectory(source);
   await state.publishSnapshot(digest, source);
   return { root, state, digest };
 }
@@ -41,7 +42,7 @@ test("USE-001 public Snapshot publication requires the canonical digest and reje
     await writeFile(join(root, "skctl.jsonc"), "{}\n");
     process.env.SKCTL_STATE_DIR = state;
     const coordinator = new StateCoordinator(state);
-    const digest = await coordinator.snapshotDigest(source);
+    const digest = await digestDirectory(source);
     await expect(coordinator.publishSnapshot("0".repeat(64), source)).rejects.toMatchObject({
       code: "PROVIDER_INTEGRITY_FAILED",
     });
@@ -57,9 +58,7 @@ test("USE-001 public Snapshot publication requires the canonical digest and reje
     expect(await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).text()).toBe(
       original,
     );
-    expect(
-      await new StateCoordinator(state).snapshotDigest(join(state, "snapshots", digest, "root")),
-    ).toBe(digest);
+    expect(await digestDirectory(join(state, "snapshots", digest, "root"))).toBe(digest);
   } finally {
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
@@ -69,7 +68,6 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
   const root = await mkdtemp(join(tmpdir(), "skctl-use-process-"));
   const state = join(root, "state");
   const source = join(root, "source");
-  const release = join(root, "release");
   const global = join(root, "global.jsonc");
   try {
     await mkdir(source);
@@ -90,69 +88,75 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
       }),
     );
     process.env.SKCTL_STATE_DIR = state;
-    const digest = await new StateCoordinator(state).snapshotDigest(source);
+    const digest = await digestDirectory(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
-    await new StateCoordinator(state).installRemoteForTest({
-      source: "remote",
-      path: "skill",
-      name: "remote",
-      description: "Remote",
-      kind: "remote",
-      digest,
-      bindingDigest: bindingDigest({
-        kind: "git",
-        origin: canonicalRemoteOrigin("https://example.test/repo"),
-        root: "",
-        ref: "main",
-      }),
-      adoptedRevision: "a".repeat(40),
-    });
-    delete process.env.SKCTL_STATE_DIR;
-    const entry = join(import.meta.dir, "../../src/index.ts");
-    const readScript = `import { readResource } from ${JSON.stringify(entry)}; await readResource({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(global)}}, {selector:"c:s",path:"SKILL.md"});`;
-    const gcScript = `import { gc } from ${JSON.stringify(entry)}; await gc();`;
-    const reader = Bun.spawn({
-      cmd: [process.execPath, "--eval", readScript],
-      env: {
-        ...process.env,
-        SKCTL_STATE_DIR: state,
-        SKCTL_TEST_BARRIER_AT: "use-created",
-        SKCTL_TEST_BARRIER_RELEASE: release,
+    await new StateCoordinator(state).write(
+      {
+        configs: {},
+        installed: [
+          {
+            source: "remote",
+            path: "skill",
+            name: "remote",
+            description: "Remote",
+            kind: "remote",
+            digest,
+            bindingDigest: bindingDigest({
+              kind: "git",
+              origin: canonicalRemoteOrigin("https://example.test/repo"),
+              root: "",
+              ref: "main",
+            }),
+            adoptedRevision: "a".repeat(40),
+            identityEvidence: {
+              status: "known",
+              canonicalOrigin: "https://example.test/repo",
+              originRelativeSkillRoot: "skill",
+            },
+          },
+        ],
       },
-      stdout: "pipe",
-      stderr: "pipe",
+      0,
+    );
+    const entry = join(import.meta.dir, "../../src/index.ts");
+    const gcScript = `import { gc } from ${JSON.stringify(entry)}; await gc();`;
+    const uses = StateCoordinator.prototype.withRemoteUse;
+    const read = spyOn(StateCoordinator.prototype, "withRemoteUse").mockImplementation(function <T>(
+      this: StateCoordinator,
+      digest: string,
+      operation: () => Promise<T>,
+    ): Promise<T> {
+      return uses.bind(this)<T>(digest, async () => {
+        expect(await readdir(join(state, "uses"))).toHaveLength(1);
+        // Remove the state reference during the read: only its live use protects it.
+        const coordinator = new StateCoordinator(state),
+          current = await coordinator.read();
+        await coordinator.write({ configs: {}, installed: [] }, current.generation);
+        const gc = Bun.spawn({
+          cmd: [process.execPath, "-e", gcScript],
+          env: { ...process.env, SKCTL_STATE_DIR: state },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(await gc.exited).toBe(0);
+        expect(await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).exists()).toBe(
+          true,
+        );
+        return operation();
+      });
     });
-    for (let i = 0; i < 500 && !(await Bun.file(join(state, "mutation.lock")).exists()); i += 1)
-      await Bun.sleep(10);
-    expect(await Bun.file(join(state, "mutation.lock")).exists()).toBe(true);
-    const gc = Bun.spawn({
-      cmd: [process.execPath, "--eval", gcScript],
-      env: { ...process.env, SKCTL_STATE_DIR: state },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(
-      await Promise.race([gc.exited.then(() => "exited"), Bun.sleep(100).then(() => "waiting")]),
-    ).toBe("waiting");
-    await writeFile(release, "go");
-    expect(
-      await Promise.race([
-        reader.exited,
-        Bun.sleep(5000).then(() => {
-          reader.kill();
-          return -1;
-        }),
-      ]),
-    ).toBe(0);
-    expect(
-      await Promise.race([
-        gc.exited,
-        Bun.sleep(5000).then(() => {
-          gc.kill();
-          return -1;
-        }),
-      ]),
-    ).toBe(0);
+    try {
+      expect(
+        (
+          await api.readResource(
+            { cwd: root, userConfigPath: global },
+            { selector: "c:s", path: "SKILL.md" },
+          )
+        ).text,
+      ).toContain("body");
+    } finally {
+      read.mockRestore();
+    }
     expect(await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).exists()).toBe(
       true,
     );
@@ -163,13 +167,6 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
         level: "project",
         collection: "c",
         name: "s",
-      },
-    );
-    await api.uninstallSkills(
-      { cwd: root, userConfigPath: global },
-      {
-        source: "remote",
-        paths: ["skill"],
       },
     );
     await api.gc();
@@ -208,14 +205,16 @@ test("GC-003 public collection crash retains a recorded tombstone until a later 
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     await writeFile(join(root, "skctl.jsonc"), "{}\n");
     process.env.SKCTL_STATE_DIR = state;
-    const digest = await new StateCoordinator(state).snapshotDigest(source);
+    const digest = await digestDirectory(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
     delete process.env.SKCTL_STATE_DIR;
     const entry = join(import.meta.dir, "../../src/index.ts");
-    const script = `import { gc } from ${JSON.stringify(entry)}; await gc();`;
+    const script = `import {spyOn} from 'bun:test';import * as fs from 'node:fs/promises';
+      import {gc} from ${JSON.stringify(entry)};const rename=fs.rename;
+      spyOn(fs,'rename').mockImplementation(async(a,b)=>{await rename(a,b);if(String(b).endsWith('/content'))process.exit(97)});await gc();`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
-      env: { ...process.env, SKCTL_STATE_DIR: state, SKCTL_TEST_CRASH_AT: "trash-moved" },
+      env: { ...process.env, SKCTL_STATE_DIR: state },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -243,7 +242,7 @@ test("GC-001..003 retains malformed uses conservatively and collects only after 
   try {
     await mkdir(deadSource);
     await writeFile(join(deadSource, "SKILL.md"), "---\nname: dead\ndescription: Dead\n---\n");
-    const dead = await value.state.snapshotDigest(deadSource);
+    const dead = await digestDirectory(deadSource);
     await value.state.publishSnapshot(dead, deadSource);
     expect(
       await Bun.file(join(value.state.root, "snapshots", dead, "root", "SKILL.md")).exists(),

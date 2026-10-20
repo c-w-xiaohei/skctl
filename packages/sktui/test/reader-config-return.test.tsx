@@ -95,8 +95,8 @@ async function chooseProject(setup: Setup) {
   // This fixture starts with unmanaged Agent access; its recovery control proves
   // the real projection has reached the work area before we move into chrome.
   await setup.waitFor(() => {
-    const pane = setup.renderer.root.findDescendantById("agent-access-pane");
-    const recovery = pane?.findDescendantById("current-exposure-enable-managed-opencode");
+    const pane = setup.renderer.root.findDescendantById("skills-setup-pane");
+    const recovery = pane?.findDescendantById("skills-setup-primary");
     const scope = setup.renderer.root.findDescendantById("shell-scope-select");
     return !!pane && !!recovery && !!scope && scope.width > 0 && scope.height > 0;
   });

@@ -8,7 +8,11 @@ import { keyboardGuidance } from "./keyboard-guidance";
 import type { CommandRecord } from "./types";
 
 /** Optional technical history. It never replaces task-facing update feedback. */
-export function DiagnosticLog(props: { readonly text: string; readonly onClose: () => void }) {
+export function DiagnosticLog(props: {
+  readonly title?: string;
+  readonly text: string;
+  readonly onClose: () => void;
+}) {
   const terminal = useTerminalDimensions();
   const renderer = useRenderer();
   const tokens = useTheme();
@@ -56,7 +60,7 @@ export function DiagnosticLog(props: { readonly text: string; readonly onClose: 
         minHeight={0}
       >
         <text height={1} flexShrink={0} fg={tokens().colors.foreground}>
-          <strong>Diagnostic logs</strong>
+          <strong>{props.title ?? "Diagnostic logs"}</strong>
         </text>
         <scrollbox
           id="diagnostic-log-content"

@@ -1,5 +1,6 @@
-import type { ConfigDeclarationOwner } from "./config/types";
-import type { SkillAddress } from "./source/schema";
+import * as v from "valibot";
+import { configDeclarationOwnerSchema } from "./config/schema";
+import { skillAddressSchema } from "./source/schema";
 
 export interface CoreOptions {
   readonly cwd: string;
@@ -18,24 +19,32 @@ export interface OperationResult<T> {
   readonly diagnostics: readonly Diagnostic[];
 }
 
-export interface Diagnostic {
-  readonly code: string;
-  readonly severity: "info" | "warning";
-  readonly message: string;
-  readonly location?: { readonly file: string; readonly pointer?: string };
-  readonly related?: readonly {
-    readonly message: string;
-    readonly file?: string;
-    readonly pointer?: string;
-  }[];
-  readonly suggestion?: string;
-  readonly subject?:
-    | { readonly kind: "config"; readonly owner: ConfigDeclarationOwner }
-    | {
-        readonly kind: "installed-skill";
-        readonly address: SkillAddress;
-      };
-}
+export const diagnosticSchema = v.object({
+  code: v.string(),
+  severity: v.picklist(["info", "warning"]),
+  message: v.string(),
+  location: v.optional(v.object({ file: v.string(), pointer: v.optional(v.string()) })),
+  related: v.optional(
+    v.pipe(
+      v.array(
+        v.object({
+          message: v.string(),
+          file: v.optional(v.string()),
+          pointer: v.optional(v.string()),
+        }),
+      ),
+      v.readonly(),
+    ),
+  ),
+  suggestion: v.optional(v.string()),
+  subject: v.optional(
+    v.variant("kind", [
+      v.object({ kind: v.literal("config"), owner: configDeclarationOwnerSchema }),
+      v.object({ kind: v.literal("installed-skill"), address: skillAddressSchema }),
+    ]),
+  ),
+});
+export type Diagnostic = Readonly<v.InferOutput<typeof diagnosticSchema>>;
 
 export type SkctlErrorCode =
   | "INVALID_ARGUMENT"

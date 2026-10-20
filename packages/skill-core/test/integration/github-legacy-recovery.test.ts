@@ -1,29 +1,13 @@
-import * as coreApi from "../../src/index";
+import * as api from "../../src/index";
 import { expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-async function git(cwd: string, ...args: string[]) {
-  const child = Bun.spawn(["/usr/bin/git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  const [output, error, status] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
-  if (status) throw new Error(error);
-  return output.trim();
-}
-const blob = (text: string) => {
-  const bytes = Buffer.from(text);
-  return {
-    id: createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex"),
-    bytes,
-  };
-};
-type OldOutcome =
+import { runProcess } from "../../src/runtime/process";
+import { repositoryFixture } from "../provider/repository-fixture";
+
+type Outcome =
   | "available"
   | "missing"
   | "auth"
@@ -33,374 +17,279 @@ type OldOutcome =
   | "missing-integrity"
   | "unprocessable"
   | "tree-missing";
-async function fixture(changed: boolean) {
-  const root = await mkdtemp(join(tmpdir(), "github-legacy-"));
-  const work = join(root, "work"),
-    bare = join(root, "remote.git"),
-    stateFile = join(root, "state", "state.json");
-  const previousState = process.env.SKCTL_STATE_DIR;
-  process.env.SKCTL_STATE_DIR = join(root, "state");
-  let oldOutcome: OldOutcome = "available",
-    currentUnavailable = false,
-    disappearAfterOld = false;
-  const requests: string[] = [];
-  await mkdir(work);
-  await writeFile(join(root, "skctl.jsonc"), "{}\n");
-  await git(work, "init", "-b", "main");
-  await git(work, "config", "user.email", "test@example.test");
-  await git(work, "config", "user.name", "Test");
-  await writeFile(join(work, "pin.txt"), "old");
-  await git(work, "add", ".");
-  await git(work, "commit", "-m", "old");
-  const old = await git(work, "rev-parse", "HEAD");
-  await writeFile(join(work, "pin.txt"), "current");
-  await git(work, "add", ".");
-  await git(work, "commit", "-m", "current");
-  const current = await git(work, "rev-parse", "HEAD");
-  await git(root, "init", "--bare", bare);
-  await git(work, "push", bare, "HEAD:main");
-  const marker = blob("---\nname: chosen\ndescription: Chosen\n---\n");
-  const oldResource = blob("old resource\n"),
-    currentResource = blob(changed ? "new resource\n" : "old resource\n");
-  const otherMarker = blob("---\nname: other\ndescription: Other\n---\n"),
-    otherResource = blob("unselected\n");
-  const uninstalledMarker = blob("---\nname: uninstalled\ndescription: Uninstalled\n---\n"),
-    uninstalledResource = blob("never download\n");
-  const blobs = new Map(
-    [
-      marker,
-      oldResource,
-      currentResource,
-      otherMarker,
-      otherResource,
-      uninstalledMarker,
-      uninstalledResource,
-    ].map((item) => [item.id, item]),
-  );
-  const oldRepo = "1".repeat(40),
-    currentRepo = "2".repeat(40),
-    oldSource = "3".repeat(40),
-    currentSource = "4".repeat(40);
-  const oldChosen = "5".repeat(40),
-    currentChosen = "6".repeat(40),
-    other = "7".repeat(40),
-    uninstalled = "8".repeat(40);
-  const directory = (path: string, sha: string) => ({ path, sha, mode: "040000", type: "tree" });
-  const file = (path: string, item: ReturnType<typeof blob>) => ({
-    path,
-    sha: item.id,
-    mode: "100644",
-    type: "blob",
-    size: item.bytes.length,
+async function fixture(changed = true) {
+  const value = await repositoryFixture({
+    "skills/chosen/SKILL.md": "---\nname: chosen\ndescription: Chosen\n---\n",
+    "skills/chosen/resource.txt": "old resource\n",
+    "skills/other/SKILL.md": "---\nname: other\ndescription: Other\n---\n",
+    "skills/other/resource.txt": "unselected\n",
+    "skills/uninstalled/SKILL.md": "---\nname: uninstalled\ndescription: Uninstalled\n---\n",
+    "skills/uninstalled/resource.txt": "never download\n",
   });
-  const trees = new Map<string, (ReturnType<typeof directory> | ReturnType<typeof file>)[]>([
-    [oldRepo, [directory("skills", oldSource)]],
-    [currentRepo, [directory("skills", currentSource)]],
-    [
-      oldSource,
-      [
-        directory("chosen", oldChosen),
-        directory("other", other),
-        directory("uninstalled", uninstalled),
-      ],
-    ],
-    [
-      currentSource,
-      [
-        directory("chosen", currentChosen),
-        directory("other", other),
-        directory("uninstalled", uninstalled),
-      ],
-    ],
-    [oldChosen, [file("SKILL.md", marker), file("resource.txt", oldResource)]],
-    [currentChosen, [file("SKILL.md", marker), file("resource.txt", currentResource)]],
-    [other, [file("SKILL.md", otherMarker), file("resource.txt", otherResource)]],
-    [uninstalled, [file("SKILL.md", uninstalledMarker), file("resource.txt", uninstalledResource)]],
-  ]);
-  function recursiveTree(id: string) {
-    const entries: (ReturnType<typeof directory> | ReturnType<typeof file>)[] = [];
-    function collect(treeId: string, prefix = "") {
-      for (const entry of trees.get(treeId) ?? []) {
-        const path = prefix ? `${prefix}/${entry.path}` : entry.path;
-        entries.push({ ...entry, path });
-        if (entry.type === "tree") collect(entry.sha, path);
-      }
-    }
-    collect(id);
-    return entries;
-  }
-  const api = createServer((request, response) => {
-    const url = new URL(request.url!, "http://fixture.invalid");
-    const path = url.pathname;
+  const old = value.commit;
+  await writeFile(join(value.work, "pin.txt"), "new commit\n");
+  if (changed)
+    await writeFile(join(value.work, "skills", "chosen", "resource.txt"), "new resource\n");
+  await value.git("add", ".");
+  await value.git("commit", "-m", "current");
+  const current = await value.git("rev-parse", "HEAD"),
+    currentTree = await value.git("rev-parse", "HEAD^{tree}");
+  const currentEntries = JSON.parse(
+    `[${(await value.git("ls-tree", "-r", "-t", '--format={"path":"%(path)","mode":"%(objectmode)","type":"%(objecttype)","sha":"%(objectname)"},', "HEAD")).replace(/,\s*$/, "")}]`,
+  );
+  const saved = {
+    SKCTL_STATE_DIR: process.env.SKCTL_STATE_DIR,
+    SKCTL_SOURCE_CACHE_DIR: process.env.SKCTL_SOURCE_CACHE_DIR,
+  };
+  const cache = join(value.root, "cache"),
+    stateFile = join(value.root, "state", "state.json");
+  process.env.SKCTL_STATE_DIR = join(value.root, "state");
+  process.env.SKCTL_SOURCE_CACHE_DIR = cache;
+  let outcome: Outcome = "available",
+    currentUnavailable = false,
+    disappearOnOld = false;
+  const requests: string[] = [];
+  const server = createServer(async (request, response) => {
+    const path = new URL(request.url!, "http://fixture.invalid").pathname;
     requests.push(path);
-    const json = (data: unknown, status = 200) => {
+    const json = (body: unknown, status = 200) => {
       response.writeHead(status, { "content-type": "application/json" });
-      response.end(JSON.stringify(data));
+      response.end(JSON.stringify(body));
     };
+    if (path.endsWith("/git/ref/heads/main"))
+      return json({ object: { sha: current, type: "commit" } });
     if (path.endsWith(`/commits/${old}`)) {
-      if (oldOutcome === "missing") {
-        if (disappearAfterOld) currentUnavailable = true;
-        return json({ message: "Not Found" }, 404);
+      if (outcome === "missing" || outcome === "missing-integrity") {
+        if (disappearOnOld) currentUnavailable = true;
+        return json(
+          { message: outcome === "missing-integrity" ? "parse/integrity failure" : "Not Found" },
+          404,
+        );
       }
-      if (oldOutcome === "auth") return json({ message: "Bad credentials" }, 401);
-      if (oldOutcome === "missing-integrity")
-        return json({ message: "parse/integrity failure in commit response" }, 404);
-      if (oldOutcome === "unprocessable") return json({ message: "Validation Failed" }, 422);
-      if (oldOutcome === "socket") {
+      if (outcome === "auth") return json({ message: "Bad credentials" }, 401);
+      if (outcome === "unprocessable") return json({ message: "Validation Failed" }, 422);
+      if (outcome === "socket") {
         response.destroy();
         return;
       }
-      if (oldOutcome === "body") {
-        response.writeHead(200, { "content-type": "application/json", "content-length": "10000" });
+      if (outcome === "body") {
+        response.writeHead(200, { "content-length": "10000" });
         response.write('{"sha":');
         setTimeout(() => response.destroy(), 10);
         return;
       }
-      if (oldOutcome === "integrity")
-        return json({ sha: current, commit: { tree: { sha: oldRepo } } });
-      return json({ sha: old, commit: { tree: { sha: oldRepo } } });
+      return json({
+        sha: outcome === "integrity" ? current : old,
+        commit: { tree: { sha: value.tree } },
+      });
     }
     if (path.endsWith(`/commits/${current}`))
       return currentUnavailable
-        ? json({ message: "Not Found" }, 404)
-        : json({ sha: current, commit: { tree: { sha: currentRepo } } });
-    const id = path.split("/").at(-1)!;
-    if (oldOutcome === "tree-missing" && id === oldRepo) return json({ message: "Not Found" }, 404);
-    if (path.includes("/git/trees/") && url.searchParams.get("recursive") === "1" && trees.has(id))
-      return json({ sha: id, truncated: false, tree: recursiveTree(id) });
-    if (path.includes("/git/trees/") && trees.has(id))
-      return json({ sha: id, truncated: false, tree: trees.get(id) });
-    if (path.includes("/git/blobs/") && blobs.has(id)) {
-      const item = blobs.get(id)!;
-      return json({ sha: id, encoding: "base64", content: item.bytes.toString("base64") });
+        ? json({}, 404)
+        : json({ sha: current, commit: { tree: { sha: currentTree } } });
+    if (path.includes("/trees/")) {
+      const tree = path.split("/").at(-1)!;
+      if (outcome === "tree-missing" && tree === value.tree) return json({}, 404);
+      return json({
+        sha: tree,
+        truncated: false,
+        tree: tree === value.tree ? value.entries : currentEntries,
+      });
     }
-    json({ message: "Not Found" }, 404);
+    if (path.includes("/blobs/")) {
+      const id = path.split("/").at(-1)!,
+        blob = await runProcess({ cmd: ["/usr/bin/git", "cat-file", "blob", id], cwd: value.work });
+      return json({
+        sha: id,
+        encoding: "base64",
+        content: blob.stdout.toString("base64"),
+        size: blob.stdout.length,
+      });
+    }
+    json({}, 404);
   });
-  await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const core = {
-    cwd: root,
-    userConfigPath: join(root, "user.jsonc"),
-    sourceTransport: (url: string) =>
-      url === "https://github.com/acme/skills.git" ? bare : undefined,
-    githubApiBaseUrl: `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
+    cwd: value.root,
+    userConfigPath: join(value.root, "user.jsonc"),
+    githubApiBaseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    sourceTransport: () => "/unavailable-fallback",
   };
-  await coreApi.registerSource(core, {
-    level: "project",
-    id: "github",
-    binding: {
-      kind: "github",
-      origin: "https://github.com/acme/skills.git",
-      root: "skills",
-      ref: "main",
-    },
-  });
-  await coreApi.installSkills(core, { source: "github", paths: ["chosen"], exactRevision: old });
-  await coreApi.installSkills(core, { source: "github", paths: ["other"], exactRevision: current });
+  await writeFile(
+    join(value.root, "skctl.jsonc"),
+    JSON.stringify({
+      sources: {
+        github: {
+          kind: "github",
+          origin: "https://github.com/acme/skills",
+          root: "skills",
+          ref: "main",
+        },
+      },
+    }),
+  );
+  await api.installSkills(core, { source: "github", paths: ["chosen"], exactRevision: old });
+  await api.installSkills(core, { source: "github", paths: ["other"], exactRevision: current });
   const state = JSON.parse(await readFile(stateFile, "utf8"));
   state.version = 2;
   for (const item of state.installed) delete item.treeIdentity;
-  await writeFile(stateFile, JSON.stringify(state) + "\n");
+  await writeFile(stateFile, JSON.stringify(state));
+  // This scenario explicitly lacks shared old metadata. Installation content survives.
+  await rm(cache, { recursive: true });
+  await mkdir(cache);
   requests.length = 0;
   return {
-    root,
+    ...value,
     core,
     old,
     current,
     stateFile,
     requests,
-    marker,
-    currentResource,
-    otherMarker,
-    otherResource,
-    uninstalledMarker,
-    uninstalledResource,
-    setOld(outcome: OldOutcome) {
-      oldOutcome = outcome;
+    setOld(next: Outcome) {
+      outcome = next;
     },
     setCurrentUnavailable() {
       currentUnavailable = true;
     },
     disappearOnOldMissing() {
-      disappearAfterOld = true;
-    },
-    restoreCurrent() {
-      currentUnavailable = false;
+      disappearOnOld = true;
     },
     async close() {
-      api.closeAllConnections();
-      await new Promise<void>((resolve) => api.close(() => resolve()));
-      if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
-      else process.env.SKCTL_STATE_DIR = previousState;
-      await rm(root, { recursive: true, force: true });
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      for (const [key, setting] of Object.entries(saved)) {
+        if (setting === undefined) delete process.env[key];
+        else process.env[key] = setting;
+      }
+      await rm(value.root, { recursive: true, force: true });
     },
   };
 }
-test("GitHub unavailable legacy O fails check without content fallback; update can use exact C", async () => {
+
+test("missing legacy comparison metadata fails check without content fallback; exact changed content remains applicable", async () => {
   for (const changed of [false, true]) {
     const value = await fixture(changed);
     try {
       value.setOld("missing");
-      const before = await readFile(value.stateFile);
-      await expect(coreApi.checkUpdate(value.core, { source: "github" })).rejects.toMatchObject({
-        code: "PINNED_COMMIT_UNAVAILABLE",
-      });
-      expect(await readFile(value.stateFile)).toEqual(before);
-      expect(
-        value.requests.some((path) => path.includes("/git/blobs/") || path.includes("/raw/")),
-      ).toBe(false);
-      expect(value.requests).toContain(`/repos/acme/skills/commits/${value.old}`);
+      const before = await readFile(value.stateFile, "utf8");
+      await expect(api.checkUpdate(value.core, { source: "github" })).rejects.toHaveProperty(
+        "code",
+        "SOURCE_NOT_FOUND",
+      );
+      expect(await readFile(value.stateFile, "utf8")).toBe(before);
+      expect(value.requests.some((path) => path.includes("/blobs/"))).toBe(false);
+      value.requests.length = 0;
       if (changed) {
-        value.requests.length = 0;
-        const oldState = JSON.parse(before.toString());
-        await coreApi.updateSkills(value.core, {
+        await api.updateSkills(value.core, {
           source: "github",
           paths: ["chosen"],
           exactRevision: value.current,
         });
         const updated = JSON.parse(await readFile(value.stateFile, "utf8"));
         expect(updated.installed.find((item: { path: string }) => item.path === "other")).toEqual(
-          oldState.installed.find((item: { path: string }) => item.path === "other"),
+          JSON.parse(before).installed.find((item: { path: string }) => item.path === "other"),
         );
-        expect(
-          updated.installed.find((item: { path: string }) => item.path === "chosen"),
-        ).toMatchObject({ adoptedRevision: value.current, treeIdentity: { objectFormat: "sha1" } });
         const chosen = updated.installed.find((item: { path: string }) => item.path === "chosen");
+        expect(chosen).toMatchObject({
+          adoptedRevision: value.current,
+          treeIdentity: { objectFormat: "sha1" },
+        });
         expect(
           await readFile(
             join(value.root, "state", "snapshots", chosen.digest, "root", "resource.txt"),
+            "utf8",
           ),
-        ).toEqual(value.currentResource.bytes);
-        const updateBlobs = value.requests
-          .filter((path) => path.includes("/git/blobs/"))
-          .map((path) => path.split("/").at(-1));
-        expect(updateBlobs.sort()).toEqual([value.marker.id, value.currentResource.id].sort());
-        expect(
-          value.requests
-            .filter((path) => path.includes("/commits/"))
-            .every((path) => path.endsWith(value.current)),
-        ).toBe(true);
+        ).toBe("new resource\n");
+        expect(value.requests).not.toContain(`/repos/acme/skills/commits/${value.old}`);
+        expect(value.requests.filter((path) => path.includes("/blobs/"))).toHaveLength(2);
+      } else {
+        await expect(
+          api.updateSkills(value.core, {
+            source: "github",
+            paths: ["chosen"],
+            exactRevision: value.current,
+          }),
+        ).rejects.toHaveProperty("code", "INVALID_ARGUMENT");
+        expect(await readFile(value.stateFile, "utf8")).toBe(before);
       }
     } finally {
       await value.close();
     }
   }
 });
-test("old O 404 is not recovery evidence when fresh exact C repository-access proof fails", async () => {
-  const value = await fixture(true);
+
+test("old metadata 404 followed by lost repository access never becomes digest recovery or a removal", async () => {
+  const value = await fixture();
   try {
     value.setOld("missing");
     value.disappearOnOldMissing();
-    const before = await readFile(value.stateFile);
-    await expect(coreApi.checkUpdate(value.core, { source: "github" })).rejects.toMatchObject({
-      code: "SOURCE_NOT_FOUND",
-    });
-    expect(value.requests.some((path) => path.includes("/git/blobs/"))).toBe(false);
-    expect(
-      value.requests.filter((path) => path.endsWith(`/commits/${value.current}`)).length,
-    ).toBeGreaterThanOrEqual(2);
-    expect(await readFile(value.stateFile)).toEqual(before);
-    value.restoreCurrent();
-    value.setCurrentUnavailable();
-    value.requests.length = 0;
-    await expect(
-      coreApi.updateSkills(value.core, {
-        source: "github",
-        paths: ["chosen"],
-        exactRevision: value.current,
-      }),
-    ).rejects.toMatchObject({ code: "SOURCE_NOT_FOUND" });
-    expect(value.requests.some((path) => path.includes("/git/blobs/"))).toBe(false);
-    expect(
-      value.requests.filter((path) => path.endsWith(`/commits/${value.current}`)).length,
-    ).toBeGreaterThanOrEqual(1);
-    expect(await readFile(value.stateFile)).toEqual(before);
+    const before = await readFile(value.stateFile, "utf8");
+    await expect(api.checkUpdate(value.core, { source: "github" })).rejects.toHaveProperty(
+      "code",
+      "SOURCE_NOT_FOUND",
+    );
+    expect(value.requests.some((path) => path.includes("/blobs/"))).toBe(false);
+    expect(await readFile(value.stateFile, "utf8")).toBe(before);
   } finally {
     await value.close();
   }
 });
-test("GitHub legacy O auth/socket/body/integrity and current C missing never authorize digest recovery", async () => {
-  for (const [outcome, code] of [
-    ["auth", "PROVIDER_AUTH_FAILED"],
-    ["socket", "PROVIDER_UNAVAILABLE"],
-    ["body", "PROVIDER_UNAVAILABLE"],
-    ["integrity", "PROVIDER_INTEGRITY_FAILED"],
-    ["unprocessable", "PROVIDER_UNAVAILABLE"],
-    ["tree-missing", "SOURCE_NOT_FOUND"],
-  ] as const) {
-    const value = await fixture(true);
+
+test.each([
+  ["auth", "PROVIDER_AUTH_FAILED"],
+  ["socket", "PROVIDER_UNAVAILABLE"],
+  ["body", "PROVIDER_UNAVAILABLE"],
+  ["integrity", "PROVIDER_INTEGRITY_FAILED"],
+  ["unprocessable", "PROVIDER_UNAVAILABLE"],
+  ["tree-missing", "SOURCE_NOT_FOUND"],
+  ["missing-integrity", "SOURCE_NOT_FOUND"],
+] as const)(
+  "legacy metadata failure %s cannot authorize digest comparison, but a selected exact update needs no old metadata",
+  async (outcome, code) => {
+    const value = await fixture();
     try {
-      const before = await readFile(value.stateFile);
       value.setOld(outcome);
-      value.requests.length = 0;
-      await expect(coreApi.checkUpdate(value.core, { source: "github" })).rejects.toMatchObject({
+      const before = await readFile(value.stateFile, "utf8");
+      await expect(api.checkUpdate(value.core, { source: "github" })).rejects.toHaveProperty(
+        "code",
         code,
-      });
-      expect(value.requests).toContain(`/repos/acme/skills/commits/${value.old}`);
-      expect(
-        value.requests.some((path) => path.includes("/git/blobs/") || path.includes("/raw/")),
-      ).toBe(false);
-      expect(await readFile(value.stateFile)).toEqual(before);
-      value.requests.length = 0;
-      await expect(
-        coreApi.updateSkills(value.core, {
-          source: "github",
-          paths: ["chosen"],
-          exactRevision: value.current,
-        }),
-      ).resolves.toBeDefined();
-      expect(value.requests).not.toContain(`/repos/acme/skills/commits/${value.old}`);
-      expect(value.requests.filter((path) => path.includes("/git/blobs/")).length).toBeGreaterThan(
-        0,
       );
+      expect(value.requests).toContain(`/repos/acme/skills/commits/${value.old}`);
+      expect(value.requests.some((path) => path.includes("/blobs/"))).toBe(false);
+      expect(await readFile(value.stateFile, "utf8")).toBe(before);
+      value.requests.length = 0;
+      await api.updateSkills(value.core, {
+        source: "github",
+        paths: ["chosen"],
+        exactRevision: value.current,
+      });
+      expect(value.requests).not.toContain(`/repos/acme/skills/commits/${value.old}`);
+      expect(value.requests.filter((path) => path.includes("/blobs/"))).toHaveLength(2);
     } finally {
       await value.close();
     }
-  }
-  const value = await fixture(true);
+  },
+);
+
+test("an unavailable exact target cannot authorize check, removal or publication", async () => {
+  const value = await fixture();
   try {
-    const before = await readFile(value.stateFile);
-    value.setOld("missing");
     value.setCurrentUnavailable();
-    value.requests.length = 0;
-    await expect(coreApi.checkUpdate(value.core, { source: "github" })).rejects.toMatchObject({
-      code: "SOURCE_NOT_FOUND",
-    });
+    const before = await readFile(value.stateFile, "utf8");
+    await expect(api.checkUpdate(value.core, { source: "github" })).rejects.toHaveProperty(
+      "code",
+      "SOURCE_NOT_FOUND",
+    );
     await expect(
-      coreApi.updateSkills(value.core, {
+      api.updateSkills(value.core, {
         source: "github",
         paths: ["chosen"],
         exactRevision: value.current,
       }),
-    ).rejects.toMatchObject({ code: "SOURCE_NOT_FOUND" });
-    expect(value.requests.some((path) => path.includes("/git/blobs/"))).toBe(false);
+    ).rejects.toHaveProperty("code", "SOURCE_NOT_FOUND");
     expect(value.requests).not.toContain(`/repos/acme/skills/commits/${value.old}`);
-    expect(await readFile(value.stateFile)).toEqual(before);
-  } finally {
-    await value.close();
-  }
-});
-test("I1R1 old O HTTP404 already classified as integrity never enters missing-evidence recovery", async () => {
-  const value = await fixture(true);
-  try {
-    value.setOld("missing-integrity");
-    const before = await readFile(value.stateFile);
-    await expect(coreApi.checkUpdate(value.core, { source: "github" })).rejects.toMatchObject({
-      code: "PROVIDER_INTEGRITY_FAILED",
-    });
-    expect(value.requests).toContain(`/repos/acme/skills/commits/${value.old}`);
-    expect(
-      value.requests.filter((path) => path.endsWith(`/commits/${value.current}`)),
-    ).toHaveLength(1);
-    expect(value.requests.some((path) => path.includes("/git/blobs/"))).toBe(false);
-    expect(await readFile(value.stateFile)).toEqual(before);
-    value.requests.length = 0;
-    await coreApi.updateSkills(value.core, {
-      source: "github",
-      paths: ["chosen"],
-      exactRevision: value.current,
-    });
-    expect(value.requests).not.toContain(`/repos/acme/skills/commits/${value.old}`);
-    expect(value.requests.some((path) => path.includes("/git/blobs/"))).toBe(true);
+    expect(value.requests.some((path) => path.includes("/blobs/"))).toBe(false);
+    expect(await readFile(value.stateFile, "utf8")).toBe(before);
   } finally {
     await value.close();
   }

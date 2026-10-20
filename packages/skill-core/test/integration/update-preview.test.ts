@@ -12,7 +12,9 @@ async function git(cwd: string, ...args: string[]) {
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "update-preview-"));
   const prior = process.env.SKCTL_STATE_DIR;
+  const priorCache = process.env.SKCTL_SOURCE_CACHE_DIR;
   process.env.SKCTL_STATE_DIR = join(root, "state");
+  process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
   const work = join(root, "work"),
     bare = join(root, "remote.git");
   const skill = join(work, "skills", "review");
@@ -69,6 +71,8 @@ async function fixture() {
     dispose: async () => {
       if (prior === undefined) delete process.env.SKCTL_STATE_DIR;
       else process.env.SKCTL_STATE_DIR = prior;
+      if (priorCache === undefined) delete process.env.SKCTL_SOURCE_CACHE_DIR;
+      else process.env.SKCTL_SOURCE_CACHE_DIR = priorCache;
       await rm(root, { recursive: true, force: true });
     },
   };

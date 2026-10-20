@@ -9,7 +9,14 @@ import {
 } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import type { WorkspaceView, UpdatePreview } from "@skctl/core";
+import type {
+  CoreOptions,
+  OperationOptions,
+  OperationResult,
+  UpdateObservation,
+  WorkspaceView,
+  UpdatePreview,
+} from "@skctl/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
@@ -51,10 +58,10 @@ async function mount(
     readonly update?: typeof import("@skctl/core").updateSkills;
   } = {},
 ) {
-  const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
+  const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/updates-return-");
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const base = workspaceProjection({ includeContribution: false });
   const sources = options.otherSource
     ? [...base.effective.sources, { ...base.effective.sources[0]!, id: "other" }]
@@ -81,11 +88,31 @@ async function mount(
   let workspaceReads = 0;
   const updates: Parameters<typeof import("@skctl/core").updateSkills>[1][] = [];
   const updateSignals: (AbortSignal | undefined)[] = [];
+  function checked(
+    options: CoreOptions,
+    request: { source: string; observation: "retained" },
+    operation?: OperationOptions,
+  ): Promise<OperationResult<UpdateObservation | undefined>>;
+  function checked(
+    options: CoreOptions,
+    request: { source: string; observation?: "current" },
+    operation?: OperationOptions,
+  ): Promise<OperationResult<UpdateObservation>>;
+  function checked(
+    options: CoreOptions,
+    request: { source: string; observation?: "current" | "retained" },
+    operation?: OperationOptions,
+  ) {
+    checks.push(request.source);
+    return request.observation === "retained"
+      ? checkUpdate(options, { source: request.source, observation: "retained" }, operation)
+      : checkUpdate(options, { source: request.source }, operation);
+  }
   let setup: Awaited<ReturnType<typeof testRender>> | undefined;
   const dispose = async () => {
     setup?.renderer.destroy();
-    if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-    else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+    if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
     await rm(cache, { recursive: true, force: true });
   };
   try {
@@ -93,18 +120,13 @@ async function mount(
       () => (
         <App
           core={directSourceCore(projection, {
+            getUpdateBaseline: async () => ({ value: "checked-baseline", diagnostics: [] }),
             getWorkspace: async () => {
               workspaceReads++;
               return { value: projection, diagnostics: [] };
             },
-            checkUpdate: async (
-              _environment: import("@skctl/core").CoreOptions,
-              request,
-              options,
-            ) => {
-              checks.push(request.source);
-              return checkUpdate(_environment, request, options);
-            },
+            checkUpdate: checked,
+            previewUpdate,
             updateSkills: async (
               _environment: import("@skctl/core").CoreOptions,
               request,

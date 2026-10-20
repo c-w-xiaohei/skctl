@@ -1,120 +1,115 @@
 import { expect, test } from "bun:test";
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as localModule from "../../src/source/local";
-import { openLocalSource } from "../../src/source/local";
+import { discoverSource, withPreparedSkills } from "../../src/source/service";
+import { runProcess } from "../../src/runtime/process";
 
-test("Local snapshots expose deterministic entries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skctl-local-"));
-  await mkdir(join(root, "nested"));
-  await writeFile(join(root, "SKILL.md"), "---\nname: local\ndescription: Local\n---\n");
-  await writeFile(join(root, "nested", "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
-  await symlink("nested/run.sh", join(root, "link"));
-  const local = await openLocalSource("local", root, {
-    source: "local",
-    origin: "local",
-    declaration: { level: "project" },
-    stability: "mutable-local",
-  });
-  expect((await Array.fromAsync(local.list(""))).map((entry) => [entry.kind, entry.path])).toEqual([
-    ["file", "SKILL.md"],
-    ["symlink", "link"],
-    ["directory", "nested"],
-    ["file", "nested/run.sh"],
-  ]);
-  expect("openNativeSource" in localModule).toBe(false);
-  expect(new TextDecoder().decode((await local.read("link")).bytes)).toBe("#!/bin/sh\n");
-  await local.close();
+const context = (root: string) => ({
+  binding: {
+    id: "local",
+    kind: "local" as const,
+    origin: root,
+    root: "",
+    selectors: [],
+    provenance: { level: "project" as const },
+  },
 });
 
-test("Local snapshots expose initialized submodule files, retain uninitialized gitlink directories, and never invoke Git", async () => {
-  const fixture = await mkdtemp(join(tmpdir(), "skctl-submodule-"));
-  const nested = join(fixture, "nested-repository");
-  const parent = join(fixture, "parent-repository");
-  const initialized = join(fixture, "initialized-parent");
-  const uninitialized = join(fixture, "uninitialized-parent");
-  const provenance = {
-    source: "local",
-    origin: "local" as const,
-    declaration: { level: "project" as const },
-    stability: "mutable-local" as const,
-  };
-  const git = async (args: string[], cwd?: string) => {
-    const child = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-    if (await child.exited) throw new Error(await new Response(child.stderr).text());
-  };
-
+test("Local discovery and preparation retain live bytes, safe internal links and executable modes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skctl-local-"));
   try {
-    await git(["init", nested]);
-    await git(["config", "user.email", "test@skctl.invalid"], nested);
-    await git(["config", "user.name", "skctl test"], nested);
+    await mkdir(join(root, "nested"));
+    await writeFile(join(root, "SKILL.md"), "---\nname: local\ndescription: Local\n---\n");
+    await writeFile(join(root, "nested", "run.sh"), "#!/bin/sh\n", { mode: 0o755 });
+    await symlink("nested/run.sh", join(root, "link"));
+    expect((await discoverSource(context(root))).candidates).toEqual([
+      { path: "", name: "local", description: "Local" },
+    ]);
+    let original = "";
+    await withPreparedSkills(context(root), [""], undefined, async ([skill]) => {
+      expect(skill!.kind).toBe("local");
+      expect(await readFile(join(skill!.directory, "link"), "utf8")).toBe("#!/bin/sh\n");
+      original = skill!.digest;
+    });
+    await chmod(join(root, "nested", "run.sh"), 0o600);
+    await withPreparedSkills(context(root), [""], undefined, async ([skill]) => {
+      expect(skill!.digest).not.toBe(original);
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Local discovery sees initialized submodule files but never initializes or follows directory links", async () => {
+  const root = await mkdtemp(join(tmpdir(), "skctl-submodule-"));
+  const nested = join(root, "nested-repository"),
+    parent = join(root, "parent-repository");
+  const initialized = join(root, "initialized-parent"),
+    uninitialized = join(root, "uninitialized-parent");
+  const git = async (cwd: string, ...args: string[]) => {
+    const result = await runProcess({ cmd: ["/usr/bin/git", ...args], cwd });
+    if (result.status) throw new Error(result.stderr.toString());
+  };
+  try {
+    for (const path of [nested, parent]) {
+      await mkdir(path);
+      await git(path, "init");
+      await git(path, "config", "user.email", "test@skctl.invalid");
+      await git(path, "config", "user.name", "Fixture");
+    }
     await writeFile(join(nested, "SKILL.md"), "---\nname: nested\ndescription: Nested\n---\n");
     await writeFile(join(nested, "helper.txt"), "present on host\n");
-    await git(["add", "."], nested);
-    await git(["commit", "-m", "nested skill"], nested);
-
-    await git(["init", parent]);
-    await git(["config", "user.email", "test@skctl.invalid"], parent);
-    await git(["config", "user.name", "skctl test"], parent);
-    await mkdir(join(parent, "source"));
+    await git(nested, "add", ".");
+    await git(nested, "commit", "-m", "nested skill");
     await git(
-      ["-c", "protocol.file.allow=always", "submodule", "add", nested, "source/nested"],
       parent,
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "add",
+      nested,
+      "source/nested",
     );
-    await git(["commit", "-am", "parent submodule"], parent);
-
-    await git(["clone", parent, initialized]);
-    await git(["-c", "protocol.file.allow=always", "submodule", "update", "--init"], initialized);
-    await git(["clone", parent, uninitialized]);
-    expect((await lstat(join(uninitialized, "source", "nested"))).isDirectory()).toBe(true);
+    await git(parent, "commit", "-am", "parent submodule");
+    await git(root, "clone", parent, initialized);
+    await git(initialized, "-c", "protocol.file.allow=always", "submodule", "update", "--init");
+    await git(root, "clone", parent, uninitialized);
     await symlink("nested", join(initialized, "source", "linked-nested"));
     await symlink("missing.txt", join(initialized, "source", "dangling.txt"));
-
-    const sentinel = join(fixture, "git-sentinel");
-    await mkdir(sentinel);
-    await writeFile(join(sentinel, "git"), "#!/bin/sh\nexit 97\n", { mode: 0o755 });
-    const originalPath = process.env.PATH;
-    process.env.PATH = sentinel;
+    expect((await lstat(join(uninitialized, "source", "nested"))).isDirectory()).toBe(true);
+    const saved = process.env.PATH;
+    process.env.PATH = "";
     try {
-      const initializedSnapshot = await openLocalSource(
-        "local",
-        join(initialized, "source"),
-        provenance,
+      expect(
+        (await discoverSource(context(join(initialized, "source")))).candidates.map(
+          (item) => item.path,
+        ),
+      ).toEqual(["nested"]);
+      expect(await readFile(join(initialized, "source", "nested", "helper.txt"), "utf8")).toBe(
+        "present on host\n",
       );
-      const uninitializedSnapshot = await openLocalSource(
-        "local",
-        join(uninitialized, "source"),
-        provenance,
-      );
-      expect(
-        (await Array.fromAsync(initializedSnapshot.list(""))).map((entry) => entry.path),
-      ).toEqual([
-        "dangling.txt",
-        "linked-nested",
-        "nested",
-        "nested/.git",
-        "nested/SKILL.md",
-        "nested/helper.txt",
-      ]);
-      expect(
-        new TextDecoder().decode((await initializedSnapshot.read("nested/helper.txt")).bytes),
-      ).toBe("present on host\n");
-      await expect(initializedSnapshot.read("dangling.txt")).rejects.toMatchObject({
-        code: "RESOURCE_NOT_FOUND",
-      });
-      expect(
-        (await Array.fromAsync(uninitializedSnapshot.list(""))).map((entry) => [
-          entry.kind,
-          entry.path,
-        ]),
-      ).toEqual([["directory", "nested"]]);
-      await initializedSnapshot.close();
-      await uninitializedSnapshot.close();
+      expect((await discoverSource(context(join(uninitialized, "source")))).candidates).toEqual([]);
+      await expect(
+        withPreparedSkills(
+          context(join(initialized, "source")),
+          ["nested"],
+          undefined,
+          async () => {},
+        ),
+      ).rejects.toHaveProperty("code", "PROVIDER_INTEGRITY_FAILED");
+      await expect(
+        withPreparedSkills(
+          context(join(uninitialized, "source")),
+          ["nested"],
+          undefined,
+          async () => {},
+        ),
+      ).rejects.toHaveProperty("code", "SKILL_NOT_FOUND");
     } finally {
-      process.env.PATH = originalPath;
+      process.env.PATH = saved;
     }
   } finally {
-    await rm(fixture, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });

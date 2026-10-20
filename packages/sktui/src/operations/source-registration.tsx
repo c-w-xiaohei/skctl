@@ -9,36 +9,24 @@ import { DataList } from "../ui/data-list";
 import { FormField } from "../ui/form";
 import { Input } from "../ui/input";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
+import type { ConfigLevel, RegisterSourceRequest } from "@skctl/core";
 
 export function SourceRegistrationOverlay(props: {
   readonly kind: "source" | "config-source";
-  readonly level?: "global" | "project" | "local";
+  readonly level?: ConfigLevel;
+  readonly configFile?: (level: ConfigLevel) => string | undefined;
   readonly pending: boolean;
   readonly error?: { readonly code: string; readonly message: string };
-  readonly onSubmit: (value: {
-    readonly level: "global" | "project" | "local";
-    readonly id: string;
-    readonly binding:
-      | { readonly kind: "local"; readonly path: string; readonly root: string }
-      | {
-          readonly kind: "git";
-          readonly origin: string;
-          readonly ref: string;
-          readonly root: string;
-        }
-      | {
-          readonly kind: "github";
-          readonly owner: string;
-          readonly repository: string;
-          readonly origin: string;
-          readonly ref: string;
-          readonly root: string;
-        };
-  }) => void;
+  readonly onSubmit: (value: RegisterSourceRequest) => void;
   readonly onCancel: () => void;
 }) {
   const controls = createModalControlRegistry();
-  const [level, setLevel] = createSignal(props.level ?? "project");
+  const levels = (["global", "project", "local"] as const).filter(
+    (level) => !props.configFile || props.configFile(level),
+  );
+  const [level, setLevel] = createSignal(
+    props.level ?? (levels.includes("project") ? "project" : levels[0]!),
+  );
   const [kind, setKind] = createSignal<"local" | "git" | "github">("local");
   const [id, setId] = createSignal("");
   const [origin, setOrigin] = createSignal("");
@@ -59,11 +47,9 @@ export function SourceRegistrationOverlay(props: {
   const valid = () => {
     const sourceId = id().trim();
     const sourceOrigin = origin().trim();
-    const sourceRoot = root().trim();
     return (
       !!sourceId &&
       (kind() === "github" ? !!owner().trim() && !!repository().trim() : !!sourceOrigin) &&
-      !!sourceRoot &&
       (kind() === "local" ||
         ((kind() === "github" ||
           (/^https?:\/\//.test(sourceOrigin) && !sourceOrigin.includes("@"))) &&
@@ -80,24 +66,29 @@ export function SourceRegistrationOverlay(props: {
         ) : (
           <DataList
             id="source-register-level"
-            height={3}
+            height={levels.length}
             flexShrink={0}
             ref={(value: SelectRenderable) => {
               initialControl = value;
               registerLevel(value);
             }}
             focused={false}
-            options={["global", "project", "local"].map((value) => ({
+            options={levels.map((value) => ({
               name: value,
               description: "Config owner",
               value,
             }))}
             showDescription={false}
+            selectedIndex={levels.indexOf(level())}
+            onChange={(_index, option) =>
+              option && setLevel(option.value as "global" | "project" | "local")
+            }
             onSelect={(_index, option) =>
               option && setLevel(option.value as "global" | "project" | "local")
             }
           />
         )}
+        <text wrapMode="word">{`Config: ${props.configFile?.(level()) ?? level()} (created on Register if missing)`}</text>
         <DataList
           id="source-register-kind"
           height={3}
@@ -197,7 +188,7 @@ export function SourceRegistrationOverlay(props: {
             ref={registerRoot}
             focused={false}
             value={root()}
-            placeholder="Source root"
+            placeholder="Origin root (leave empty)"
             onInput={setRoot}
           />
         </FormField>
@@ -205,10 +196,10 @@ export function SourceRegistrationOverlay(props: {
         {!valid() && (
           <text>
             {kind() === "github"
-              ? "Enter an ID, GitHub owner, repository, ref, and source root."
+              ? "Enter an ID, GitHub owner, repository, and ref."
               : kind() === "git"
-                ? "Enter an ID, credential-free http(s) origin, ref, and source root."
-                : "Enter an ID, configured local path, and source root."}
+                ? "Enter an ID, credential-free http(s) origin, and ref."
+                : "Enter an ID and configured local path."}
           </text>
         )}
         <box flexDirection="column" gap={1} flexShrink={0}>

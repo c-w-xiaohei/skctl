@@ -130,8 +130,8 @@ function projection(): WorkspaceView {
 async function mount(width = 80) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/skills-view-reentry-");
-  const priorCache = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  const priorCache = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const reads: string[] = [];
   const checks: string[] = [];
   const writes: string[] = [];
@@ -163,8 +163,8 @@ async function mount(width = 80) {
     releaseSelectionTrace?.();
     setup?.renderer.destroy();
     await Promise.allSettled(pending);
-    if (priorCache === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-    else process.env.SKTUI_UPDATE_CACHE_DIR = priorCache;
+    if (priorCache === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    else process.env.SKTUI_UPDATE_SCHEDULE_DIR = priorCache;
     await rm(cache, { recursive: true, force: true });
   };
   try {
@@ -184,6 +184,7 @@ async function mount(width = 80) {
               });
             },
             listInstalledResources: () => tracked("listResources", []),
+            getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
             checkUpdate: (_environment: import("@skctl/core").CoreOptions, { source }) => {
               checks.push(source);
               return tracked(`checkUpdate:${source}`, {
@@ -451,14 +452,14 @@ async function assertViewContent(
     expect(visible(setup.renderer.root.findDescendantById("reader-details"))).toBe(false);
     await focusLive(setup, "problems-browser");
   } else {
-    expect(visible(live(setup, "agent-access-pane"))).toBe(true);
-    expect(setup.captureCharFrame()).toContain("Agent access is unavailable");
+    expect(visible(live(setup, "skills-setup-pane"))).toBe(true);
+    expect(setup.captureCharFrame()).toContain("Organize Skills into a Collection");
     expect(visible(setup.renderer.root.findDescendantById("reader-details"))).toBe(false);
-    const problems = live(setup, "current-exposure-problems");
+    const problems = live(setup, "skills-setup-primary");
     expect(visible(problems)).toBe(true);
     // This fixture has no selected Agent node. Use its actual visible recovery
     // control, without activating it or inventing a preview focus target.
-    await focusLive(setup, "current-exposure-problems");
+    await focusLive(setup, "skills-setup-primary");
   }
   await setup.flush();
   // A local Skills view change cannot manufacture a route predecessor or root Back.
@@ -550,7 +551,7 @@ test("FI2 explicit Problems Reader route still restores its Reader after a Skill
     await routeCommand(setup, true);
     await pointerView(setup, "current-exposure");
     await setup.waitFor(() => selectedView(setup) === "current-exposure");
-    expect(visible(live(setup, "agent-access-pane"))).toBe(true);
+    expect(visible(live(setup, "skills-setup-pane"))).toBe(true);
     await routeCommand(setup, true);
     const back = live(setup, "route-back");
     await setup.mockMouse.click(back.screenX + 1, back.screenY);

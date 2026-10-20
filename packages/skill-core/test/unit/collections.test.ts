@@ -1,7 +1,7 @@
 import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { resolveCollections, type CollectionContribution } from "../../src/collection/graph";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateCoordinator } from "../../src/storage/state";
@@ -349,6 +349,7 @@ test("MGMT-016 imports effective memberships as ordinary direct entries and reje
     await writeFile(
       file,
       JSON.stringify({
+        sources: { s: { kind: "local", path: "./skills", root: "" } },
         collections: {
           source: { members: { review: { source: "s", path: "review" } } },
           target: { members: { keep: { source: "s", path: "keep" } } },
@@ -359,10 +360,10 @@ test("MGMT-016 imports effective memberships as ordinary direct entries and reje
       const skill = join(root, "skills", name);
       await mkdir(skill, { recursive: true });
       await writeFile(join(skill, "SKILL.md"), `---\nname: ${name}\ndescription: ${name}\n---\n`);
-      await new StateCoordinator(state).installLocal("s", name, skill);
     }
     process.env.SKCTL_STATE_DIR = state;
     const core = { cwd: root };
+    await api.installSkills(core, { source: "s", paths: ["review", "keep"] });
     await api.importMembers(core, { level: "project", from: "source", into: "target" });
     expect(JSON.parse(await readFile(file, "utf8")).collections.target.members).toEqual({
       keep: { source: "s", path: "keep" },
@@ -434,24 +435,38 @@ test("MGMT-016 imports contributed derived and composed effective Collections in
       const skill = join(root, "skills", name);
       await mkdir(skill, { recursive: true });
       await writeFile(join(skill, "SKILL.md"), `---\nname: ${name}\ndescription: ${name}\n---\n`);
+      const current = await coordinator.read();
       if (source === "remote")
-        await coordinator.installRemoteForTest({
-          source,
-          path,
-          name,
-          description: name,
-          kind: "remote",
-          digest: new Bun.CryptoHasher("sha256").update(name).digest("hex"),
-          bindingDigest: bindingDigest({
-            kind: "github",
-            origin: "https://github.com/acme/skills",
-            root: "",
-            ref: "main",
-          }),
-          adoptedRevision: "a".repeat(40),
-          identityEvidence: { status: "unavailable" },
-        });
-      else await coordinator.installLocal(source, path, skill);
+        await coordinator.write(
+          {
+            configs: {},
+            installed: [
+              ...current.installed,
+              {
+                source,
+                path,
+                name,
+                description: name,
+                kind: "remote",
+                digest: new Bun.CryptoHasher("sha256").update(name).digest("hex"),
+                bindingDigest: bindingDigest({
+                  kind: "github",
+                  origin: "https://github.com/acme/skills",
+                  root: "",
+                  ref: "main",
+                }),
+                adoptedRevision: "a".repeat(40),
+                identityEvidence: { status: "unavailable" },
+              },
+            ],
+          },
+          current.generation,
+        );
+      else {
+        await mkdir(join(module, "skills"), { recursive: true });
+        await cp(skill, join(module, "skills", path), { recursive: true });
+        await api.installSkills({ cwd: root }, { source, paths: [path] });
+      }
     }
     const core = { cwd: root };
     await api.importMembers(core, {

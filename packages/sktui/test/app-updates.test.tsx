@@ -1,11 +1,19 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
 import type { WorkspaceView, UpdateObservation } from "@skctl/core";
-import { SelectRenderable } from "@opentui/core";
+import { SelectRenderable, TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { collectionFilterPathKey } from "../src/collections/collection-filter-tree";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { enterLive, focusLive, parsedEscape } from "./reader-test-controls";
+import {
+  enterLive,
+  focusLive,
+  openAllInstalledSkills,
+  parsedEnter,
+  parsedEscape,
+  waitForReaderBody,
+} from "./reader-test-controls";
 const revision = "a".repeat(40);
 const addresses = {
   first: { source: "team-main", path: "guide" },
@@ -119,6 +127,17 @@ async function openWorkspaceUpdates(setup: Awaited<ReturnType<typeof testRender>
   await enterLive(setup, "shell-section-tab-updates");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
 }
+async function chooseAction(setup: Awaited<ReturnType<typeof testRender>>, id: string) {
+  setup.mockInput.pressKey("p", { ctrl: true });
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+  const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+  const index = choices.options.findIndex((option) => option.value.id === id);
+  expect(index, `Expected legal action ${id}`).toBeGreaterThanOrEqual(0);
+  expect(choices.options[index]!.value.enabled).toBe(true);
+  choices.setSelectedIndex(index);
+  await setup.renderOnce();
+  await parsedEnter(setup);
+}
 async function enterWithFocusContext(setup: Awaited<ReturnType<typeof testRender>>, id: string) {
   try {
     await enterLive(setup, id);
@@ -134,13 +153,14 @@ async function enterWithFocusContext(setup: Awaited<ReturnType<typeof testRender
     );
   }
 }
-test("RED App Updates opens manually without automatic checks, then submits only the visible current group", async () => {
+test("App automatic checks stay read-only and updating the current Source preserves its exact reviewed target", async () => {
   let current = updatesProjection();
   const checks: string[] = [];
   const updates: unknown[] = [];
   let contentLoads = 0;
   const core = directSourceCore(current, {
     getWorkspace: async () => ({ value: current, diagnostics: [] }),
+    getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
     checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
       checks.push(source);
       return {
@@ -174,33 +194,50 @@ test("RED App Updates opens manually without automatic checks, then submits only
   });
   try {
     await openWorkspaceUpdates(setup);
-    expect(checks).toEqual([]);
+    await setup.waitFor(() =>
+      [addresses.first.source, addresses.second.source].every((source) => {
+        const status = setup.renderer.root.findDescendantById(
+          `updates-browser-row-${source}:cell-status`,
+        );
+        return status instanceof TextRenderable && status.plainText === "Updates available";
+      }),
+    );
     expect(contentLoads).toBe(0);
-    await enterLive(setup, "updates-check");
-    await setup.waitFor(() => checks.length === 2);
     expect(checks).toEqual([addresses.first.source, addresses.second.source]);
-    await focusLive(setup, "updates-submit");
-    setup.mockInput.pressEnter();
+    expect(updates).toEqual([]);
+    await chooseAction(setup, "updates.update-source");
     await setup.waitFor(() => updates.length === 1);
     expect(updates).toEqual([
-      { source: addresses.first.source, paths: [addresses.first.path], exactRevision: revision },
+      {
+        source: addresses.first.source,
+        paths: [addresses.first.path],
+        exactRevision: revision,
+        expectedBaseline: "baseline:test",
+      },
     ]);
     expect(contentLoads).toBe(0);
   } finally {
     setup.renderer.destroy();
   }
 });
-test("RED App Updates source, Collection, and Skill entries retain structural scope and Esc never aborts active work", async () => {
+test("App checks survive semantic Back, Stop checks cancels only reads, and host teardown cancels a replacement", async () => {
   const projection = updatesProjection();
   const checks: string[] = [];
   let aborts = 0;
   let exits = 0;
   let destroyed = false;
+  let holdChecks = false;
   let setup!: Awaited<ReturnType<typeof testRender>>;
   const core = directSourceCore(projection, {
-    checkUpdate: (_environment: import("@skctl/core").CoreOptions, { source }, options) => {
+    getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
+    checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }, options) => {
       checks.push(source);
-      return new Promise((_, reject) =>
+      if (!holdChecks)
+        return {
+          value: observation(source, source === addresses.first.source ? ["guide"] : ["other"]),
+          diagnostics: [],
+        };
+      return new Promise<import("@skctl/core").OperationResult<UpdateObservation>>((_, reject) =>
         options?.signal?.addEventListener("abort", () => {
           aborts++;
           reject(new Error("cancelled"));
@@ -227,35 +264,49 @@ test("RED App Updates source, Collection, and Skill entries retain structural sc
     { width: 80, height: 16 },
   );
   try {
-    // Future App entry wiring uses the existing visible Source action, rather than a route fake.
+    await openWorkspaceUpdates(setup);
+    await setup.waitFor(() =>
+      [addresses.first.source, addresses.second.source].every((source) => {
+        const status = setup.renderer.root.findDescendantById(
+          `updates-browser-row-${source}:cell-status`,
+        );
+        return status instanceof TextRenderable && status.plainText === "Updates available";
+      }),
+    );
+    // A Sources row with installed content enters its direct Reader inventory.
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("shell-section-tab-sources"),
     );
     await enterLive(setup, "shell-section-tab-sources");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
-    await enterLive(setup, "source-browser");
-    await enterLive(setup, "workspace-action-check-updates");
+    await focusLive(setup, "source-browser");
+    holdChecks = true;
+    await chooseAction(setup, "check-updates");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
-    expect(checks).toEqual([addresses.first.source]);
+    await setup.waitFor(() => checks.length === 3);
+    expect(checks[2]).toBe(addresses.first.source);
     // Esc browses Back while the request remains active; only Stop aborts it.
     await parsedEscape(setup);
     expect(aborts).toBe(0);
     await openWorkspaceUpdates(setup);
-    await enterLive(setup, "updates-stop");
+    await chooseAction(setup, "checks.task.stop");
     await setup.waitFor(() => aborts === 1);
     // Ctrl+C must tear down a newly active request, not merely exit after a prior Stop.
-    await enterLive(setup, "updates-check");
-    await setup.waitFor(() => checks.length === 2);
+    await chooseAction(setup, "updates.check");
+    await setup.waitFor(() => checks.length === 4);
     setup.mockInput.pressKey("c", { ctrl: true });
     await setup.waitFor(() => exits === 1 && aborts === 2);
   } finally {
     if (!destroyed) setup.renderer.destroy();
   }
 });
-test("RED App Updates Collection and Skill actions enter their exact visible structural scopes", async () => {
+test("App Collection checks include Reference descendants while direct Reader Update submits only its Skill", async () => {
   const projection = collectionScopeProjection();
   const checks: string[] = [];
+  const updates: Parameters<typeof import("@skctl/core").updateSkills>[1][] = [];
+  const reads: unknown[] = [];
   const core = directSourceCore(projection, {
+    getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
     checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
       checks.push(source);
       return {
@@ -263,55 +314,77 @@ test("RED App Updates Collection and Skill actions enter their exact visible str
         diagnostics: [],
       };
     },
-    loadInstalledSkill: async () => {
-      throw new Error("Scope entry must not read SKILL.md");
+    updateSkills: async (_environment, request) => {
+      updates.push(request);
+      return { value: undefined, diagnostics: [] };
+    },
+    loadInstalledSkill: async (_environment, { address }) => {
+      reads.push(address);
+      return {
+        address,
+        name: address.path,
+        description: "",
+        rawText: "Installed guide",
+        markdownText: "Installed guide",
+      };
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 80,
-    height: 16,
+    height: 24,
   });
   try {
-    // The Collection update action stays in the parent's existing progressive
-    // Actions disclosure, not in an App-owned wrapper row or synthetic route.
+    await openWorkspaceUpdates(setup);
+    await setup.waitFor(() =>
+      projection.effective.sources.every((source) => {
+        const status = setup.renderer.root.findDescendantById(
+          `updates-browser-row-${source.id}:cell-status`,
+        );
+        return (
+          status instanceof TextRenderable &&
+          !["Checking", "Not checked", "Waiting"].includes(status.plainText)
+        );
+      }),
+    );
+    const startup = checks.length;
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("shell-section-tab-collections"),
     );
     await enterWithFocusContext(setup, "shell-section-tab-collections");
-    const collectionBrowser = await focusLive(setup, "collection-browser");
-    expect(collectionBrowser).toBeInstanceOf(SelectRenderable);
-    if (!(collectionBrowser instanceof SelectRenderable))
-      throw new Error("Expected the native Collection SelectRenderable");
-    expect(collectionBrowser.options.map((option) => option.value)).toContain("release");
-    await setup.mockMouse.click(collectionBrowser.screenX + 1, collectionBrowser.screenY);
-    await setup.waitFor(() => collectionBrowser.getSelectedOption()?.value === "release");
+    const releaseKey = collectionFilterPathKey({ segments: [{ collection: "release" }] });
+    const release = setup.renderer.root.findDescendantById(
+      `collection-browser-row-${encodeURIComponent(releaseKey)}-name`,
+    )!;
+    expect(release).toBeDefined();
+    await setup.mockMouse.click(release.screenX + 1, release.screenY);
     await enterWithFocusContext(setup, "collection-browser");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
-    await enterWithFocusContext(setup, "collection-actions-toggle");
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("collection-action-collection-check-updates"),
-    );
-    await enterWithFocusContext(setup, "collection-action-collection-check-updates");
+    // Collection-wide commands belong to shared Actions, not a removed local menu.
+    await chooseAction(setup, "collection-check-updates");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
-    await setup.waitFor(() => checks.length === 2);
-    expect(checks).toEqual([addresses.first.source, addresses.second.source]);
-    expect(checks).not.toContain("unrelated-source");
+    await setup.waitFor(() => checks.length === startup + 2);
+    expect(checks.slice(startup)).toEqual([addresses.first.source, addresses.second.source]);
+    expect(checks.slice(startup)).not.toContain("unrelated-source");
+    expect(updates).toEqual([]);
+    expect(reads).toEqual([]);
     expect(setup.captureCharFrame()).toContain("Collection release");
     await parsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
     expect(setup.captureCharFrame()).toContain("release");
     await enterWithFocusContext(setup, "shell-section-tab-skills");
-    await setup.waitFor(() => setup.captureCharFrame().includes("[ Skills ]"));
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-    await enterWithFocusContext(setup, "installed-skill-browser");
-    await enterWithFocusContext(setup, "skill-detail-actions-toggle");
-    await enterWithFocusContext(setup, "workspace-action-skill-check-updates");
+    await openAllInstalledSkills(setup);
+    await parsedEnter(setup);
+    await waitForReaderBody(setup, "Installed guide");
+    await enterWithFocusContext(setup, "reader-action-skill-check-updates");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
-    await setup.waitFor(() => checks.length === 3);
-    expect(checks).toEqual([
-      addresses.first.source,
-      addresses.second.source,
-      addresses.first.source,
+    await setup.waitFor(() => updates.length === 1);
+    expect(updates).toEqual([
+      {
+        source: addresses.first.source,
+        paths: [addresses.first.path],
+        exactRevision: revision,
+        expectedBaseline: "baseline:test",
+      },
     ]);
     expect(setup.captureCharFrame()).toContain(`${addresses.first.source}/${addresses.first.path}`);
   } finally {

@@ -49,10 +49,10 @@ async function mount(
   height: number,
   hook?: typeof import("@skctl/core").previewUpdate,
 ) {
-  const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
+  const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/update-preview-");
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const base = workspaceProjection({ includeContribution: false });
   const projection: WorkspaceView = {
     ...base,
@@ -72,6 +72,7 @@ async function mount(
   const requests: Parameters<typeof import("@skctl/core").previewUpdate>[1][] = [];
   const mutations: unknown[] = [];
   const core = directSourceCore(projection, {
+    getUpdateBaseline: async () => ({ value: "checked", diagnostics: [] }),
     checkUpdate: async () => ({
       value: {
         source: address.source,
@@ -113,8 +114,8 @@ async function mount(
     mutations,
     async dispose() {
       setup.renderer.destroy();
-      if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+      if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
       await rm(cache, { recursive: true, force: true });
     },
   };

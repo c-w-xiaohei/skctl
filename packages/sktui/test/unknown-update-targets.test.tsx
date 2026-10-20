@@ -8,13 +8,13 @@ import { createRoot, createSignal } from "solid-js";
 import { CommandPalette } from "../src/command-palette";
 import { createCommandRegistry } from "../src/commands";
 import { createFocusRegistry } from "../src/focus";
-import { createUpdateController } from "../src/updates/controller";
+import { createTuiSession } from "../src/session";
+import { createOperationState } from "../src/operation-state";
 import { updateFeedback } from "../src/updates/feedback";
-import { buildUpdateScope, createUpdatesState } from "../src/updates/model";
 import { SourceUpdatesPage, UpdatesPage } from "../src/updates/page";
 import type { UpdateAddress } from "../src/updates/scope";
 import type { UpdateRun } from "../src/updates/state";
-import { workspaceProjection } from "./direct-source.fixture";
+import { directSourceCore, testProjection, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
 const source = "team-main";
 const first = { source, path: "guides/alpha" };
@@ -43,11 +43,10 @@ function fixture(
         problems: [],
       })),
     };
-    const state = createUpdatesState(buildUpdateScope(projection, { kind: "workspace" }));
     const checks: string[] = [];
     const updates: Parameters<typeof import("@skctl/core").updateSkills>[1][] = [];
-    const controller = createUpdateController(
-      {
+    const controller = createTuiSession(
+      directSourceCore(projection, {
         getWorkspace: async () => ({
           value:
             failure === "ownership"
@@ -92,9 +91,11 @@ function fixture(
             ]);
           throw new Error("Publication receipt unavailable");
         },
-      },
-      state,
+      }),
+      createOperationState(),
+      testProjection().projection.outcomes,
     );
+    const state = controller.selectUpdatesScope({ kind: "workspace" }, projection)!;
     return {
       state,
       controller,
@@ -114,11 +115,11 @@ test.each([1, 2])(
   async (count) => {
     const data = fixture([first.path, second.path].slice(0, count));
     try {
-      expect(await data.controller.submit()).toBe(false);
+      expect(await data.controller.submitUpdates()).toBe(false);
       const notices = updateFeedback(
         data.state.scope.addresses,
         data.state.groups(),
-        data.controller.run(),
+        data.controller.updateRun(),
       );
       expect(data.checks).toEqual([source]);
       expect(data.updates).toEqual([
@@ -136,7 +137,7 @@ test.each([1, 2])(
         expect(notice.detail).toContain("Publication receipt unavailable");
         expect(notice.body).not.toMatch(/kept|rollback/i);
       }
-      expect(data.controller.retryable()).toEqual([]);
+      expect(data.controller.updatesRetryable()).toEqual([]);
     } finally {
       data.dispose();
     }
@@ -196,8 +197,8 @@ async function mountPage(
   const common = {
     state: data.state,
     skills: data.skills,
-    run: options.run ?? data.controller.run,
-    active: data.controller.active,
+    run: options.run ?? data.controller.updateRun,
+    active: data.controller.updatesActive,
     onCheck: (targets?: readonly string[]) => {
       checks.push(targets);
     },
@@ -205,7 +206,7 @@ async function mountPage(
       updates.push(targets);
     },
     onStop: () => {
-      data.controller.stop();
+      data.controller.stopUpdates();
     },
     onInspectSkill:
       options.inspectSkill === false
@@ -296,7 +297,7 @@ test.each([
   "RENDER unknown recovery follows the current Skill for keyboard, pointer and Actions at %ix%i",
   async (width, height) => {
     const data = fixture();
-    await data.controller.submit();
+    await data.controller.submitUpdates();
     data.state.toggle(first);
     const page = await mountPage(data, { sourceView: true, width, height });
     const { setup } = page;
@@ -368,7 +369,7 @@ test.each([1, 2])(
   "RENDER overview keeps a usable exact unknown target for %i results without rechecking",
   async (count) => {
     const data = fixture([first.path, second.path].slice(0, count));
-    await data.controller.submit();
+    await data.controller.submitUpdates();
     const page = await mountPage(data);
     try {
       const record = data.commands.resolve("updates.feedback-recover")!.record;
@@ -393,9 +394,9 @@ test.each([true, false])(
   "RENDER missing-message unknown still offers exact Skill inspection with Source diagnostic=%s",
   async (groupDiagnostic) => {
     const data = fixture([first.path]);
-    await data.controller.submit();
+    await data.controller.submitUpdates();
     if (!groupDiagnostic) data.state.setStatus(source, "partial");
-    const run = data.controller.run()!;
+    const run = data.controller.updateRun()!;
     const page = await mountPage(data, {
       sourceView: true,
       run: () => ({
@@ -426,7 +427,7 @@ test.each([true, false])(
   "RENDER absent Skill inspection names the exact target and Source fallback availability=%s",
   async (inspectSource) => {
     const data = fixture([first.path]);
-    await data.controller.submit();
+    await data.controller.submitUpdates();
     const page = await mountPage(data, { sourceView: true, inspectSkill: false, inspectSource });
     try {
       const record = data.commands.resolve("source-updates.feedback-recover")!.record;
@@ -448,8 +449,8 @@ test.each([true, false])(
 );
 test("RENDER a current successful sibling does not inherit another Skill's unknown recovery", async () => {
   const data = fixture();
-  await data.controller.submit();
-  const run = data.controller.run()!;
+  await data.controller.submitUpdates();
+  const run = data.controller.updateRun()!;
   const page = await mountPage(data, {
     sourceView: true,
     run: () => ({ ...run, results: [run.results[0]!, { address: second, status: "updated" }] }),
@@ -471,13 +472,13 @@ test.each(["check", "metadata", "ownership"] as const)(
   "RENDER ordinary %s failures retain their explicit recovery, deduplicated per Source",
   async (failure) => {
     const data = fixture(undefined, failure);
-    await data.controller.submit();
+    await data.controller.submitUpdates();
     const page = await mountPage(data);
     try {
       const notices = updateFeedback(
         data.state.scope.addresses,
         data.state.groups(),
-        data.controller.run(),
+        data.controller.updateRun(),
       );
       expect(notices).toHaveLength(1);
       expect(notices[0]!.recovery).toBe(

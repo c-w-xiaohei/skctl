@@ -10,22 +10,33 @@ async function installRemoteReview(
   state: string,
   identityEvidence: IdentityEvidence = { status: "unavailable" },
 ) {
-  await new StateCoordinator(state).installRemoteForTest({
-    source: "remote",
-    path: "review",
-    name: "review",
-    description: "Review",
-    kind: "remote",
-    digest: "a".repeat(64),
-    bindingDigest: bindingDigest({
-      kind: "github",
-      origin: "https://github.com/acme/skills",
-      root: "",
-      ref: "main",
-    }),
-    adoptedRevision: "b".repeat(40),
-    identityEvidence,
-  });
+  const coordinator = new StateCoordinator(state),
+    current = await coordinator.read();
+  await coordinator.write(
+    {
+      configs: current.configs,
+      installed: [
+        ...current.installed.filter((item) => item.source !== "remote" || item.path !== "review"),
+        {
+          source: "remote",
+          path: "review",
+          name: "review",
+          description: "Review",
+          kind: "remote",
+          digest: "a".repeat(64),
+          bindingDigest: bindingDigest({
+            kind: "github",
+            origin: "https://github.com/acme/skills",
+            root: "",
+            ref: "main",
+          }),
+          adoptedRevision: "b".repeat(40),
+          identityEvidence,
+        },
+      ],
+    },
+    current.generation,
+  );
 }
 async function fixture(config = "{}\n") {
   const root = await mkdtemp(join(tmpdir(), "skctl-impact-"));

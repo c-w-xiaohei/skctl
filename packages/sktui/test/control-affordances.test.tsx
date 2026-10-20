@@ -234,8 +234,8 @@ test.each([
     palette("dark");
     await mkdir("/tmp/opencode", { recursive: true });
     const cache = await mkdtemp("/tmp/opencode/operate-controls-");
-    const previous = process.env.SKTUI_UPDATE_CACHE_DIR;
-    process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+    const previous = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
     const setup = await testRender(
       () => (
         <App
@@ -276,8 +276,8 @@ test.each([
       expect(live(setup, "reader-details-relationship-source")).toBe(source);
     } finally {
       setup.renderer.destroy();
-      if (previous === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = previous;
+      if (previous === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = previous;
       await rm(cache, { recursive: true, force: true });
     }
   },

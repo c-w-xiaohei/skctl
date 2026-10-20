@@ -1,9 +1,8 @@
 import * as api from "../../src/index";
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StateCoordinator } from "../../src/storage/state";
 
 test("MGMT-029 execution requests accept no preview token generation or digest authority", () => {
   type Forbidden = "token" | "generation" | "digest";
@@ -170,8 +169,17 @@ test("PROJ-017 excludes unresolved owners from selectors without blocking struct
         agents: { opencode: "managed" },
       }),
     );
-    await new StateCoordinator(state).installLocal("gone", "review", skill);
     const core = { cwd: root, userConfigPath: global };
+    await api.registerSource(core, {
+      level: "project",
+      id: "gone",
+      binding: { kind: "local", path: "./skills", root: "" },
+    });
+    await api.installSkills(core, { source: "gone", paths: ["review"] });
+    const host = join(root, "skctl.jsonc");
+    const config = JSON.parse(await readFile(host, "utf8"));
+    delete config.sources.gone;
+    await writeFile(host, JSON.stringify(config));
     await expect(api.loadSkill(core, { selector: "reviews:review" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });

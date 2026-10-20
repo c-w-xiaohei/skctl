@@ -121,7 +121,7 @@ function UpdateWorkbench(
     () =>
       new Set(
         scope()
-          .observed.filter((item) => item.ownerHealth === "healthy")
+          .observed.filter((item) => item.owner.health === "healthy")
           .map((item) => addressKey(item.address)),
       ),
   );
@@ -543,7 +543,7 @@ function UpdateWorkbench(
         source: address.source,
         path: address.path,
         exactRevision: observation?.exactRevision,
-        expectedBaseline: observation!.baseline,
+        expectedBaseline: observation?.baseline ?? "",
       },
       unavailableReason:
         !observation?.baseline || group?.stale
@@ -776,13 +776,24 @@ function UpdateWorkbench(
       );
     if (active())
       records.push(
-        command("stop", "Stop update", props.onStop, {
-          palette: false,
-          shortcut: "s",
-          destination: "Stop pending work; completed updates remain published",
-          reason:
-            run()?.phase === "stopping" ? "Stopping; waiting for the current operation" : undefined,
-        }),
+        command(
+          "stop",
+          "Stop update",
+          () => {
+            // Move before Stop becomes disabled and loses its native focus.
+            browser?.focus();
+            props.onStop();
+          },
+          {
+            palette: false,
+            shortcut: "s",
+            destination: "Stop pending work; completed updates remain published",
+            reason:
+              run()?.phase === "stopping"
+                ? "Stopping; waiting for the current operation"
+                : undefined,
+          },
+        ),
       );
     if (props.checkingActive?.() && !active())
       records.push(

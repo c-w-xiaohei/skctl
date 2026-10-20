@@ -17,9 +17,9 @@ import {
   parseDocument,
   validateDocumentBindings,
   validateDocumentNames,
-  validatorFor,
 } from "./document";
-import { type ConfigDocument } from "./schema";
+import { configSchemaFor, type ConfigDocument } from "./schema";
+import * as v from "valibot";
 import type { CollectionDeclaration } from "../collection/schema";
 import { configFile, configInputs, resolveProjectRoot, type ReadWorkspaceOptions } from "./inputs";
 import { cachedConfig } from "./bindings";
@@ -132,7 +132,7 @@ export async function writeConfig<T extends object>(
       proposed: () => parse(next, [], { allowTrailingComma: true }) as ConfigDocument,
     });
     const proposed: unknown = parse(next, [], { allowTrailingComma: true });
-    if (!validatorFor(level)(proposed))
+    if (!v.is(configSchemaFor(level), proposed))
       throw new SkctlError("CONFIG_INVALID", "Invalid declaration edit");
     validateDocumentNames(proposed, file);
     validateDocumentBindings(proposed, file, false);

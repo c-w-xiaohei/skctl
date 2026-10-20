@@ -11,7 +11,8 @@ import { createSignal, Show } from "solid-js";
 
 import { createFocusRegistry } from "../src/focus";
 import { SourceUpdatesPage, UpdatesPage } from "../src/updates/page";
-import { buildUpdateScope, createUpdatesState } from "../src/updates/model";
+import { deriveUpdateScope as buildUpdateScope } from "../src/updates/scope";
+import { createUpdatesState } from "../src/updates/state";
 import type { UpdateRun } from "../src/updates/state";
 import { workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, live, parsedEnter } from "./reader-test-controls";

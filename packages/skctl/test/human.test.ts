@@ -467,9 +467,24 @@ test("MGMT-006/007/023 human observations emit deterministic exact-revision line
   expect(await run(["update", "check", "remote"])).toContain(
     "changed changed\tchanged\tChanged\nadded added\tadded\tAdded",
   );
-  expect(JSON.parse(await run(["update", "check", "remote", "--json"]))).not.toHaveProperty(
+  expect(JSON.parse(await run(["update", "check", "remote", "--json"]))).toHaveProperty(
     "baseline",
+    "fixture-baseline",
   );
+  await run([
+    "update",
+    "apply",
+    "remote",
+    "changed",
+    "--revision",
+    "a".repeat(40),
+    "--baseline",
+    "fixture-baseline",
+  ]);
+  expect(calls).toContainEqual([
+    "update",
+    expect.objectContaining({ expectedBaseline: "fixture-baseline" }),
+  ]);
   expect(await run(["config-source", "observe", "remote"])).toStartWith(
     `revision ${"a".repeat(40)}\nconfig-source remote\n`,
   );

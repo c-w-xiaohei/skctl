@@ -1,11 +1,10 @@
 import * as api from "../../src/index";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setConfigReadHookForTest } from "../../src/config/document";
-import { setAcquisitionTrapForTest } from "../../src/source/snapshot";
-import { setSemanticStateReadHookForTest, StateCoordinator } from "../../src/storage/state";
+import { StateCoordinator } from "../../src/storage/state";
 import { exposureHierarchy } from "../../../sktui/src/collections/state";
 test("PROJ-001 resolves an exact nearest Config project root", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-projection-root-"));
@@ -102,7 +101,7 @@ test("PROJ invalid Config reports its exact file, pointer, and validation cause 
         location: { file: project, pointer: "/sources/source/path" },
       },
     });
-    expect(invalid.file.problem!.message).toContain("must be string");
+    expect(invalid.file.problem!.message).toContain("Expected string");
     expect(workspace.configs.find((config) => config.level === "global")!.file.status).toBe(
       "valid",
     );
@@ -290,8 +289,10 @@ test("PROJ-012/013/014/015/018 reports complete effective projection, Installed 
         use: ["exposed"],
       }),
     );
-    const { StateCoordinator } = await import("../../src/storage/state");
-    await new StateCoordinator(state).installLocal("source", "review", skill);
+    await api.installSkills(
+      { cwd: root, userConfigPath: global },
+      { source: "source", paths: ["review"] },
+    );
     const projection = (await api.getWorkspace({ cwd: root, userConfigPath: global })).value;
     expect(projection.effective).toMatchObject({
       status: "complete",
@@ -354,7 +355,10 @@ test("PROJ-015 projects selector-local member paths and Collection Use owners", 
       }),
     );
     await writeFile(local, JSON.stringify({ use: ["base"] }));
-    await new StateCoordinator(state).installLocal("source", "review", skill);
+    await api.installSkills(
+      { cwd: root, userConfigPath: global },
+      { source: "source", paths: ["review"] },
+    );
     const core = { cwd: root, userConfigPath: global };
     const projection = (await api.getWorkspace(core)).value;
     const installed = projection.installedSkills[0]!;
@@ -440,7 +444,10 @@ test("PROJ Reference-reachable Collections contribute management selectors witho
         use: ["root"],
       }),
     );
-    await new StateCoordinator(state).installLocal("source", "review", skill);
+    await api.installSkills(
+      { cwd: root, userConfigPath: global },
+      { source: "source", paths: ["review"] },
+    );
     const core = { cwd: root, userConfigPath: global };
     const projection = (await api.getWorkspace(core)).value;
     const installed = projection.installedSkills[0]!;
@@ -516,7 +523,10 @@ test("PROJ Reference paths deduplicate linked selectors and Current Exposure fac
         use: ["root"],
       }),
     );
-    await new StateCoordinator(state).installLocal("source", "review", skill);
+    await api.installSkills(
+      { cwd: root, userConfigPath: global },
+      { source: "source", paths: ["review"] },
+    );
     const projection = (await api.getWorkspace({ cwd: root, userConfigPath: global })).value;
     const installed = projection.installedSkills[0]!;
     expect(installed.selectorViews).toMatchObject({
@@ -597,7 +607,10 @@ test("PROJ-016/017 excludes a drifted Local owner from Agent disclosure and sele
       }),
     );
     process.env.SKCTL_STATE_DIR = state;
-    await new StateCoordinator(state).installLocal("source", "review", skill);
+    await api.installSkills(
+      { cwd: root, userConfigPath: global },
+      { source: "source", paths: ["review"] },
+    );
     await writeFile(
       join(root, "skctl.jsonc"),
       JSON.stringify({
@@ -769,6 +782,13 @@ test("PROJ-020 captures every concrete Config and private state exactly once und
   const state = join(root, "state");
   const configReads = new Map<string, number>();
   let stateReads = 0;
+  const read = StateCoordinator.prototype.read;
+  const reads = spyOn(StateCoordinator.prototype, "read").mockImplementation(
+    function (this: StateCoordinator) {
+      stateReads++;
+      return read.call(this);
+    },
+  );
   try {
     process.env.SKCTL_STATE_DIR = state;
     await writeFile(global, JSON.stringify({ agents: { opencode: "managed" } }));
@@ -784,13 +804,21 @@ test("PROJ-020 captures every concrete Config and private state exactly once und
     const applied = Buffer.from(
       JSON.stringify({ sources: { shared: { kind: "local", path: "./skills", root: "" } } }),
     );
-    await new StateCoordinator(state).publishRemoteConfig("remote", "a".repeat(40), applied);
-    setSemanticStateReadHookForTest(() => stateReads++);
+    const coordinator = new StateCoordinator(state),
+      digest = await coordinator.publishConfig(applied);
+    await coordinator.write(
+      { installed: [], configs: { remote: { commit: "a".repeat(40), digest } } },
+      0,
+    );
+    stateReads = 0;
     setConfigReadHookForTest((path) => configReads.set(path, (configReads.get(path) ?? 0) + 1));
-    setAcquisitionTrapForTest(() => {
-      throw new Error("workspace projection must not acquire a provider");
+    await api.getWorkspace({
+      cwd: root,
+      userConfigPath: global,
+      sourceTransport: () => {
+        throw new Error("workspace projection must not acquire a provider");
+      },
     });
-    await api.getWorkspace({ cwd: root, userConfigPath: global });
     expect(stateReads).toBe(1);
     expect([...configReads.entries()].sort(([left], [right]) => left.localeCompare(right))).toEqual(
       [
@@ -809,9 +837,8 @@ test("PROJ-020 captures every concrete Config and private state exactly once und
       ],
     );
   } finally {
-    setAcquisitionTrapForTest();
     setConfigReadHookForTest();
-    setSemanticStateReadHookForTest();
+    reads.mockRestore();
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
@@ -829,9 +856,8 @@ test("PROJ-005 projects adopted Remote Config Source commit and contributions wi
         },
       }),
     );
-    await new StateCoordinator(state).publishRemoteConfig(
-      "remote",
-      "b".repeat(40),
+    const coordinator = new StateCoordinator(state);
+    const digest = await coordinator.publishConfig(
       Buffer.from(
         JSON.stringify({
           sources: { shared: { kind: "local", path: "./skills", root: "" } },
@@ -839,10 +865,18 @@ test("PROJ-005 projects adopted Remote Config Source commit and contributions wi
         }),
       ),
     );
-    setAcquisitionTrapForTest(() => {
-      throw new Error("workspace projection must not acquire a provider");
-    });
-    const config = (await api.getWorkspace({ cwd: root })).value.configs[1]!;
+    await coordinator.write(
+      { installed: [], configs: { remote: { commit: "b".repeat(40), digest } } },
+      0,
+    );
+    const config = (
+      await api.getWorkspace({
+        cwd: root,
+        sourceTransport: () => {
+          throw new Error("workspace projection must not acquire a provider");
+        },
+      })
+    ).value.configs[1]!;
     expect(config.direct.configSources).toEqual([
       expect.objectContaining({
         id: "remote",
@@ -855,7 +889,6 @@ test("PROJ-005 projects adopted Remote Config Source commit and contributions wi
     ]);
     expect(JSON.stringify(config)).not.toContain(join(state, "configs"));
   } finally {
-    setAcquisitionTrapForTest();
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }

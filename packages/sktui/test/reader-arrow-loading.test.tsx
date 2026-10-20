@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
-import type { TuiCore } from "../src/effects";
+import type { TuiCore } from "../src/session";
 import { directSourceCore } from "./direct-source.fixture";
 import {
   readerAddress,

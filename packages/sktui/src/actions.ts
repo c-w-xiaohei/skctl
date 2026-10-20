@@ -15,6 +15,7 @@ import {
 } from "./workspace/state";
 import { unassignedSkills, type CollectionsSnapshot } from "./collections/state";
 import { configDeclarationOwnerKey, type ConfigSnapshot } from "./config/state";
+import { skillsStatus } from "./workspace/skills-status";
 
 export interface PageActionFacts {
   readonly workspace: WorkspaceSnapshot;
@@ -424,6 +425,16 @@ function reachableActionIntents(
           },
         ]
       : [
+          ...(projection &&
+          currentSection === "skills" &&
+          skillsStatus(projection)?.action === "add-source"
+            ? [{ id: "add-source" as const, title: "Add a Source", enabled: true }]
+            : []),
+          ...(projection &&
+          currentSection === "skills" &&
+          skillsStatus(projection)?.action === "create-collection"
+            ? [{ id: "new-collection" as const, title: "Create a Collection", enabled: true }]
+            : []),
           ...selectedSkillActionIntents(destination, projection, pages),
           ...checkedSkillActionIntents(destination, projection, pages),
         ];

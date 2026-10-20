@@ -339,11 +339,11 @@ test("an incomplete projection offers Problems without suggesting an unrelated M
     width: 100,
     height: 24,
   });
-  await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("current-exposure-problems"));
+  await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("skills-setup-primary"));
   expect(
     setup.renderer.root.findDescendantById("current-exposure-enable-managed-opencode"),
   ).toBeUndefined();
-  await focusLive(setup, "current-exposure-problems");
+  await focusLive(setup, "skills-setup-primary");
   await parsedEnter(setup);
   try {
     await setup.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "problems-browser");

@@ -1,7 +1,12 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
 import type { WorkspaceView, UpdateObservation } from "@skctl/core";
-import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
+import {
+  BoxRenderable,
+  ScrollBoxRenderable,
+  SelectRenderable,
+  TextRenderable,
+} from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,7 +14,7 @@ import { join } from "node:path";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { enterLive, focusLive } from "./reader-test-controls";
+import { enterLive, parsedEnter } from "./reader-test-controls";
 type Setup = Awaited<ReturnType<typeof testRender>>;
 const revision = "c".repeat(40);
 function bounds(target: ReturnType<Setup["renderer"]["root"]["findDescendantById"]>) {
@@ -26,7 +31,7 @@ function bounds(target: ReturnType<Setup["renderer"]["root"]["findDescendantById
 function diagnostic(setup: Setup, stage: string) {
   const root = setup.renderer.root;
   const page = root.findDescendantById("updates-page");
-  const region = root.findDescendantById("updates-scroll-region");
+  const region = root.findDescendantById("updates-browser-body");
   const browser = root.findDescendantById("updates-browser");
   const check = root.findDescendantById("updates-check");
   const updateAll = root.findDescendantById("updates-update-all");
@@ -46,16 +51,13 @@ function diagnostic(setup: Setup, stage: string) {
     },
   )}\n${setup.captureCharFrame()}`;
 }
-async function key(setup: Setup, key: "down" | "enter") {
-  if (key === "down") setup.mockInput.pressArrow("down");
-  else setup.mockInput.pressEnter();
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  await setup.renderOnce();
-}
 function rowNames(setup: Setup) {
-  const browser = setup.renderer.root.findDescendantById("updates-browser");
-  if (!(browser instanceof SelectRenderable)) return [];
-  return browser.options.map((option) => option.name);
+  return ["team-main", "other-source"].map((source) => {
+    const cell = setup.renderer.root.findDescendantById(
+      `updates-browser-row-${source}:cell-status`,
+    );
+    return `${source} ${cell instanceof TextRenderable ? cell.plainText : "missing"}`;
+  });
 }
 test("App Updates keeps Source results above actions after Stop removes the active command", async () => {
   const base = workspaceProjection({ includeContribution: false });
@@ -75,11 +77,7 @@ test("App Updates keeps Source results above actions after Stop removes the acti
   };
   const checks: string[] = [];
   const completedChecks: string[] = [];
-  const updates: {
-    source: string;
-    paths: readonly string[];
-    exactRevision?: string;
-  }[] = [];
+  const updates: Parameters<typeof import("@skctl/core").updateSkills>[1][] = [];
   let updateAborts = 0;
   const observation = (source: string, path: string): UpdateObservation => ({
     source,
@@ -89,9 +87,16 @@ test("App Updates keeps Source results above actions after Stop removes the acti
     changed: [{ path, name: path, description: `Changed ${path}` }],
     added: [],
     removed: [],
-    unchanged: [],
+    unchanged: projection.installedSkills
+      .filter((skill) => skill.address.source === source && skill.address.path !== path)
+      .map((skill) => ({
+        path: skill.address.path,
+        name: skill.name,
+        description: skill.description,
+      })),
   });
   const core = directSourceCore(projection, {
+    getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
     checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
       checks.push(source);
       const result = {
@@ -115,9 +120,9 @@ test("App Updates keeps Source results above actions after Stop removes the acti
       );
     },
   });
-  const priorCachePath = process.env.SKTUI_UPDATE_CACHE_DIR;
+  const priorCachePath = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   const cacheDirectory = await mkdtemp(join(tmpdir(), "skctl-stop-layout-"));
-  process.env.SKTUI_UPDATE_CACHE_DIR = cacheDirectory;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cacheDirectory;
   let setup: Setup | undefined;
   let stage = "boot";
   try {
@@ -126,11 +131,9 @@ test("App Updates keeps Source results above actions after Stop removes the acti
       height: 40,
     });
     await setup.waitFor(
-      () => !!setup!.renderer.root.findDescendantById("shell-section-navigation"),
+      () => !!setup!.renderer.root.findDescendantById("shell-section-tab-updates"),
     );
-    await focusLive(setup, "shell-section-navigation");
-    for (let step = 0; step < 3; step++) await key(setup, "down");
-    await key(setup, "enter");
+    await enterLive(setup, "shell-section-tab-updates");
     await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("updates-browser"));
     stage = "automatic startup checks settle";
     await setup.waitFor(() => completedChecks.length >= 2);
@@ -138,19 +141,22 @@ test("App Updates keeps Source results above actions after Stop removes the acti
       const rows = rowNames(setup!);
       return (
         rows.length === 2 &&
-        rows.some((row) => /team-main.*1 updates/i.test(row)) &&
-        rows.some((row) => /other-source.*1 updates/i.test(row)) &&
+        rows.every((row) => row.includes("Updates available")) &&
         !rows.some((row) => /checking|not checked/i.test(row))
       );
     });
     expect(checks.slice(0, 2), diagnostic(setup, stage)).toEqual(["team-main", "other-source"]);
-    expect(setup.captureCharFrame(), diagnostic(setup, stage)).toContain(
-      "Update available 2 Skills",
-    );
+    expect(updates).toEqual([]);
     stage = "explicit manual refresh after startup settles";
     const beforeManualCheck = checks.length;
     const beforeManualCompletion = completedChecks.length;
-    await enterLive(setup, "updates-check");
+    setup.mockInput.pressKey("p", { ctrl: true });
+    await setup.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "palette-choices");
+    const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+    const checkIndex = choices.options.findIndex((option) => option.value.id === "updates.check");
+    expect(checkIndex).toBeGreaterThanOrEqual(0);
+    choices.setSelectedIndex(checkIndex);
+    await parsedEnter(setup);
     await setup.waitFor(() => checks.length === beforeManualCheck + 2);
     expect(checks.slice(beforeManualCheck), diagnostic(setup, stage)).toEqual([
       "team-main",
@@ -165,33 +171,22 @@ test("App Updates keeps Source results above actions after Stop removes the acti
       const rows = rowNames(setup!);
       return (
         rows.length === 2 &&
-        rows.some((row) => /team-main.*1 updates/i.test(row)) &&
-        rows.some((row) => /other-source.*1 updates/i.test(row)) &&
+        rows.every((row) => row.includes("Updates available")) &&
         !rows.some((row) => /checking|not checked/i.test(row))
       );
     });
-    stage = "review exact checked targets";
+    stage = "execute exact checked two-Source batch";
     await enterLive(setup, "updates-update-all");
-    await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("updates-review-execute"));
-    await setup.waitForFrame(
-      (frame) =>
-        frame.includes("Exact update targets") &&
-        frame.includes("team-main/guide") &&
-        frame.includes("other-source/other"),
-      { maxPasses: 200 },
-    );
-    const review = setup.captureCharFrame();
-    expect(review, diagnostic(setup, stage)).toContain("Exact update targets");
-    expect(review, diagnostic(setup, stage)).toContain("team-main/guide");
-    expect(review, diagnostic(setup, stage)).toContain("other-source/other");
-    expect(updates, diagnostic(setup, stage)).toEqual([]);
-    stage = "execute reviewed two-Source batch";
-    await enterLive(setup, "updates-review-execute");
     await setup.waitFor(
       () => updates.length === 1 && !!setup!.renderer.root.findDescendantById("updates-stop"),
     );
     expect(updates, diagnostic(setup, stage)).toEqual([
-      { source: "team-main", paths: ["guide"], exactRevision: revision },
+      {
+        source: "team-main",
+        paths: ["guide"],
+        exactRevision: revision,
+        expectedBaseline: "baseline:test",
+      },
     ]);
     const activeStop = setup.renderer.root.findDescendantById("updates-stop");
     expect(activeStop?.focusable, diagnostic(setup, stage)).toBe(true);
@@ -204,25 +199,26 @@ test("App Updates keeps Source results above actions after Stop removes the acti
     await setup.waitFor(() => updateAborts === 1);
     await setup.waitFor(() => !setup!.renderer.root.findDescendantById("updates-stop"));
     await setup.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "updates-browser");
-    await setup.renderOnce();
-    await setup.renderOnce();
+    await setup.flush();
     stage = "post-Stop result, feedback, focus, and geometry";
     const root = setup.renderer.root;
     const page = root.findDescendantById("updates-page");
-    const region = root.findDescendantById("updates-scroll-region");
+    const region = root.findDescendantById("updates-browser-body");
     const browser = root.findDescendantById("updates-browser");
-    const check = root.findDescendantById("updates-check");
+    const details = root.findDescendantById("updates-feedback-details");
     if (
       !page ||
       !(region instanceof ScrollBoxRenderable) ||
-      !(browser instanceof SelectRenderable) ||
-      !check
+      !(browser instanceof BoxRenderable) ||
+      !details
     )
-      throw new Error("Current Updates page, scroll region, list, or Check action is not mounted");
+      throw new Error(
+        "Current Updates page, scroll region, table, or diagnostic action is not mounted",
+      );
     expect(setup.renderer.currentFocusedRenderable, diagnostic(setup, stage)).toBe(browser);
-    expect(check.focusable, diagnostic(setup, stage)).toBe(true);
-    expect(root.findDescendantById("updates-update-all"), diagnostic(setup, stage)).toBeUndefined();
-    expect(check.screenY + check.height, diagnostic(setup, stage)).toBeLessThanOrEqual(
+    expect(details.focusable, diagnostic(setup, stage)).toBe(true);
+    expect(root.findDescendantById("updates-stop"), diagnostic(setup, stage)).toBeUndefined();
+    expect(details.screenY + details.height, diagnostic(setup, stage)).toBeLessThanOrEqual(
       page.screenY + page.height,
     );
     expect(region.screenY, diagnostic(setup, stage)).toBeGreaterThanOrEqual(page.screenY);
@@ -230,36 +226,37 @@ test("App Updates keeps Source results above actions after Stop removes the acti
       page.screenY + page.height,
     );
     expect(browser.screenY + browser.height, diagnostic(setup, stage)).toBeLessThanOrEqual(
-      check.screenY,
+      details.screenY,
     );
     expect(region.horizontalScrollBar.visible, diagnostic(setup, stage)).toBe(false);
     expect(region.verticalScrollBar.visible, diagnostic(setup, stage)).toBe(false);
-    expect(rowNames(setup).join("\n"), diagnostic(setup, stage)).toMatch(/team-main.*cancelled/i);
-    expect(rowNames(setup).join("\n"), diagnostic(setup, stage)).toMatch(/other-source.*not run/i);
-    expect(setup.captureCharFrame(), diagnostic(setup, stage)).toContain(
-      "Update outcome may be unknown; check updates again",
+    expect(rowNames(setup).join("\n"), diagnostic(setup, stage)).toMatch(
+      /team-main.*Needs attention/i,
     );
+    expect(rowNames(setup).join("\n"), diagnostic(setup, stage)).toMatch(/other-source.*not run/i);
+    expect(setup.captureCharFrame(), diagnostic(setup, stage)).toContain("Result not confirmed");
     expect(updates, diagnostic(setup, stage)).toEqual([
-      { source: "team-main", paths: ["guide"], exactRevision: revision },
+      {
+        source: "team-main",
+        paths: ["guide"],
+        exactRevision: revision,
+        expectedBaseline: "baseline:test",
+      },
     ]);
     const frameLines = setup.captureCharFrame().split("\n");
-    const feedbackLine = frameLines.findIndex((line) =>
-      line.includes("Update outcome may be unknown"),
-    );
-    const checkLine = frameLines.findIndex((line) => line.includes("Check updates"));
+    const feedbackLine = frameLines.findIndex((line) => line.includes("Result not confirmed"));
+    const checkLine = frameLines.findIndex((line) => line.includes("Details"));
     expect(feedbackLine, diagnostic(setup, stage)).toBeGreaterThanOrEqual(0);
     expect(checkLine, diagnostic(setup, stage)).toBeGreaterThan(feedbackLine);
     expect(frameLines[feedbackLine], diagnostic(setup, stage)).not.toMatch(/[┌┐└┘─]/);
-    expect(setup.captureCharFrame(), diagnostic(setup, stage)).not.toMatch(
-      /█.*Check updates|Check updates.*█/,
-    );
+    expect(setup.captureCharFrame(), diagnostic(setup, stage)).not.toMatch(/█.*Details|Details.*█/);
   } catch (error) {
     if (!setup) throw error;
     throw new Error(diagnostic(setup, stage), { cause: error });
   } finally {
     setup?.renderer.destroy();
-    if (priorCachePath === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-    else process.env.SKTUI_UPDATE_CACHE_DIR = priorCachePath;
+    if (priorCachePath === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    else process.env.SKTUI_UPDATE_SCHEDULE_DIR = priorCachePath;
     await rm(cacheDirectory, { recursive: true, force: true });
   }
 });

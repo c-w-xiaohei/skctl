@@ -1,5 +1,5 @@
 import type { ConfigDeclarationOwner } from "@skctl/core";
-import type { CollectionReview } from "../effects";
+import type { CollectionReview } from "../session";
 import { createModalControlRegistry, useModalControlTraversal } from "../modal-controls";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
 

@@ -2,11 +2,14 @@ import type { SkillAddress } from "../source/schema";
 import type { CollectionDeclaration, CollectionReference } from "./schema";
 import { SkctlError } from "../shared";
 import { type ConfigDeclarationOwner } from "../config/types";
+import type * as v from "valibot";
+import type {
+  installedIdentitySchema,
+  resolvedMemberSchema,
+  memberOriginPathSchema,
+} from "./domain.schema";
 
-export interface InstalledIdentity extends SkillAddress {
-  readonly name: string;
-  readonly repository?: string;
-}
+export type InstalledIdentity = Readonly<v.InferOutput<typeof installedIdentitySchema>>;
 
 export interface CollectionContribution {
   readonly id: string;
@@ -19,31 +22,8 @@ export interface ResolvedCollections {
   readonly references: ReadonlyMap<string, Readonly<Record<string, CollectionReference>>>;
   readonly missing: ReadonlySet<string>;
 }
-export interface ResolvedMember {
-  readonly address: SkillAddress;
-  readonly paths: readonly MemberOriginPath[];
-}
-export type MemberOriginPath =
-  | {
-      readonly kind: "direct";
-      readonly collection: string;
-      readonly entryName: string;
-      readonly owner?: ConfigDeclarationOwner;
-    }
-  | {
-      readonly kind: "via-link";
-      readonly links: readonly {
-        readonly collection: string;
-        readonly linkedCollection: string;
-        readonly owner?: ConfigDeclarationOwner;
-      }[];
-    }
-  | {
-      readonly kind: "repository-derived";
-      readonly repository: string;
-      readonly source: string;
-      readonly path: string;
-    };
+export type ResolvedMember = Readonly<v.InferOutput<typeof resolvedMemberSchema>>;
+export type MemberOriginPath = Readonly<v.InferOutput<typeof memberOriginPathSchema>>;
 export class CollectionResolutionError extends SkctlError {
   constructor(
     code: "CONFIG_CONFLICT" | "EXPOSURE_CONFLICT",

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { SkctlError } from "@skctl/core";
-import { createTuiEffects } from "../src/effects";
+import { createTuiSession } from "../src/session";
 import {
   directOwner,
   directSourceCore,
@@ -67,7 +67,7 @@ test("refresh applies only the current initial projection after a replacement re
   }[] = [];
   const { projection, operation } = testProjection();
   const accepted = workspaceProjection();
-  const effects = createTuiEffects(
+  const effects = createTuiSession(
     directSourceCore(workspaceProjection(), {
       getWorkspace: (_environment: import("@skctl/core").CoreOptions, options) =>
         new Promise((resolve) => {
@@ -91,7 +91,7 @@ test("refresh applies only the current initial projection after a replacement re
 });
 test("refresh failure reports stale diagnostics without applying a snapshot", async () => {
   const { projection, operation } = testProjection();
-  const effects = createTuiEffects(
+  const effects = createTuiSession(
     directSourceCore(workspaceProjection(), {
       getWorkspace: async () => {
         throw new SkctlError("PROVIDER_UNAVAILABLE", "offline");
@@ -560,3 +560,65 @@ test("STATE-016/018 cancelled install retains its observed review and retries wi
   expect(await effects.install(review!, selectedPaths)).toBe(true);
   expect({ discovers, installs, refreshes }).toEqual({ discovers: 1, installs: 2, refreshes: 1 });
 });
+
+test.each(["adopt", "forget", "remove"] as const)(
+  "Config %s confirms through the authoritative Core mutation without a second preview",
+  async (kind) => {
+    const calls: unknown[] = [];
+    const observation = {
+      id: "team-config",
+      kind: "github" as const,
+      exactRevision: "a".repeat(40),
+      contributions: { sources: [], collections: [] },
+    };
+    const core = directSourceCore(workspaceProjection());
+    const effects = testEffects({
+      ...core,
+      previewConfigAdoption: async (...args) => {
+        calls.push("preview");
+        return core.previewConfigAdoption(...args);
+      },
+      previewConfigForget: async (...args) => {
+        calls.push("preview");
+        return core.previewConfigForget(...args);
+      },
+      previewConfigRemoval: async (...args) => {
+        calls.push("preview");
+        return core.previewConfigRemoval(...args);
+      },
+      adoptConfigSource: async (_environment, request) => {
+        calls.push(request);
+        return { value: undefined, diagnostics: [] };
+      },
+      forgetConfig: async (_environment, request) => {
+        calls.push(request);
+        return { value: undefined, diagnostics: [] };
+      },
+      removeConfig: async (_environment, request) => {
+        calls.push(request);
+        return { value: undefined, diagnostics: [] };
+      },
+      getWorkspace: async () => {
+        calls.push("refresh");
+        return { value: workspaceProjection(), diagnostics: [] };
+      },
+    });
+    try {
+      const ok =
+        kind === "adopt"
+          ? await effects.adoptConfig(observation.id, observation.exactRevision, observation)
+          : kind === "forget"
+            ? await effects.forgetConfig(observation.id)
+            : await effects.removeConfig(observation.id);
+      expect(ok).toBe(true);
+      expect(calls).toEqual([
+        kind === "adopt"
+          ? { id: observation.id, exactRevision: observation.exactRevision, observation }
+          : { id: observation.id },
+        "refresh",
+      ]);
+    } finally {
+      await effects.teardown();
+    }
+  },
+);

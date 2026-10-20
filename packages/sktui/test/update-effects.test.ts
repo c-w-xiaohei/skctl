@@ -5,10 +5,11 @@ import {
   type WorkspaceView,
   type UpdateObservation,
 } from "@skctl/core";
-import { createUpdateController } from "../src/updates/controller";
-import { testEffects } from "./direct-source.fixture";
+import { createTuiSession } from "../src/session";
+import { createOperationState } from "../src/operation-state";
+import { testEffects, testProjection } from "./direct-source.fixture";
 import { directOwner, directSourceCore } from "./direct-source.fixture";
-import { buildUpdateScope, createUpdatesState } from "../src/updates/model";
+import { deriveUpdateScope as buildUpdateScope } from "../src/updates/scope";
 import { workspaceProjection } from "./direct-source.fixture";
 const observation = (source: string, paths: string[], exactRevision = "a".repeat(40)) => ({
   source,
@@ -193,7 +194,6 @@ function deferred<T>() {
 }
 test("UPDATES controller stops a read-only check without publishing its late result or checking later Sources", async () => {
   const initial = projection(["first", "second"]);
-  const state = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
   const check = deferred<{
     value: UpdateObservation;
     diagnostics: [];
@@ -201,8 +201,8 @@ test("UPDATES controller stops a read-only check without publishing its late res
   const checks: string[] = [];
   let signal: AbortSignal | undefined;
   let updates = 0;
-  const controller = createUpdateController(
-    {
+  const controller = createTuiSession(
+    directSourceCore(initial, {
       getWorkspace: async () => ({ value: initial, diagnostics: [] }),
       checkUpdate: (_environment: import("@skctl/core").CoreOptions, { source }, options) => {
         checks.push(source);
@@ -213,65 +213,68 @@ test("UPDATES controller stops a read-only check without publishing its late res
         updates++;
         return { value: undefined, diagnostics: [] };
       },
-    },
-    state,
+    }),
+    createOperationState(),
+    testProjection().projection.outcomes,
   );
-  const running = controller.check();
+  const state = controller.selectUpdatesScope({ kind: "workspace" }, initial)!;
+  const running = controller.checkUpdates();
   expect(checks).toEqual(["first"]);
   expect(state.group("first")?.status).toBe("checking");
-  expect(controller.stop()).toBe(true);
+  expect(controller.stopUpdateChecks()).toBe(true);
   expect(signal?.aborted).toBe(true);
   check.resolve({ value: observation("first", ["guide"]), diagnostics: [] });
   expect(await running).toBe(false);
   expect(state.group("first")?.observation).toBeUndefined();
-  expect(state.group("second")?.status).toBe("not-checked");
+  expect(state.group("second")?.status).toBe("cancelled");
   expect(state.eligible()).toEqual([]);
   expect(checks).toEqual(["first"]);
   expect(updates).toBe(0);
-  expect(controller.active()).toBe(false);
+  expect(controller.checkingActive()).toBe(false);
 });
 test("UPDATES controller blocks stale public scope before update and never submits an unchecked source", async () => {
   const initial = projection(["first"]);
-  const state = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
-  state.observe(observation("first", ["guide"]));
   const stale = projection([]);
   let updates = 0;
-  const controller = createUpdateController(
-    {
+  const controller = createTuiSession(
+    directSourceCore(initial, {
       getWorkspace: async () => ({ value: stale, diagnostics: [] }),
       checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
       updateSkills: async () => {
         updates++;
         return { value: undefined, diagnostics: [] };
       },
-    },
-    state,
+    }),
+    createOperationState(),
+    testProjection().projection.outcomes,
   );
-  await controller.submit();
+  const state = controller.selectUpdatesScope({ kind: "workspace" }, initial)!;
+  state.observe(observation("first", ["guide"]));
+  await controller.submitUpdates();
   expect(updates).toBe(0);
   expect(state.group("first")?.error).toContain("no longer installed");
-  const unchecked = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
-  const second = createUpdateController(
-    {
+  const second = createTuiSession(
+    directSourceCore(initial, {
       getWorkspace: async () => ({ value: initial, diagnostics: [] }),
       checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
       updateSkills: async () => {
         updates++;
         return { value: undefined, diagnostics: [] };
       },
-    },
-    unchecked,
+    }),
+    createOperationState(),
+    testProjection().projection.outcomes,
   );
-  await second.submit();
+  second.selectUpdatesScope({ kind: "workspace" }, initial);
+  await second.submitUpdates();
   expect(updates).toBe(0);
 });
 test("UPDATES failed rechecks revoke old observations without blocking another Source or a fresh submission", async () => {
   const initial = projection(["first", "second"]);
-  const state = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
   let firstChecks = 0;
   const updates: unknown[] = [];
-  const controller = createUpdateController(
-    {
+  const controller = createTuiSession(
+    directSourceCore(initial, {
       getWorkspace: async () => ({ value: initial, diagnostics: [] }),
       checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
         if (source === "first" && ++firstChecks === 2) throw new Error("upstream unavailable");
@@ -281,21 +284,23 @@ test("UPDATES failed rechecks revoke old observations without blocking another S
         updates.push(request);
         return { value: undefined, diagnostics: [] };
       },
-    },
-    state,
+    }),
+    createOperationState(),
+    testProjection().projection.outcomes,
   );
-  await controller.check();
+  const state = controller.selectUpdatesScope({ kind: "workspace" }, initial)!;
+  await controller.checkUpdates();
   expect(state.group("first")?.observation).toEqual(observation("first", ["guide"]));
   expect(state.eligible()).toEqual(initial.installedSkills.map((skill) => skill.address));
-  await controller.check();
+  await controller.checkUpdates();
   expect(state.group("first")?.status).toBe("failed");
   expect(state.group("first")?.failure).toBe("check");
-  expect(state.group("first")?.observation).toBeUndefined();
+  expect(state.group("first")?.stale).toBe(true);
   expect(state.group("second")?.status).toBe("changed");
   expect(state.eligible()).toEqual([{ source: "second", path: "guide" }]);
   expect(state.selected()).toEqual([]);
   expect(updates).toEqual([]);
-  expect(await controller.submit([{ source: "first", path: "guide" }])).toBe(true);
+  expect(await controller.submitUpdates([{ source: "first", path: "guide" }])).toBe(true);
   expect(firstChecks).toBe(3);
   expect(updates).toEqual([
     {
@@ -311,8 +316,6 @@ test.each(["before-check", "after-check"] as const)(
   "UPDATES refuses installed revision drift %s without blocking another selected Source",
   async (timing) => {
     const initial = projection(["first", "second"]);
-    const state = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
-    for (const skill of initial.installedSkills) state.toggle(skill.address);
     const revised = {
       ...initial,
       installedSkills: initial.installedSkills.map((skill) =>
@@ -325,8 +328,8 @@ test.each(["before-check", "after-check"] as const)(
     const updates: unknown[] = [];
     const published: WorkspaceView[] = [];
     let reads = 0;
-    const controller = createUpdateController(
-      {
+    const controller = createTuiSession(
+      directSourceCore(initial, {
         getWorkspace: async () => ({
           value: ++reads >= (timing === "before-check" ? 1 : 2) ? revised : initial,
           diagnostics: [],
@@ -340,11 +343,18 @@ test.each(["before-check", "after-check"] as const)(
           updates.push(request);
           return { value: undefined, diagnostics: [] };
         },
+      }),
+      createOperationState(),
+      {
+        ...testProjection().projection.outcomes,
+        applyProjection: (snapshot) => {
+          published.push(snapshot);
+        },
       },
-      state,
-      { onProjection: (snapshot) => published.push(snapshot) },
     );
-    expect(await controller.submit()).toBe(false);
+    const state = controller.selectUpdatesScope({ kind: "workspace" }, initial)!;
+    for (const skill of initial.installedSkills) state.toggle(skill.address);
+    expect(await controller.submitUpdates()).toBe(false);
     expect(checks).toEqual(timing === "before-check" ? ["second"] : ["first", "second"]);
     expect(updates).toEqual([
       {
@@ -358,8 +368,11 @@ test.each(["before-check", "after-check"] as const)(
     expect(state.group("first")?.error).toContain("installed revision changed");
     expect(state.group("first")?.committed).toBeUndefined();
     expect(state.group("second")).toMatchObject({ status: "succeeded", committed: true });
-    expect(controller.run()?.results.map((result) => result.status)).toEqual(["failed", "updated"]);
-    expect(controller.run()?.results[0]).toMatchObject({
+    expect(controller.updateRun()?.results.map((result) => result.status)).toEqual([
+      "failed",
+      "updated",
+    ]);
+    expect(controller.updateRun()?.results[0]).toMatchObject({
       status: "failed",
       issue: { kind: "scope" },
     });
@@ -371,8 +384,6 @@ test.each(["before-check", "after-check"] as const)(
 );
 test("UPDATES controller teardown never publishes a late fulfilled update", async () => {
   const initial = projection(["first"]);
-  const state = createUpdatesState(buildUpdateScope(initial, { kind: "workspace" }));
-  state.toggle({ source: "first", path: "guide" });
   const pending = deferred<{
     value: undefined;
     diagnostics: [];
@@ -381,8 +392,8 @@ test("UPDATES controller teardown never publishes a late fulfilled update", asyn
   let signal: AbortSignal | undefined;
   let reads = 0;
   const published: WorkspaceView[] = [];
-  const controller = createUpdateController(
-    {
+  const controller = createTuiSession(
+    directSourceCore(initial, {
       getWorkspace: async () => {
         reads++;
         return { value: initial, diagnostics: [] };
@@ -393,28 +404,39 @@ test("UPDATES controller teardown never publishes a late fulfilled update", asyn
         started.resolve();
         return pending.promise;
       },
+    }),
+    createOperationState(),
+    {
+      ...testProjection().projection.outcomes,
+      applyProjection: (snapshot) => {
+        published.push(snapshot);
+      },
     },
-    state,
-    { onProjection: (snapshot) => published.push(snapshot) },
   );
-  const running = controller.submit();
+  const state = controller.selectUpdatesScope({ kind: "workspace" }, initial)!;
+  state.toggle({ source: "first", path: "guide" });
+  const running = controller.submitUpdates();
   await started.promise;
-  expect(controller.active()).toBe(true);
+  expect(controller.updatesActive()).toBe(true);
   expect(signal?.aborted).toBe(false);
   expect(reads).toBe(2);
-  const before = { run: controller.run(), groups: state.groups(), selected: state.selected() };
+  const before = {
+    run: controller.updateRun(),
+    groups: state.groups(),
+    selected: state.selected(),
+  };
   controller.teardown();
   expect(signal?.aborted).toBe(true);
-  expect(controller.active()).toBe(false);
+  expect(controller.updatesActive()).toBe(false);
   pending.resolve({ value: undefined, diagnostics: [] });
   expect(await running).toBe(false);
   expect(reads).toBe(2);
   expect(published).toEqual([]);
-  expect(controller.run()).toBe(before.run);
+  expect(controller.updateRun()).toBe(before.run);
   expect(state.groups()).toBe(before.groups);
   expect(state.selected()).toBe(before.selected);
   expect(state.group("first")?.committed).toBeUndefined();
-  expect(controller.active()).toBe(false);
+  expect(controller.updatesActive()).toBe(false);
 });
 test("UPDATES effects own one persistent same-scope draft and do not check automatically", async () => {
   const snapshot = projection(["first"]);
@@ -479,7 +501,7 @@ test("UPDATES effects checks stay background and a late cancelled result cannot 
   expect(effects.pending()).toBe(false);
   effects.teardown();
 });
-test("UPDATES effects do not revive cached changed work after an update attempt or public revision drift", async () => {
+test("UPDATES retained drafts do not revive changed work after an update attempt or public revision drift", async () => {
   const original = projection(["first"]);
   const drifted = {
     ...original,
@@ -559,26 +581,27 @@ test("UPDATES effects submit only an explicit current-group subset and preserve 
 });
 test("UPDATES controller rejects requested addresses outside the bounded draft without widening", async () => {
   const snapshot = projection(["first"]);
-  const state = createUpdatesState(buildUpdateScope(snapshot, { kind: "workspace" }));
-  state.observe(observation("first", ["guide"]));
-  state.toggle({ source: "first", path: "guide" });
   let updates = 0;
-  const controller = createUpdateController(
-    {
+  const controller = createTuiSession(
+    directSourceCore(snapshot, {
       getWorkspace: async () => ({ value: snapshot, diagnostics: [] }),
       checkUpdate: async () => ({ value: observation("first", []), diagnostics: [] }),
       updateSkills: async () => {
         updates++;
         return { value: undefined, diagnostics: [] };
       },
-    },
-    state,
+    }),
+    createOperationState(),
+    testProjection().projection.outcomes,
   );
-  expect(await controller.submit([{ source: "first", path: "outside-scope" }])).toBe(false);
+  const state = controller.selectUpdatesScope({ kind: "workspace" }, snapshot)!;
+  state.observe(observation("first", ["guide"]));
+  state.toggle({ source: "first", path: "guide" });
+  expect(await controller.submitUpdates([{ source: "first", path: "outside-scope" }])).toBe(false);
   expect(updates).toBe(0);
   expect(state.selected()).toEqual([{ source: "first", path: "guide" }]);
 });
-test("UPDATES effects evict only attempted source cache after an ambiguous failed subset submit", async () => {
+test("UPDATES invalidates only attempted Source observations after an ambiguous failed subset submit", async () => {
   const snapshot = projection(["first", "second"]);
   const core = directSourceCore(snapshot);
   const effects = testEffects({
@@ -604,7 +627,7 @@ test("UPDATES effects evict only attempted source cache after an ambiguous faile
   expect(firstScope.group("first")?.observation).toBeUndefined();
   expect(effects.updatesSubmittable()).toEqual([]);
 });
-test("UPDATES effects retain cache when a valid subset is refused before foreground-lane acquisition", async () => {
+test("UPDATES retains reviewed observations when a valid subset is refused before lane acquisition", async () => {
   const snapshot = projection(["first"]);
   const core = directSourceCore(snapshot);
   const competing = deferred<{
@@ -648,7 +671,6 @@ test("UPDATES effects preserve a source exclusion across an intervening Skill sc
   const restored = effects.selectUpdatesScope({ kind: "source", source: "first" }, snapshot)!;
   expect(restored).toBe(source);
   expect(restored.selected()).toEqual([{ source: "first", path: "guide" }]);
-  expect(restored.draftTouched()).toBe(true);
 });
 test("UPDATES Effects restore rejects a retained draft whose checked public facts drift", () => {
   const snapshot = projection(["first"]);
@@ -712,7 +734,7 @@ test("UPDATES submit keeps its initiating workspace targets while baseline reval
       diagnostics: [],
     }),
     getUpdateBaseline: async () => {
-      if (++baselineCalls === 3) {
+      if (++baselineCalls === 1) {
         markBaselineStarted();
         await baselineHeld;
       }

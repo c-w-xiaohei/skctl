@@ -1,9 +1,12 @@
 import * as api from "../../src/index";
-import { expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setManagementUpdateCheckHookForTest } from "../../src/installed/update";
+import * as service from "../../src/source/service";
+afterEach(() => {
+  delete process.env.SKCTL_SOURCE_CACHE_DIR;
+});
 async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
   const output = await new Response(child.stdout).text();
@@ -13,6 +16,7 @@ async function git(cwd: string, ...args: string[]) {
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skctl-update-baseline-"));
   process.env.SKCTL_STATE_DIR = join(root, "state");
+  process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
   await mkdir(join(root, "skills", "review"), { recursive: true });
   await writeFile(join(root, "skctl.jsonc"), "{}\n");
   await writeFile(
@@ -87,6 +91,7 @@ test("update baseline changes after a remote skill is re-materialized across res
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   process.env.SKCTL_STATE_DIR = join(root, "state");
+  process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
   try {
     await mkdir(join(work, "skills", "review"), { recursive: true });
     await writeFile(join(root, "skctl.jsonc"), "{}\n");
@@ -159,7 +164,7 @@ test("update baseline changes after a remote skill is re-materialized across res
     await rm(root, { recursive: true, force: true });
   }
 });
-test("checkUpdate baseline guards update at the commit lock while callers without it remain compatible", async () => {
+test("reviewed baselines guard updates; an unreviewed invocation captures its own current baseline", async () => {
   const value = await fixture();
   try {
     await writeFile(
@@ -193,13 +198,16 @@ test("checkUpdate baseline guards update at the commit lock while callers withou
 });
 test("checkUpdate rejects a local change after candidate capture instead of returning mixed metadata and baseline", async () => {
   const value = await fixture();
-  try {
-    setManagementUpdateCheckHookForTest(() =>
-      writeFile(
-        join(value.root, "skills", "review", "SKILL.md"),
-        "---\nname: review\ndescription: Unseen\n---\n",
-      ),
+  const compare = service.compareSource;
+  const inspection = spyOn(service, "compareSource").mockImplementation(async (...args) => {
+    const result = await compare(...args);
+    await writeFile(
+      join(value.root, "skills", "review", "SKILL.md"),
+      "---\nname: review\ndescription: Unseen\n---\n",
     );
+    return result;
+  });
+  try {
     await expect(api.checkUpdate(value.core, { source: "local" })).rejects.toMatchObject({
       code: "TRANSACTION_CONFLICT",
     });
@@ -207,7 +215,7 @@ test("checkUpdate rejects a local change after candidate capture instead of retu
       description: "First",
     });
   } finally {
-    setManagementUpdateCheckHookForTest();
+    inspection.mockRestore();
     delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }

@@ -78,6 +78,7 @@ test("Agent access opens the exact structural Skill while preserving an All Skil
     () => (
       <App
         core={directSourceCore(projection, {
+          getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
           checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
             checks.push(source);
             return {

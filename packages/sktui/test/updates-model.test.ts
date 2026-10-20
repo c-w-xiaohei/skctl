@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { buildUpdateScope, createUpdatesState, updateSubmission } from "../src/updates/model";
+import { deriveUpdateScope as buildUpdateScope, updateSubmission } from "../src/updates/scope";
+import { createUpdatesState } from "../src/updates/state";
 import { directOwner, workspaceProjection } from "./direct-source.fixture";
 
 function projection() {
@@ -110,7 +111,7 @@ test("MODEL draft selection is explicit and bounded; added and removed roots rem
   expect(state.selected()).toEqual([{ source: "team-main", path: "guide" }]);
   state.toggle({ source: "team-main", path: "guide" });
   expect(state.selected()).toEqual([]);
-  expect(state.disabledReason()).toBe("Select at least one changed Skill");
+  expect(state.eligible()).toEqual([{ source: "team-main", path: "guide" }]);
 });
 
 test("MODEL retry excludes successful sources and submission blocks projection drift", () => {
@@ -118,9 +119,9 @@ test("MODEL retry excludes successful sources and submission blocks projection d
   const state = createUpdatesState(scope);
   state.observe(observation("team-main", ["guide"]));
   state.setResult("team-main", "succeeded");
-  expect(state.retryable()).toEqual([]);
+  expect(state.eligible()).toEqual([]);
   state.setResult("team-main", "failed");
-  expect(state.retryable()).toEqual([]);
+  expect(state.eligible()).toEqual([]);
   expect(state.group("team-main")?.committed).toBe(true);
   state.observe(observation("team-main", ["guide"]));
   state.toggle({ source: "team-main", path: "guide" });
@@ -148,7 +149,6 @@ test("MODEL rechecks preserve the explicit draft while eligibility follows curre
   state.setResult("team-main", "succeeded");
   expect(state.eligible()).toEqual([]);
   expect(state.selected()).toEqual([{ source: "team-main", path: "guide" }]);
-  expect(state.disabledReason()).toBeUndefined();
 });
 
 test("MODEL keeps a committed batch fact when a later check fails", () => {
@@ -275,4 +275,14 @@ test("MODEL submission blocks public installed remote revision changes including
   const presentResult = updateSubmission(missingScope, selected, original);
   if (!("reason" in presentResult)) throw new Error("Expected newly present revision rejection");
   expect(presentResult.reason).toContain("installed revision changed");
+});
+
+test("MODEL scope captures owner facts rather than aliasing mutable projection data", () => {
+  const snapshot = projection();
+  const scope = buildUpdateScope(snapshot, { kind: "workspace" });
+  const selected = scope.addresses;
+  snapshot.installedSkills[0]!.owner.relevantRemoteRevision = "b".repeat(40);
+  const guard = updateSubmission(scope, selected, snapshot);
+  expect("reason" in guard && guard.reason).toContain("installed revision changed");
+  expect(scope.observed[0]!.owner.relevantRemoteRevision).toBe("a".repeat(40));
 });

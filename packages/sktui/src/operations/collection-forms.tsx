@@ -1,6 +1,6 @@
 import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { createSignal, onMount } from "solid-js";
-import type { CollectionReview } from "../effects";
+import type { CollectionReview } from "../session";
 import {
   createModalControlRegistry,
   useModalControl,
@@ -23,6 +23,7 @@ type CollectionCreateLevelProps =
 export function CollectionCreateOverlay(
   props: CollectionCreateLevelProps & {
     readonly collection: string;
+    readonly configFile?: (level: "global" | "project" | "local") => string | undefined;
     readonly fixed?: boolean;
     readonly pending: boolean;
     readonly error?: { readonly code: string; readonly message: string };
@@ -65,12 +66,19 @@ export function CollectionCreateOverlay(
               value,
             }))}
             showDescription
+            selectedIndex={allowedLevels.indexOf(level())}
+            onChange={(_index, option) =>
+              option && setLevel(option.value as "global" | "project" | "local")
+            }
             onSelect={(_index, option) =>
               option && setLevel(option.value as "global" | "project" | "local")
             }
           />
         ) : (
           <text>{`Level: ${props.level}`}</text>
+        )}
+        {props.configFile && (
+          <text wrapMode="word">{`Target: ${props.configFile(level()) ?? level()}`}</text>
         )}
         {props.fixed ? (
           <text>{`Collection ID: ${collection()}`}</text>

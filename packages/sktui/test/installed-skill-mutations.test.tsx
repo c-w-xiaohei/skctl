@@ -4,7 +4,7 @@ import {
   InstalledSkillPreviewFailureOverlay,
   InstalledSkillReviewOverlay,
 } from "../src/operations";
-import type { InstalledSkillReview } from "../src/effects";
+import type { InstalledSkillReview } from "../src/session";
 import type { ConfigDeclarationOwner } from "@skctl/core";
 
 const address = { source: "team-main", path: "guide" };

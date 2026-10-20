@@ -24,7 +24,13 @@ import {
   readerSecondAddress,
   readerSecondContent,
 } from "./installed-reader.fixture";
-import { focusLive, parsedEscape, parsedEnter as rawParsedEnter } from "./reader-test-controls";
+import {
+  focusLive,
+  openAllInstalledSkills,
+  parsedEscape,
+  parsedEnter as rawParsedEnter,
+  waitForReaderBody,
+} from "./reader-test-controls";
 async function parsedArrow(
   setup: Awaited<ReturnType<typeof testRender>>,
   direction: "up" | "down" | "left" | "right",
@@ -46,7 +52,7 @@ async function parsedEnter(setup: Awaited<ReturnType<typeof testRender>>) {
   await new Promise<void>((resolve) => setImmediate(resolve));
   await setup.renderOnce();
 }
-test("arrow-first browser selection enters Details, reads, cycles panes, and returns to its skill", async () => {
+test("arrow-first browser selection reads directly, cycles Reader views, and returns to the same Skill", async () => {
   const loads: string[] = [];
   const setup = await testRender(
     () => (
@@ -66,7 +72,8 @@ test("arrow-first browser selection enters Details, reads, cycles panes, and ret
     { width: 120, height: 40 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
+    await openAllInstalledSkills(setup);
+    await waitForReaderBody(setup, "const needle = true");
     await setup.renderOnce();
     const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
     expect(browser).toBeInstanceOf(SelectRenderable);
@@ -76,21 +83,13 @@ test("arrow-first browser selection enters Details, reads, cycles panes, and ret
     await setup.waitFor(() => list.getSelectedOption()?.value !== first);
     await checkpoint(setup, "installed-skill-browser", "Installed browser Down");
     const selectedAddress = list.getSelectedOption()?.value;
-    await parsedEnter(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-    );
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
-    );
-    await parsedArrow(setup, "down");
-    await checkpoint(setup, "workspace-action-skill-check-updates", "Skill action Down");
-    await parsedArrow(setup, "up");
-    await checkpoint(setup, "skill-inspector-open-reader", "Skill action Up");
+    await waitForReaderBody(setup, "reference needle");
+    expect(loads).toEqual(["guide", "reference"]);
+    expect(setup.renderer.root.findDescendantById("skill-inspector-open-reader")).toBeUndefined();
     await parsedEnter(setup);
     await checkpoint(setup, "reader-scrollbox", "Read Enter");
     expect(JSON.parse(selectedAddress!)).toEqual(["team-main", "reference"]);
-    await setup.waitForFrame((frame) => frame.includes("Reader · reference"));
+    expect(loads).toHaveLength(2);
     // Reader body Up reaches tabs; horizontal arrows switch Reader sections.
     await parsedArrow(setup, "up");
     await setup.waitFor(
@@ -102,7 +101,6 @@ test("arrow-first browser selection enters Details, reads, cycles panes, and ret
     );
     await parsedEnter(setup);
     await checkpoint(setup, "resource-browser", "Enter populated Resources");
-    await setup.waitForFrame((frame) => frame.includes("Reader / Resources"));
     await parsedArrow(setup, "up");
     await checkpoint(setup, "reader-tabs-tab-resources", "Resources Up to tabs");
     await parsedArrow(setup, "right");
@@ -110,25 +108,15 @@ test("arrow-first browser selection enters Details, reads, cycles panes, and ret
       () => setup.renderer.currentFocusedRenderable?.id === "reader-tabs-tab-details",
     );
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Reader / Details"));
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
     await parsedArrow(setup, "right");
-    await checkpoint(
-      setup,
-      "reader-details-action-skill-check-updates",
-      "Details Right enters actions",
-    );
-    await parsedArrow(setup, "down");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-action-skill-rebind",
-    );
-    expect(loads).toHaveLength(1);
-    await parsedEscape(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-    );
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("skill-inspector-open-reader");
-    expect(setup.captureCharFrame()).toContain(JSON.parse(selectedAddress!)[1]);
+    const control = setup.renderer.currentFocusedRenderable;
+    expect(control?.id).not.toBe("reader-details");
+    expect(control?.id).not.toBe("reader-action-skill-check-updates");
+    // Details arrows stay in its local controls; the persistent Update action
+    // does not intercept content navigation.
+    await parsedArrow(setup, "left");
+    await checkpoint(setup, "reader-details", "Details Left returns to body");
     await parsedEscape(setup);
     await setup.waitFor(() => {
       const restored = setup.renderer.root.findDescendantById("installed-skill-browser");
@@ -137,7 +125,8 @@ test("arrow-first browser selection enters Details, reads, cycles panes, and ret
         restored.getSelectedOption()?.value === selectedAddress
       );
     });
-    expect(loads).toHaveLength(1);
+    expect(setup.renderer.currentFocusedRenderable).toBe(list);
+    expect(loads).toEqual(["guide", "reference"]);
   } finally {
     setup.renderer.destroy();
   }
@@ -149,6 +138,7 @@ test("update workbench arrows preserve selection and Escape leaves without apply
     () => (
       <App
         core={directSourceCore(readerProjection(), {
+          getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
           checkUpdate: async (_environment: import("@skctl/core").CoreOptions, request) => {
             observations.push(request);
             return {

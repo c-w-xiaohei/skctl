@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import type { UpdateAddress, UpdateScope } from "./scope";
-import type { CheckedUpdateObservation, SourceUpdateCheck } from "./check-service";
+import type { UpdateObservation } from "@skctl/core";
 
 export type UpdateGroupStatus =
   | "not-checked"
@@ -13,9 +13,17 @@ export type UpdateGroupStatus =
   | "succeeded"
   | "cancelled"
   | "not-run";
+export interface SourceUpdateCheck {
+  readonly source: string;
+  readonly status: "not-checked" | "checking" | "failed" | "changed" | "no-changes" | "cancelled";
+  readonly checkedAt?: number;
+  readonly observation?: UpdateObservation;
+  readonly error?: string;
+  readonly stale?: boolean;
+}
 export interface UpdateGroup {
   readonly source: string;
-  readonly observation?: CheckedUpdateObservation;
+  readonly observation?: UpdateObservation;
   readonly checkedAt?: number;
   readonly stale?: boolean;
   readonly status: UpdateGroupStatus;
@@ -51,7 +59,6 @@ export function createUpdatesState(scope: UpdateScope) {
     scope.sources.map((source) => ({ source, status: "not-checked", expanded: false })),
   );
   const [selected, setSelected] = createSignal<readonly UpdateAddress[]>([]);
-  const [draftTouched, setDraftTouched] = createSignal(false);
   const [focusedRowKey, setFocusedRowKey] = createSignal(
     scope.sources[0] ? `group:${scope.sources[0]}` : undefined,
   );
@@ -110,7 +117,6 @@ export function createUpdatesState(scope: UpdateScope) {
     setShowAll,
     groups,
     selected,
-    draftTouched,
     focusedRowKey,
     setFocusedRowKey,
     browserScroll,
@@ -125,43 +131,19 @@ export function createUpdatesState(scope: UpdateScope) {
     group,
     scopedChanged,
     eligible,
-    observe(observation: CheckedUpdateObservation, checkedAt?: number, stale = false) {
-      const prior = group(observation.source) ?? {
-        source: observation.source,
-        status: "not-checked" as const,
-        expanded: false,
-      };
-      const next = { ...prior, observation, checkedAt, stale };
-      const status: UpdateGroupStatus = scopedChanged(next).length > 0 ? "changed" : "no-changes";
+    observe(observation: UpdateObservation, checkedAt?: number, stale = false) {
       replace(observation.source, (item) => ({
         ...item,
         observation,
         checkedAt,
         stale,
-        status,
+        status: scopedChanged({ ...item, observation }).length ? "changed" : "no-changes",
         error: undefined,
         failure: undefined,
       }));
     },
-    /** A service snapshot never changes selection; stale/failed snapshots cannot authorize submit. */
+    /** A check never changes selection; stale/failed observations cannot authorize submit. */
     applyCheck(check: SourceUpdateCheck) {
-      // Check freshness is independent of a completed Core batch. Keep the
-      // committed outcome visible even when a later recheck fails/cancels.
-      if (
-        group(check.source)?.committed &&
-        (check.status === "failed" || check.status === "cancelled")
-      ) {
-        replace(check.source, (item) => ({
-          ...item,
-          observation: check.observation ?? item.observation,
-          checkedAt: check.checkedAt ?? item.checkedAt,
-          stale: check.stale ?? item.stale,
-          status: check.status,
-          error: check.error,
-          failure: "check",
-        }));
-        return;
-      }
       if (
         check.observation &&
         !check.stale &&
@@ -174,7 +156,7 @@ export function createUpdatesState(scope: UpdateScope) {
           ...item,
           observation: check.observation ?? item.observation,
           checkedAt: check.checkedAt ?? item.checkedAt,
-          stale: true,
+          stale: item.committed ? (check.stale ?? item.stale) : true,
           status: check.status,
           error: check.error,
           failure: "check",
@@ -182,13 +164,7 @@ export function createUpdatesState(scope: UpdateScope) {
       }
     },
     /** A failed/cancelled check makes its former observation unsafe to submit. */
-    invalidateCheck(
-      source: string,
-      status: Extract<UpdateGroupStatus, "failed" | "cancelled">,
-      error?: string,
-    ) {
-      invalidateCheck(source, status, error);
-    },
+    invalidateCheck,
     /** Refreshes public guard facts for one checked Source without changing this draft's scope. */
     rebaseCheckedScope(fresh: UpdateScope, source: string) {
       const currentAddresses = new Set(scopeSnapshot().addresses.map(key));
@@ -237,9 +213,9 @@ export function createUpdatesState(scope: UpdateScope) {
             const current = after.find((skill) => key(skill.address) === key(previous.address));
             return (
               current &&
-              current.ownerSource === previous.ownerSource &&
-              current.ownerHealth === previous.ownerHealth &&
-              current.relevantRemoteRevision === previous.relevantRemoteRevision &&
+              current.owner.source === previous.owner.source &&
+              current.owner.health === previous.owner.health &&
+              current.owner.relevantRemoteRevision === previous.owner.relevantRemoteRevision &&
               current.binding === previous.binding
             );
           });
@@ -271,7 +247,7 @@ export function createUpdatesState(scope: UpdateScope) {
       replace(source, (item) => ({
         ...item,
         status,
-        ...(status === "succeeded" ? { committed: true as const } : {}),
+        ...(status === "succeeded" ? { committed: true as const, stale: true } : {}),
       }));
     },
     /** Records a fulfilled Core batch without rewriting a later check/result status. */
@@ -290,11 +266,10 @@ export function createUpdatesState(scope: UpdateScope) {
     toggle(address: UpdateAddress) {
       if (
         !scopeSnapshot().observed.some(
-          (item) => key(item.address) === key(address) && item.ownerHealth === "healthy",
+          (item) => key(item.address) === key(address) && item.owner.health === "healthy",
         )
       )
         return;
-      setDraftTouched(true);
       setSelected((current) =>
         current.some((item) => key(item) === key(address))
           ? current.filter((item) => key(item) !== key(address))
@@ -302,7 +277,6 @@ export function createUpdatesState(scope: UpdateScope) {
       );
     },
     clearSelection() {
-      setDraftTouched(true);
       setSelected([]);
     },
     completeSelection(addresses: readonly UpdateAddress[]) {
@@ -311,17 +285,6 @@ export function createUpdatesState(scope: UpdateScope) {
     },
     toggleExpanded(source: string) {
       replace(source, (item) => ({ ...item, expanded: !item.expanded }));
-    },
-    disabledReason() {
-      if (scopeSnapshot().unavailableReason) return scopeSnapshot().unavailableReason;
-      if (selected().length === 0) return "Select at least one changed Skill";
-      return undefined;
-    },
-    retryable() {
-      return eligible().filter((address) => {
-        const status = group(address.source)?.status;
-        return status === "failed" || status === "not-run" || status === "cancelled";
-      });
     },
   };
 }

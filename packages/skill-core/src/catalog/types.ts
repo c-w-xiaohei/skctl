@@ -1,52 +1,14 @@
-import type { ConfigDeclarationOwner } from "../config/types";
-import type { Diagnostic } from "../shared";
-import type { SkillMetadata } from "../content/text";
+import type * as v from "valibot";
+import type * as schema from "./domain.schema";
 
-export interface CatalogSkill extends SkillMetadata {
-  readonly selector: string;
-}
-
-export interface ManagedAgentView {
-  readonly status: "available" | "unavailable";
-  readonly integration: readonly ConfigDeclarationOwner[];
-  readonly use: readonly ConfigDeclarationOwner[];
-  readonly reasons: readonly Diagnostic[];
-  readonly catalog: readonly (CatalogSkill & {
-    readonly aliases: readonly string[];
-  })[];
-}
-
-export interface BrowseCatalogRequest {
-  readonly collection?: string;
-}
-
-export type AgentCatalogItem =
-  | {
-      readonly kind: "collection";
-      readonly id: string;
-      readonly name: string;
-      readonly description?: string;
-    }
-  | (CatalogSkill & {
-      readonly kind: "skill";
-    });
-
-export type AgentBrowseProjection =
-  | {
-      readonly status: "available";
-      readonly scope:
-        | { readonly kind: "root" }
-        | { readonly kind: "collection"; readonly id: string };
-      readonly items: readonly AgentCatalogItem[];
-    }
-  | { readonly status: "unavailable"; readonly reason: string };
-
-export interface SearchSkillsRequest extends BrowseCatalogRequest {
-  readonly query: string;
-  readonly limit?: number;
-}
-
-export interface SearchSkillsResult {
-  readonly truncated: boolean;
-  readonly results: readonly CatalogSkill[];
-}
+export type CatalogSkill = Readonly<v.InferOutput<typeof schema.catalogSkillSchema>>;
+export type ManagedAgentView = Readonly<v.InferOutput<typeof schema.managedAgentViewSchema>>;
+export type BrowseCatalogRequest = Readonly<
+  v.InferOutput<typeof schema.browseCatalogRequestSchema>
+>;
+export type AgentCatalogItem = Readonly<v.InferOutput<typeof schema.agentCatalogItemSchema>>;
+export type AgentBrowseProjection = Readonly<
+  v.InferOutput<typeof schema.agentBrowseProjectionSchema>
+>;
+export type SearchSkillsRequest = Readonly<v.InferOutput<typeof schema.searchSkillsRequestSchema>>;
+export type SearchSkillsResult = Readonly<v.InferOutput<typeof schema.searchSkillsResultSchema>>;

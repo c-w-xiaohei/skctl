@@ -7,7 +7,7 @@ import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { focusLive, openAllInstalledSkills } from "./reader-test-controls";
 const skillsViews = [
-  ["current-exposure", "agent-access-pane"],
+  ["current-exposure", "skills-setup-pane"],
   ["all-installed-skills", "installed-skill-browser"],
   ["unassigned", "installed-skill-browser"],
   ["problems", "problems-browser"],
@@ -45,10 +45,8 @@ test("RENDER mounted Skills local tabs navigate Current Exposure through Problem
       expect(tab).toBeInstanceOf(TabsTabRenderable);
       expect((tab as TabsTabRenderable).getState().selected).toBe(true);
       if (index === 0) {
-        expect(setup.captureCharFrame()).toContain("Agent access is unavailable");
-        expect(
-          setup.renderer.root.findDescendantById("current-exposure-enable-managed-opencode"),
-        ).toBeDefined();
+        expect(setup.captureCharFrame()).toContain("Organize Skills into a Collection");
+        expect(setup.renderer.root.findDescendantById("skills-setup-primary")).toBeDefined();
       }
       expect(setup.renderer.root.findDescendantById("workspace-scope")).toBeUndefined();
       expect(setup.renderer.root.findDescendantById("work-area")).toBeUndefined();
@@ -77,6 +75,9 @@ test("RENDER Section Right leaves Current Exposure and mounts the Collections br
     { width: 120, height: 40 },
   );
   try {
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
+    );
     await focusLive(setup, "shell-section-tab-skills");
     setup.mockInput.pressArrow("right");
     await setup.waitFor(

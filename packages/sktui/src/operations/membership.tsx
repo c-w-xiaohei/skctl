@@ -1,6 +1,6 @@
 import { InputRenderable } from "@opentui/core";
 import { createSignal, Index, onMount } from "solid-js";
-import type { AddMembershipPreviewRequest } from "../effects";
+import type { AddMembershipPreviewRequest } from "../session";
 import {
   createModalControlRegistry,
   useModalControl,

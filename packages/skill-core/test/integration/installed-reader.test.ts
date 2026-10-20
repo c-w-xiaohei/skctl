@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateCoordinator } from "../../src/storage/state";
-import { setAcquisitionTrapForTest } from "../../src/source/snapshot";
+import { digestDirectory } from "../../src/content/directory";
 import { setContentHookForTest } from "../../src/content/operations";
 test("READ-001/005/006 reads undisclosed installed content structurally and classifies non-text", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-reader-"));
@@ -51,8 +51,14 @@ test("READ-001/003 structural load ignores disclosure and owner health but valid
     await mkdir(skill);
     await writeFile(join(root, "skctl.jsonc"), "{}");
     await writeFile(join(skill, "SKILL.md"), "---\nname: live\ndescription: Live\n---\nbody\n");
-    await new StateCoordinator(state).installLocal("missing", "skill", skill);
     const core = { cwd: root };
+    await api.registerSource(core, {
+      level: "project",
+      id: "missing",
+      binding: { kind: "local", path: root, root: "" },
+    });
+    await api.installSkills(core, { source: "missing", paths: ["skill"] });
+    await writeFile(join(root, "skctl.jsonc"), "{}");
     expect(
       await api.loadInstalledSkill(core, { address: { source: "missing", path: "skill" } }),
     ).toMatchObject({ name: "live", markdownText: "body\n" });
@@ -87,31 +93,41 @@ test("READ-002/003/009 Remote structural reads use only an intact Snapshot despi
       "---\nname: remote\ndescription: Remote\n---\nbody\n",
     );
     const coordinator = new StateCoordinator(state);
-    const digest = await coordinator.snapshotDigest(source);
+    const digest = await digestDirectory(source);
     await coordinator.publishSnapshot(digest, source);
-    await coordinator.installRemoteForTest({
-      source: "drifted",
-      path: "skill",
-      name: "old",
-      description: "Old",
-      kind: "remote",
-      digest,
-      bindingDigest: "a".repeat(64),
-      adoptedRevision: "a".repeat(40),
-    });
-    setAcquisitionTrapForTest(() => {
-      throw new Error("provider called");
-    });
+    await coordinator.write(
+      {
+        configs: {},
+        installed: [
+          {
+            source: "drifted",
+            path: "skill",
+            name: "old",
+            description: "Old",
+            kind: "remote",
+            digest,
+            bindingDigest: "a".repeat(64),
+            adoptedRevision: "a".repeat(40),
+            identityEvidence: { status: "unavailable" },
+          },
+        ],
+      },
+      0,
+    );
     globalThis.fetch = (() => {
       throw new Error("network called");
     }) as unknown as typeof fetch;
-    const core = { cwd: root };
+    const core = {
+      cwd: root,
+      sourceTransport: () => {
+        throw new Error("provider called");
+      },
+    };
     expect(
       (await api.loadInstalledSkill(core, { address: { source: "drifted", path: "skill" } })).name,
     ).toBe("remote");
     expect(await readdir(join(state, "uses"))).toEqual([]);
   } finally {
-    setAcquisitionTrapForTest();
     globalThis.fetch = fetch;
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
@@ -120,7 +136,7 @@ test("READ-002/003/009 Remote structural reads use only an intact Snapshot despi
 test("READ-004/005/006/011 structural resources are live, deterministic, bounded and safe", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-reader-tree-"));
   const state = join(root, "state");
-  const skill = join(root, "skill");
+  const skill = join(root, "tree");
   try {
     process.env.SKCTL_STATE_DIR = state;
     await mkdir(join(skill, "nested"), { recursive: true });
@@ -128,8 +144,13 @@ test("READ-004/005/006/011 structural resources are live, deterministic, bounded
     await writeFile(join(skill, "SKILL.md"), "---\nname: tree\ndescription: Tree\n---\n");
     await writeFile(join(skill, "nested", "z.md"), "# z");
     await writeFile(join(skill, "a.txt"), "a");
-    await new StateCoordinator(state).installLocal("local", "tree", skill);
     const core = { cwd: root };
+    await api.registerSource(core, {
+      level: "project",
+      id: "local",
+      binding: { kind: "local", path: root, root: "" },
+    });
+    await api.installSkills(core, { source: "local", paths: ["tree"] });
     expect(
       (await api.listInstalledResources(core, { address: { source: "local", path: "tree" } })).map(
         (item) => item.path,
@@ -212,18 +233,27 @@ test("READ-008/010 cancels protected Remote traversal and releases it for later 
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     await writeFile(join(source, "note.txt"), "note");
     const coordinator = new StateCoordinator(state);
-    const digest = await coordinator.snapshotDigest(source);
+    const digest = await digestDirectory(source);
     await coordinator.publishSnapshot(digest, source);
-    await coordinator.installRemoteForTest({
-      source: "remote",
-      path: "skill",
-      name: "remote",
-      description: "Remote",
-      kind: "remote",
-      digest,
-      bindingDigest: "a".repeat(64),
-      adoptedRevision: "a".repeat(40),
-    });
+    await coordinator.write(
+      {
+        configs: {},
+        installed: [
+          {
+            source: "remote",
+            path: "skill",
+            name: "remote",
+            description: "Remote",
+            kind: "remote",
+            digest,
+            bindingDigest: "a".repeat(64),
+            adoptedRevision: "a".repeat(40),
+            identityEvidence: { status: "unavailable" },
+          },
+        ],
+      },
+      0,
+    );
     const controller = new AbortController();
     let entered!: () => void;
     const waiting = new Promise<void>((resolve) => {
@@ -248,7 +278,7 @@ test("READ-008/010 cancels protected Remote traversal and releases it for later 
     controller.abort();
     await expect(read).rejects.toMatchObject({ code: "CANCELLED" });
     expect(await readdir(join(state, "uses"))).toEqual([]);
-    await coordinator.uninstall("remote", "skill");
+    await api.uninstallSkills(core, { source: "remote", paths: ["skill"] });
     await coordinator.gc();
     expect(await Bun.file(join(state, "snapshots", digest)).exists()).toBe(false);
   } finally {
@@ -267,18 +297,27 @@ test("READ-007 structural Remote reads reject a missing or corrupt Snapshot with
     await writeFile(join(root, "skctl.jsonc"), "{}");
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     const coordinator = new StateCoordinator(state);
-    const digest = await coordinator.snapshotDigest(source);
+    const digest = await digestDirectory(source);
     await coordinator.publishSnapshot(digest, source);
-    await coordinator.installRemoteForTest({
-      source: "remote",
-      path: "skill",
-      name: "remote",
-      description: "Remote",
-      kind: "remote",
-      digest,
-      bindingDigest: "a".repeat(64),
-      adoptedRevision: "a".repeat(40),
-    });
+    await coordinator.write(
+      {
+        configs: {},
+        installed: [
+          {
+            source: "remote",
+            path: "skill",
+            name: "remote",
+            description: "Remote",
+            kind: "remote",
+            digest,
+            bindingDigest: "a".repeat(64),
+            adoptedRevision: "a".repeat(40),
+            identityEvidence: { status: "unavailable" },
+          },
+        ],
+      },
+      0,
+    );
     await rm(join(state, "snapshots", digest), { recursive: true, force: true });
     await expect(
       api.loadInstalledSkill(

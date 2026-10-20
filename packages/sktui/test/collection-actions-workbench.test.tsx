@@ -77,12 +77,12 @@ async function mount(
   width: number,
   height: number,
   input: WorkspaceView = projection(),
-  configuration: Partial<import("../src/effects").TuiCore> = {},
+  configuration: Partial<import("../src/session").TuiCore> = {},
 ) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/collection-actions-");
-  const previous = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  const previous = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const reads: SkillAddress[] = [],
     changes: unknown[] = [],
     previews: unknown[] = [],
@@ -147,8 +147,8 @@ async function mount(
     usePreviews,
     async dispose() {
       setup.renderer.destroy();
-      if (previous === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = previous;
+      if (previous === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = previous;
       await rm(cache, { recursive: true, force: true });
     },
   };

@@ -36,7 +36,9 @@ const uninstallReview = 'uninstallSkills(environment, { source: "team", paths: [
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 async function expectTransactionCrash(value: Fixture, operation: string, hook: string) {
   const entry = join(import.meta.dir, "../../src/index.ts");
-  const script = `import * as api from ${JSON.stringify(entry)}; const environment = { cwd: ${JSON.stringify(value.project)}, userConfigPath: ${JSON.stringify(value.global)} }; await api.${operation};`;
+  const script = `import * as api from ${JSON.stringify(entry)};
+    ${hook === "stage-synced" ? `import {spyOn} from 'bun:test';import * as fs from 'node:fs/promises';const rename=fs.rename;spyOn(fs,'rename').mockImplementation(async(a,b)=>{if(String(b).includes('/transactions/'))process.exit(97);return rename(a,b)});` : ""}
+    const environment = { cwd: ${JSON.stringify(value.project)}, userConfigPath: ${JSON.stringify(value.global)} }; await api.${operation};`;
   const child = Bun.spawn({
     cmd: [process.execPath, "--eval", script],
     env: { ...process.env, SKCTL_STATE_DIR: value.state, SKCTL_TEST_CRASH_AT: hook },
@@ -68,12 +70,14 @@ async function expectTransactionCrash(value: Fixture, operation: string, hook: s
   }
   expect(exit).toBe(97);
 }
-async function childGuardCrash(state: string, hook = "lock-critical-enter") {
+async function childGuardCrash(state: string, atPublication = false) {
   const entry = join(import.meta.dir, "../../src/storage/state.ts");
-  const script = `import { StateCoordinator } from ${JSON.stringify(entry)}; await new StateCoordinator(${JSON.stringify(state)}).withLock(async () => undefined);`;
+  const script = `import { StateCoordinator } from ${JSON.stringify(entry)};
+    ${atPublication ? `import {spyOn} from 'bun:test';import * as fs from 'node:fs/promises';const link=fs.link;spyOn(fs,'link').mockImplementation(async(a,b)=>{await link(a,b);if(String(b).endsWith('mutation.lock'))process.exit(97)});` : ""}
+    await new StateCoordinator(${JSON.stringify(state)}).withLock(async () => {process.exit(97)});`;
   const child = Bun.spawn({
     cmd: [process.execPath, "--eval", script],
-    env: { ...process.env, SKCTL_TEST_CRASH_AT: hook },
+    env: process.env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -113,7 +117,7 @@ async function installFixture() {
 test("TX-003 public committed-marker crash rolls a declaration forward on fresh workspace read", async () => {
   const value = await fixture();
   try {
-    await expectTransactionCrash(value, registerTeamSource, "marker-committed-after");
+    await expectTransactionCrash(value, registerTeamSource, "transaction-committed");
     expect(await readFile(join(value.project, "skctl.jsonc"), "utf8")).toBe("{}\n");
     process.env.SKCTL_STATE_DIR = value.state;
     const core = { cwd: value.project, userConfigPath: value.global };
@@ -138,7 +142,7 @@ test("TX-005 a crashed lock owner is reclaimed without retaining a fence", async
 test("TX-005 a crash at atomic lock publication leaves a live owned guard that is reclaimed", async () => {
   const value = await fixture();
   try {
-    await childGuardCrash(value.state, "lock-published");
+    await childGuardCrash(value.state, true);
     const owner = JSON.parse(await readFile(join(value.state, "mutation.lock"), "utf8"));
     expect(owner).toMatchObject({ pid: expect.any(Number), nonce: expect.any(String) });
     await new StateCoordinator(value.state).withLock(async () => undefined);
@@ -150,7 +154,7 @@ test("TX-005 a crash at atomic lock publication leaves a live owned guard that i
 test("TX-004 fresh public workspace read never overwrites an unknown declaration edit", async () => {
   const value = await fixture();
   try {
-    await expectTransactionCrash(value, registerTeamSource, "marker-committed-after");
+    await expectTransactionCrash(value, registerTeamSource, "transaction-committed");
     const config = join(value.project, "skctl.jsonc");
     await writeFile(config, "{\n  // human edit\n}\n");
     process.env.SKCTL_STATE_DIR = value.state;
@@ -167,11 +171,10 @@ test("TX-004 fresh public workspace read never overwrites an unknown declaration
 });
 test("TX-002/TX-003 stage, immutable, and marker boundaries are recovered only through fresh public workspace reads", async () => {
   for (const hook of [
-    "immutable-published",
-    "marker-prepared-before",
-    "marker-prepared-after",
-    "marker-committed-before",
-    "rename-before",
+    "stage-synced",
+    "transaction-prepared",
+    "transaction-committed",
+    "transaction-config-replaced",
   ]) {
     const value = await fixture();
     try {
@@ -182,7 +185,7 @@ test("TX-002/TX-003 stage, immutable, and marker boundaries are recovered only t
         userConfigPath: value.global,
       });
       const text = await readFile(join(value.project, "skctl.jsonc"), "utf8");
-      expect(text === "{}\n").toBe(hook !== "rename-before");
+      expect(text === "{}\n").toBe(hook === "stage-synced" || hook === "transaction-prepared");
     } finally {
       delete process.env.SKCTL_STATE_DIR;
       await rm(value.root, { recursive: true, force: true });
@@ -192,7 +195,7 @@ test("TX-002/TX-003 stage, immutable, and marker boundaries are recovered only t
 test("TX-003/ST-003 state replacement crash rolls forward a valid public install and rejects stale generation", async () => {
   const value = await installFixture();
   try {
-    await expectTransactionCrash(value, installReview, "state-replace-before");
+    await expectTransactionCrash(value, installReview, "transaction-committed");
     const statePath = join(value.state, "state.json");
     await writeFile(
       statePath,
@@ -212,7 +215,7 @@ test("TX-003/ST-003 state replacement crash rolls forward a valid public install
 test("TX-003 state replacement crash rolls installed state forward through an untouched public workspace read", async () => {
   const value = await installFixture();
   try {
-    await expectTransactionCrash(value, installReview, "state-replace-before");
+    await expectTransactionCrash(value, installReview, "transaction-state-replaced");
     process.env.SKCTL_STATE_DIR = value.state;
     await api.getWorkspace({ cwd: value.project, userConfigPath: value.global });
     const state = JSON.parse(await readFile(join(value.state, "state.json"), "utf8"));
@@ -251,7 +254,7 @@ test("TX-003 a legacy migration combined with uninstall rolls forward once and p
         configs: {},
       })}\n`,
     );
-    await expectTransactionCrash(value, uninstallReview, "state-replace-before");
+    await expectTransactionCrash(value, uninstallReview, "transaction-committed");
     await writeFile(
       join(value.state, "state.json"),
       JSON.stringify({ version: 1, generation: 9, installed: [], configs: {} }),
@@ -298,7 +301,7 @@ test("TX-003 a crashed legacy migration and uninstall recovers as one v3 generat
         configs: {},
       })}\n`,
     );
-    await expectTransactionCrash(value, uninstallReview, "state-replace-before");
+    await expectTransactionCrash(value, uninstallReview, "transaction-state-replaced");
     process.env.SKCTL_STATE_DIR = value.state;
     await api.getWorkspace({ cwd: value.project, userConfigPath: value.global });
     expect(JSON.parse(await readFile(join(value.state, "state.json"), "utf8"))).toEqual({
@@ -445,7 +448,7 @@ test("TX-005 reader waits behind a publisher barrier and captures one coherent p
       env: {
         ...process.env,
         SKCTL_STATE_DIR: value.state,
-        SKCTL_TEST_BARRIER_AT: "rename-before",
+        SKCTL_TEST_BARRIER_AT: "transaction-committed",
         SKCTL_TEST_BARRIER_RELEASE: release,
       },
       stdout: "pipe",
@@ -506,7 +509,7 @@ test("TX-001 unmarked orphan staging is removed by a fresh public workspace oper
 test("TX-004 tampered marker stage or target conflicts before changing any bytes", async () => {
   const value = await fixture();
   try {
-    await expectTransactionCrash(value, registerTeamSource, "marker-committed-after");
+    await expectTransactionCrash(value, registerTeamSource, "transaction-committed");
     const transaction = (await readdir(join(value.state, "transactions"))).find((name) =>
       name.endsWith(".json"),
     )!;
@@ -552,13 +555,14 @@ test("CFG-001/ST-002 Remote Config adoption publishes cache before pointer and r
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
     const entry = join(import.meta.dir, "../../src/storage/state.ts");
-    const script = `import { StateCoordinator } from ${JSON.stringify(entry)}; await new StateCoordinator(${JSON.stringify(value.state)}).publishRemoteConfig("remote", "${"c".repeat(40)}", new Uint8Array(${JSON.stringify([...bytes])}));`;
+    const script = `import {StateCoordinator} from ${JSON.stringify(entry)};const c=new StateCoordinator(${JSON.stringify(value.state)});
+      await c.withLock(async()=>{const digest=await c.publishConfig(new Uint8Array(${JSON.stringify([...bytes])}));await c.write({installed:[],configs:{remote:{commit:'${"c".repeat(40)}',digest}}},0)});`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
       env: {
         ...process.env,
         SKCTL_STATE_DIR: value.state,
-        SKCTL_TEST_CRASH_AT: "marker-committed-after",
+        SKCTL_TEST_CRASH_AT: "transaction-committed",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -590,13 +594,12 @@ test("CFG-001 immutable Config cache crash never publishes an adoption pointer",
   const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
   try {
     const entry = join(import.meta.dir, "../../src/storage/state.ts");
-    const script = `import { StateCoordinator } from ${JSON.stringify(entry)}; await new StateCoordinator(${JSON.stringify(value.state)}).publishRemoteConfig("remote", "${"d".repeat(40)}", new Uint8Array(${JSON.stringify([...bytes])}));`;
+    const script = `import {StateCoordinator} from ${JSON.stringify(entry)};await new StateCoordinator(${JSON.stringify(value.state)}).publishConfig(new Uint8Array(${JSON.stringify([...bytes])}));process.exit(97);`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
       env: {
         ...process.env,
         SKCTL_STATE_DIR: value.state,
-        SKCTL_TEST_CRASH_AT: "immutable-published",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -629,13 +632,14 @@ test("CFG-001 state-pointer crash rolls an adopted cache forward for an offline 
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config", "root": "", "ref": "main" } } }\n',
     );
     const entry = join(import.meta.dir, "../../src/storage/state.ts");
-    const script = `import { StateCoordinator } from ${JSON.stringify(entry)}; await new StateCoordinator(${JSON.stringify(value.state)}).publishRemoteConfig("remote", "${"e".repeat(40)}", new Uint8Array(${JSON.stringify([...bytes])}));`;
+    const script = `import {StateCoordinator} from ${JSON.stringify(entry)};const c=new StateCoordinator(${JSON.stringify(value.state)});
+      await c.withLock(async()=>{const digest=await c.publishConfig(new Uint8Array(${JSON.stringify([...bytes])}));await c.write({installed:[],configs:{remote:{commit:'${"e".repeat(40)}',digest}}},0)});`;
     const child = Bun.spawn({
       cmd: [process.execPath, "--eval", script],
       env: {
         ...process.env,
         SKCTL_STATE_DIR: value.state,
-        SKCTL_TEST_CRASH_AT: "state-replace-before",
+        SKCTL_TEST_CRASH_AT: "transaction-state-replaced",
       },
       stdout: "pipe",
       stderr: "pipe",

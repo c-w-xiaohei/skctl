@@ -1,12 +1,18 @@
 import * as api from "../../src/index";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bindingDigest, canonicalRemoteOrigin } from "../../src/source/identity";
 import { StateCoordinator } from "../../src/storage/state";
-import { setAcquisitionTrapForTest } from "../../src/source/snapshot";
-const isolatedCore = (root: string) => ({ cwd: root, userConfigPath: join(root, "global.jsonc") });
+import { digestDirectory } from "../../src/content/directory";
+const isolatedCore = (root: string) => ({
+  cwd: root,
+  userConfigPath: join(root, "global.jsonc"),
+  sourceTransport: () => {
+    throw new Error("Agent must not acquire Sources");
+  },
+});
 function remoteBindingDigest(origin: string, root = "") {
   return bindingDigest({ kind: "git", origin: canonicalRemoteOrigin(origin), root, ref: "main" });
 }
@@ -27,10 +33,10 @@ test("AGT-001/AGT-002/CNT-001 uses only exposed installed Local content across a
         agents: { opencode: "managed" },
       }),
     );
-    await new StateCoordinator(state).installLocal("source", "review", skill);
     const previous = process.env.SKCTL_STATE_DIR;
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
+    await api.installSkills(core, { source: "source", paths: ["review"] });
     const selector = "engineering:review";
     expect((await api.loadSkill(core, { selector })).text).toContain("body");
     expect(
@@ -83,22 +89,35 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
     );
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
-    await new StateCoordinator(state).installLocal("local", "local", local);
-    const digest = await new StateCoordinator(state).snapshotDigest(remote);
+    await api.installSkills(core, { source: "local", paths: ["local"] });
+    const digest = await digestDirectory(remote);
     await new StateCoordinator(state).publishSnapshot(digest, remote);
-    await new StateCoordinator(state).installRemoteForTest({
-      source: "remote",
-      path: "remote",
-      name: "remote",
-      description: "Remote",
-      kind: "remote",
-      digest,
-      bindingDigest: remoteBindingDigest("https://example.test/repo"),
-      adoptedRevision: "a".repeat(40),
-    });
-    setAcquisitionTrapForTest(() => {
-      throw new Error("provider/network acquisition occurred");
-    });
+    const coordinator = new StateCoordinator(state),
+      current = await coordinator.read();
+    await coordinator.write(
+      {
+        configs: {},
+        installed: [
+          ...current.installed,
+          {
+            source: "remote",
+            path: "remote",
+            name: "remote",
+            description: "Remote",
+            kind: "remote",
+            digest,
+            bindingDigest: remoteBindingDigest("https://example.test/repo"),
+            adoptedRevision: "a".repeat(40),
+            identityEvidence: {
+              status: "known",
+              canonicalOrigin: "https://example.test/repo",
+              originRelativeSkillRoot: "remote",
+            },
+          },
+        ],
+      },
+      current.generation,
+    );
     globalThis.fetch = (() => {
       throw new Error("network acquisition occurred");
     }) as unknown as typeof fetch;
@@ -119,7 +138,6 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
       await api.runSkill(core, { selector, argv: [process.execPath, "--eval", ""] });
     }
   } finally {
-    setAcquisitionTrapForTest();
     globalThis.fetch = fetch;
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
@@ -142,8 +160,8 @@ test("CNT-001 rejects invalid and oversized installed text without side effects"
         agents: { opencode: "managed" },
       }),
     );
-    await new StateCoordinator(state).installLocal("source", "review", skill);
     process.env.SKCTL_STATE_DIR = state;
+    await api.installSkills(isolatedCore(root), { source: "source", paths: ["review"] });
     await writeFile(join(skill, "large.txt"), Buffer.alloc(1048577, "x"));
     const core = isolatedCore(root);
     await expect(
@@ -183,18 +201,31 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
     );
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
-    const digest = await new StateCoordinator(state).snapshotDigest(source);
+    const digest = await digestDirectory(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
-    await new StateCoordinator(state).installRemoteForTest({
-      source: "remote",
-      path: "review",
-      name: "remote",
-      description: "Remote review",
-      kind: "remote",
-      digest,
-      bindingDigest: remoteBindingDigest("https://example.test/skills"),
-      adoptedRevision: "a".repeat(40),
-    });
+    await new StateCoordinator(state).write(
+      {
+        configs: {},
+        installed: [
+          {
+            source: "remote",
+            path: "review",
+            name: "remote",
+            description: "Remote review",
+            kind: "remote",
+            digest,
+            bindingDigest: remoteBindingDigest("https://example.test/skills"),
+            adoptedRevision: "a".repeat(40),
+            identityEvidence: {
+              status: "known",
+              canonicalOrigin: "https://example.test/skills",
+              originRelativeSkillRoot: "review",
+            },
+          },
+        ],
+      },
+      0,
+    );
     const browsed = (await api.browseCatalog(core, { collection: "engineering" })).value;
     expect(browsed).toMatchObject({ status: "available" });
     if (browsed.status === "available") expect(browsed.items).toHaveLength(1);
@@ -229,7 +260,7 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
       argv: ["one two", "$(not-a-shell)"],
       uses: [],
     });
-    expect(await Bun.file(join(state, "uses")).exists()).toBe(false);
+    expect(await readdir(join(state, "uses"))).toEqual([]);
   } finally {
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
@@ -255,36 +286,62 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
     );
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
-    const digest = await new StateCoordinator(state).snapshotDigest(source);
+    const digest = await digestDirectory(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
-    await new StateCoordinator(state).installRemoteForTest({
-      source: "remote",
-      path: "review",
-      name: "remote",
-      description: "Remote",
-      kind: "remote",
-      digest,
-      bindingDigest: remoteBindingDigest("https://example.test/skills"),
-      adoptedRevision: "a".repeat(40),
-    });
+    await new StateCoordinator(state).write(
+      {
+        configs: {},
+        installed: [
+          {
+            source: "remote",
+            path: "review",
+            name: "remote",
+            description: "Remote",
+            kind: "remote",
+            digest,
+            bindingDigest: remoteBindingDigest("https://example.test/skills"),
+            adoptedRevision: "a".repeat(40),
+            identityEvidence: {
+              status: "known",
+              canonicalOrigin: "https://example.test/skills",
+              originRelativeSkillRoot: "review",
+            },
+          },
+        ],
+      },
+      0,
+    );
     await rm(join(state, "snapshots", digest), { recursive: true, force: true });
     await expect(api.loadSkill(core, { selector: "engineering:review" })).rejects.toMatchObject({
       code: "PROVIDER_INTEGRITY_FAILED",
     });
     expect(await Bun.file(join(state, "snapshots", digest)).exists()).toBe(false);
     await writeFile(join(source, "different.txt"), "different");
-    const corrupt = await new StateCoordinator(state).snapshotDigest(source);
+    const corrupt = await digestDirectory(source);
     await new StateCoordinator(state).publishSnapshot(corrupt, source);
-    await new StateCoordinator(state).installRemoteForTest({
-      source: "remote",
-      path: "review",
-      name: "remote",
-      description: "Remote",
-      kind: "remote",
-      digest: corrupt,
-      bindingDigest: remoteBindingDigest("https://example.test/skills"),
-      adoptedRevision: "b".repeat(40),
-    });
+    await new StateCoordinator(state).write(
+      {
+        configs: {},
+        installed: [
+          {
+            source: "remote",
+            path: "review",
+            name: "remote",
+            description: "Remote",
+            kind: "remote",
+            digest: corrupt,
+            bindingDigest: remoteBindingDigest("https://example.test/skills"),
+            adoptedRevision: "b".repeat(40),
+            identityEvidence: {
+              status: "known",
+              canonicalOrigin: "https://example.test/skills",
+              originRelativeSkillRoot: "review",
+            },
+          },
+        ],
+      },
+      1,
+    );
     await symlink("SKILL.md", join(state, "snapshots", corrupt, "root", "corrupt-link"));
     await expect(
       api.listInstalledResources(core, { address: { source: "remote", path: "review" } }),
@@ -301,7 +358,6 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
   const root = await mkdtemp(join(tmpdir(), "skctl-agent-remote-tamper-"));
   const state = join(root, "state");
   const source = join(root, "acquired");
-  const release = join(root, "release");
   try {
     await mkdir(source);
     await writeFile(
@@ -321,51 +377,49 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
     );
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
-    const digest = await new StateCoordinator(state).snapshotDigest(source);
+    const digest = await digestDirectory(source);
     await new StateCoordinator(state).publishSnapshot(digest, source);
-    await new StateCoordinator(state).installRemoteForTest({
-      source: "remote",
-      path: "remote",
-      name: "remote",
-      description: "Remote",
-      kind: "remote",
-      digest,
-      bindingDigest: remoteBindingDigest("https://example.test/repo"),
-      adoptedRevision: "a".repeat(40),
-    });
+    await new StateCoordinator(state).write(
+      {
+        configs: {},
+        installed: [
+          {
+            source: "remote",
+            path: "remote",
+            name: "remote",
+            description: "Remote",
+            kind: "remote",
+            digest,
+            bindingDigest: remoteBindingDigest("https://example.test/repo"),
+            adoptedRevision: "a".repeat(40),
+            identityEvidence: {
+              status: "known",
+              canonicalOrigin: "https://example.test/repo",
+              originRelativeSkillRoot: "remote",
+            },
+          },
+        ],
+      },
+      0,
+    );
     const snapshot = join(state, "snapshots", digest, "root", "SKILL.md");
     const stateBefore = await Bun.file(join(state, "state.json")).text();
     const cacheBefore = await Bun.file(join(state, "configs")).exists();
-    const entry = join(import.meta.dir, "../../src/index.ts");
-    const script = `import { loadSkill } from ${JSON.stringify(entry)}; await loadSkill({cwd:${JSON.stringify(root)},userConfigPath:${JSON.stringify(join(root, "global.jsonc"))}}, {selector:"c:remote"});`;
-    const child = Bun.spawn({
-      cmd: [process.execPath, "--eval", script],
-      env: {
-        ...process.env,
-        SKCTL_STATE_DIR: state,
-        SKCTL_TEST_BARRIER_AT: "use-verify-before",
-        SKCTL_TEST_BARRIER_RELEASE: release,
+    const verify = StateCoordinator.prototype.verifySnapshot;
+    const mutation = spyOn(StateCoordinator.prototype, "verifySnapshot").mockImplementation(
+      async function (this: StateCoordinator, digest) {
+        await writeFile(snapshot, "---\nname: remote\ndescription: Remote\n---\ntampered\n");
+        return verify.call(this, digest);
       },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    for (
-      let index = 0;
-      index < 500 && !(await Bun.file(join(state, "mutation.lock")).exists());
-      index += 1
-    )
-      await Bun.sleep(10);
-    await writeFile(snapshot, "---\nname: remote\ndescription: Remote\n---\ntampered\n");
-    await writeFile(release, "go");
-    expect(
-      await Promise.race([
-        child.exited,
-        Bun.sleep(5000).then(() => {
-          child.kill();
-          return -1;
-        }),
-      ]),
-    ).not.toBe(0);
+    );
+    try {
+      await expect(api.loadSkill(core, { selector: "c:remote" })).rejects.toHaveProperty(
+        "code",
+        "PROVIDER_INTEGRITY_FAILED",
+      );
+    } finally {
+      mutation.mockRestore();
+    }
     expect(await Bun.file(join(state, "uses")).exists()).toBe(false);
     expect(await Bun.file(join(state, "state.json")).text()).toBe(stateBefore);
     expect(await Bun.file(join(state, "configs")).exists()).toBe(cacheBefore);
@@ -398,9 +452,9 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
         agents: { opencode: "managed" },
       }),
     );
-    await new StateCoordinator(state).installLocal("source", "review", skill);
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
+    await api.installSkills(core, { source: "source", paths: ["review"] });
     await expect(
       api.readResource(core, { selector: "engineering:review", path: "../SKILL.md" }),
     ).rejects.toMatchObject({ code: "INVALID_RESOURCE_PATH" });
@@ -443,7 +497,7 @@ test("CNT-001 rejects traversal, unsafe entries, output collisions, spawn failur
         argv: ["/definitely/missing-executable"],
       }),
     ).rejects.toMatchObject({ code: "SPAWN_FAILED" });
-    expect(await Bun.file(join(state, "runs")).exists()).toBe(false);
+    expect(await readdir(join(state, "runs"))).toEqual([]);
   } finally {
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
@@ -471,7 +525,7 @@ test("CNT-001 cancellation escalates a resistant child and removes its run root"
       }),
     );
     process.env.SKCTL_STATE_DIR = state;
-    await new StateCoordinator(state).installLocal("source", "review", skill);
+    await api.installSkills(core, { source: "source", paths: ["review"] });
     run = api.runSkill(
       core,
       {
@@ -570,19 +624,34 @@ test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote run
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     const coordinator = new StateCoordinator(state);
-    await coordinator.installLocal("local", "local", local);
-    const digest = await coordinator.snapshotDigest(remote);
+    await api.installSkills(core, { source: "local", paths: ["local"] });
+    const digest = await digestDirectory(remote);
     await coordinator.publishSnapshot(digest, remote);
-    await coordinator.installRemoteForTest({
-      source: "remote",
-      path: "remote",
-      name: "remote",
-      description: "Remote",
-      kind: "remote",
-      digest,
-      bindingDigest: remoteBindingDigest("https://example.test/repo"),
-      adoptedRevision: "a".repeat(40),
-    });
+    const current = await coordinator.read();
+    await coordinator.write(
+      {
+        configs: {},
+        installed: [
+          ...current.installed,
+          {
+            source: "remote",
+            path: "remote",
+            name: "remote",
+            description: "Remote",
+            kind: "remote",
+            digest,
+            bindingDigest: remoteBindingDigest("https://example.test/repo"),
+            adoptedRevision: "a".repeat(40),
+            identityEvidence: {
+              status: "known",
+              canonicalOrigin: "https://example.test/repo",
+              originRelativeSkillRoot: "remote",
+            },
+          },
+        ],
+      },
+      current.generation,
+    );
     const before = await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).text();
     await symlink(outside, join(state, "runs"));
     for (const selector of ["c:local", "c:remote"])
@@ -603,9 +672,8 @@ test("CNT-001 rejects gitlinks before Snapshot publication and Local run copying
   const state = join(root, "state");
   const skill = join(root, "skills", "review");
   try {
-    await mkdir(join(skill, ".git"), { recursive: true });
+    await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Review\n---\n");
-    await writeFile(join(skill, ".git", "config"), "gitdir");
     await writeFile(
       join(root, "skctl.jsonc"),
       JSON.stringify({
@@ -618,7 +686,9 @@ test("CNT-001 rejects gitlinks before Snapshot publication and Local run copying
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     const coordinator = new StateCoordinator(state);
-    await coordinator.installLocal("local", "review", skill);
+    await api.installSkills(core, { source: "local", paths: ["review"] });
+    await mkdir(join(skill, ".git"));
+    await writeFile(join(skill, ".git", "config"), "gitdir");
     const before = await Bun.file(join(state, "state.json")).text();
     await expect(coordinator.publishSnapshot("a".repeat(64), skill)).rejects.toMatchObject({
       code: "PROVIDER_INTEGRITY_FAILED",

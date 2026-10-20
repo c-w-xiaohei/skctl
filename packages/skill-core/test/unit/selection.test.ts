@@ -17,7 +17,7 @@ test("rejects legacy declarations rather than importing or shadowing them", asyn
     });
     expect(workspace.configs.find((view) => view.level === "project")?.file.problem).toMatchObject({
       code: "CONFIG_INVALID",
-      message: "Configuration must NOT have additional properties",
+      message: expect.stringContaining("Invalid key"),
       location: { file: config },
     });
     expect(workspace.effective).toMatchObject({ status: "unavailable" });

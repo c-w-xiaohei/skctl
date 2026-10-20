@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
-import type { TuiCore } from "../src/effects";
+import type { TuiCore } from "../src/session";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import {
@@ -209,6 +209,7 @@ test("RENDER Agent access Reader Update submits only its current Skill despite o
             rawText: `Body ${address.path}`,
             markdownText: `# ${address.path}\n\nBody ${address.path}`,
           }),
+          getUpdateBaseline: async () => ({ value: "agent-reader-baseline", diagnostics: [] }),
           checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => ({
             value: {
               source,

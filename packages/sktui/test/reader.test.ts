@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { SkctlError } from "@skctl/core";
 import { createReaderOwner, type ReaderAddress } from "../src/reader/state";
-import type { TuiCore } from "../src/effects";
+import type { TuiCore } from "../src/session";
 import { findLiteralMatches, rawOffsetForMarkdownMatch } from "../src/types";
 import { directSourceCore, testEffects, workspaceProjection } from "./direct-source.fixture";
 import { deferred, installedContent, observeReader, pendingReader } from "./reader-owner.fixture";

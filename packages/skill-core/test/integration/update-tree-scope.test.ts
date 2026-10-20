@@ -1,17 +1,17 @@
 import * as api from "../../src/index";
-import { expect, spyOn, test } from "bun:test";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import * as filesystem from "node:fs/promises";
+import * as gitObjects from "isomorphic-git";
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  setManagementPublicationHookForTest,
-  setManagementUpdateCheckHookForTest,
-} from "../../src/installed/update";
-import { StateCoordinator } from "../../src/storage/state";
+import * as service from "../../src/source/service";
+import * as directory from "../../src/content/directory";
 import type { PrivateState } from "../../src/storage/schema";
+import { GitObjects } from "../../src/source/service/remote/objects";
 import { createExecutableFixture } from "../executable-fixture";
+afterEach(() => mock.restore());
 const sourceRoot = "library/skills";
 const reviewPath = "group/review";
 const origin = "https://example.test/tree-scope.git";
@@ -53,9 +53,13 @@ async function localReviewFixture() {
 async function fixture(ref = "main") {
   const root = await mkdtemp(join(tmpdir(), "skctl-update-tree-scope-"));
   const saved = new Map(
-    ["PATH", "SKCTL_STATE_DIR", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"].map(
-      (key) => [key, process.env[key]] as const,
-    ),
+    [
+      "PATH",
+      "SKCTL_STATE_DIR",
+      "SKCTL_SOURCE_CACHE_DIR",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_NOSYSTEM",
+    ].map((key) => [key, process.env[key]] as const),
   );
   const realGit = Bun.which("git");
   if (!realGit) {
@@ -67,12 +71,8 @@ async function fixture(ref = "main") {
   const bare = join(root, "remote.git");
   const stateFile = join(root, "state", "state.json");
   const trace = join(root, "git-trace");
-  const wants = join(root, "blob-wants");
   const fetchWants = join(root, "fetch-wants");
-  const batchWants = join(root, "batch-wants");
   async function cleanup() {
-    setManagementUpdateCheckHookForTest();
-    setManagementPublicationHookForTest();
     for (const [key, value] of saved) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -104,6 +104,25 @@ async function fixture(ref = "main") {
     await git("add", "-A");
     await git("commit", "-m", message);
     await git("push", "origin", "HEAD:main");
+    // These scenarios review a new ref observation. The 30-second reuse window
+    // itself is covered by source-cache, not bypassed in production.
+    const path = join(
+      root,
+      "cache",
+      "origins",
+      new Bun.CryptoHasher("sha256").update(origin).digest("hex"),
+      "cache.json",
+    );
+    const bytes = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (bytes) {
+      const index = JSON.parse(bytes);
+      for (const ref of Object.values(index.refs) as { observedAt: number }[])
+        ref.observedAt -= 31_000;
+      await writeFile(path, JSON.stringify(index));
+    }
     return git("rev-parse", "HEAD");
   }
   async function state(): Promise<PrivateState> {
@@ -111,6 +130,7 @@ async function fixture(ref = "main") {
   }
   try {
     process.env.SKCTL_STATE_DIR = join(root, "state");
+    process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
     process.env.GIT_CONFIG_GLOBAL = join(root, "gitconfig");
     process.env.GIT_CONFIG_NOSYSTEM = "1";
     await writeFile(process.env.GIT_CONFIG_GLOBAL, "");
@@ -138,14 +158,12 @@ async function fixture(ref = "main") {
 printf '%s\\n' "$*" >> ${quote(trace)}
 capture=no
 for arg in "$@"; do
-  case "$arg" in --stdin|--batch) capture=yes ;; esac
+  case "$arg" in --stdin) capture=yes ;; esac
 done
 if [ "$capture" = yes ]; then
   input=$(mktemp ${quote(join(root, "stdin.XXXXXX"))}) || exit 1
   cat > "$input"
-  cat "$input" >> ${quote(wants)}
-  case "$*" in *fetch*--stdin*) cat "$input" >> ${quote(fetchWants)} ;; esac
-  case "$*" in *cat-file*--batch*) cat "$input" >> ${quote(batchWants)} ;; esac
+   case "$*" in *fetch*--stdin*) cat "$input" >> ${quote(fetchWants)} ;; esac
   ${quote(realGit)} "$@" < "$input"
   status=$?
   rm -f "$input"
@@ -171,9 +189,7 @@ exec ${quote(realGit)} "$@"
     }
     async function clearTrace() {
       await writeFile(trace, "");
-      await writeFile(wants, "");
       await writeFile(fetchWants, "");
-      await writeFile(batchWants, "");
     }
     return {
       root,
@@ -183,7 +199,7 @@ exec ${quote(realGit)} "$@"
       first,
       stateFile,
       trace,
-      wants,
+      wants: fetchWants,
       git,
       put,
       commit,
@@ -275,9 +291,10 @@ for (const legacy of [false, true]) {
       const checkCommands = checkTrace.split("\n").filter(Boolean);
       expect(
         checkCommands.filter((line) => line.includes(" fetch ") && !line.includes("--stdin")),
-      ).toHaveLength(legacy ? 2 : 1);
-      expect(checkCommands.filter((line) => line.includes("ls-tree"))).toHaveLength(legacy ? 2 : 1);
+      ).toHaveLength(1);
+      expect(checkCommands.filter((line) => line.includes("ls-tree"))).toHaveLength(0);
       await value.clearTrace();
+      const localReads = spyOn(gitObjects, "readBlob");
       await api.updateSkills(value.core, {
         source: "remote",
         paths: selectedPaths,
@@ -288,16 +305,21 @@ for (const legacy of [false, true]) {
         trace.split("\n").filter((line) => line.includes(" fetch ") && line.includes("--stdin")),
       ).toHaveLength(1);
       const wants = (await readFile(value.wants, "utf8")).trim().split("\n");
-      for (const id of new Set(expected)) expect(wants).toContain(id);
-      for (const id of excluded) expect(wants).not.toContain(id);
+      const newMarkers = expected.filter((_, index) => index % 2 === 0);
+      for (const id of new Set(newMarkers)) expect(wants).toContain(id);
+      for (const id of excluded.filter((id) => !expected.includes(id)))
+        expect(wants).not.toContain(id);
       const fetchedInput = await readFile(join(value.root, "fetch-wants"), "utf8");
-      const batchInput = (await readFile(join(value.root, "batch-wants"), "utf8"))
-        .trim()
-        .split("\n");
       for (const id of new Set(expected)) {
-        expect(fetchedInput.match(new RegExp(`\\b${id}\\b`, "gu"))).toHaveLength(1);
-        expect(batchInput.filter((wanted) => wanted === id)).toHaveLength(1);
+        expect(fetchedInput.match(new RegExp(`\\b${id}\\b`, "gu")) ?? []).toHaveLength(
+          newMarkers.includes(id) ? 1 : 0,
+        );
+        expect(localReads.mock.calls.filter(([request]) => request.oid === id)).toHaveLength(1);
       }
+      expect(localReads.mock.calls.map(([request]) => request.oid).sort()).toEqual(
+        [...new Set(expected)].sort(),
+      );
+      expect(trace).not.toMatch(/cat-file (?:blob|tree|commit|--batch(?:\s|$))/);
     } finally {
       await value.cleanup();
     }
@@ -351,14 +373,14 @@ test("W3 empty boundary Root persists full Origin coordinates and checks with me
     expect(trace.split("\n").filter((line) => line.includes("ls-remote"))).toHaveLength(1);
     expect(
       trace.split("\n").filter((line) => line.includes(" fetch ") && !line.includes("--stdin")),
-    ).toHaveLength(1);
-    expect(trace.split("\n").filter((line) => line.includes("ls-tree"))).toHaveLength(1);
+    ).toHaveLength(0);
+    expect(trace.split("\n").filter((line) => line.includes("ls-tree"))).toHaveLength(0);
     expect((await readFile(value.wants, "utf8")).trim()).toBe("");
   } finally {
     await value.cleanup();
   }
 });
-test("W3 fully qualified branch ref checks without ls-remote", async () => {
+test("W3 fully qualified branch ref resolves once and reuses cached exact metadata", async () => {
   const value = await fixture("refs/heads/main");
   try {
     await api.registerSource(value.core, {
@@ -375,10 +397,10 @@ test("W3 fully qualified branch ref checks without ls-remote", async () => {
     const result = await api.checkUpdate(value.core, { source: "qualified" });
     expect(result.value.unchanged).toEqual([expect.objectContaining({ path: reviewPath })]);
     const trace = await readFile(value.trace, "utf8");
-    expect(trace.split("\n").filter((line) => line.includes("ls-remote"))).toHaveLength(0);
+    expect(trace.split("\n").filter((line) => line.includes("ls-remote"))).toHaveLength(1);
     expect(
       trace.split("\n").filter((line) => line.includes(" fetch ") && !line.includes("--stdin")),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect((await readFile(value.wants, "utf8")).trim()).toBe("");
   } finally {
     await value.cleanup();
@@ -450,7 +472,9 @@ test("W3 invalid selections and obsolete explicit baselines reject before remote
       await value.clearTrace();
       await expect(
         api.updateSkills(value.core, { source: "remote", paths, exactRevision: value.first }),
-      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+      ).rejects.toMatchObject({
+        code: paths[0] === "other" ? "SKILL_NOT_FOUND" : "INVALID_ARGUMENT",
+      });
       expect(await readFile(value.trace, "utf8")).toBe("");
     }
     await value.clearTrace();
@@ -483,9 +507,18 @@ test("W3 supplied and omitted baselines reject Source-owned installation changes
       await value.put(`${reviewPath}/scripts/run.sh`, "changed selected content\n");
       const revision = await value.commit("reviewed update");
       const baseline = (await api.getUpdateBaseline(value.core, { source: "remote" })).value;
-      setManagementPublicationHookForTest(() =>
-        api.uninstallSkills(value.core, { source: "remote", paths: ["other"] }).then(() => {}),
-      );
+      const prepare = service.withPreparedSkills;
+      spyOn(service, "withPreparedSkills").mockImplementation(async function <T>(
+        context: service.SourceContext,
+        paths: readonly string[],
+        revision: string | undefined,
+        operation: (skills: readonly service.PreparedSkill[]) => Promise<T>,
+      ): Promise<T> {
+        return prepare(context, paths, revision, async (skills) => {
+          await api.uninstallSkills(value.core, { source: "remote", paths: ["other"] });
+          return operation(skills);
+        });
+      });
       await expect(
         api.updateSkills(value.core, {
           source: "remote",
@@ -499,6 +532,7 @@ test("W3 supplied and omitted baselines reject Source-owned installation changes
         adoptedRevision: value.first,
       });
     } finally {
+      mock.restore();
       await value.cleanup();
     }
   }
@@ -537,7 +571,7 @@ test("W3 normal check is installed-only and compares resource and executable-mod
       (await readFile(value.trace, "utf8"))
         .split("\n")
         .filter((line) => line.includes(" init --bare ")),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     await value.commit("resource-only change");
     expect((await api.checkUpdate(value.core, { source: "remote" })).value.changed).toEqual([
       expect.objectContaining({ path: reviewPath }),
@@ -599,9 +633,14 @@ test("W3 same-commit shortcut rejoins final binding guard and present-valid remo
         remove: [reviewPath],
         exactRevision: value.first,
       }),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(value.stateFile, "utf8")).toBe(before);
-    setManagementUpdateCheckHookForTest(() => writeFile(join(value.root, "skctl.jsonc"), "{}\n"));
+    const compare = service.compareSource;
+    spyOn(service, "compareSource").mockImplementation(async (...args) => {
+      const result = await compare(...args);
+      await writeFile(join(value.root, "skctl.jsonc"), "{}\n");
+      return result;
+    });
     await expect(api.checkUpdate(value.core, { source: "remote" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
@@ -641,6 +680,18 @@ test("W3 legacy missing-tree recovery uses retrievable old metadata without rewr
       `${revision}:${sourceRoot}/${reviewPath}/scripts/run.sh`,
     );
     expect(await readFile(value.wants, "utf8")).not.toContain(resource);
+    await value.clearTrace();
+    const trees = spyOn(gitObjects, "readTree");
+    const closure = spyOn(GitObjects.prototype, "verifyTree");
+    const restored = (
+      await api.checkUpdate(value.core, { source: "remote", observation: "retained" })
+    ).value;
+    expect(restored?.unchanged.map((item) => item.path)).toEqual([reviewPath]);
+    expect(restored?.exactRevision).toBe(revision);
+    expect(await readFile(value.stateFile, "utf8")).toBe(before);
+    expect(closure).not.toHaveBeenCalled();
+    expect(trees.mock.calls.length).toBeLessThanOrEqual(12);
+    expect(await readFile(value.trace, "utf8")).not.toMatch(/built-in: git (?:fetch|ls-remote) /);
   } finally {
     await value.cleanup();
   }
@@ -676,18 +727,19 @@ test("W3 Local checks target installed Roots, tolerate malformed status, and gua
     expect((await api.checkUpdate(core, { source: "local" })).value.removed).toEqual([
       expect.objectContaining({ path: reviewPath }),
     ]);
-    setManagementPublicationHookForTest(() =>
-      writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Revived\n---\n"),
-    );
+    const remove = service.assertRemovedSkills;
+    const inspection = spyOn(service, "assertRemovedSkills").mockImplementation(async (...args) => {
+      await remove(...args);
+      await writeFile(join(skill, "SKILL.md"), "---\nname: review\ndescription: Revived\n---\n");
+    });
     await expect(
       api.updateSkills(core, { source: "local", paths: [], remove: [reviewPath] }),
     ).rejects.toMatchObject({ code: "TRANSACTION_CONFLICT" });
     expect((await api.getWorkspace(core)).value.installedSkills).toHaveLength(1);
-    setManagementPublicationHookForTest();
+    inspection.mockRestore();
     await writeFile(join(root, "skills", "group", "SKILL.md"), "malformed ancestor\n");
     expect((await api.checkUpdate(core, { source: "local" })).value.removed).toHaveLength(1);
   } finally {
-    setManagementPublicationHookForTest();
     if (saved === undefined) delete process.env.SKCTL_STATE_DIR;
     else process.env.SKCTL_STATE_DIR = saved;
     await chmod(unrelated, 0o700);
@@ -705,7 +757,12 @@ test("W3 empty Installed Source checks have no remote work but still rejoin the 
       added: [],
     });
     expect(await readFile(value.trace, "utf8")).toBe("");
-    setManagementUpdateCheckHookForTest(() => writeFile(join(value.root, "skctl.jsonc"), "{}\n"));
+    const compare = service.compareSource;
+    spyOn(service, "compareSource").mockImplementation(async (...args) => {
+      const result = await compare(...args);
+      await writeFile(join(value.root, "skctl.jsonc"), "{}\n");
+      return result;
+    });
     await expect(api.checkUpdate(value.core, { source: "remote" })).rejects.toMatchObject({
       code: "CONFIG_CONFLICT",
     });
@@ -745,7 +802,7 @@ test("W3 malformed own metadata is changed, cannot be removed, and fails update 
         remove: [reviewPath],
         exactRevision: revision,
       }),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await readFile(value.stateFile, "utf8")).toBe(before);
   } finally {
     await value.cleanup();
@@ -1015,28 +1072,26 @@ test("W3 M1 Local prefix validation keeps marker shadowing inside the Source bou
 for (const changed of ["resource", "marker"] as const) {
   test(`W3 M2 multi-Root Local reinstall rejects ${changed} drift after the first captured digest`, async () => {
     const value = await localReviewFixture();
-    const originalDigest = StateCoordinator.prototype.snapshotDigest;
+    const originalDigest = directory.digestDirectory;
     const one = join(value.boundary, "one");
     const two = join(value.boundary, "two");
     let mutations = 0;
-    const digestSpy = spyOn(StateCoordinator.prototype, "snapshotDigest").mockImplementation(
-      async function (this: StateCoordinator, root) {
-        // Delegate every hash to the actual coordinator. Observing the second
-        // selected Root proves the first Root's metadata AND full digest have
-        // already been captured; no sleep or synthetic digest controls the race.
-        const digest = await originalDigest.call(this, root);
-        if (root === two && mutations === 0) {
-          mutations++;
-          await writeFile(
-            join(one, changed === "resource" ? "resource.txt" : "SKILL.md"),
-            changed === "resource"
-              ? "Changed between selected Roots\n"
-              : "---\nname: renamed\ndescription: Changed between selected Roots\n---\n",
-          );
-        }
-        return digest;
-      },
-    );
+    const digestSpy = spyOn(directory, "digestDirectory").mockImplementation(async function (root) {
+      // Delegate every hash to the actual coordinator. Observing the second
+      // selected Root proves the first Root's metadata AND full digest have
+      // already been captured; no sleep or synthetic digest controls the race.
+      const digest = await originalDigest(root);
+      if (root === two && mutations === 0) {
+        mutations++;
+        await writeFile(
+          join(one, changed === "resource" ? "resource.txt" : "SKILL.md"),
+          changed === "resource"
+            ? "Changed between selected Roots\n"
+            : "---\nname: renamed\ndescription: Changed between selected Roots\n---\n",
+        );
+      }
+      return digest;
+    });
     try {
       const before = await readFile(value.stateFile, "utf8");
       const outcome = await api
@@ -1059,23 +1114,22 @@ for (const changed of ["resource", "marker"] as const) {
 }
 test("W3 M2 Local metadata read and its full digest must describe the same marker bytes", async () => {
   const value = await localReviewFixture();
-  const originalDigest = StateCoordinator.prototype.snapshotDigest;
+  const originalDigest = directory.digestDirectory;
   const one = join(value.boundary, "one");
   let mutations = 0;
-  const digestSpy = spyOn(StateCoordinator.prototype, "snapshotDigest").mockImplementation(
-    async function (this: StateCoordinator, root) {
-      // localRoot has already parsed original SKILL.md here. Its actual digest
-      // now sees changed marker bytes, exercising the metadata/hash window itself.
-      if (root === one && mutations === 0) {
-        mutations++;
-        await writeFile(
-          join(one, "SKILL.md"),
-          "---\nname: renamed\ndescription: Changed during marker hash\n---\n",
-        );
-      }
-      return originalDigest.call(this, root);
-    },
-  );
+  let hashes = 0;
+  const digestSpy = spyOn(directory, "digestDirectory").mockImplementation(async function (root) {
+    // localRoot has already parsed original SKILL.md here. Its actual digest
+    // now sees changed marker bytes, exercising the metadata/hash window itself.
+    if (root === one && ++hashes === 2) {
+      mutations++;
+      await writeFile(
+        join(one, "SKILL.md"),
+        "---\nname: renamed\ndescription: Changed during marker hash\n---\n",
+      );
+    }
+    return originalDigest(root);
+  });
   try {
     const before = await readFile(value.stateFile, "utf8");
     const outcome = await api

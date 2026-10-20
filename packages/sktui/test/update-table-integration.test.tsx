@@ -46,8 +46,8 @@ function text(setup: Setup, id: string) {
 async function renderApp(core: ReturnType<typeof directSourceCore>, width: number, height: number) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/update-table-app-");
-  const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   let setup: Setup | undefined;
   return {
     async mount() {
@@ -60,8 +60,8 @@ async function renderApp(core: ReturnType<typeof directSourceCore>, width: numbe
     },
     async dispose() {
       setup?.renderer.destroy();
-      if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+      if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
       await rm(cache, { recursive: true, force: true });
     },
   };
@@ -79,6 +79,7 @@ test.each([
     const fixture = projection(12);
     const mounted = await renderApp(
       directSourceCore(fixture, {
+        getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
         checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
           calls.push(source);
           if (source === "source-12") throw new Error(failure);
@@ -177,6 +178,7 @@ test("RENDER App Source table submits one selected Skill once at the checked exa
   const fixture = projection(1, 120);
   const mounted = await renderApp(
     directSourceCore(fixture, {
+      getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
       checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
         checks.push(source);
         return {
@@ -236,7 +238,12 @@ test("RENDER App Source table submits one selected Skill once at the checked exa
     await enterLive(setup, "source-updates-update-all");
     await setup.waitFor(() => requests.length === 1);
     expect(requests).toEqual([
-      { source: "team-main", paths: ["skill-119"], exactRevision: revision },
+      {
+        source: "team-main",
+        paths: ["skill-119"],
+        exactRevision: revision,
+        expectedBaseline: "baseline:test",
+      },
     ]);
     expect(checks).toEqual(["team-main"]);
     expect(reads).toEqual([]);

@@ -7,7 +7,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DataTable, type DataTableColumn } from "../src/ui/data-table";
 import { SourceUpdatesPage } from "../src/updates/page";
-import { buildUpdateScope, createUpdatesState } from "../src/updates/model";
+import { deriveUpdateScope as buildUpdateScope } from "../src/updates/scope";
+import { createUpdatesState } from "../src/updates/state";
 import { workspaceProjection } from "./direct-source.fixture";
 
 test("PERF 120 selected Skills cache scope derivations instead of reading them per row or movement", async () => {

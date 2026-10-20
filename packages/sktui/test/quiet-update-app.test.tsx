@@ -15,13 +15,15 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
 import { UpdatesPage } from "../src/updates/page";
-import { buildUpdateScope, createUpdatesState } from "../src/updates/model";
+import { deriveUpdateScope as buildUpdateScope } from "../src/updates/scope";
+import { createUpdatesState } from "../src/updates/state";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import {
   enterLive,
   focusLive,
   openAllInstalledSkills,
   openReaderTab,
+  openReaderManagement,
   parsedEnter,
   parsedEscape,
   selectedReaderTab,
@@ -63,8 +65,8 @@ async function mount(
 ) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/quiet-update-app-");
-  const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const projection = fixture(count);
   let currentProjection: WorkspaceView = projection;
   const loaded: {
@@ -88,6 +90,7 @@ async function mount(
   let updateSignal: AbortSignal | undefined;
   let settle!: () => void;
   const core = directSourceCore(projection, {
+    getUpdateBaseline: async () => ({ value: "checked-baseline", diagnostics: [] }),
     getWorkspace: async () => ({ value: currentProjection, diagnostics: [] }),
     discoverSkills: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
       acquisitions.push(`discover:${source}`);
@@ -220,15 +223,15 @@ async function mount(
       async dispose() {
         settle?.();
         setup!.renderer.destroy();
-        if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-        else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+        if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+        else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
         await rm(cache, { recursive: true, force: true });
       },
     };
   } catch (error) {
     setup?.renderer.destroy();
-    if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-    else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+    if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
     await rm(cache, { recursive: true, force: true });
     throw error;
   }
@@ -257,8 +260,8 @@ test.each([
   async (width, height) => {
     await mkdir("/tmp/opencode", { recursive: true });
     const cache = await mkdtemp("/tmp/opencode/footer-checking-");
-    const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
-    process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+    const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
     let signal: AbortSignal | undefined;
     let checks = 0;
     const projection = fixture();
@@ -321,8 +324,8 @@ test.each([
       expect(signal?.aborted).toBe(false);
     } finally {
       setup?.renderer.destroy();
-      if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+      if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
       await rm(cache, { recursive: true, force: true });
     }
   },
@@ -497,7 +500,12 @@ test.each([
       mounted.driftOwnership({ source: "team-main", path: "skill-0" });
       await focusLive(setup, "updates-browser");
       await setup.mockInput.typeText("u");
-      await setup.waitForFrame((frame) => frame.includes("Update blocked"));
+      await setup.waitFor(() => {
+        const status = setup.renderer.root.findDescendantById(
+          "updates-browser-row-team-main:cell-status",
+        );
+        return status instanceof TextRenderable && status.plainText === "Needs attention";
+      });
       expect(calls).toEqual([]);
       expect(setup.captureCharFrame()).not.toContain("ownership changed or is unhealthy");
       expect(
@@ -795,7 +803,7 @@ test.each([
       await setup.mockInput.typeText("s");
       await setup.waitFor(() => mounted.signal()?.aborted === true);
       mounted.settle();
-      await setup.waitForFrame((frame) => frame.includes("need attention"), { maxPasses: 200 });
+      await setup.waitFor(() => !setup.renderer.root.findDescendantById("updates-stop"));
       expect(calls).toHaveLength(1);
       expect(setup.renderer.root.findDescendantById("updates-stop")).toBeUndefined();
       const committed = setup.renderer.root.findDescendantById(
@@ -915,6 +923,7 @@ test.each([
       expect(loaded).toEqual([{ source: "team-main", path: "skill-0" }]);
       expect(acquisitions).toEqual([]);
       await openReaderTab(setup, 2);
+      await openReaderManagement(setup);
       const add = setup.renderer.root.findDescendantById(
         "reader-details-action-skill-add-to-collection",
       )!;
@@ -1017,7 +1026,8 @@ test.each([
       expect(status.plainText).toContain("Stopping");
       await capture(setup, `task-stopping-away-${width}x${height}`);
       mounted.settle();
-      await setup.waitFor(() => status.plainText.includes("need attention"));
+      await setup.waitFor(() => !status.plainText.includes("Stopping"));
+      expect(status.plainText).toContain("Review");
       expect(calls).toHaveLength(1);
       expect(setup.renderer.root.findDescendantById("source-browser")).toBeUndefined();
       await chooseAction(setup, "updates.task.show");

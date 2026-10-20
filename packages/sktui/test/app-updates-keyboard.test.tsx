@@ -23,13 +23,12 @@ async function tab(setup: Awaited<ReturnType<typeof testRender>>, shift = false)
 function diagnostic(setup: Awaited<ReturnType<typeof testRender>>, stage: string) {
   const ids = [
     "installed-skill-browser",
-    "skill-inspector-open-reader",
-    "top-navigation-tab-workspace",
-    "shell-section-navigation",
+    "shell-section-tab-skills",
+    "shell-section-tab-updates",
     "updates-browser",
-    "updates-details",
-    "updates-check",
-    "updates-stop",
+    "source-updates-browser",
+    "update-preview-pane",
+    "process-status",
   ].map((id) => {
     const target = setup.renderer.root.findDescendantById(id);
     return { id, mounted: !!target && !target.isDestroyed && !!target.parent };
@@ -58,8 +57,10 @@ test("App keyboard navigation reaches Updates commands and active Stop without f
     },
   };
   let aborts = 0;
+  const mutations: unknown[] = [];
   const checks: string[] = [];
   const core = directSourceCore(projection, {
+    getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
     checkUpdate: (_environment: import("@skctl/core").CoreOptions, { source }, options) => {
       checks.push(source);
       if (source === base.effective.sources[0]!.id) {
@@ -82,6 +83,10 @@ test("App keyboard navigation reaches Updates commands and active Stop without f
         }),
       );
     },
+    updateSkills: async (_environment, request) => {
+      mutations.push(request);
+      return { value: undefined, diagnostics: [] };
+    },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 120,
@@ -89,80 +94,45 @@ test("App keyboard navigation reaches Updates commands and active Stop without f
   });
   let stage = "boot";
   try {
-    await setup.waitFor(() => {
-      const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
-      const focused = setup.renderer.currentFocusedRenderable;
-      return (
-        !!browser &&
-        !browser.isDestroyed &&
-        !!browser.parent &&
-        !!focused &&
-        !focused.isDestroyed &&
-        !!focused.parent
-      );
-    });
-    // Startup focus is App-owned and may change as projection hydrates. Follow
-    // real Tab stops, bounded by the existing physical panel cycle.
-    stage = "Tab traversal to section navigation";
-    for (
-      let step = 0;
-      step < 6 && setup.renderer.currentFocusedRenderable?.id !== "shell-section-navigation";
-      step++
-    )
-      await tab(setup);
-    expect(setup.renderer.currentFocusedRenderable?.id, diagnostic(setup, stage)).toBe(
-      "shell-section-navigation",
+    await setup.waitFor(
+      () =>
+        checks.length === 2 &&
+        setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-skills",
     );
-    // The normal section-navigation key handler moves from Skills to Updates.
+    // Start from App-owned focus; do not force focus onto a test-only target.
+    stage = "Tab traversal to section navigation";
+    await tab(setup);
+    expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("shell-section-tab-skills");
+    await tab(setup, true);
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-section-tab-skills");
     stage = "section navigation to Updates";
-    for (let i = 0; i < 3; i++) await key(setup, "ARROW_DOWN");
+    for (let i = 0; i < 3; i++) await key(setup, "ARROW_RIGHT");
     await key(setup, "ENTER");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
     expect(setup.captureCharFrame()).toContain("Updates");
-    stage = "Updates browser boundary reaches Check before any manual check";
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "updates-browser");
-    await key(setup, "ARROW_RIGHT"); // expand the current Source row
-    const browser = setup.renderer.root.findDescendantById("updates-browser");
-    if (!(browser instanceof SelectRenderable))
-      throw new Error("Updates browser is not a native Select");
-    for (
-      let step = 0;
-      step <= browser.options.length &&
-      setup.renderer.currentFocusedRenderable?.id !== "updates-check";
-      step++
-    )
-      await key(setup, "ARROW_DOWN");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("updates-check");
-    expect(checks).toEqual([]);
-    await key(setup, "ENTER");
-    stage = "pending update Stop reachability";
-    await setup.waitFor(
-      () => checks.length === 2 && !!setup.renderer.root.findDescendantById("updates-stop"),
-    );
     expect(checks).toEqual(["team-main", "other-source"]);
-    await setup.waitFor(() => setup.captureCharFrame().includes("1 changed"));
-    // The initiating Check became disabled. Its leaf-owned handoff keeps the
-    // physical keyboard owner on the newly mounted active Stop command.
-    stage = "active Stop focus handoff";
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("updates-stop");
-    const check = setup.renderer.root.findDescendantById("updates-check");
-    expect(check?.focusable).toBe(false);
-    expect(setup.renderer.root.findDescendantById("updates-stop")?.focusable).toBe(true);
-    await tab(setup);
-    expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("updates-stop");
-    await tab(setup, true);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("updates-stop");
-    await key(setup, "ENTER");
+    const choose = async (id: string) => {
+      setup.mockInput.pressKey("p", { ctrl: true });
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+      const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+      const index = choices.options.findIndex((option) => option.value.id === id);
+      expect(index, diagnostic(setup, stage)).toBeGreaterThanOrEqual(0);
+      expect(choices.options[index]!.value.enabled).toBe(true);
+      const current = choices.getSelectedIndex();
+      for (let row = 0; row < Math.abs(index - current); row++)
+        await key(setup, index > current ? "ARROW_DOWN" : "ARROW_UP");
+      await key(setup, "ENTER");
+    };
+    stage = "active checks Stop via shared keyboard Actions";
+    await choose("checks.task.stop");
     await setup.waitFor(() => aborts === 1);
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "updates-browser");
-    // After Stop restores the browser, navigate from the pending Source back
-    // to the completed group's changed Skill and enter its result details.
-    stage = "checked result details after Stop";
-    await key(setup, "ARROW_UP");
-    await key(setup, "ARROW_UP");
-    await key(setup, "ARROW_DOWN");
-    await key(setup, "ARROW_RIGHT");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("updates-details");
+    stage = "manual recheck remains keyboard reachable after Stop";
+    await choose("updates.check");
+    await setup.waitFor(() => checks.length === 4);
+    expect(checks).toEqual(["team-main", "other-source", "team-main", "other-source"]);
+    await choose("checks.task.stop");
+    await setup.waitFor(() => aborts === 2);
+    expect(mutations).toEqual([]);
   } catch (error) {
     throw new Error(diagnostic(setup, stage), { cause: error });
   } finally {

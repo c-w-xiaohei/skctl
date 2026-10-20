@@ -29,8 +29,8 @@ async function mount(
 ) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/collections-sources-");
-  const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const reads: SkillAddress[] = [];
   const sideEffects: string[] = [];
   const checks: string[] = [];
@@ -57,6 +57,7 @@ async function mount(
         markdownText: text,
       };
     },
+    getUpdateBaseline: async () => ({ value: "operate-baseline", diagnostics: [] }),
     checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
       checks.push(source);
       return {
@@ -96,8 +97,8 @@ async function mount(
     checks,
     async dispose() {
       setup.renderer.destroy();
-      if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+      if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
       await rm(cache, { recursive: true, force: true });
     },
   };

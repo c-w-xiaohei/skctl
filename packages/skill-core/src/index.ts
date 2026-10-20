@@ -3,7 +3,8 @@ export * from "./collection/edit";
 export * from "./collection/preview";
 export { inspectCollection } from "./collection/inspect";
 export * from "./collection/use";
-export { discoverSkills, previewSourceRemoval, removeSource } from "./source/lifecycle";
+export { discoverSkills } from "./source/discover";
+export { previewSourceRemoval, removeSource } from "./source/remove";
 export {
   observeConfigSource,
   adoptConfigSource,
@@ -12,14 +13,10 @@ export {
   previewConfigForget,
   removeConfig,
   previewConfigRemoval,
-} from "./config/lifecycle";
-export {
-  installSkills,
-  uninstallSkills,
-  rebindSkill,
-  previewUninstall,
-  previewRebind,
-} from "./installed/lifecycle";
+} from "./config/sources/operations";
+export { installSkills } from "./installed/install";
+export { uninstallSkills, previewUninstall } from "./installed/uninstall";
+export { rebindSkill, previewRebind } from "./installed/rebind";
 export { checkUpdate, getUpdateBaseline, previewUpdate, updateSkills } from "./installed/update";
 export {
   loadInstalledSkill,

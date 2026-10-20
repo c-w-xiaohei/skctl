@@ -20,8 +20,8 @@ async function mount(
 ) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/scope-tree-");
-  const previous = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  const previous = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const reads: SkillAddress[] = [];
   const setup = await testRender(
     () => (
@@ -52,8 +52,8 @@ async function mount(
     reads,
     async dispose() {
       setup.renderer.destroy();
-      if (previous === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = previous;
+      if (previous === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = previous;
       await rm(cache, { recursive: true, force: true });
     },
   };

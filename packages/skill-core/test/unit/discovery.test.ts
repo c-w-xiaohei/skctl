@@ -3,7 +3,17 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { discoverLocalSkills } from "../../src/source/discovery";
+import { discoverSource } from "../../src/source/service";
+const context = (root: string) => ({
+  binding: {
+    id: "local",
+    kind: "local" as const,
+    origin: root,
+    root: "",
+    selectors: [],
+    provenance: { level: "project" as const },
+  },
+});
 
 test("discovers deterministic skill roots and stops below a valid root", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-discovery-"));
@@ -15,7 +25,10 @@ test("discovers deterministic skill roots and stops below a valid root", async (
     join(root, "a", "nested", "SKILL.md"),
     "---\nname: hidden\ndescription: hidden\n---\n",
   );
-  expect((await discoverLocalSkills(root)).skills.map((skill) => skill.name)).toEqual(["a", "z"]);
+  expect((await discoverSource(context(root))).candidates.map((skill) => skill.name)).toEqual([
+    "a",
+    "z",
+  ]);
 });
 
 test("diagnoses malformed frontmatter and does not follow directory symlinks", async () => {
@@ -25,7 +38,7 @@ test("diagnoses malformed frontmatter and does not follow directory symlinks", a
   await writeFile(join(root, "bad", "SKILL.md"), "---\nname: [not scalar]\n---\n");
   await writeFile(join(root, "outside", "SKILL.md"), "---\nname: outside\ndescription: no\n---\n");
   await symlink(join(root, "outside"), join(root, "linked"));
-  const result = await discoverLocalSkills(root);
-  expect(result.skills.map((skill) => skill.name)).toEqual(["outside"]);
+  const result = await discoverSource(context(root));
+  expect(result.candidates.map((skill) => skill.name)).toEqual(["outside"]);
   expect(result.diagnostics).toHaveLength(1);
 });

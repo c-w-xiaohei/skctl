@@ -231,6 +231,7 @@ test("Source Inspector exposes Check Updates directly and leaving its workbench 
     () => (
       <App
         core={directSourceCore(readerProjection(), {
+          getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
           checkUpdate: async (_environment: import("@skctl/core").CoreOptions, request) => {
             observationCalls.push(request);
             return {

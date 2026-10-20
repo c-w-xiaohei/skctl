@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
+import * as v from "valibot";
 import {
-  configModuleValidator,
-  validatorFor,
-  schemaJson,
-  userConfigValidator,
-  projectConfigValidator,
-} from "../../src/config/document";
+  userConfigSchema,
+  projectConfigSchema,
+  reusableConfigSchema,
+  configSchemaFor,
+} from "../../src/config/schema";
+import { schemaJson } from "../../../../scripts/schema";
+import { resourcePathSchema, skillMetadataSchema } from "../../src/content/domain.schema";
 
 const userProject = {
   $schema: "https://skctl.dev/schema.json",
@@ -17,13 +19,24 @@ const userProject = {
 };
 
 describe("persisted JSONC v1 schema", () => {
+  test("domain schemas own normalization, selected output and path validation", () => {
+    expect(
+      v.parse(skillMetadataSchema, {
+        name: " cafe\u0301 ",
+        description: " Review\n ",
+        ignored: true,
+      }),
+    ).toEqual({ name: "café", description: "Review" });
+    expect(v.safeParse(resourcePathSchema, "../secret").success).toBe(false);
+    expect(v.safeParse(resourcePathSchema, "nested/file.txt").success).toBe(true);
+  });
   test("only user documents accept a strict HTTP(S) proxy URL", () => {
     for (const proxy of ["http://127.0.0.1:7890", "https://user:password@proxy.test:8443/"])
-      expect(userConfigValidator({ ...userProject, network: { proxy } })).toBe(true);
-    expect(userConfigValidator({ network: {} })).toBe(true);
-    expect(userConfigValidator({})).toBe(true);
-    for (const validator of [projectConfigValidator, validatorFor("local"), configModuleValidator])
-      expect(validator({ network: { proxy: "http://proxy.test:7890" } })).toBe(false);
+      expect(v.is(userConfigSchema, { ...userProject, network: { proxy } })).toBe(true);
+    expect(v.is(userConfigSchema, { network: {} })).toBe(true);
+    expect(v.is(userConfigSchema, {})).toBe(true);
+    for (const schema of [projectConfigSchema, configSchemaFor("local"), reusableConfigSchema])
+      expect(v.is(schema, { network: { proxy: "http://proxy.test:7890" } })).toBe(false);
     for (const proxy of [
       "",
       null,
@@ -40,40 +53,43 @@ describe("persisted JSONC v1 schema", () => {
       "http:\\proxy.test",
       "http://",
     ])
-      expect(userConfigValidator({ network: { proxy } })).toBe(false);
+      expect(v.is(userConfigSchema, { network: { proxy } })).toBe(false);
     for (const network of [
       null,
       { proxy: "http://proxy.test", mode: "direct" },
       { timeout: 1 },
       { unknown: true },
     ])
-      expect(userConfigValidator({ network })).toBe(false);
+      expect(v.is(userConfigSchema, { network })).toBe(false);
     for (const proxy of [
       "http://proxy.test/.",
       "http://proxy.test/foo/..",
       "http://proxy.test/%2e",
       "http://proxy.test:",
     ])
-      expect(userConfigValidator({ network: { proxy } })).toBe(false);
+      expect(v.is(userConfigSchema, { network: { proxy } })).toBe(false);
   });
   test("accepts only the three persisted document forms", () => {
-    expect(userConfigValidator(userProject)).toBe(true);
-    expect(projectConfigValidator(userProject)).toBe(true);
+    expect(v.is(userConfigSchema, userProject)).toBe(true);
+    expect(v.is(projectConfigSchema, userProject)).toBe(true);
     const { agents: _agents, use: _use, ...local } = userProject;
-    expect(validatorFor("local")(local)).toBe(true);
+    expect(v.is(configSchemaFor("local"), local)).toBe(true);
     expect(
-      configModuleValidator({ collections: userProject.collections, sources: userProject.sources }),
+      v.is(reusableConfigSchema, {
+        collections: userProject.collections,
+        sources: userProject.sources,
+      }),
     ).toBe(true);
 
-    expect(userConfigValidator({ ...userProject, unknown: true })).toBe(false);
-    expect(configModuleValidator(userProject)).toBe(false);
+    expect(v.is(userConfigSchema, { ...userProject, unknown: true })).toBe(false);
+    expect(v.is(reusableConfigSchema, userProject)).toBe(false);
     for (const oldField of ["profiles", "imports", "omit"])
-      expect(userConfigValidator({ ...userProject, [oldField]: {} })).toBe(false);
-    expect(userConfigValidator({ ...userProject, agents: { opencode: "native" } })).toBe(false);
-    expect(configModuleValidator({ ...local, use: ["development"] })).toBe(false);
-    expect(configModuleValidator({ ...local, agents: { opencode: "managed" } })).toBe(false);
+      expect(v.is(userConfigSchema, { ...userProject, [oldField]: {} })).toBe(false);
+    expect(v.is(userConfigSchema, { ...userProject, agents: { opencode: "native" } })).toBe(false);
+    expect(v.is(reusableConfigSchema, { ...local, use: ["development"] })).toBe(false);
+    expect(v.is(reusableConfigSchema, { ...local, agents: { opencode: "managed" } })).toBe(false);
     expect(
-      userConfigValidator({
+      v.is(userConfigSchema, {
         ...userProject,
         configSources: {
           upstream: {
@@ -86,18 +102,18 @@ describe("persisted JSONC v1 schema", () => {
       }),
     ).toBe(true);
     expect(
-      configModuleValidator({
+      v.is(reusableConfigSchema, {
         configSources: { upstream: { kind: "local", path: "./config", root: "" } },
       }),
     ).toBe(false);
     expect(
-      userConfigValidator({
+      v.is(userConfigSchema, {
         ...userProject,
         configSources: { upstream: { kind: "local", path: "./config", root: "", ref: "main" } },
       }),
     ).toBe(false);
     expect(
-      userConfigValidator({
+      v.is(userConfigSchema, {
         ...userProject,
         sources: {
           bad: { kind: "local", path: "./skills", origin: "https://example.test", root: "" },
@@ -105,7 +121,7 @@ describe("persisted JSONC v1 schema", () => {
       }),
     ).toBe(false);
     expect(
-      userConfigValidator({
+      v.is(userConfigSchema, {
         ...userProject,
         sources: { bad: { kind: "git", origin: "https://example.test", root: "" } },
       }),

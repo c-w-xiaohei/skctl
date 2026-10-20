@@ -1,5 +1,5 @@
 import { useTerminalDimensions } from "@opentui/solid";
-import type { DiscoveryReview, SourceRemovalReview } from "../effects";
+import type { DiscoveryReview, SourceRemovalReview } from "../session";
 import {
   createModalControlRegistry,
   useModalControl,

@@ -63,7 +63,7 @@ export async function networkFixture() {
   await command(work, ["/usr/bin/git", "push", bare, "HEAD:main"]);
   await command(work, ["/usr/bin/git", "push", bare, "refs/tags/historical"]);
   const routes: string[] = [];
-  const transfers: { wants: string[]; objects: string[] }[] = [];
+  const transfers: { wants: string[]; objects: string[]; bytes: number }[] = [];
   let direct = 0;
   async function smart(request: IncomingMessage, response: ServerResponse) {
     const url = new URL(request.url!, "http://fixture.invalid");
@@ -163,7 +163,7 @@ export async function networkFixture() {
             "--batch-check=%(objectname) %(objecttype)",
           )
         ).split("\n");
-        transfers.push({ wants, objects });
+        transfers.push({ wants, objects, bytes: pack.length });
       }
     }
     response.writeHead(code);

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMain } from "../../../skctl/src/main";
-import { StateCoordinator } from "../../src/storage/state";
+import { installSkills } from "../../src/index";
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skctl-agent-reference-"));
   const state = join(root, "state");
@@ -37,9 +37,10 @@ async function fixture() {
       use: ["gingiris"],
     }),
   );
-  const coordinator = new StateCoordinator(state);
-  for (const name of ["router", "specialist", "private"])
-    await coordinator.installLocal("source", name, join(root, "skills", name));
+  await installSkills(
+    { cwd: root, userConfigPath: global },
+    { source: "source", paths: ["router", "specialist", "private"] },
+  );
   return { root, state, global };
 }
 async function command(
@@ -117,7 +118,10 @@ test("agent browse uses a global catalog outside a project", async () => {
         use: ["catalog"],
       }),
     );
-    await new StateCoordinator(state).installLocal("source", "router", skill);
+    await installSkills(
+      { cwd: outside, userConfigPath: global },
+      { source: "source", paths: ["router"] },
+    );
     const result = await command(outside, global, ["browse", "catalog"]);
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
@@ -225,7 +229,10 @@ test("agent loads a ready child Skill without requiring unrelated child members"
         use: ["root"],
       }),
     );
-    await new StateCoordinator(state).installLocal("source", "ready", ready);
+    await installSkills(
+      { cwd: root, userConfigPath: global },
+      { source: "source", paths: ["ready"] },
+    );
     const browsed = await command(root, global, ["browse", "child"]);
     expect(browsed.stdout).toContain('<managed_skill_catalog scope="collection" id="child">');
     expect(browsed.stdout).toContain("<selector>child:ready</selector>");
@@ -269,7 +276,10 @@ test("agent refuses content when the host Use is incomplete", async () => {
         use: ["root"],
       }),
     );
-    await new StateCoordinator(state).installLocal("source", "ready", ready);
+    await installSkills(
+      { cwd: root, userConfigPath: global },
+      { source: "source", paths: ["ready"] },
+    );
     expect((await command(root, global, ["browse"])).stdout).toContain(
       "managed catalog is unavailable",
     );
@@ -304,7 +314,10 @@ test("agent search includes each Use-root selector for one installed Skill", asy
         use: ["alpha", "beta"],
       }),
     );
-    await new StateCoordinator(state).installLocal("source", "review", skill);
+    await installSkills(
+      { cwd: root, userConfigPath: global },
+      { source: "source", paths: ["review"] },
+    );
     expect(JSON.parse((await command(root, global, ["search", "beta:second"])).stdout)).toEqual({
       results: [
         {
@@ -342,12 +355,20 @@ test("agent reports unavailable catalogs as system-prompt guidance", async () =>
 });
 test("agent rejects collection IDs and Skill Selectors in the wrong address positions before Core", async () => {
   let created = 0;
+  const unexpected = async (): Promise<never> => {
+    created++;
+    throw new Error("Core must not be called");
+  };
   const options = {
     cwd: "/tmp",
-    api: (() => {
-      created += 1;
-      throw new Error("Core must not be called");
-    })(),
+    api: {
+      browseCatalog: unexpected,
+      searchSkills: unexpected,
+      loadSkill: unexpected,
+      readResource: unexpected,
+      downloadResource: unexpected,
+      runSkill: unexpected,
+    },
     stdout: { write() {} },
     stderr: { write() {} },
   };

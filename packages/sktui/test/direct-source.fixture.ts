@@ -1,8 +1,8 @@
 import type { WorkspaceView, OperationResult } from "@skctl/core";
-import type { TuiCore } from "../src/effects";
+import type { TuiCore } from "../src/session";
 import type { testRender } from "@opentui/solid";
 import { CodeRenderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
-import { createTuiEffects } from "../src/effects";
+import { createTuiSession } from "../src/session";
 import { createOperationState } from "../src/operation-state";
 import { createProjection } from "../src/projection";
 import { createWorkspaceState } from "../src/workspace/state";
@@ -20,7 +20,7 @@ export function testProjection() {
 }
 export function testEffects(core: TuiCore, environment?: import("@skctl/core").CoreOptions) {
   const { projection, operation } = testProjection();
-  return { ...createTuiEffects(core, operation, projection.outcomes, environment), operation };
+  return { ...createTuiSession(core, operation, projection.outcomes, environment), operation };
 }
 export const directOwner = {
   level: "project" as const,

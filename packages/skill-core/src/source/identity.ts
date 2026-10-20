@@ -1,7 +1,7 @@
-import { isAbsolute, normalize, resolve } from "node:path";
-
 import { SkctlError } from "../shared";
 import type { SkillAddress, SourceBinding } from "./schema";
+import { canonicalRemoteOriginSchema, canonicalLocalOriginSchema } from "./schema";
+import * as v from "valibot";
 import type { SourceBindingView } from "./types";
 
 export interface InternalSourceBinding extends SourceBindingView {
@@ -19,35 +19,15 @@ export interface CanonicalSourceBinding {
   readonly ref?: string;
 }
 export function canonicalRemoteOrigin(value: string): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return fail("INVALID_ARGUMENT", "Invalid remote origin");
-  }
-  if (
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    (url.protocol !== "https:" && url.protocol !== "http:")
-  )
-    return fail("INVALID_ARGUMENT", "Remote origin must not contain credentials");
-  const port =
-    (url.protocol === "https:" && url.port === "443") ||
-    (url.protocol === "http:" && url.port === "80")
-      ? ""
-      : url.port;
-  const path =
-    url.pathname.length > 1 && url.pathname.endsWith("/")
-      ? url.pathname.slice(0, -1)
-      : url.pathname;
-  return `${url.protocol.toLowerCase()}//${url.hostname.toLowerCase()}${port ? `:${port}` : ""}${path}${url.search}${url.hash}`;
+  const result = v.safeParse(canonicalRemoteOriginSchema, value);
+  if (!result.success) return fail("INVALID_ARGUMENT", "Invalid remote origin or credentials");
+  return result.output;
 }
 
 export function canonicalLocalOrigin(value: string, base: string): string {
-  if (!value || value.includes("\0")) return fail("INVALID_ARGUMENT", "Invalid local origin");
-  return normalize(isAbsolute(value) ? value : resolve(base, value));
+  const result = v.safeParse(canonicalLocalOriginSchema, { value, base });
+  if (!result.success) return fail("INVALID_ARGUMENT", "Invalid local origin");
+  return result.output;
 }
 
 export function bindingDigest(binding: CanonicalSourceBinding): string {

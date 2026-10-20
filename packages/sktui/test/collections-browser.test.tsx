@@ -1161,13 +1161,11 @@ test("RENDER unavailable Agent access routes to authoritative Problems without i
     { width: 120, height: 30 },
   );
   try {
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("current-exposure-problems"),
-    );
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-setup-primary"));
     expect(
       setup.renderer.root.findDescendantById("current-exposure-enable-managed-opencode"),
     ).toBeUndefined();
-    await enterLive(setup, "current-exposure-problems");
+    await enterLive(setup, "skills-setup-primary");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
     const diagnostics = setup.renderer.root.findDescendantById(
       "problems-browser",

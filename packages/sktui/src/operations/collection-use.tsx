@@ -1,7 +1,7 @@
 import { SelectRenderable } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/solid";
 import { createMemo, createSignal } from "solid-js";
-import type { CollectionReview } from "../effects";
+import type { CollectionReview } from "../session";
 import {
   createModalControlRegistry,
   useModalControl,
@@ -12,6 +12,7 @@ import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
 
 export function CollectionUseOverlay(props: {
   readonly level: "global" | "project" | "local";
+  readonly file?: string;
   /** Exact direct Use at this host level, not effective roots or the cursor item. */
   readonly collections: readonly string[];
   readonly availableCollections: readonly { readonly id: string; readonly description?: string }[];
@@ -74,6 +75,7 @@ export function CollectionUseOverlay(props: {
       <ModalBody controls={controls}>
         <text>Set Collection Use</text>
         <text>{`Config level: ${props.level} · ${collections().length} selected`}</text>
+        {props.file && <text wrapMode="word">{`Target: ${props.file}`}</text>}
         <DataList
           id="collection-use-values"
           ref={(value: SelectRenderable) => {

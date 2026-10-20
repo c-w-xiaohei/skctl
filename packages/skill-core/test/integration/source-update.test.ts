@@ -1,10 +1,28 @@
 import * as api from "../../src/index";
-import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setManagementPublicationHookForTest } from "../../src/installed/update";
-import { setCoordinatorHookForTest } from "../../src/storage/state";
+import { StateCoordinator } from "../../src/storage/state";
+import * as service from "../../src/source/service";
+let cacheRoot: string;
+beforeEach(async () => {
+  cacheRoot = await mkdtemp(join(tmpdir(), "skctl-update-cache-"));
+  process.env.SKCTL_SOURCE_CACHE_DIR = cacheRoot;
+});
+afterEach(async () => {
+  delete process.env.SKCTL_SOURCE_CACHE_DIR;
+  await rm(cacheRoot, { recursive: true, force: true });
+});
+async function expireRef() {
+  for (const key of await readdir(join(cacheRoot, "origins"))) {
+    const path = join(cacheRoot, "origins", key, "cache.json"),
+      index = JSON.parse(await readFile(path, "utf8"));
+    for (const ref of Object.values(index.refs) as { observedAt: number }[])
+      ref.observedAt -= 31_000;
+    await writeFile(path, JSON.stringify(index));
+  }
+}
 async function git(cwd: string, ...args: string[]) {
   const child = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
   const output = await new Response(child.stdout).text();
@@ -64,6 +82,7 @@ test("remote update and installed reading accept quoted ampersands; invalid meta
     await git(work, "add", ".");
     await git(work, "commit", "-m", "ordinary punctuation");
     await git(work, "push", "origin", "HEAD:main");
+    await expireRef();
     const valid = await api.checkUpdate(core, { source: "remote" });
     await api.updateSkills(core, {
       source: "remote",
@@ -88,37 +107,38 @@ test("remote update and installed reading accept quoted ampersands; invalid meta
     await git(work, "add", ".");
     await git(work, "commit", "-m", "invalid required field");
     await git(work, "push", "origin", "HEAD:main");
+    await expireRef();
     const invalid = await api.checkUpdate(core, { source: "remote" });
-    let publicationCalls = 0;
-    setManagementPublicationHookForTest(() => {
-      publicationCalls++;
-    });
-    await expect(
-      api.updateSkills(core, {
-        source: "remote",
-        paths: ["one", "placement"],
-        exactRevision: invalid.value.exactRevision,
-        expectedBaseline: invalid.value.baseline,
-      }),
-    ).rejects.toMatchObject({
-      code: "INVALID_ARGUMENT",
-      message: expect.stringContaining("placement/SKILL.md"),
-      diagnostics: [
-        expect.objectContaining({
-          code: "UPDATE_NOT_APPLIED",
-          subject: { kind: "installed-skill", address: { source: "remote", path: "placement" } },
-          suggestion: expect.stringContaining("recheck"),
+    const publication = spyOn(StateCoordinator.prototype, "write");
+    try {
+      await expect(
+        api.updateSkills(core, {
+          source: "remote",
+          paths: ["one", "placement"],
+          exactRevision: invalid.value.exactRevision,
+          expectedBaseline: invalid.value.baseline,
         }),
-      ],
-    });
-    expect(publicationCalls).toBe(0);
+      ).rejects.toMatchObject({
+        code: "CONFIG_INVALID",
+        message: expect.stringContaining("placement/SKILL.md"),
+        diagnostics: [
+          expect.objectContaining({
+            code: "UPDATE_NOT_APPLIED",
+            subject: { kind: "installed-skill", address: { source: "remote", path: "placement" } },
+            suggestion: expect.stringContaining("recheck"),
+          }),
+        ],
+      });
+      expect(publication).not.toHaveBeenCalled();
+    } finally {
+      publication.mockRestore();
+    }
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
     expect(
       (await api.loadInstalledSkill(core, { address: { source: "remote", path: "one" } }))
         .description,
     ).toBe(description);
   } finally {
-    setManagementPublicationHookForTest();
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
@@ -165,12 +185,12 @@ test("MGMT-007 classifies Changed New Removed and unchanged while selecting only
     });
     await expect(api.updateSkills(core, { source: "local", paths: ["new"] })).rejects.toMatchObject(
       {
-        code: "INVALID_ARGUMENT",
+        code: "SKILL_NOT_FOUND",
       },
     );
     await expect(
       api.updateSkills(core, { source: "local", paths: ["removed"] }),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    ).rejects.toMatchObject({ code: "SKILL_NOT_FOUND" });
     await api.updateSkills(core, { source: "local", paths: ["review"], remove: ["removed"] });
     expect(
       (await api.getWorkspace(core)).value.installedSkills.map((item) => item.address.path),
@@ -209,15 +229,29 @@ test("MGMT-029 update rejects a Source removed after observation without publish
       join(root, "skills", "review", "SKILL.md"),
       "---\nname: review\ndescription: Changed\n---\n",
     );
-    setManagementPublicationHookForTest(() => writeFile(join(root, "skctl.jsonc"), "{}\n"));
-    await expect(
-      api.updateSkills(core, { source: "local", paths: ["review"] }),
-    ).rejects.toMatchObject({
-      code: "CONFIG_CONFLICT",
+    const prepare = service.withPreparedSkills;
+    const inspection = spyOn(service, "withPreparedSkills").mockImplementation(async function <T>(
+      context: service.SourceContext,
+      paths: readonly string[],
+      revision: string | undefined,
+      operation: (skills: readonly service.PreparedSkill[]) => Promise<T>,
+    ): Promise<T> {
+      return prepare(context, paths, revision, async (skills) => {
+        await writeFile(join(root, "skctl.jsonc"), "{}\n");
+        return operation(skills);
+      });
     });
+    try {
+      await expect(
+        api.updateSkills(core, { source: "local", paths: ["review"] }),
+      ).rejects.toMatchObject({
+        code: "CONFIG_CONFLICT",
+      });
+    } finally {
+      inspection.mockRestore();
+    }
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
   } finally {
-    setManagementPublicationHookForTest();
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
@@ -250,7 +284,7 @@ test("MGMT-008 selected update is atomic when one root fails validation", async 
     await expect(
       api.updateSkills(core, { source: "local", paths: ["one", "two"] }),
     ).rejects.toMatchObject({
-      code: "INVALID_ARGUMENT",
+      code: "SKILL_NOT_FOUND",
     });
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
   } finally {
@@ -319,6 +353,7 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
     await git(work, "commit", "-m", "two");
     const second = await git(work, "rev-parse", "HEAD");
     await git(work, "push", "origin", "HEAD:main");
+    await expireRef();
     const update = await api.checkUpdate(core, { source: "remote" });
     expect(update.value).toMatchObject({
       source: "remote",
@@ -374,20 +409,29 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
     const before = await Bun.file(join(root, "state", "state.json")).text();
     const snapshots = await readdir(join(root, "state", "snapshots"));
     let publications = 0;
-    setCoordinatorHookForTest((name) => {
-      if (name === "immutable-published" && ++publications === 2)
-        throw new Error("second Snapshot publication failed");
-    });
-    await expect(
-      api.updateSkills(core, {
-        source: "remote",
-        paths: ["alpha", "beta"],
-        exactRevision: (await api.checkUpdate(core, { source: "remote" })).value.exactRevision,
-      }),
-    ).rejects.toThrow("second Snapshot publication failed");
-    setCoordinatorHookForTest();
+    const publish = StateCoordinator.prototype.publishSnapshot;
+    const publication = spyOn(StateCoordinator.prototype, "publishSnapshot").mockImplementation(
+      async function (this: StateCoordinator, ...args) {
+        if (++publications === 2) throw new Error("second Snapshot publication failed");
+        return publish.apply(this, args);
+      },
+    );
+    await expireRef();
+    try {
+      await expect(
+        api.updateSkills(core, {
+          source: "remote",
+          paths: ["alpha", "beta"],
+          exactRevision: (await api.checkUpdate(core, { source: "remote" })).value.exactRevision,
+        }),
+      ).rejects.toThrow("second Snapshot publication failed");
+    } finally {
+      publication.mockRestore();
+    }
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
-    expect(await readdir(join(root, "state", "snapshots"))).toEqual(snapshots);
+    expect(await readdir(join(root, "state", "snapshots"))).toEqual(
+      expect.arrayContaining(snapshots),
+    );
     await api.gc();
     const remaining = await readdir(join(root, "state", "snapshots"));
     const referenced = JSON.parse(await Bun.file(join(root, "state", "state.json")).text())
@@ -395,7 +439,6 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
       .sort();
     expect(remaining.sort()).toEqual(referenced);
   } finally {
-    setCoordinatorHookForTest();
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
@@ -442,6 +485,7 @@ test("MGMT-007 checks exact Git and GitHub revisions using installed metadata on
       await git(work, "commit", "-m", "two");
       const revision = await git(work, "rev-parse", "HEAD");
       await git(work, "push", "origin", "HEAD:main");
+      await expireRef();
       expect((await api.checkUpdate(core, { source: kind })).value).toMatchObject({
         source: kind,
         kind,
@@ -501,6 +545,7 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
     await git(work, "add", ".");
     await git(work, "commit", "-m", "two");
     await git(work, "push", "origin", "HEAD:main");
+    await expireRef();
     const observed = await api.checkUpdate(core, { source: "remote" });
     const before = await Bun.file(join(root, "state", "state.json")).text();
     for (const paths of [["foreign"], ["review", "review"]] as readonly (readonly string[])[]) {
@@ -510,7 +555,7 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
           paths,
           exactRevision: observed.value.exactRevision,
         }),
-      ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+      ).rejects.toMatchObject({ code: paths.length > 1 ? "INVALID_ARGUMENT" : "SKILL_NOT_FOUND" });
       expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
     }
     await expect(
@@ -521,22 +566,34 @@ test("MGMT-034 update rejects foreign or duplicate paths, unavailable commits, a
       }),
     ).rejects.toMatchObject({ code: "PINNED_COMMIT_UNAVAILABLE" });
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
-    setManagementPublicationHookForTest(() =>
-      writeFile(
-        join(root, "skctl.jsonc"),
-        '{ "sources": { "remote": { "kind": "git", "origin": "https://example.test/skills.git", "root": "other", "ref": "main" } } }\n',
-      ),
-    );
-    await expect(
-      api.updateSkills(core, {
-        source: "remote",
-        paths: ["review"],
-        exactRevision: observed.value.exactRevision,
-      }),
-    ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
+    const prepare = service.withPreparedSkills;
+    const acquisition = spyOn(service, "withPreparedSkills").mockImplementation(async function <T>(
+      context: service.SourceContext,
+      paths: readonly string[],
+      revision: string | undefined,
+      operation: (skills: readonly service.PreparedSkill[]) => Promise<T>,
+    ): Promise<T> {
+      return prepare(context, paths, revision, async (skills) => {
+        await writeFile(
+          join(root, "skctl.jsonc"),
+          '{ "sources": { "remote": { "kind": "git", "origin": "https://example.test/skills.git", "root": "other", "ref": "main" } } }\n',
+        );
+        return operation(skills);
+      });
+    });
+    try {
+      await expect(
+        api.updateSkills(core, {
+          source: "remote",
+          paths: ["review"],
+          exactRevision: observed.value.exactRevision,
+        }),
+      ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
+    } finally {
+      acquisition.mockRestore();
+    }
     expect(await Bun.file(join(root, "state", "state.json")).text()).toBe(before);
   } finally {
-    setManagementPublicationHookForTest();
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }

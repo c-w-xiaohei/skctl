@@ -33,10 +33,11 @@ test("CLI-002 process agent browse writes an agent-ready root catalog", async ()
       cmd: [
         process.execPath,
         "--eval",
-        `import { StateCoordinator } from ${JSON.stringify(join(import.meta.dir, "../../src/storage/state.ts"))}; await new StateCoordinator(${JSON.stringify(state)}).installLocal("source", "review", ${JSON.stringify(skill)});`,
+        `import { installSkills } from ${JSON.stringify(join(import.meta.dir, "../../src/installed/install.ts"))}; await installSkills({cwd:${JSON.stringify(root)}},{source:"source", paths:["review"]});`,
       ],
       stdout: "pipe",
       stderr: "pipe",
+      env: { ...process.env, SKCTL_STATE_DIR: state, XDG_CONFIG_HOME: configHome },
     });
     expect(await setup.exited).toBe(0);
     const command = Bun.spawn({

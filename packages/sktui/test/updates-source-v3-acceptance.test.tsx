@@ -29,13 +29,13 @@ async function renderApp(
 ) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/source-updates-acceptance-");
-  const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   let setup: Setup | undefined;
   const dispose = async () => {
     setup?.renderer.destroy();
-    if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-    else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+    if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
     await rm(cache, { recursive: true, force: true });
   };
   try {
@@ -118,6 +118,10 @@ function updateCore(projection: WorkspaceView) {
   const updates: unknown[] = [];
   const reads: unknown[] = [];
   const core = directSourceCore(projection, {
+    getUpdateBaseline: async (_options, { source }) => ({
+      value: `checked-${source}`,
+      diagnostics: [],
+    }),
     checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
       checks.push(source);
       const paths = projection.installedSkills
@@ -216,6 +220,10 @@ test.each([12, 2])(
     const completed: string[] = [];
     const reads: unknown[] = [];
     const core = directSourceCore(projection, {
+      getUpdateBaseline: async (_options, { source }) => ({
+        value: `checked-${source}`,
+        diagnostics: [],
+      }),
       checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
         checks.push(source);
         try {

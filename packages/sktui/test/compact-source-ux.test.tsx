@@ -24,9 +24,9 @@ function assertInsidePane(
 
 test("RENDER compact Sources keeps native rows, source identity, and every detail action inside the pane", async () => {
   const projection = workspaceProjection();
-  const sources = Array.from({ length: 8 }, (_, index) => ({
+  const sources = Array.from({ length: 24 }, (_, index) => ({
     ...projection.effective.sources[0]!,
-    id: `source-${index}`,
+    id: `source-${String(index).padStart(2, "0")}`,
   }));
   const compactProjection = {
     ...projection,
@@ -66,49 +66,51 @@ test("RENDER compact Sources keeps native rows, source identity, and every detai
     expect(first).toBe(browser.num);
     await setup.mockMouse.click(browser.screenX + 1, browser.screenY);
     await enterLive(setup, "source-browser");
+    await enterLive(setup, "source-details-toggle");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
     await parsedEscape(setup);
     const returned = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;
-    expect(returned.getSelectedOption()?.value).toBe("source-0");
+    expect(returned.getSelectedOption()?.value).toBe("source-00");
 
     await focusLive(setup, "source-browser");
-    for (let index = 1; index < 8; index++) {
+    for (let index = 1; index < sources.length; index++) {
       setup.mockInput.pressArrow("down");
       await setup.waitFor(() => returned.getSelectedIndex() === index);
     }
-    expect(returned.getSelectedOption()?.value).toBe("source-7");
+    expect(returned.getSelectedOption()?.value).toBe("source-23");
     const offset = selectScrollOffset(returned);
     expect(offset).toBeGreaterThan(0);
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("source-7");
+    expect(setup.captureCharFrame()).toContain("source-23");
 
     const lastY = returned.screenY + returned.height - 1;
     await setup.mockMouse.click(returned.screenX + 1, lastY);
     await enterLive(setup, "source-browser");
+    await enterLive(setup, "source-details-toggle");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("source-7");
+    expect(setup.captureCharFrame()).toContain("source-23");
     const pane = setup.renderer.root.findDescendantById("source-details-pane")!;
     const footer = setup.renderer.root.findDescendantById("command-status")!;
-    const commands = [
-      "workspace-action-add-skills",
-      "workspace-action-remove-source",
-      "source-command-skills",
-      "source-command-config",
-    ];
+    const commands = ["workspace-action-remove-source", "source-command-config"];
     for (const id of commands) {
       const command = await focusLive(setup, id);
-      await setup.renderOnce();
+      await setup.flush();
       assertInsidePane(command, pane);
       expect(command.screenY + command.height).toBeLessThanOrEqual(footer.screenY);
       expect(command.id).toBe(id);
     }
+    // An empty Source exposes discovery, not a fabricated All Skills target.
+    const discover = await focusLive(setup, "workspace-action-add-skills");
+    await setup.flush();
+    assertInsidePane(discover, pane);
+    expect(setup.renderer.root.findDescendantById("source-command-skills")).toBeUndefined();
 
     await parsedEscape(setup);
     const restored = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;
-    expect(restored.getSelectedOption()?.value).toBe("source-7");
+    expect(restored.getSelectedOption()?.value).toBe("source-23");
     expect(selectScrollOffset(restored)).toBe(offset);
-    expect(setup.captureCharFrame()).toContain("source-7");
+    expect(setup.captureCharFrame()).toContain("source-23");
   } finally {
     setup.renderer.destroy();
   }

@@ -1,18 +1,36 @@
-import { Type, type Static } from "@sinclair/typebox";
+import * as v from "valibot";
 import { skillAddressSchema } from "../source/schema";
-export const referenceSchema = Type.Object(
-  { collection: Type.String(), description: Type.String() },
-  { additionalProperties: false },
+export const nameSegmentSchema = v.pipe(
+  v.string(),
+  v.normalize("NFC"),
+  v.check(
+    (value) =>
+      !!value &&
+      ![".", ".."].includes(value) &&
+      Buffer.byteLength(value) <= 128 &&
+      ![...value].some(
+        (character) =>
+          /\s/u.test(character) ||
+          character.codePointAt(0)! < 32 ||
+          character.codePointAt(0) === 127 ||
+          ":\\/#".includes(character),
+      ),
+    "Invalid Name Segment",
+  ),
 );
-export const collectionSchema = Type.Object(
-  {
-    description: Type.Optional(Type.String({ minLength: 1 })),
-    members: Type.Optional(Type.Record(Type.String(), skillAddressSchema)),
-    links: Type.Optional(Type.Array(Type.String())),
-    references: Type.Optional(Type.Record(Type.String(), referenceSchema)),
-  },
-  { additionalProperties: false },
+export const qualifiedNameSchema = v.pipe(
+  v.string(),
+  v.transform((value) => value.split("/")),
+  v.array(nameSegmentSchema),
+  v.transform((segments) => segments.join("/")),
 );
+export const referenceSchema = v.strictObject({ collection: v.string(), description: v.string() });
+export const collectionSchema = v.strictObject({
+  description: v.optional(v.pipe(v.string(), v.minLength(1))),
+  members: v.optional(v.record(v.string(), skillAddressSchema)),
+  links: v.optional(v.array(v.string())),
+  references: v.optional(v.record(v.string(), referenceSchema)),
+});
 
-export type CollectionDeclaration = Readonly<Static<typeof collectionSchema>>;
-export type CollectionReference = Readonly<Static<typeof referenceSchema>>;
+export type CollectionDeclaration = Readonly<v.InferOutput<typeof collectionSchema>>;
+export type CollectionReference = Readonly<v.InferOutput<typeof referenceSchema>>;

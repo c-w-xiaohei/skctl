@@ -1,11 +1,15 @@
 import * as api from "../../src/index";
-import { expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bindingDigest, canonicalLocalOrigin } from "../../src/source/identity";
-import { setManagementPublicationHookForTest } from "../../src/installed/update";
+import * as service from "../../src/source/service";
+import { digestDirectory } from "../../src/content/directory";
+afterEach(() => {
+  delete process.env.SKCTL_SOURCE_CACHE_DIR;
+});
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skctl-management-"));
   const skills = join(root, "skills");
@@ -20,6 +24,7 @@ async function fixture() {
     "---\nname: publish\ndescription: Publish\n---\n",
   );
   process.env.SKCTL_STATE_DIR = join(root, "state");
+  process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
   return { root, skills, global, core: { cwd: root, userConfigPath: global } };
 }
 function legacyLocal(root: string, source: string, path: string) {
@@ -162,14 +167,23 @@ test("INS-001 rejects a second Source that attempts to install the same Local id
 });
 test("INS-001 rejects a first install whose owner is removed after acquisition", async () => {
   const value = await fixture();
+  const prepare = service.withPreparedSkills;
+  const acquisition = spyOn(service, "withPreparedSkills").mockImplementation(async function <T>(
+    context: service.SourceContext,
+    paths: readonly string[],
+    revision: string | undefined,
+    operation: (skills: readonly service.PreparedSkill[]) => Promise<T>,
+  ): Promise<T> {
+    return prepare(context, paths, revision, async (skills) => {
+      await writeFile(join(value.root, "skctl.jsonc"), "{}\n");
+      return operation(skills);
+    });
+  });
   try {
     await api.registerSource(value.core, {
       level: "project",
       id: "local",
       binding: { kind: "local", path: "./skills", root: "" },
-    });
-    setManagementPublicationHookForTest(async () => {
-      await writeFile(join(value.root, "skctl.jsonc"), "{}\n");
     });
     await expect(
       api.installSkills(value.core, { source: "local", paths: ["one"] }),
@@ -178,7 +192,7 @@ test("INS-001 rejects a first install whose owner is removed after acquisition",
     });
     expect((await api.getWorkspace(value.core)).value.installedSkills).toEqual([]);
   } finally {
-    setManagementPublicationHookForTest();
+    acquisition.mockRestore();
     delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
@@ -543,15 +557,12 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
     ).toMatchObject({ proof: "proven", allowed: true });
     const removedOwnerBytes =
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" } } }\n';
-    setManagementPublicationHookForTest(() =>
-      writeFile(join(value.root, "skctl.jsonc"), removedOwnerBytes),
-    );
+    await writeFile(join(value.root, "skctl.jsonc"), removedOwnerBytes);
     await expect(
       api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" }),
-    ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
+    ).rejects.toMatchObject({ code: "REBIND_UNPROVABLE" });
     expect(await Bun.file(join(value.root, "state", "state.json")).text()).toBe(before);
     expect(await Bun.file(join(value.root, "skctl.jsonc")).text()).toBe(removedOwnerBytes);
-    setManagementPublicationHookForTest();
     await writeFile(
       join(value.root, "skctl.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
@@ -561,7 +572,6 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
       "second",
     );
   } finally {
-    setManagementPublicationHookForTest();
     delete process.env.SKCTL_STATE_DIR;
     await rm(value.root, { recursive: true, force: true });
   }
@@ -572,7 +582,7 @@ test("private snapshot fixture publication cannot forge a Remote Installed ident
     const coordinator = new (await import("../../src/storage/state")).StateCoordinator(
       join(value.root, "state"),
     );
-    const digest = await coordinator.snapshotDigest(join(value.skills, "one"));
+    const digest = await digestDirectory(join(value.skills, "one"));
     const state = Bun.file(join(value.root, "state", "state.json"));
     expect(await state.exists()).toBe(false);
     await expect(
@@ -603,6 +613,7 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   process.env.SKCTL_STATE_DIR = join(root, "state");
+  process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
   try {
     await mkdir(join(work, "skills", "review"), { recursive: true });
     await writeFile(join(root, "skctl.jsonc"), "{}\n");
@@ -679,6 +690,7 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   process.env.SKCTL_STATE_DIR = join(root, "state");
+  process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
   try {
     await mkdir(join(work, "skills", "review"), { recursive: true });
     await writeFile(join(root, "skctl.jsonc"), "{}\n");
@@ -724,22 +736,34 @@ test("MGMT-034 install rejects foreign paths, duplicate selections, unavailable 
       expect(await Bun.file(join(root, "state", "state.json")).exists()).toBe(false);
     }
     const beforeConfig = await Bun.file(join(root, "skctl.jsonc")).text();
-    setManagementPublicationHookForTest(() =>
-      writeFile(
-        join(root, "skctl.jsonc"),
-        beforeConfig.replace('"root": "skills"', '"root": "other"'),
-      ),
-    );
-    await expect(
-      api.installSkills(core, {
-        source: "remote",
-        paths: ["review"],
-        exactRevision: observed.value.exactRevision,
-      }),
-    ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
+    const prepare = service.withPreparedSkills;
+    const acquisition = spyOn(service, "withPreparedSkills").mockImplementation(async function <T>(
+      context: service.SourceContext,
+      paths: readonly string[],
+      revision: string | undefined,
+      operation: (skills: readonly service.PreparedSkill[]) => Promise<T>,
+    ): Promise<T> {
+      return prepare(context, paths, revision, async (skills) => {
+        await writeFile(
+          join(root, "skctl.jsonc"),
+          beforeConfig.replace('"root": "skills"', '"root": "other"'),
+        );
+        return operation(skills);
+      });
+    });
+    try {
+      await expect(
+        api.installSkills(core, {
+          source: "remote",
+          paths: ["review"],
+          exactRevision: observed.value.exactRevision,
+        }),
+      ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
+    } finally {
+      acquisition.mockRestore();
+    }
     expect(await Bun.file(join(root, "state", "state.json")).exists()).toBe(false);
   } finally {
-    setManagementPublicationHookForTest();
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
   }
@@ -749,6 +773,7 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
   const work = join(root, "work");
   const bare = join(root, "remote.git");
   process.env.SKCTL_STATE_DIR = join(root, "state");
+  process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
   try {
     await mkdir(join(work, "skills", "review"), { recursive: true });
     await writeFile(join(root, "skctl.jsonc"), "{}\n");
@@ -775,6 +800,8 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
       fetch(request) {
         const url = new URL(request.url);
         const path = url.pathname;
+        if (path === "/repos/acme/skills/git/ref/heads/main")
+          return Response.json({ object: { type: "commit", sha: revision } });
         if (path === `/repos/acme/skills/commits/${revision}`)
           return Response.json({ sha: revision, commit: { tree: { sha: tree } } });
         if (
@@ -827,6 +854,7 @@ test("MGMT-006 GitHub discovery and install use its controlled API at the review
             sha: blob,
             encoding: "base64",
             content: Buffer.from(skill).toString("base64"),
+            size: Buffer.byteLength(skill),
           });
         return Response.json({ message: "not found" }, { status: 404 });
       },

@@ -3,7 +3,7 @@ import { InputRenderable, Renderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { skillAddressKey } from "@skctl/core";
-import type { TuiCore } from "../src/effects";
+import type { TuiCore } from "../src/session";
 import { App } from "../src/app";
 import { createWorkspaceState } from "../src/workspace/state";
 import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
@@ -368,6 +368,7 @@ const refreshedProblemsTest = async () => {
       <App
         core={directSourceCore(current, {
           getWorkspace: async () => ({ value: current, diagnostics: [] }),
+          getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
           checkUpdate: async (_environment: import("@skctl/core").CoreOptions, request) => {
             checkedSources.push(request.source);
             return {
@@ -555,6 +556,7 @@ test("STATE-012 RENDER local filtering makes no workspace, provider, or manageme
       calls.remove++;
       return { value: undefined, diagnostics: [] };
     },
+    getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
     checkUpdate: async (_environment: import("@skctl/core").CoreOptions, request) => {
       calls.checkUpdate++;
       return {

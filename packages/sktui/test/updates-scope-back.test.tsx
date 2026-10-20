@@ -45,12 +45,17 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
   };
   const checks: string[] = [],
     completed: string[] = [];
-  const updates: {
-    source: string;
-    paths: readonly string[];
-  }[] = [];
+  const updates: Parameters<typeof import("@skctl/core").updateSkills>[1][] = [];
   let updateSignal: AbortSignal | undefined;
   const core = directSourceCore(projection, {
+    loadInstalledSkill: async (_environment, { address }) => ({
+      address,
+      name: address.path,
+      description: address.path,
+      rawText: `Installed ${address.path}`,
+      markdownText: `Installed ${address.path}`,
+    }),
+    getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
     checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => {
       checks.push(source);
       try {
@@ -71,12 +76,8 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
         completed.push(source);
       }
     },
-    updateSkills: async (
-      _environment: import("@skctl/core").CoreOptions,
-      { source, paths },
-      options,
-    ) => {
-      updates.push({ source, paths });
+    updateSkills: async (_environment: import("@skctl/core").CoreOptions, request, options) => {
+      updates.push(request);
       updateSignal = options?.signal;
       await new Promise<never>((_resolve, reject) => {
         const abort = () =>
@@ -88,17 +89,17 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
     },
   });
   const cacheKey = await mkdtemp(join(tmpdir(), "source-scope-back-"));
-  const priorCacheKey = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cacheKey;
+  const priorCacheKey = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cacheKey;
   let setup: Awaited<ReturnType<typeof testRender>> | undefined;
   try {
     setup = await testRender(() => <App core={core} exit={() => {}} />, { width: 80, height: 24 });
     await setup.waitFor(
-      () => !!setup!.renderer.root.findDescendantById("shell-section-tab-sources"),
+      () => !!setup!.renderer.root.findDescendantById("shell-section-tab-updates"),
     );
-    await enterLive(setup, "shell-section-tab-sources");
-    await enterLive(setup, "source-browser");
+    await enterLive(setup, "shell-section-tab-updates");
     await setup.waitFor(() => completed.length === 1);
+    await enterLive(setup, "updates-browser");
     await setup.waitFor(() => !!setup!.renderer.root.findDescendantById(sourceRow("two")));
     expect(setup.renderer.root.findDescendantById("source-updates-browser")).toBeInstanceOf(
       BoxRenderable,
@@ -116,15 +117,34 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
     setup.mockInput.pressKey(" ");
     await setup.waitFor(() => !cell(setup!, `${sourceRow("one")}:check`).includes("✓"));
     expect(cell(setup, `${sourceRow("two")}:check`)).toContain("✓");
-    await focusLive(setup, "source-updates-browser");
+    // Activating an update row now opens a read-only comparison, never Reader.
+    // Follow Source details → All Skills for an installed-content action instead.
+    setup.mockInput.pressKey("p", { ctrl: true });
+    await setup.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "palette-choices");
+    const commands = setup.renderer.currentFocusedRenderable as SelectRenderable;
+    const details = commands.options.findIndex(
+      (option) => option.value.id === "source-updates.source-details",
+    );
+    expect(details).toBeGreaterThanOrEqual(0);
+    commands.setSelectedIndex(details);
     await parsedEnter(setup);
-    await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("reader-scrollbox"));
-    await waitForReaderBody(setup, "one");
+    await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("source-command-skills"));
+    await enterLive(setup, "source-command-skills");
+    await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("installed-skill-browser"));
+    await enterLive(setup, "installed-skill-browser");
+    await waitForReaderBody(setup, "Installed one");
     expect(setup.captureCharFrame()).toContain("one");
     expect(updates).toEqual([]);
     await enterLive(setup, "reader-action-skill-check-updates");
     await setup.waitFor(() => updates.length === 1);
-    expect(updates).toEqual([{ source: "team-main", paths: ["one"] }]);
+    expect(updates).toEqual([
+      {
+        source: "team-main",
+        paths: ["one"],
+        exactRevision: revision,
+        expectedBaseline: "baseline:test",
+      },
+    ]);
     expect(checks.every((source) => source === "team-main")).toBe(true);
     expect(updateSignal?.aborted).toBe(false);
     await enterLive(setup, "updates-stop");
@@ -132,9 +152,15 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
       () =>
         updateSignal?.aborted === true && !setup!.renderer.root.findDescendantById("updates-stop"),
     );
-    await parsedEscape(setup);
+    await enterLive(setup, "route-back");
     await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("reader-scrollbox"));
-    await parsedEscape(setup);
+    await enterLive(setup, "route-back");
+    await setup.waitFor(
+      () => setup!.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+    await enterLive(setup, "route-back");
+    await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("source-details-pane"));
+    await enterLive(setup, "route-back");
     await setup.waitFor(
       () => !!setup!.renderer.root.findDescendantById(`${sourceRow("two")}:check`),
     );
@@ -150,12 +176,19 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
     expect(selectedUpdate.destination).toContain("team-main");
     expect(selectedUpdate.destination).toContain("1 selected Skills");
     await parsedEscape(setup);
-    expect(updates).toEqual([{ source: "team-main", paths: ["one"] }]);
+    expect(updates).toEqual([
+      {
+        source: "team-main",
+        paths: ["one"],
+        exactRevision: revision,
+        expectedBaseline: "baseline:test",
+      },
+    ]);
     expect(cell(setup, `${sourceRow("two")}:check`)).toContain("✓");
   } finally {
     setup?.renderer.destroy();
-    if (priorCacheKey === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-    else process.env.SKTUI_UPDATE_CACHE_DIR = priorCacheKey;
+    if (priorCacheKey === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    else process.env.SKTUI_UPDATE_SCHEDULE_DIR = priorCacheKey;
     await rm(cacheKey, { recursive: true, force: true });
   }
 });

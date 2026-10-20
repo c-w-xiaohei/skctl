@@ -89,7 +89,7 @@ export function contributedSourceBindings(
           ? undefined
           : {
               origin: canonicalRemoteOrigin(
-                binding.kind === "github"
+                binding.kind === "github" && binding.owner && binding.repository
                   ? `https://github.com/${binding.owner}/${binding.repository}`
                   : binding.origin,
               ),

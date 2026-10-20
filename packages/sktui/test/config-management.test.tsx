@@ -1777,9 +1777,7 @@ test("RENDER Source registration validates and submits a fixed-level local bindi
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "source-register-kind",
     );
-    expect(setup.captureCharFrame()).toContain(
-      "Enter an ID, configured local path, and source root.",
-    );
+    expect(setup.captureCharFrame()).toContain("Enter an ID and configured local path.");
     setup.mockInput.pressKey("TAB");
     await setup.mockInput.pressKeys(["t", "e", "a", "m"]);
     setup.mockInput.pressKey("TAB");
@@ -1822,6 +1820,7 @@ test("RENDER workspace Config Source registration selects its owner and submits 
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "source-register-level",
     );
+    setup.mockInput.pressArrow("up");
     setup.mockInput.pressArrow("down");
     await setup.renderOnce();
     await parsedEnter(setup);

@@ -10,7 +10,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import type { ConfigLevel, WorkspaceView, OperationResult } from "@skctl/core";
 import { directSourceCore } from "./direct-source.fixture";
-import type { TuiCore } from "../src/effects";
+import type { TuiCore } from "../src/session";
 import {
   enterInstalledAddress,
   enterReaderDetailsRelationship,

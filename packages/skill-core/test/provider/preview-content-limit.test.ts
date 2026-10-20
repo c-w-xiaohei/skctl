@@ -1,75 +1,119 @@
 import { expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { openGitHubSource } from "../../src/source/github";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { withRepository } from "../../src/source/service/remote/cache";
+import { previewSource } from "../../src/source/service";
+import { textLimit } from "../../src/content/text";
+import { repositoryFixture, serveRepository } from "./repository-fixture";
 
-test("bounded GitHub preview reads reject oversized metadata before requesting a blob and constrain cached bytes", async () => {
-  const commit = "a".repeat(40),
-    tree = "b".repeat(40);
-  const text = "small\n";
-  const blob = createHash("sha1")
-    .update(`blob ${Buffer.byteLength(text)}\0`)
-    .update(text)
-    .digest("hex");
-  const requests: string[] = [];
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const url = new URL(request.url);
-      requests.push(url.pathname);
-      if (url.pathname.includes("/commits/"))
-        return Response.json({ sha: commit, commit: { tree: { sha: tree } } });
-      if (url.pathname.includes("/blobs/"))
-        return Response.json({
-          sha: blob,
-          encoding: "base64",
-          content: Buffer.from(text).toString("base64"),
-          size: Buffer.byteLength(text),
-        });
-      return Response.json({
-        sha: tree,
-        truncated: false,
-        tree: [
-          { path: "huge.txt", type: "blob", mode: "100644", sha: "c".repeat(40), size: 2_000_000 },
-          {
-            path: "small.txt",
-            type: "blob",
-            mode: "100644",
-            sha: blob,
-            size: Buffer.byteLength(text),
-          },
-        ],
-      });
-    },
+test("bounded GitHub reads reject oversized metadata before requesting a blob and constrain cached bytes", async () => {
+  const value = await repositoryFixture({
+    "huge.txt": "x".repeat(2_000_000),
+    "small.txt": "small\n",
   });
-  const snapshot = await openGitHubSource(
-    "preview",
-    "https://github.com/acme/skills",
-    commit,
-    "",
-    { source: "preview", origin: "git", stability: "immutable" },
-    undefined,
-    { baseUrl: server.url.toString() },
-    undefined,
-    undefined,
-    true,
-  );
+  const cache = await mkdtemp(join(tmpdir(), "skctl-preview-cache-")),
+    saved = process.env.SKCTL_SOURCE_CACHE_DIR;
+  process.env.SKCTL_SOURCE_CACHE_DIR = cache;
+  const api = serveRepository(value);
   try {
-    await expect(snapshot.read("huge.txt", undefined, 1_048_576)).rejects.toMatchObject({
-      code: "TEXT_TOO_LARGE",
-      byteLength: 2_000_000,
-    });
-    expect(requests.some((path) => path.includes("/blobs/"))).toBe(false);
-    expect(new TextDecoder().decode((await snapshot.read("small.txt", undefined, 100)).bytes)).toBe(
-      text,
+    await withRepository(
+      {
+        origin: "https://github.com/acme/skills",
+        kind: "github",
+        ref: value.commit,
+        githubApiBaseUrl: api.server.url.toString(),
+      },
+      async (reader) => {
+        const revision = await reader.revision({ current: true });
+        const entries = await revision!.readTree(revision!.version.tree);
+        const huge = entries.find((entry) => entry.path === "huge.txt")!,
+          small = entries.find((entry) => entry.path === "small.txt")!;
+        await expect(revision!.blobs([huge.oid], 1_048_576)).rejects.toMatchObject({
+          code: "TEXT_TOO_LARGE",
+          byteLength: 2_000_000,
+        });
+        expect(api.requests.some((path) => path.includes("/blobs/"))).toBe(false);
+        expect(
+          Buffer.from((await revision!.blobs([small.oid], 100)).get(small.oid)!).toString(),
+        ).toBe("small\n");
+        const count = api.requests.length;
+        await expect(revision!.blobs([small.oid], 0)).rejects.toMatchObject({
+          code: "TEXT_TOO_LARGE",
+          byteLength: 6,
+        });
+        expect(api.requests).toHaveLength(count);
+        await expect(revision!.blobs([huge.oid, small.oid], 100)).rejects.toHaveProperty(
+          "code",
+          "TEXT_TOO_LARGE",
+        );
+        expect(api.requests).toHaveLength(count);
+      },
     );
-    const count = requests.length;
-    await expect(snapshot.read("small.txt", undefined, 0)).rejects.toMatchObject({
-      code: "TEXT_TOO_LARGE",
-      byteLength: Buffer.byteLength(text),
-    });
-    expect(requests).toHaveLength(count);
   } finally {
-    await snapshot.close();
-    server.stop(true);
+    await api.server.stop(true);
+    if (saved === undefined) delete process.env.SKCTL_SOURCE_CACHE_DIR;
+    else process.env.SKCTL_SOURCE_CACHE_DIR = saved;
+    await rm(value.root, { recursive: true, force: true });
+    await rm(cache, { recursive: true, force: true });
+  }
+});
+
+test("preview batches eligible content, refills after oversized files, and never fetches beyond its aggregate budget", async () => {
+  const value = await repositoryFixture(
+    Object.fromEntries([
+      ["SKILL.md", "---\nname: preview\ndescription: Preview\n---\n"],
+      ["a-huge.txt", "h".repeat(textLimit + 1)],
+      ...Array.from({ length: 6 }, (_, index) => [
+        `text-${index}.txt`,
+        String(index).repeat(textLimit),
+      ]),
+    ]),
+  );
+  const installed = await mkdtemp(join(tmpdir(), "preview-empty-"));
+  const saved = process.env.SKCTL_SOURCE_CACHE_DIR;
+  process.env.SKCTL_SOURCE_CACHE_DIR = join(value.root, "cache");
+  const api = serveRepository(value);
+  try {
+    const result = await previewSource(
+      {
+        binding: {
+          id: "remote",
+          kind: "github",
+          origin: "https://github.com/acme/skills",
+          ref: "main",
+          root: "",
+          selectors: [],
+          provenance: { level: "project" },
+        },
+        githubApiBaseUrl: api.server.url.toString(),
+      },
+      "",
+      value.commit,
+      installed,
+    );
+    expect(result.files.find((file) => file.path === "a-huge.txt")!.content).toEqual({
+      kind: "unavailable",
+      reason: "too-large",
+    });
+    expect(
+      result.files.filter((file) => file.content.kind === "text").map((file) => file.path),
+    ).toEqual(["SKILL.md", "text-0.txt", "text-1.txt", "text-2.txt"]);
+    const requested = api.requests
+      .filter((path) => path.includes("/blobs/"))
+      .map((path) => path.split("/blobs/")[1]);
+    const allowed = value.entries
+      .filter((entry) =>
+        ["SKILL.md", "text-0.txt", "text-1.txt", "text-2.txt"].includes(entry.path),
+      )
+      .map((entry) => entry.sha);
+    expect(new Set(requested)).toEqual(new Set(allowed));
+    expect(requested).toHaveLength(allowed.length);
+  } finally {
+    await api.server.stop(true);
+    if (saved === undefined) delete process.env.SKCTL_SOURCE_CACHE_DIR;
+    else process.env.SKCTL_SOURCE_CACHE_DIR = saved;
+    await rm(value.root, { recursive: true, force: true });
+    await rm(installed, { recursive: true, force: true });
   }
 });

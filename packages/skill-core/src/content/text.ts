@@ -1,7 +1,7 @@
-import { parseNameSegment } from "../collection/names";
-
 import { isAlias, isMap, parseDocument, visit } from "yaml";
 import { SkctlError } from "../shared";
+import * as v from "valibot";
+import { skillMetadataSchema } from "./domain.schema";
 
 const fail = (code: SkctlError["code"], message: string): never => {
   throw new SkctlError(code, message);
@@ -47,15 +47,13 @@ export function parseSkillFrontmatter(header: string): Record<string, unknown> {
   return document.toJS({ maxAliasCount: 0 });
 }
 
-export type SkillMetadata = Readonly<ReturnType<typeof parseSkillMetadata>>;
+export type SkillMetadata = Readonly<v.InferOutput<typeof skillMetadataSchema>>;
 
 export function parseSkillMetadata(text: string) {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(text);
   if (!match) throw new SkctlError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
   const data = parseSkillFrontmatter(match[1]!);
-  if (typeof data.name !== "string" || !data.name.trim())
-    throw new SkctlError("CONFIG_INVALID", "SKILL.md name must be a non-empty string");
-  if (typeof data.description !== "string" || !data.description.trim())
-    throw new SkctlError("CONFIG_INVALID", "SKILL.md description must be a non-empty string");
-  return { name: parseNameSegment(data.name.trim()), description: data.description.trim() };
+  const result = v.safeParse(skillMetadataSchema, data);
+  if (!result.success) throw new SkctlError("CONFIG_INVALID", result.issues[0].message);
+  return result.output;
 }

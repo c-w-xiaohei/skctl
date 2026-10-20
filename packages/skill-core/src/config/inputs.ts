@@ -2,7 +2,7 @@ import { lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { ConfigLevel } from "./types";
 import { SkctlError, type CoreOptions, type OperationOptions } from "../shared";
-import { runProviderChild } from "../source/git";
+import { runProcess } from "../runtime/process";
 
 export type ReadWorkspaceOptions = Pick<CoreOptions, "cwd" | "project" | "userConfigPath"> &
   OperationOptions;
@@ -28,10 +28,7 @@ export async function resolveProjectRoot(
     current = parent;
   }
   try {
-    const result = await runProviderChild(
-      { cmd: ["git", "rev-parse", "--show-toplevel"], cwd, stdout: "pipe", stderr: "pipe" },
-      signal,
-    );
+    const result = await runProcess({ cmd: ["git", "rev-parse", "--show-toplevel"], cwd, signal });
     const output = new TextDecoder().decode(result.stdout).trim();
     if (result.status === 0 && output) return { root: output, resolution: "git-root" };
   } catch (error) {

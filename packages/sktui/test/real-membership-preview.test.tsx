@@ -26,9 +26,9 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
     await mkdir("/tmp/opencode", { recursive: true });
     const root = await mkdtemp("/tmp/opencode/real-membership-preview-");
     const priorState = process.env.SKCTL_STATE_DIR;
-    const priorCache = process.env.SKTUI_UPDATE_CACHE_DIR;
+    const priorCache = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
     process.env.SKCTL_STATE_DIR = join(root, "state");
-    process.env.SKTUI_UPDATE_CACHE_DIR = join(root, "update-cache");
+    process.env.SKTUI_UPDATE_SCHEDULE_DIR = join(root, "update-schedule");
     let setup: Awaited<ReturnType<typeof testRender>> | undefined;
     try {
       await writeFile(join(root, "skctl.jsonc"), "{}\n");
@@ -75,7 +75,7 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
       const workspaceDone = new Promise<void>((resolve) => {
         workspaceFinished = resolve;
       });
-      const traced: import("../src/effects").TuiCore = {
+      const traced: import("../src/session").TuiCore = {
         ...core,
         getWorkspace: async (...args: Parameters<typeof core.getWorkspace>) => {
           try {
@@ -244,8 +244,8 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
       setup?.renderer.destroy();
       if (priorState === undefined) delete process.env.SKCTL_STATE_DIR;
       else process.env.SKCTL_STATE_DIR = priorState;
-      if (priorCache === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-      else process.env.SKTUI_UPDATE_CACHE_DIR = priorCache;
+      if (priorCache === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+      else process.env.SKTUI_UPDATE_SCHEDULE_DIR = priorCache;
     }
   });
 }

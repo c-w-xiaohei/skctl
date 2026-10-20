@@ -3,7 +3,6 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StateCoordinator } from "../../src/storage/state";
 test("PROJ-016 reports managed catalog unavailable for absent, empty, or incomplete Use", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-catalog-"));
   const state = join(root, "state");
@@ -59,8 +58,8 @@ test("PROJ-015/016 projects root and collection nodes without aliases or graph t
     );
     process.env.SKCTL_STATE_DIR = state;
     await writeFile(global, "{}\n");
-    await new StateCoordinator(state).installLocal("source", "review", skill);
     const core = { cwd: root, userConfigPath: global };
+    await api.installSkills(core, { source: "source", paths: ["review"] });
     const catalog = await api.browseCatalog(core, {});
     expect(catalog.value).toEqual(
       expect.objectContaining({

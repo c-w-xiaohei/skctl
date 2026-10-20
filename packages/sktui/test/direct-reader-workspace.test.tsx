@@ -307,6 +307,7 @@ test("Back after a remote update restores Resources with current payloads and a 
   const resources: number[] = [];
   const reads = await mount(144, 40, snapshot, {
     getWorkspace: async () => ({ value: snapshot, diagnostics: [] }),
+    getUpdateBaseline: async () => ({ value: "reader-baseline", diagnostics: [] }),
     checkUpdate: async (_environment: import("@skctl/core").CoreOptions, { source }) => ({
       value: {
         source,

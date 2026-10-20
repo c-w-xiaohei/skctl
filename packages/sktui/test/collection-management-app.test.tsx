@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { CollectionReviewOverlay, ReferenceOverlay } from "../src/operations";
-import type { CollectionReview } from "../src/effects";
+import type { CollectionReview } from "../src/session";
 
 const owner = {
   level: "project" as const,

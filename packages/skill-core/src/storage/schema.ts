@@ -1,148 +1,125 @@
 import { isAbsolute, resolve } from "node:path";
-import { Type, type Static } from "@sinclair/typebox";
-import Ajv2020 from "ajv/dist/2020";
+import * as v from "valibot";
 import { gitObjectIdSchema, gitTreeIdentitySchema } from "../source/schema";
+import { processIdentitySchema } from "../runtime/process";
 
-const ajv = new Ajv2020({ strict: true });
-ajv.addFormat(
-  "state-name",
-  (value: string) => value.length > 0 && value.normalize("NFC") === value,
+const name = v.pipe(
+  v.string(),
+  v.minLength(1),
+  v.check((value) => value.normalize("NFC") === value),
 );
-ajv.addFormat(
-  "state-path",
-  (value: string) =>
-    value.length > 0 &&
-    value.normalize("NFC") === value &&
-    !value.includes("\0") &&
-    !value.includes("\\") &&
-    !value.startsWith("/") &&
-    !value.split("/").some((part) => !part || part === "." || part === ".."),
+const path = v.pipe(
+  name,
+  v.check(
+    (value) =>
+      !value.includes("\0") &&
+      !value.includes("\\") &&
+      !value.startsWith("/") &&
+      !value.split("/").some((part) => !part || part === "." || part === ".."),
+  ),
 );
-ajv.addFormat(
-  "absolute-normalized-path",
-  (value: string) => isAbsolute(value) && resolve(value) === value,
-);
-
-const name = Type.String({ format: "state-name" });
-const path = Type.String({ format: "state-path" });
-const rootPath = Type.Union([path, Type.Literal("")]);
-const digest = Type.String({ pattern: "^[a-f0-9]{64}$" });
-const strict = { additionalProperties: false } as const;
-const unavailable = Type.Object({ status: Type.Literal("unavailable") }, strict);
-const knownIdentity = Type.Object(
-  {
-    status: Type.Literal("known"),
-    canonicalOrigin: name,
-    originRelativeSkillRoot: rootPath,
-  },
-  strict,
-);
-const identity = Type.Union([unavailable, knownIdentity]);
-const legacyIdentity = Type.Union([
+const rootPath = v.union([path, v.literal("")]);
+export const digestSchema = v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/));
+const unavailable = v.strictObject({ status: v.literal("unavailable") });
+const knownIdentity = v.strictObject({
+  status: v.literal("known"),
+  canonicalOrigin: name,
+  originRelativeSkillRoot: rootPath,
+});
+const identity = v.variant("status", [unavailable, knownIdentity]);
+const legacyIdentity = v.variant("status", [
   unavailable,
-  Type.Object({ ...knownIdentity.properties, originRelativeSkillRoot: path }, strict),
+  v.strictObject({ ...knownIdentity.entries, originRelativeSkillRoot: path }),
 ]);
-
 const common = {
   source: name,
   path,
   name,
   description: name,
-  digest,
-  bindingDigest: digest,
+  digest: digestSchema,
+  bindingDigest: digestSchema,
 };
 const local = {
-  kind: Type.Literal("local"),
-  root: Type.String({ format: "absolute-normalized-path" }),
-};
-const remote = { kind: Type.Literal("remote"), treeIdentity: Type.Optional(Type.Never()) };
-const exact = { adoptedRevision: gitObjectIdSchema, revisionStatus: Type.Optional(Type.Never()) };
-const unresolved = {
-  revisionStatus: Type.Literal("unresolved"),
-  adoptedRevision: Type.Optional(Type.Never()),
-};
-const v1 = Type.Union([
-  Type.Object({ ...common, ...local, identityEvidence: Type.Optional(Type.Never()) }, strict),
-  Type.Object(
-    { ...common, ...remote, ...exact, identityEvidence: Type.Optional(Type.Never()) },
-    strict,
+  kind: v.literal("local"),
+  root: v.pipe(
+    v.string(),
+    v.check((value) => isAbsolute(value) && resolve(value) === value),
   ),
+};
+const remote = { kind: v.literal("remote"), treeIdentity: v.optional(v.never()) };
+const exact = { adoptedRevision: gitObjectIdSchema, revisionStatus: v.optional(v.never()) };
+const unresolved = {
+  revisionStatus: v.literal("unresolved"),
+  adoptedRevision: v.optional(v.never()),
+};
+const v1 = v.union([
+  v.strictObject({ ...common, ...local, identityEvidence: v.optional(v.never()) }),
+  v.strictObject({ ...common, ...remote, ...exact, identityEvidence: v.optional(v.never()) }),
 ]);
 const v2Common = { ...common, identityEvidence: legacyIdentity };
-const v2 = Type.Union([
-  Type.Object({ ...v2Common, ...local }, strict),
-  Type.Object({ ...v2Common, ...remote, ...exact }, strict),
-  Type.Object({ ...v2Common, ...remote, ...unresolved }, strict),
+const v2 = v.union([
+  v.strictObject({ ...v2Common, ...local }),
+  v.strictObject({ ...v2Common, ...remote, ...exact }),
+  v.strictObject({ ...v2Common, ...remote, ...unresolved }),
 ]);
 const v3Common = { ...common, path: rootPath, identityEvidence: identity };
-const v3 = Type.Union([
-  Type.Object({ ...v3Common, ...local }, strict),
-  Type.Object({ ...v3Common, ...remote, ...exact }, strict),
-  Type.Object({ ...v3Common, ...remote, ...unresolved }, strict),
-  Type.Object(
-    {
-      ...v3Common,
-      ...remote,
-      ...exact,
-      identityEvidence: knownIdentity,
-      treeIdentity: gitTreeIdentitySchema,
-    },
-    strict,
-  ),
+export const materializationSchema = v.union([
+  v.strictObject({ ...v3Common, ...local }),
+  v.strictObject({ ...v3Common, ...remote, ...exact }),
+  v.strictObject({ ...v3Common, ...remote, ...unresolved }),
+  v.strictObject({
+    ...v3Common,
+    ...remote,
+    ...exact,
+    identityEvidence: knownIdentity,
+    treeIdentity: gitTreeIdentitySchema,
+  }),
 ]);
-const configRecord = Type.Object({ commit: gitObjectIdSchema, digest }, strict);
+const configRecord = v.strictObject({ commit: gitObjectIdSchema, digest: digestSchema });
 const stateFields = {
-  generation: Type.Integer({ minimum: 0 }),
-  configs: Type.Record(Type.String(), configRecord, { propertyNames: name }),
+  generation: v.pipe(v.number(), v.integer(), v.minValue(0)),
+  configs: v.record(name, configRecord),
 };
-const stateSchema = Type.Union([
-  Type.Object({ ...stateFields, version: Type.Literal(1), installed: Type.Array(v1) }, strict),
-  Type.Object({ ...stateFields, version: Type.Literal(2), installed: Type.Array(v2) }, strict),
-  Type.Object({ ...stateFields, version: Type.Literal(3), installed: Type.Array(v3) }, strict),
+export const stateSchema = v.variant("version", [
+  v.strictObject({ ...stateFields, version: v.literal(1), installed: v.array(v1) }),
+  v.strictObject({ ...stateFields, version: v.literal(2), installed: v.array(v2) }),
+  v.strictObject({
+    ...stateFields,
+    version: v.literal(3),
+    installed: v.array(materializationSchema),
+  }),
 ]);
-
-export type IdentityEvidence = Readonly<Static<typeof identity>>;
-export type PrivateState = Readonly<Static<typeof stateSchema>>;
+export type IdentityEvidence = Readonly<v.InferOutput<typeof identity>>;
+export type PrivateState = Readonly<v.InferOutput<typeof stateSchema>>;
 export type InstalledMaterialization = PrivateState["installed"][number];
 export type StateContents = Readonly<Pick<PrivateState, "configs">> & {
   readonly installed: readonly InstalledMaterialization[];
 };
 export type RemoteInstalledMaterialization = Extract<InstalledMaterialization, { kind: "remote" }>;
-export const validateState = ajv.compile<PrivateState>(stateSchema);
-export const validateCurrentMaterialization = ajv.compile<Static<typeof v3>>(v3);
-export const validateConfigIdentity = ajv.compile(
-  Type.Object({ id: name, commit: gitObjectIdSchema }, strict),
-);
 
-const transactionTarget = Type.Object({
-  target: Type.String(),
-  stage: Type.String(),
-  exists: Type.Boolean(),
-  old: Type.Union([Type.Null(), digest]),
-  next: digest,
+const transactionTarget = v.looseObject({
+  target: v.string(),
+  stage: v.string(),
+  exists: v.boolean(),
+  old: v.nullable(digestSchema),
+  next: digestSchema,
 });
-const transactionSchema = Type.Object({
-  status: Type.Union([Type.Literal("prepared"), Type.Literal("committed")]),
-  targets: Type.Array(transactionTarget),
-  state: Type.Optional(
-    Type.Object({ target: Type.String(), expected: Type.Integer(), next: Type.Integer() }),
+export const transactionSchema = v.looseObject({
+  status: v.picklist(["prepared", "committed"]),
+  targets: v.array(transactionTarget),
+  state: v.optional(
+    v.looseObject({
+      target: v.string(),
+      expected: v.pipe(v.number(), v.integer()),
+      next: v.pipe(v.number(), v.integer()),
+    }),
   ),
 });
-export type Transaction = Static<typeof transactionSchema>;
+export type Transaction = v.InferOutput<typeof transactionSchema>;
 export type TransactionTarget = Transaction["targets"][number];
-export const validateTransaction = ajv.compile<Transaction>(transactionSchema);
-
-const processOwner = {
-  pid: Type.Number(),
-  nonce: Type.String(),
-  startToken: Type.Optional(Type.String()),
-};
-const lockOwnerSchema = Type.Object({ ...processOwner, pid: Type.Integer({ minimum: 1 }) });
-export type LockOwner = Static<typeof lockOwnerSchema>;
-export const validateLockOwner = ajv.compile<LockOwner>(lockOwnerSchema);
-const snapshotUseSchema = Type.Object({ ...processOwner, digest: Type.String() });
-export type SnapshotUse = Static<typeof snapshotUseSchema>;
-export const validateSnapshotUse = ajv.compile<SnapshotUse>(snapshotUseSchema);
-const tombstoneOwnerSchema = Type.Object({ ...processOwner, startToken: Type.String() });
-export const validateTombstoneOwner =
-  ajv.compile<Static<typeof tombstoneOwnerSchema>>(tombstoneOwnerSchema);
+const processOwner = { ...processIdentitySchema.entries, nonce: v.string() };
+export const lockOwnerSchema = v.looseObject(processOwner);
+export type LockOwner = v.InferOutput<typeof lockOwnerSchema>;
+export const snapshotUseSchema = v.looseObject({ ...processOwner, digest: v.string() });
+export type SnapshotUse = v.InferOutput<typeof snapshotUseSchema>;
+export const tombstoneOwnerSchema = v.looseObject({ ...processOwner, startToken: v.string() });

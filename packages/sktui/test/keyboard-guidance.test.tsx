@@ -14,8 +14,8 @@ import {
 async function mount(width: number, height = 30) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/keyboard-guidance-");
-  const prior = process.env.SKTUI_UPDATE_CACHE_DIR;
-  process.env.SKTUI_UPDATE_CACHE_DIR = cache;
+  const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+  process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   let loads = 0;
   let updates = 0;
   const core = directSourceCore(readerProjection(), {
@@ -32,8 +32,8 @@ async function mount(width: number, height = 30) {
   let setup: Awaited<ReturnType<typeof testRender>> | undefined;
   const dispose = async () => {
     setup?.renderer.destroy();
-    if (prior === undefined) delete process.env.SKTUI_UPDATE_CACHE_DIR;
-    else process.env.SKTUI_UPDATE_CACHE_DIR = prior;
+    if (prior === undefined) delete process.env.SKTUI_UPDATE_SCHEDULE_DIR;
+    else process.env.SKTUI_UPDATE_SCHEDULE_DIR = prior;
     await rm(cache, { recursive: true, force: true });
   };
   try {

@@ -13,7 +13,7 @@ import {
   MembershipRemovalPlanOverlay,
   ReferenceOverlay,
 } from "../src/operations";
-import type { CollectionReview } from "../src/effects";
+import type { CollectionReview } from "../src/session";
 
 type FormState = {
   readonly pending: boolean;

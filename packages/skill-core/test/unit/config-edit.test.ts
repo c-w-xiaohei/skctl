@@ -1,5 +1,5 @@
 import * as api from "../../src/index";
-import { expect, test as bunTest } from "bun:test";
+import { expect, spyOn, test as bunTest } from "bun:test";
 import {
   chmod,
   lstat,
@@ -13,13 +13,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  StateCoordinator,
-  setCoordinatorHookForTest,
-  setSemanticStateReadHookForTest,
-} from "../../src/storage/state";
+import { StateCoordinator } from "../../src/storage/state";
 import { getWorkspace } from "../../src/workspace/query";
-import { forgetConfigSource, removeConfigSource } from "../../src/config/adoption";
 import { readWorkspaceUnlocked } from "../../src/workspace/capture";
 import { validateConfigBytes } from "../../src/config/document";
 const test = bunTest.serial;
@@ -126,9 +121,15 @@ test("cancellation during configuration validation prevents publication", async 
   const { root, cleanup } = await configResources("skctl-cancel-edit-");
   const file = join(root, "skctl.jsonc");
   const controller = new AbortController();
+  const originalRead = StateCoordinator.prototype.read;
+  const read = spyOn(StateCoordinator.prototype, "read").mockImplementation(
+    async function (this: StateCoordinator) {
+      controller.abort();
+      return originalRead.call(this);
+    },
+  );
   try {
     await writeFile(file, "{}\n");
-    setSemanticStateReadHookForTest(() => controller.abort());
     await expect(
       api.createCollection(
         { cwd: root },
@@ -138,7 +139,7 @@ test("cancellation during configuration validation prevents publication", async 
     ).rejects.toMatchObject({ code: "CANCELLED" });
     expect(await readFile(file, "utf8")).toBe("{}\n");
   } finally {
-    setSemanticStateReadHookForTest();
+    read.mockRestore();
     await cleanup();
   }
 });
@@ -202,15 +203,24 @@ test("qualified Collection IDs do not change declaration owner interpretation", 
 test("successful configuration publication does not depend on a later projection read", async () => {
   const { root, cleanup } = await configResources("skctl-committed-result-");
   const file = join(root, "skctl.jsonc");
+  let published = false;
+  const originalPublish = StateCoordinator.prototype.publish,
+    originalRead = StateCoordinator.prototype.read;
+  const publish = spyOn(StateCoordinator.prototype, "publish").mockImplementation(async function (
+    this: StateCoordinator,
+    ...args
+  ) {
+    await originalPublish.apply(this, args);
+    published = true;
+  });
+  const read = spyOn(StateCoordinator.prototype, "read").mockImplementation(
+    function (this: StateCoordinator) {
+      if (published) throw new Error("post-commit projection unavailable");
+      return originalRead.call(this);
+    },
+  );
   try {
     await writeFile(file, "{}\n");
-    let published = false;
-    setCoordinatorHookForTest((name) => {
-      if (name === "rename-after") published = true;
-    });
-    setSemanticStateReadHookForTest(() => {
-      if (published) throw new Error("post-commit projection unavailable");
-    });
     const result = await api.createCollection(
       { cwd: root },
       {
@@ -225,8 +235,8 @@ test("successful configuration publication does not depend on a later projection
     ]);
     expect(JSON.parse(await readFile(file, "utf8")).collections).toEqual({ team: {} });
   } finally {
-    setCoordinatorHookForTest();
-    setSemanticStateReadHookForTest();
+    publish.mockRestore();
+    read.mockRestore();
     await cleanup();
   }
 });
@@ -436,8 +446,7 @@ test("both manual Config state writers emit v3 and retain unrelated Remote tree 
     const options = { cwd: root, userConfigPath: join(root, "missing") };
     const coordinator = new StateCoordinator();
     const digest = new Bun.CryptoHasher("sha256").update("{}").digest("hex");
-    await coordinator.publishRemoteConfig("one", "a".repeat(40), Buffer.from("{}"));
-    await coordinator.publishRemoteConfig("two", "a".repeat(40), Buffer.from("{}"));
+    await coordinator.publishConfig(Buffer.from("{}"));
     const item = {
       kind: "remote" as const,
       source: "retained",
@@ -463,19 +472,19 @@ test("both manual Config state writers emit v3 and retain unrelated Remote tree 
             two: { commit: "a".repeat(40), digest },
           },
         },
-        2,
+        0,
       ),
     );
-    await forgetConfigSource(options, "one");
+    await api.forgetConfig(options, { id: "one" });
     expect(await coordinator.read()).toMatchObject({
       version: 3,
-      generation: 4,
+      generation: 2,
       installed: [item],
     });
-    await removeConfigSource(options, "two");
+    await api.removeConfig(options, { id: "two" });
     expect(await coordinator.read()).toEqual({
       version: 3,
-      generation: 5,
+      generation: 3,
       installed: [item],
       configs: {},
     });
@@ -847,12 +856,15 @@ test("global mutations respect adopted Remote Config Source contributions", asyn
       global,
       '{ "configSources": { "remote": { "kind": "git", "origin": "https://example.test/config.git", "root": "", "ref": "main" } } }\n',
     );
-    await new StateCoordinator(state).publishRemoteConfig(
-      "remote",
-      "a".repeat(40),
+    const coordinator = new StateCoordinator(state);
+    const digest = await coordinator.publishConfig(
       Buffer.from(
         '{ "sources": { "core": { "kind": "local", "path": "./skills", "root": "" } } }\n',
       ),
+    );
+    await coordinator.write(
+      { installed: [], configs: { remote: { commit: "a".repeat(40), digest } } },
+      0,
     );
     await expect(
       api.registerSource(

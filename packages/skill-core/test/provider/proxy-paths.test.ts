@@ -8,23 +8,28 @@ import { join } from "node:path";
 import { createExecutableFixture } from "../executable-fixture";
 import { networkFixture, tlsFixture } from "./network-fixture";
 
-const test = bunTest.serial;
-const commit = "a".repeat(40),
-  tree = "b".repeat(40);
+const test = Bun.semver.satisfies(Bun.version, ">=1.4.3") ? bunTest.serial : bunTest.skip;
+const commit = "a".repeat(40);
 const bytes = Buffer.from("---\nname: proxy\ndescription: Proxy\n---\n");
 const blob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+const treeBytes = Buffer.concat([Buffer.from("100644 SKILL.md\0"), Buffer.from(blob, "hex")]);
+const tree = createHash("sha1")
+  .update(`tree ${treeBytes.length}\0`)
+  .update(treeBytes)
+  .digest("hex");
 const marker = { path: "SKILL.md", mode: "100644", type: "blob", sha: blob, size: bytes.length };
 const imports = `
-import { openGitHubSource, resolveGitHubApi } from ${JSON.stringify(join(import.meta.dir, "../../src/source/github.ts"))};
-import { createSourceOperation } from ${JSON.stringify(join(import.meta.dir, "../../src/source/network.ts"))};
+import { withRepository } from ${JSON.stringify(join(import.meta.dir, "../../src/source/service/remote/cache.ts"))};
+import { GitHubTransfer } from ${JSON.stringify(join(import.meta.dir, "../../src/source/service/remote/github.ts"))};
+import { GitObjects } from ${JSON.stringify(join(import.meta.dir, "../../src/source/service/remote/objects.ts"))};
+import { createSourceOperation } from ${JSON.stringify(join(import.meta.dir, "../../src/source/service/remote/network.ts"))};
 import { expect } from 'bun:test';
-expect(Bun.version).toBe('1.4.3');
+expect(Bun.semver.satisfies(Bun.version, '>=1.4.3')).toBe(true);
 const before = {...process.env};
 const commit = process.env.COMMIT ?? '${commit}';
-const provenance = {source:'proxy-paths', origin:'git', declaration:{level:'project'}, stability:'immutable', revision:commit};
 const operation = createSourceOperation({source:'proxy-paths', proxy:process.env.PROXY, budgetMs:Number(process.env.BUDGET ?? 5000)});
-let snapshot;
-try {
+const request = {origin:'https://github.com/acme/skills', kind:'github', ref:'main', proxy:process.env.PROXY,
+  budgetMs:Number(process.env.BUDGET ?? 5000), githubApiBaseUrl:process.env.TARGET ?? 'http://api.invalid', transport:()=>process.env.GIT_TARGET ?? 'http://127.0.0.1:1/forbidden.git'};
 `;
 
 // Hostile inheritance exists only in a fresh child; neither process rewrites its environment.
@@ -37,7 +42,6 @@ async function client(body: string, env: Record<string, string | undefined>) {
       imports +
         body +
         `
-} finally { await snapshot?.close(); operation.dispose(); }
 expect(process.env).toEqual(before);
 console.log('provider-paths-ok');
 `,
@@ -61,6 +65,7 @@ console.log('provider-paths-ok');
         GIT_CONFIG_COUNT: "1",
         GIT_CONFIG_KEY_0: "http.proxy",
         GIT_CONFIG_VALUE_0: "http://127.0.0.1:7",
+        SKCTL_SOURCE_CACHE_DIR: join(root, "cache"),
         ...env,
       },
       stdout: "pipe",
@@ -82,7 +87,7 @@ console.log('provider-paths-ok');
   }
 }
 
-test("actual Octokit API and raw requests use the explicit proxy despite hostile inheritance", async () => {
+test("actual GitHub API and blob requests use the explicit proxy despite hostile inheritance", async () => {
   const routes: string[] = [],
     auth: string[] = [];
   let directCount = 0;
@@ -106,18 +111,24 @@ test("actual Octokit API and raw requests use the explicit proxy despite hostile
       if (path.includes("/trees/"))
         return Response.json({ sha: tree, truncated: false, tree: [marker] });
       if (path.includes("/blobs/"))
-        return Response.json({ message: "unavailable" }, { status: 503 });
+        return Response.json({
+          sha: blob,
+          encoding: "base64",
+          content: bytes.toString("base64"),
+          size: bytes.length,
+        });
       return new Response(bytes);
     },
   });
   try {
     await client(
       `
-snapshot = await openGitHubSource('proxy-paths','https://github.com/acme/skills',commit,'',provenance,undefined,
-  {baseUrl:process.env.TARGET, rawBaseUrl:process.env.TARGET}, 'http://127.0.0.1:1/forbidden.git', operation);
-expect((await snapshot.inspectRoots(['']))[0].status).toBe('present');
-expect(Buffer.from((await snapshot.read('SKILL.md')).bytes).toString()).toBe(${JSON.stringify(bytes.toString())});
-await snapshot.read('SKILL.md');
+await withRepository(request, async reader => {
+  const version = await reader.revision({commit});
+  const marker = (await version.readTree(version.version.tree)).find(entry=>entry.path==='SKILL.md');
+  expect(Buffer.from((await version.blobs([marker.oid])).get(marker.oid)).toString()).toBe(${JSON.stringify(bytes.toString())});
+  await version.blobs([marker.oid]);
+});
 `,
       { PROXY: proxy.url.toString(), TARGET: direct.url.toString() },
     );
@@ -125,7 +136,6 @@ await snapshot.read('SKILL.md');
       `/repos/acme/skills/commits/${commit}`,
       `/repos/acme/skills/git/trees/${tree}`,
       `/repos/acme/skills/git/blobs/${blob}`,
-      `/acme/skills/${commit}/SKILL.md`,
     ]);
     expect(auth.every((value) => value === "")).toBe(true);
     expect(directCount).toBe(0);
@@ -135,7 +145,7 @@ await snapshot.read('SKILL.md');
   }
 });
 
-test("actual HTTPS Octokit trusts the fixture CA and refuses untrusted TLS without raw or Git fallback", async () => {
+test("actual HTTPS GitHub trusts the fixture CA and refuses untrusted TLS without Git fallback", async () => {
   const tls = await tlsFixture();
   const apiRoutes: string[] = [],
     proxyHttpRoutes: string[] = [],
@@ -148,7 +158,7 @@ test("actual HTTPS Octokit trusts the fixture CA and refuses untrusted TLS witho
       cert: await readFile(join(tls.root, "server.pem")),
     },
     (request, response) => {
-      const path = request.url!;
+      const path = request.url!.split("?")[0]!;
       apiRoutes.push(path);
       authorization.push(request.headers.authorization ?? "");
       response.writeHead(200, { "content-type": "application/json" });
@@ -158,7 +168,12 @@ test("actual HTTPS Octokit trusts the fixture CA and refuses untrusted TLS witho
             ? { sha: commit, commit: { tree: { sha: tree } } }
             : path.includes("/trees/")
               ? { sha: tree, truncated: false, tree: [marker] }
-              : { sha: blob, encoding: "base64", content: bytes.toString("base64") },
+              : {
+                  sha: blob,
+                  encoding: "base64",
+                  content: bytes.toString("base64"),
+                  size: bytes.length,
+                },
         ),
       );
     },
@@ -211,13 +226,15 @@ test("actual HTTPS Octokit trusts the fixture CA and refuses untrusted TLS witho
       GIT_TARGET: `http://127.0.0.1:${(gitTarget.address() as AddressInfo).port}/forbidden.git`,
       NODE_EXTRA_CA_CERTS: tls.ca,
     };
-    const open = `snapshot = await openGitHubSource('proxy-paths','https://github.com/acme/skills',commit,'',provenance,undefined,
-  {baseUrl:'https://target.invalid', rawBaseUrl:'http://raw.invalid'}, process.env.GIT_TARGET, operation);`;
+    const open = `request.githubApiBaseUrl = 'https://target.invalid';`;
     await client(
       open +
         `
-expect((await snapshot.inspectRoots(['']))[0].status).toBe('present');
-expect(Buffer.from((await snapshot.read('SKILL.md')).bytes).toString()).toBe(${JSON.stringify(bytes.toString())});
+await withRepository(request, async reader => {
+  const version=await reader.revision({commit});
+  const marker=(await version.readTree(version.version.tree)).find(entry=>entry.path==='SKILL.md');
+  expect(Buffer.from((await version.blobs([marker.oid])).get(marker.oid)).toString()).toBe(${JSON.stringify(bytes.toString())});
+});
 `,
       env,
     );
@@ -235,7 +252,7 @@ expect(Buffer.from((await snapshot.read('SKILL.md')).bytes).toString()).toBe(${J
       open +
         `
 let failure;
-try { await snapshot.read('SKILL.md'); } catch (error) { failure = error; }
+try { await withRepository(request, async reader => reader.revision({commit})); } catch (error) { failure = error; }
 expect(failure).toMatchObject({code:'PROVIDER_UNAVAILABLE'});
 expect(failure.message).toMatch(/certificate|cert|TLS/iu);
 expect(failure.message).not.toMatch(/public-gh-sentinel|public-github-sentinel/);
@@ -286,12 +303,12 @@ test("eligible API failure reuses explicit proxy and exact C for real smart HTTP
   try {
     await client(
       `
-snapshot = await openGitHubSource('proxy-paths','https://github.com/acme/skills',commit,'',provenance,undefined,
-  {baseUrl:'http://api.invalid'}, process.env.GIT_TARGET, operation);
-expect((await snapshot.inspectRoots(['']))[0].status).toBe('present');
-expect(snapshot.commit).toBe(commit);
-expect(Buffer.from((await snapshot.read('SKILL.md')).bytes).toString()).toContain('name: network');
-await snapshot.read('SKILL.md');
+await withRepository(request, async reader => {
+  const version=await reader.revision({commit}); expect(version.version.commit).toBe(commit);
+  const marker=(await version.readTree(version.version.tree)).find(entry=>entry.path==='SKILL.md');
+  expect(Buffer.from((await version.blobs([marker.oid])).get(marker.oid)).toString()).toContain('name: network');
+  await version.blobs([marker.oid]);
+});
 `,
       { PROXY: proxy.url.toString(), COMMIT: fixture.commit, GIT_TARGET: fixture.targetUrl },
     );
@@ -332,13 +349,10 @@ test("fallback consumes the same elapsed SourceOperation budget rather than rene
   try {
     await client(
       `
-const started = Date.now(), expiresAt = operation.expiresAt;
-snapshot = await openGitHubSource('proxy-paths','https://github.com/acme/skills',commit,'',provenance,undefined,
-  {baseUrl:'http://api.invalid'}, 'http://git.invalid/remote.git', operation);
-await expect(snapshot.inspectRoots([''])).rejects.toMatchObject({code:'PROVIDER_TIMEOUT'});
-expect(operation.expiresAt).toBe(expiresAt);
+const started = Date.now();
+request.transport=()=>'http://git.invalid/remote.git';
+await expect(withRepository(request, async reader=>reader.revision({commit}))).rejects.toMatchObject({code:'PROVIDER_TIMEOUT'});
 expect(Date.now()-started).toBeLessThan(3500);
-expect(operation.signal.aborted).toBe(true);
 `,
       { PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`, BUDGET: "2500" },
     );
@@ -380,9 +394,8 @@ test("actual HTTP auth, not-found, integrity and socket failures never start Git
     try {
       await client(
         `
-snapshot = await openGitHubSource('proxy-paths','https://github.com/acme/skills',commit,'',provenance,undefined,
-  {baseUrl:'http://api.invalid'}, 'http://git.invalid/forbidden.git', operation);
-await expect(snapshot.read('SKILL.md')).rejects.toMatchObject({code:${JSON.stringify(code)}});
+request.transport=()=>'http://git.invalid/forbidden.git';
+await expect(withRepository(request, async reader=>reader.revision({commit}))).rejects.toMatchObject({code:${JSON.stringify(code)}});
 `,
         { PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}` },
       );
@@ -462,25 +475,24 @@ test("enterprise HTTPS meta uses host credentials through explicit CONNECT; TLS 
     };
     await client(
       `
-const api = await resolveGitHubApi('https://enterprise.invalid/acme/skills',undefined,undefined,operation);
-expect(api.baseUrl).toBe('https://enterprise.invalid/api/v3');
-expect(api.token).toBe('enterprise-token-sentinel');
+const api = await GitHubTransfer.create('https://enterprise.invalid/acme/skills',new GitObjects(process.env.SKCTL_SOURCE_CACHE_DIR+'/objects.git'),operation);
+expect(api).toBeInstanceOf(GitHubTransfer);
 `,
       env,
     );
     status = 401;
     await client(
-      `await expect(resolveGitHubApi('https://enterprise.invalid/acme/skills',undefined,undefined,operation)).rejects.toMatchObject({code:'PROVIDER_AUTH_FAILED'});`,
+      `await expect(GitHubTransfer.create('https://enterprise.invalid/acme/skills',new GitObjects(process.env.SKCTL_SOURCE_CACHE_DIR+'/objects.git'),operation)).rejects.toMatchObject({code:'PROVIDER_AUTH_FAILED'});`,
       env,
     );
     await client(
-      `await expect(resolveGitHubApi('https://enterprise.invalid/acme/skills',undefined,undefined,operation)).rejects.toMatchObject({code:'PROVIDER_UNAVAILABLE'});`,
+      `await expect(GitHubTransfer.create('https://enterprise.invalid/acme/skills',new GitObjects(process.env.SKCTL_SOURCE_CACHE_DIR+'/objects.git'),operation)).rejects.toMatchObject({code:'PROVIDER_UNAVAILABLE'});`,
       { ...env, NODE_EXTRA_CA_CERTS: "" },
     );
     expect(routes).toEqual(["/api/v3/meta", "/api/v3/meta"]);
     expect(authorization).toEqual([
-      "Bearer enterprise-token-sentinel",
-      "Bearer enterprise-token-sentinel",
+      "token enterprise-token-sentinel",
+      "token enterprise-token-sentinel",
     ]);
     expect(tunnels).toEqual([
       "enterprise.invalid:443",

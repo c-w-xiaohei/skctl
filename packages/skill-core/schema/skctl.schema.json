@@ -1,851 +1,515 @@
 {
-  "$comment": "Only the user/global file may contain network. Runtime selects the schema by owner scope; the editor root accepts any document form.",
+  "$comment": "Only the user/global file may contain network. Runtime selects the schema by owner scope; the editor root accepts any document form. Custom proxy URL validation is represented by its format annotation.",
   "$defs": {
     "localConfig": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
-        "$schema": {
-          "const": "https://skctl.dev/schema.json",
-          "type": "string"
-        },
+        "$schema": { "const": "https://skctl.dev/schema.json" },
         "agents": {
           "additionalProperties": false,
-          "properties": {
-            "opencode": {
-              "const": "managed",
-              "type": "string"
-            }
-          },
+          "properties": { "opencode": { "const": "managed" } },
           "required": ["opencode"],
           "type": "object"
         },
         "collections": {
-          "patternProperties": {
-            "^(.*)$": {
-              "additionalProperties": false,
-              "properties": {
-                "description": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "links": {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                "members": {
-                  "patternProperties": {
-                    "^(.*)$": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "path": {
-                          "type": "string"
-                        },
-                        "source": {
-                          "type": "string"
-                        }
-                      },
-                      "required": ["source", "path"],
-                      "type": "object"
-                    }
-                  },
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "description": { "minLength": 1, "type": "string" },
+              "links": { "items": { "type": "string" }, "type": "array" },
+              "members": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": { "path": { "type": "string" }, "source": { "type": "string" } },
+                  "required": ["source", "path"],
                   "type": "object"
                 },
-                "references": {
-                  "patternProperties": {
-                    "^(.*)$": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "collection": {
-                          "type": "string"
-                        },
-                        "description": {
-                          "type": "string"
-                        }
-                      },
-                      "required": ["collection", "description"],
-                      "type": "object"
-                    }
-                  },
-                  "type": "object"
-                }
+                "propertyNames": { "type": "string" },
+                "type": "object"
               },
-              "type": "object"
-            }
+              "references": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "collection": { "type": "string" },
+                    "description": { "type": "string" }
+                  },
+                  "required": ["collection", "description"],
+                  "type": "object"
+                },
+                "propertyNames": { "type": "string" },
+                "type": "object"
+              }
+            },
+            "required": [],
+            "type": "object"
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         },
         "configSources": {
-          "patternProperties": {
-            "^(.*)$": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "local",
-                      "type": "string"
-                    },
-                    "path": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "path", "root"],
-                  "type": "object"
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "local" },
+                  "path": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "git",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
+                "required": ["kind", "path", "root"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "git" },
+                  "origin": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "github",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "repository": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
-                }
-              ]
-            }
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "github" },
+                  "origin": { "type": "string" },
+                  "owner": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "repository": { "type": "string" },
+                  "root": { "type": "string" }
+                },
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              }
+            ]
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         },
         "sources": {
-          "patternProperties": {
-            "^(.*)$": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "local",
-                      "type": "string"
-                    },
-                    "path": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "path", "root"],
-                  "type": "object"
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "local" },
+                  "path": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "git",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
+                "required": ["kind", "path", "root"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "git" },
+                  "origin": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "github",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "repository": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
-                }
-              ]
-            }
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "github" },
+                  "origin": { "type": "string" },
+                  "owner": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "repository": { "type": "string" },
+                  "root": { "type": "string" }
+                },
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              }
+            ]
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         },
-        "use": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
+        "use": { "items": { "type": "string" }, "type": "array" }
       },
+      "required": [],
       "type": "object"
     },
     "projectConfig": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
-        "$schema": {
-          "const": "https://skctl.dev/schema.json",
-          "type": "string"
-        },
+        "$schema": { "const": "https://skctl.dev/schema.json" },
         "agents": {
           "additionalProperties": false,
-          "properties": {
-            "opencode": {
-              "const": "managed",
-              "type": "string"
-            }
-          },
+          "properties": { "opencode": { "const": "managed" } },
           "required": ["opencode"],
           "type": "object"
         },
         "collections": {
-          "patternProperties": {
-            "^(.*)$": {
-              "additionalProperties": false,
-              "properties": {
-                "description": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "links": {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                "members": {
-                  "patternProperties": {
-                    "^(.*)$": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "path": {
-                          "type": "string"
-                        },
-                        "source": {
-                          "type": "string"
-                        }
-                      },
-                      "required": ["source", "path"],
-                      "type": "object"
-                    }
-                  },
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "description": { "minLength": 1, "type": "string" },
+              "links": { "items": { "type": "string" }, "type": "array" },
+              "members": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": { "path": { "type": "string" }, "source": { "type": "string" } },
+                  "required": ["source", "path"],
                   "type": "object"
                 },
-                "references": {
-                  "patternProperties": {
-                    "^(.*)$": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "collection": {
-                          "type": "string"
-                        },
-                        "description": {
-                          "type": "string"
-                        }
-                      },
-                      "required": ["collection", "description"],
-                      "type": "object"
-                    }
-                  },
-                  "type": "object"
-                }
+                "propertyNames": { "type": "string" },
+                "type": "object"
               },
-              "type": "object"
-            }
+              "references": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "collection": { "type": "string" },
+                    "description": { "type": "string" }
+                  },
+                  "required": ["collection", "description"],
+                  "type": "object"
+                },
+                "propertyNames": { "type": "string" },
+                "type": "object"
+              }
+            },
+            "required": [],
+            "type": "object"
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         },
         "configSources": {
-          "patternProperties": {
-            "^(.*)$": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "local",
-                      "type": "string"
-                    },
-                    "path": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "path", "root"],
-                  "type": "object"
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "local" },
+                  "path": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "git",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
+                "required": ["kind", "path", "root"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "git" },
+                  "origin": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "github",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "repository": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
-                }
-              ]
-            }
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "github" },
+                  "origin": { "type": "string" },
+                  "owner": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "repository": { "type": "string" },
+                  "root": { "type": "string" }
+                },
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              }
+            ]
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         },
         "sources": {
-          "patternProperties": {
-            "^(.*)$": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "local",
-                      "type": "string"
-                    },
-                    "path": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "path", "root"],
-                  "type": "object"
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "local" },
+                  "path": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "git",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
+                "required": ["kind", "path", "root"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "git" },
+                  "origin": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "github",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "repository": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
-                }
-              ]
-            }
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "github" },
+                  "origin": { "type": "string" },
+                  "owner": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "repository": { "type": "string" },
+                  "root": { "type": "string" }
+                },
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              }
+            ]
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         },
-        "use": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
+        "use": { "items": { "type": "string" }, "type": "array" }
       },
+      "required": [],
       "type": "object"
     },
     "reusableConfig": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
         "collections": {
-          "patternProperties": {
-            "^(.*)$": {
-              "additionalProperties": false,
-              "properties": {
-                "description": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "links": {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                "members": {
-                  "patternProperties": {
-                    "^(.*)$": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "path": {
-                          "type": "string"
-                        },
-                        "source": {
-                          "type": "string"
-                        }
-                      },
-                      "required": ["source", "path"],
-                      "type": "object"
-                    }
-                  },
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "description": { "minLength": 1, "type": "string" },
+              "links": { "items": { "type": "string" }, "type": "array" },
+              "members": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": { "path": { "type": "string" }, "source": { "type": "string" } },
+                  "required": ["source", "path"],
                   "type": "object"
                 },
-                "references": {
-                  "patternProperties": {
-                    "^(.*)$": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "collection": {
-                          "type": "string"
-                        },
-                        "description": {
-                          "type": "string"
-                        }
-                      },
-                      "required": ["collection", "description"],
-                      "type": "object"
-                    }
-                  },
-                  "type": "object"
-                }
+                "propertyNames": { "type": "string" },
+                "type": "object"
               },
-              "type": "object"
-            }
+              "references": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "collection": { "type": "string" },
+                    "description": { "type": "string" }
+                  },
+                  "required": ["collection", "description"],
+                  "type": "object"
+                },
+                "propertyNames": { "type": "string" },
+                "type": "object"
+              }
+            },
+            "required": [],
+            "type": "object"
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         },
         "sources": {
-          "patternProperties": {
-            "^(.*)$": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "local",
-                      "type": "string"
-                    },
-                    "path": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "path", "root"],
-                  "type": "object"
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "local" },
+                  "path": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "git",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
+                "required": ["kind", "path", "root"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "git" },
+                  "origin": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "github",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "repository": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
-                }
-              ]
-            }
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "github" },
+                  "origin": { "type": "string" },
+                  "owner": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "repository": { "type": "string" },
+                  "root": { "type": "string" }
+                },
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              }
+            ]
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         }
       },
+      "required": [],
       "type": "object"
     },
     "userConfig": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
-        "$schema": {
-          "const": "https://skctl.dev/schema.json",
-          "type": "string"
-        },
+        "$schema": { "const": "https://skctl.dev/schema.json" },
         "agents": {
           "additionalProperties": false,
-          "properties": {
-            "opencode": {
-              "const": "managed",
-              "type": "string"
-            }
-          },
+          "properties": { "opencode": { "const": "managed" } },
           "required": ["opencode"],
           "type": "object"
         },
         "collections": {
-          "patternProperties": {
-            "^(.*)$": {
-              "additionalProperties": false,
-              "properties": {
-                "description": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "links": {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                "members": {
-                  "patternProperties": {
-                    "^(.*)$": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "path": {
-                          "type": "string"
-                        },
-                        "source": {
-                          "type": "string"
-                        }
-                      },
-                      "required": ["source", "path"],
-                      "type": "object"
-                    }
-                  },
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "description": { "minLength": 1, "type": "string" },
+              "links": { "items": { "type": "string" }, "type": "array" },
+              "members": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": { "path": { "type": "string" }, "source": { "type": "string" } },
+                  "required": ["source", "path"],
                   "type": "object"
                 },
-                "references": {
-                  "patternProperties": {
-                    "^(.*)$": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "collection": {
-                          "type": "string"
-                        },
-                        "description": {
-                          "type": "string"
-                        }
-                      },
-                      "required": ["collection", "description"],
-                      "type": "object"
-                    }
-                  },
-                  "type": "object"
-                }
+                "propertyNames": { "type": "string" },
+                "type": "object"
               },
-              "type": "object"
-            }
+              "references": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "collection": { "type": "string" },
+                    "description": { "type": "string" }
+                  },
+                  "required": ["collection", "description"],
+                  "type": "object"
+                },
+                "propertyNames": { "type": "string" },
+                "type": "object"
+              }
+            },
+            "required": [],
+            "type": "object"
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         },
         "configSources": {
-          "patternProperties": {
-            "^(.*)$": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "local",
-                      "type": "string"
-                    },
-                    "path": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "path", "root"],
-                  "type": "object"
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "local" },
+                  "path": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "git",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
+                "required": ["kind", "path", "root"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "git" },
+                  "origin": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "github",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "repository": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
-                }
-              ]
-            }
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "github" },
+                  "origin": { "type": "string" },
+                  "owner": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "repository": { "type": "string" },
+                  "root": { "type": "string" }
+                },
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              }
+            ]
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         },
         "network": {
           "additionalProperties": false,
           "properties": {
-            "proxy": {
-              "format": "http-proxy-url",
-              "minLength": 1,
-              "type": "string"
-            }
+            "proxy": { "format": "http-proxy-url", "minLength": 1, "type": "string" }
           },
+          "required": [],
           "type": "object"
         },
         "sources": {
-          "patternProperties": {
-            "^(.*)$": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "local",
-                      "type": "string"
-                    },
-                    "path": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "path", "root"],
-                  "type": "object"
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "local" },
+                  "path": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "git",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
+                "required": ["kind", "path", "root"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "git" },
+                  "origin": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "root": { "type": "string" }
                 },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "kind": {
-                      "const": "github",
-                      "type": "string"
-                    },
-                    "origin": {
-                      "type": "string"
-                    },
-                    "owner": {
-                      "type": "string"
-                    },
-                    "ref": {
-                      "type": "string"
-                    },
-                    "repository": {
-                      "type": "string"
-                    },
-                    "root": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["kind", "origin", "root", "ref"],
-                  "type": "object"
-                }
-              ]
-            }
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "github" },
+                  "origin": { "type": "string" },
+                  "owner": { "type": "string" },
+                  "ref": { "type": "string" },
+                  "repository": { "type": "string" },
+                  "root": { "type": "string" }
+                },
+                "required": ["kind", "origin", "root", "ref"],
+                "type": "object"
+              }
+            ]
           },
+          "propertyNames": { "type": "string" },
           "type": "object"
         },
-        "use": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
+        "use": { "items": { "type": "string" }, "type": "array" }
       },
+      "required": [],
       "type": "object"
     }
   },
   "$id": "https://skctl.dev/schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "anyOf": [
-    {
-      "$ref": "#/$defs/userConfig"
-    },
-    {
-      "$ref": "#/$defs/projectConfig"
-    },
-    {
-      "$ref": "#/$defs/localConfig"
-    },
-    {
-      "$ref": "#/$defs/reusableConfig"
-    }
+    { "$ref": "#/$defs/userConfig" },
+    { "$ref": "#/$defs/projectConfig" },
+    { "$ref": "#/$defs/localConfig" },
+    { "$ref": "#/$defs/reusableConfig" }
   ]
 }

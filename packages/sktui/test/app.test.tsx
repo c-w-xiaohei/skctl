@@ -1523,6 +1523,7 @@ test.each(["team-main", "team-config/lark"])(
       () => (
         <App
           core={directSourceCore(projection, {
+            getUpdateBaseline: async () => ({ value: "reviewed-baseline", diagnostics: [] }),
             checkUpdate: async (_environment: import("@skctl/core").CoreOptions, request) => {
               return {
                 value: {

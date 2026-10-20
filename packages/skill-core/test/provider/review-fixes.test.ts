@@ -1,698 +1,510 @@
-import { expect, test, spyOn } from "bun:test";
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { openGitHubSource, resolveGitHubApi } from "../../src/source/github";
-import { runProviderChild, openGitSource, resolveGitRef } from "../../src/source/git";
-import { networkFixture } from "./network-fixture";
-import { discoverSnapshotSkills } from "../../src/source/snapshot";
-import { createSourceOperation } from "../../src/source/network";
+import { discoverSource, withPreparedSkills } from "../../src/source/service";
+import { withRepository } from "../../src/source/service/remote/cache";
+import type { Repository, RepositoryReader } from "../../src/source/service/remote/types";
+import { GitHubTransfer } from "../../src/source/service/remote/github";
+import { GitObjects } from "../../src/source/service/remote/objects";
+import * as network from "../../src/source/service/remote/network";
+import { skillTree, candidateMarkers } from "../../src/source/service/skills";
+import { runProcess } from "../../src/runtime/process";
 import { createExecutableFixture } from "../executable-fixture";
+import { repositoryFixture, serveRepository } from "./repository-fixture";
 
-const commit = "a".repeat(40),
-  treeId = "b".repeat(40);
-const bytes = Buffer.from("---\nname: reviewed\ndescription: Reviewed\n---\n");
-const blobId = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
-const provenance = {
-  source: "reviewed",
-  origin: "git" as const,
-  declaration: { level: "project" as const },
-  stability: "immutable" as const,
-};
-const marker = { path: "SKILL.md", sha: blobId, mode: "100644", type: "blob", size: bytes.length };
-const blob = { sha: blobId, encoding: "base64", content: bytes.toString("base64") };
-const open = (baseUrl: string, operation?: ReturnType<typeof createSourceOperation>) =>
-  openGitHubSource(
-    "reviewed",
-    "https://github.com/acme/skills",
-    commit,
-    "",
-    provenance,
-    undefined,
-    { baseUrl },
-    "/not-an-available-fallback",
-    operation,
+let root: string, saved: Record<string, string | undefined>, roots: string[];
+beforeEach(async () => {
+  saved = Object.fromEntries(
+    ["PATH", "GITHUB_TOKEN", "GH_TOKEN", "SKCTL_SOURCE_CACHE_DIR"].map((key) => [
+      key,
+      process.env[key],
+    ]),
   );
+  root = await mkdtemp(join(tmpdir(), "skctl-review-"));
+  roots = [root];
+  process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
+});
+afterEach(async () => {
+  mock.restore();
+  for (const [key, value] of Object.entries(saved)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  for (const path of roots) await rm(path, { recursive: true, force: true });
+});
+const origin = "https://github.com/acme/skills";
+const binding = {
+  id: "reviewed",
+  kind: "github" as const,
+  origin,
+  root: "",
+  ref: "main",
+  selectors: [],
+  provenance: { level: "project" as const },
+};
+async function fixture(files?: Readonly<Record<string, string>>) {
+  const value = await repositoryFixture(files);
+  roots.push(value.root);
+  return value;
+}
 
-test("unsafe resource names do not block tree checks; blob success is memoized and cancelled cache hits reject", async () => {
-  let blobs = 0;
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      if (path.includes("/commits/"))
-        return Response.json({ sha: commit, commit: { tree: { sha: treeId } } });
-      if (path.includes("/trees/"))
-        return Response.json({
-          sha: treeId,
-          tree: [marker, { ...marker, path: "notes\\draft.txt" }],
-        });
-      blobs++;
-      return Response.json(blob);
-    },
+test("unsafe resource names do not block metadata checks; blob reuse and cancelled cache hits stay correct", async () => {
+  const value = await fixture({
+    "SKILL.md": "---\nname: reviewed\ndescription: Reviewed\n---\n",
+    "notes\\draft.txt": "unsafe resource",
   });
-  const operation = createSourceOperation({ source: "reviewed" });
-  const snapshot = await open(server.url.toString(), operation);
+  const api = serveRepository(value),
+    controller = new AbortController();
+  const request = {
+    ...binding,
+    githubApiBaseUrl: api.server.url.toString(),
+    signal: controller.signal,
+  };
   try {
-    expect((await snapshot.inspectRoots([""]))[0]?.status).toBe("present");
-    await snapshot.read("SKILL.md");
-    await snapshot.read("SKILL.md");
-    expect(blobs).toBe(1);
-    const cancelled = AbortSignal.abort();
-    await expect(snapshot.read("SKILL.md", cancelled)).rejects.toMatchObject({ code: "CANCELLED" });
-    operation.dispose();
+    await withRepository(request, async (reader) => {
+      const version = await reader.revision({ commit: value.commit });
+      expect(await skillTree(version!, version!.version.tree, "")).toBe(version!.version.tree);
+      const marker = (await version!.readTree(version!.version.tree)).find(
+        (entry) => entry.path === "SKILL.md",
+      )!;
+      await version!.blobs([marker.oid]);
+      await version!.blobs([marker.oid]);
+      expect(api.requests.filter((path) => path.includes("/blobs/"))).toHaveLength(1);
+      controller.abort();
+      await expect(version!.blobs([marker.oid])).rejects.toHaveProperty("code", "CANCELLED");
+    });
+    await expect(
+      withPreparedSkills(
+        { binding, githubApiBaseUrl: api.server.url.toString() },
+        [""],
+        value.commit,
+        async () => {},
+      ),
+    ).rejects.toHaveProperty("code", "INVALID_RESOURCE_PATH");
   } finally {
-    await snapshot.close();
-    operation.dispose();
-    server.stop(true);
+    await api.server.stop(true);
   }
 });
 
-test("GitHub method abort stops in-flight work without poisoning memo and close drains admitted reads", async () => {
-  let blobRequests = 0,
-    ready!: () => void;
-  const started = new Promise<void>((resolve) => (ready = resolve));
-  const server = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      const path = new URL(request.url).pathname;
-      if (path.includes("/commits/"))
-        return Response.json({ sha: commit, commit: { tree: { sha: treeId } } });
-      if (path.includes("/trees/")) return Response.json({ sha: treeId, tree: [marker] });
-      blobRequests++;
-      ready();
-      await Bun.sleep(180);
-      return Response.json(blob);
-    },
+test("GitHub cancellation during blob acquisition releases the lock, preserves valid metadata and permits a clean retry", async () => {
+  const value = await fixture(),
+    api = serveRepository(value);
+  let ready!: () => void;
+  const started = new Promise<void>((resolve) => {
+    ready = resolve;
   });
-  const snapshot = await open(server.url.toString());
+  const fetch = network.sourceFetch;
+  const admission = spyOn(network, "sourceFetch").mockImplementation((operation) => {
+    const client = fetch(operation);
+    return async (input, init) => {
+      if (String(input).includes("/blobs/")) {
+        ready();
+        await new Promise<void>((resolve) =>
+          operation.signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        operation.throwIfAborted("fixture blob");
+      }
+      return client(input, init);
+    };
+  });
+  const controller = new AbortController();
+  const context = { binding, githubApiBaseUrl: api.server.url.toString() };
+  const pending = discoverSource({ ...context, signal: controller.signal });
   try {
-    const controller = new AbortController();
-    const pending = snapshot.read("SKILL.md", controller.signal);
     await started;
     controller.abort();
-    await expect(pending).rejects.toMatchObject({ code: "CANCELLED" });
-    const retry = snapshot.read("SKILL.md");
-    let closed = false;
-    const close = snapshot.close().then(() => {
-      closed = true;
-    });
-    const closeAgain = snapshot.close();
-    await Bun.sleep(20);
-    expect(closed).toBe(false);
-    expect((await retry).bytes).toEqual(bytes);
-    await Promise.all([close, closeAgain]);
-    expect(blobRequests).toBe(2);
-    await expect(snapshot.read("SKILL.md")).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    await expect(pending).rejects.toHaveProperty("code", "CANCELLED");
+    admission.mockRestore();
+    expect((await discoverSource(context)).candidates).toHaveLength(1);
+    expect(api.requests.filter((path) => path.includes("/trees/"))).toHaveLength(1);
+    expect(await readdir(join(root, "cache", "locks"))).toEqual([]);
   } finally {
-    await snapshot.close();
-    server.stop(true);
+    controller.abort();
+    await pending.catch(() => {});
+    await api.server.stop(true);
   }
 });
 
-test("warmed GitHub list respects shared cancellation and discovery never swallows blob deadline", async () => {
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      if (path.includes("/commits/"))
-        return Response.json({ sha: commit, commit: { tree: { sha: treeId } } });
-      if (path.includes("/trees/")) return Response.json({ sha: treeId, tree: [marker] });
-      return new Promise<Response>(() => {});
-    },
-  });
-  const caller = new AbortController(),
-    operation = createSourceOperation({ source: "reviewed", signal: caller.signal });
-  const cached = await open(server.url.toString(), operation);
-  try {
-    await Array.fromAsync(cached.list(""));
-    caller.abort();
-    await expect(Array.fromAsync(cached.list(""))).rejects.toMatchObject({ code: "CANCELLED" });
-  } finally {
-    await cached.close();
-    operation.dispose();
-  }
-  const short = createSourceOperation({ source: "reviewed", budgetMs: 80 });
-  const snapshot = await open(server.url.toString(), short);
-  try {
-    await expect(discoverSnapshotSkills(snapshot)).rejects.toMatchObject({
-      code: "PROVIDER_TIMEOUT",
-    });
-  } finally {
-    await snapshot.close();
-    short.dispose();
-    server.stop(true);
-  }
-});
-
-test("discovery ignores OTHER_SKILL.md rather than inventing/shadowing a Root", async () => {
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      if (path.includes("/commits/"))
-        return Response.json({ sha: commit, commit: { tree: { sha: treeId } } });
-      if (path.includes("/trees/"))
-        return Response.json({ sha: treeId, tree: [{ ...marker, path: "OTHER_SKILL.md" }] });
-      return Response.json(blob);
-    },
-  });
-  const snapshot = await open(server.url.toString());
-  try {
-    expect((await discoverSnapshotSkills(snapshot)).skills).toEqual([]);
-  } finally {
-    await snapshot.close();
-    server.stop(true);
-  }
-});
-
-test("owned cancellation kills a pipe-closed descendant and a failed drain keeps cleanup active", async () => {
-  const root = await mkdtemp(join(tmpdir(), "review-child-"));
-  try {
-    for (const failDrain of [false, true]) {
-      const pidFile = join(root, `pid-${failDrain}`);
-      const original = Bun.spawn;
-      const injection = failDrain
-        ? spyOn(Bun, "spawn").mockImplementation((...args) => {
-            const [command] = args;
-            const child = Array.isArray(command)
-              ? original({ cmd: command, stdout: "pipe", stderr: "pipe", detached: true })
-              : original(command);
-            return new Proxy(child, {
-              get(target, key) {
-                if (key === "stdout")
-                  return new ReadableStream({
-                    start(controller) {
-                      setTimeout(() => controller.error(new Error("fixture pipe read failed")), 40);
-                    },
-                  });
-                return Reflect.get(target, key, target);
-              },
-            });
-          })
-        : undefined;
-      const controller = new AbortController();
-      const pending = runProviderChild(
-        {
-          cmd: [
-            "/bin/sh",
-            "-c",
-            `trap 'exit 0' TERM; /bin/sh -c 'trap "" TERM; echo $$ > "${pidFile}"; exec >/dev/null 2>&1; while :; do sleep 1; done' & wait`,
-          ],
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-        controller.signal,
-      );
-      const outcome = pending.catch((error) => error);
-      try {
-        for (let i = 0; i < 100 && !(await Bun.file(pidFile).exists()); i++) await Bun.sleep(10);
-        expect(await Bun.file(pidFile).exists()).toBe(true);
-        if (failDrain) await Bun.sleep(70);
-        controller.abort();
-        const error = await outcome;
-        expect(String(error)).toContain(failDrain ? "fixture pipe read failed" : "cancelled");
-        const pid = Number(await readFile(pidFile, "utf8"));
-        const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => "");
-        expect(!stat || /^\d+ \(.*\) Z /u.test(stat)).toBe(true);
-      } finally {
-        controller.abort();
-        await outcome;
-        injection?.mockRestore();
-      }
-    }
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("enterprise credentials remain host-specific; meta auth and body failures are authoritative", async () => {
-  const root = await createExecutableFixture();
-  const previousPath = process.env.PATH,
-    previousToken = process.env.GH_TOKEN;
-  try {
-    await mkdir(join(root, "bin"));
-    await writeFile(join(root, "bin", "gh"), "#!/bin/sh\nprintf host-specific-token\n", {
-      mode: 0o755,
-    });
-    process.env.PATH = `${root}/bin:${previousPath}`;
-    process.env.GH_TOKEN = "public-secret";
-    const seen: string[] = [];
-    // Runtime-boundary fetch injection retains the actual provider/meta classification.
-    const actualFetch = globalThis.fetch;
-    const fetchMock = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-          seen.push(new Headers(init?.headers).get("authorization") ?? "");
-          return new Response("not-json", { status: 401 });
-        },
-        { preconnect: actualFetch.preconnect },
-      ),
+test("warmed tree reads respect cancellation and marker acquisition cannot swallow its deadline", async () => {
+  const value = await fixture(),
+    api = serveRepository(value, (request) =>
+      new URL(request.url).pathname.includes("/blobs/")
+        ? new Response(new ReadableStream({ start() {} }))
+        : undefined,
     );
-    try {
-      await expect(
-        resolveGitHubApi("https://enterprise.invalid/acme/skills"),
-      ).rejects.toMatchObject({
-        code: "PROVIDER_AUTH_FAILED",
-        message: expect.stringContaining("GitHub meta"),
-      });
-      expect(seen).toEqual(["Bearer host-specific-token"]);
-    } finally {
-      fetchMock.mockRestore();
-    }
+  const controller = new AbortController();
+  const request = { ...binding, githubApiBaseUrl: api.server.url.toString() };
+  try {
+    await withRepository({ ...request, signal: controller.signal }, async (reader) => {
+      const version = await reader.revision({ commit: value.commit });
+      controller.abort();
+      await expect(version!.readTree(version!.version.tree)).rejects.toHaveProperty(
+        "code",
+        "CANCELLED",
+      );
+    });
+    await expect(
+      withRepository({ ...request, budgetMs: 80 }, async (reader) => {
+        const version = await reader.revision({ commit: value.commit });
+        const markers = await candidateMarkers(version!, version!.version.tree);
+        await version!.blobs(markers.map((entry) => entry.oid));
+      }),
+    ).rejects.toHaveProperty("code", "PROVIDER_TIMEOUT");
   } finally {
-    process.env.PATH = previousPath;
-    if (previousToken === undefined) delete process.env.GH_TOKEN;
-    else process.env.GH_TOKEN = previousToken;
-    await rm(root, { recursive: true, force: true });
+    await api.server.stop(true);
   }
 });
 
-test("provider errors retain actual API body failure and bounded primary/fallback phases without secondary logs", async () => {
+test("discovery ignores OTHER_SKILL.md rather than inventing or shadowing a Root", async () => {
+  const value = await fixture({
+      "OTHER_SKILL.md": "---\nname: not-a-skill\ndescription: Other\n---\n",
+    }),
+    api = serveRepository(value);
+  try {
+    expect(
+      (await discoverSource({ binding, githubApiBaseUrl: api.server.url.toString() })).candidates,
+    ).toEqual([]);
+    expect(api.requests.some((path) => path.includes("/blobs/"))).toBe(false);
+  } finally {
+    await api.server.stop(true);
+  }
+});
+
+test.each([false, true])(
+  "owned cancellation stops a pipe-closed descendant; failed drain precedence = %s",
+  async (failDrain) => {
+    const pidFile = join(root, "pid"),
+      original = Bun.spawn;
+    if (failDrain)
+      spyOn(Bun, "spawn").mockImplementation((...args) => {
+        const child = Reflect.apply(original, Bun, args);
+        return new Proxy(child, {
+          get(target, key) {
+            if (key === "stdout")
+              return new ReadableStream({
+                start(controller) {
+                  setTimeout(() => controller.error(new Error("fixture pipe read failed")), 40);
+                },
+              });
+            return Reflect.get(target, key, target);
+          },
+        });
+      });
+    const controller = new AbortController();
+    const pending = runProcess({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        `trap 'exit 0' TERM; /bin/sh -c 'trap "" TERM; echo $$ > "${pidFile}"; exec >/dev/null 2>&1; while :; do sleep 1; done' & wait`,
+      ],
+      signal: controller.signal,
+    }).catch((error: unknown) => error);
+    try {
+      for (let i = 0; i < 100 && !(await Bun.file(pidFile).exists()); i++) await Bun.sleep(10);
+      expect(await Bun.file(pidFile).exists()).toBe(true);
+      if (failDrain) await Bun.sleep(70);
+      controller.abort();
+      expect(String(await pending)).toContain(failDrain ? "fixture pipe read failed" : "cancelled");
+      const pid = Number(await readFile(pidFile, "utf8")),
+        stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => "");
+      expect(!stat || /^\d+ \(.*\) Z /u.test(stat)).toBe(true);
+    } finally {
+      controller.abort();
+      await pending;
+    }
+  },
+);
+
+test("enterprise credentials are host-specific; meta separates auth, unavailable capability and integrity", async () => {
+  const executable = await createExecutableFixture();
+  roots.push(executable);
+  await mkdir(join(executable, "bin"));
+  const invocation = join(root, "invocation");
+  await writeFile(
+    join(executable, "bin", "gh"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${invocation}'\nprintf enterprise-token\n`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${executable}/bin:${saved.PATH}`;
+  process.env.GH_TOKEN = "public-secret";
+  process.env.GITHUB_TOKEN = "public-secret";
+  for (const [status, body, code] of [
+    [401, "not-json", "PROVIDER_AUTH_FAILED"],
+    [403, "not-json", "PROVIDER_AUTH_FAILED"],
+    [404, "not-json", undefined],
+    [503, "not-json", undefined],
+    [200, "{}", "PROVIDER_INTEGRITY_FAILED"],
+    [200, '{"installed_version":"fixture"}', "success"],
+  ] as const) {
+    const seen: string[] = [];
+    const fetch = spyOn(network, "sourceFetch").mockReturnValue(async (input, init) => {
+      expect(String(input)).toBe("https://enterprise.invalid/api/v3/meta");
+      seen.push(new Headers(init?.headers).get("authorization") ?? "");
+      return new Response(body, { status, headers: { "content-type": "application/json" } });
+    });
+    const operation = network.createSourceOperation({ source: "enterprise" });
+    try {
+      const pending = GitHubTransfer.create(
+        "https://enterprise.invalid/acme/skills",
+        new GitObjects(join(root, "objects.git")),
+        operation,
+      );
+      if (code === "success") expect(await pending).toBeInstanceOf(GitHubTransfer);
+      else if (code) await expect(pending).rejects.toHaveProperty("code", code);
+      else expect(await pending).toBeUndefined();
+      expect(seen).toEqual(["token enterprise-token"]);
+    } finally {
+      fetch.mockRestore();
+    }
+  }
+  expect(
+    (await readFile(invocation, "utf8"))
+      .trim()
+      .split("\n")
+      .every((line) => line === "auth token --hostname enterprise.invalid"),
+  ).toBe(true);
+  spyOn(Bun, "spawn").mockImplementation(() => {
+    throw Object.assign(new Error("credential executable permission denied"), { code: "EACCES" });
+  });
+  const operation = network.createSourceOperation({ source: "enterprise" });
+  await expect(
+    GitHubTransfer.create(
+      "https://enterprise.invalid/acme/skills",
+      new GitObjects(join(root, "objects.git")),
+      operation,
+    ),
+  ).rejects.toMatchObject({
+    code: "PROVIDER_UNAVAILABLE",
+    message: expect.stringContaining("credentials startup"),
+  });
+});
+
+test("actual body failures are sanitized and primary/fallback diagnostics do not emit secondary logs", async () => {
   const broken = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "application/json", "content-length": "10000" });
     response.write('{"sha":');
     setTimeout(() => response.destroy(), 30);
   });
   await new Promise<void>((resolve) => broken.listen(0, "127.0.0.1", resolve));
-  const snapshot = await open(`http://127.0.0.1:${(broken.address() as AddressInfo).port}`);
   try {
-    await expect(snapshot.inspectRoots([""])).rejects.toMatchObject({
+    await expect(
+      withRepository(
+        {
+          ...binding,
+          githubApiBaseUrl: `http://127.0.0.1:${(broken.address() as AddressInfo).port}`,
+        },
+        async (reader) => reader.revision({ commit: "a".repeat(40) }),
+      ),
+    ).rejects.toMatchObject({
       code: "PROVIDER_UNAVAILABLE",
       message: expect.stringContaining("body"),
     });
   } finally {
-    await snapshot.close();
     broken.closeAllConnections();
     await new Promise<void>((resolve) => broken.close(() => resolve()));
   }
-  const server = Bun.serve({
-    port: 0,
-    fetch: () =>
-      Response.json(
-        { message: "unavailable" },
-        {
+  const value = await fixture(),
+    api = serveRepository(
+      value,
+      () =>
+        new Response("unavailable", {
           status: 503,
           headers: {
             deprecation: "true",
-            sunset: "tomorrow",
             link: '<https://secret.invalid/?token=secondary-secret>; rel="deprecation"',
           },
-        },
-      ),
-  });
-  const warnings: unknown[][] = [];
-  const warn = spyOn(console, "warn").mockImplementation((...args) => {
-    warnings.push(args);
-  });
-  const fallback = await open(server.url.toString());
+        }),
+    );
+  const warn = spyOn(console, "warn");
   try {
-    const error = await fallback.inspectRoots([""]).catch((error) => error);
-    expect(error.message).toContain("GitHub commit");
-    expect(error.message).toContain("Git fetch");
-    expect(warnings).toEqual([]);
-  } finally {
-    await fallback.close();
-    warn.mockRestore();
-    server.stop(true);
-  }
-});
-
-test("Git method signals cancel tree preparation/ref and cached reads without poisoning the next caller", async () => {
-  const fixture = await networkFixture(),
-    shim = await createExecutableFixture(),
-    previous = process.env.PATH;
-  const ready = join(shim, "ready"),
-    block = join(shim, "block");
-  const operation = createSourceOperation({ source: "reviewed" });
-  let snapshot: Awaited<ReturnType<typeof openGitSource>> | undefined;
-  try {
-    snapshot = await openGitSource(
-      "reviewed",
-      join(fixture.root, "remote.git"),
-      fixture.commit,
-      "",
-      provenance,
-      undefined,
-      operation,
-    );
-    await mkdir(join(shim, "bin"));
-    await writeFile(
-      join(shim, "bin", "git"),
-      `#!/bin/sh
-if [ -f '${block}' ]; then
-  case " $* " in *' ls-tree '*|*' ls-remote '*) : > '${ready}'; trap '' TERM; while :; do sleep 1; done;; esac
-fi
-exec /usr/bin/git "$@"
-`,
-      { mode: 0o755 },
-    );
-    process.env.PATH = `${shim}/bin:${previous}`;
-    await writeFile(block, "");
-    const controller = new AbortController();
-    await snapshot.close();
-    snapshot = undefined;
-    const pending = openGitSource(
-      "reviewed",
-      join(fixture.root, "remote.git"),
-      fixture.commit,
-      "",
-      provenance,
-      controller.signal,
-      operation,
-    );
-    const outcome = pending.catch((error) => error);
-    for (let i = 0; i < 100 && !(await Bun.file(ready).exists()); i++) await Bun.sleep(10);
-    expect(await Bun.file(ready).exists()).toBe(true);
-    controller.abort();
-    expect(await outcome).toMatchObject({ code: "CANCELLED" });
-    await rm(block);
-    await rm(ready);
-    snapshot = await openGitSource(
-      "reviewed",
-      join(fixture.root, "remote.git"),
-      fixture.commit,
-      "",
-      provenance,
-      undefined,
-      operation,
-    );
-    expect((await snapshot.inspectRoots([""]))[0]?.status).toBe("present");
-    await snapshot.read("SKILL.md");
-    await expect(snapshot.read("SKILL.md", AbortSignal.abort())).rejects.toMatchObject({
-      code: "CANCELLED",
+    const error = await discoverSource({
+      binding,
+      githubApiBaseUrl: api.server.url.toString(),
+      transport: () => "/unavailable",
+    }).catch((error: unknown) => error);
+    const message = String(error);
+    expect(error).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      message: expect.stringContaining("GitHub"),
     });
-    await writeFile(block, "");
-    const refController = new AbortController();
-    const ref = resolveGitRef(
-      join(fixture.root, "remote.git"),
-      "main",
-      refController.signal,
-      undefined,
-      operation,
-    ).catch((error) => error);
-    for (let i = 0; i < 100 && !(await Bun.file(ready).exists()); i++) await Bun.sleep(10);
-    refController.abort();
-    expect(await ref).toMatchObject({ code: "CANCELLED" });
+    expect(message).toContain("Git");
+    expect(message).not.toContain("secondary-secret");
+    expect(warn).not.toHaveBeenCalled();
   } finally {
-    await snapshot?.close();
-    operation.dispose();
-    process.env.PATH = previous;
-    await fixture.close();
-    await rm(shim, { recursive: true, force: true });
+    await api.server.stop(true);
   }
 });
 
-test("close never admits a new fallback after an in-flight API failure", async () => {
-  let ready!: () => void;
-  const started = new Promise<void>((resolve) => (ready = resolve));
-  const fixture = await networkFixture();
+test("cancelling an in-flight API failure never admits fallback work", async () => {
+  const value = await fixture();
+  let ready!: () => void, finish!: () => void;
+  const started = new Promise<void>((resolve) => {
+      ready = resolve;
+    }),
+    release = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
   const server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     async fetch() {
       ready();
-      await Bun.sleep(100);
-      return Response.json({ message: "unavailable" }, { status: 503 });
+      await release;
+      return new Response("unavailable", { status: 503 });
     },
   });
-  const snapshot = await openGitHubSource(
-    "reviewed",
-    "https://github.com/acme/skills",
-    fixture.commit,
-    "",
-    provenance,
-    undefined,
-    { baseUrl: server.url.toString() },
-    fixture.targetUrl,
-  );
+  const controller = new AbortController();
+  const pending = discoverSource({
+    binding,
+    signal: controller.signal,
+    githubApiBaseUrl: server.url.toString(),
+    transport: () => value.bare,
+  });
   try {
-    const result = snapshot.inspectRoots([""]).catch((error) => error);
     await started;
-    const closed = snapshot.close();
-    const again = snapshot.close();
-    expect(await result).toMatchObject({
-      code: "PROVIDER_UNAVAILABLE",
-      message: expect.stringContaining("closing"),
-    });
-    await Promise.all([closed, again]);
-    expect(fixture.direct).toBe(0);
-    expect(fixture.transfers).toEqual([]);
+    controller.abort();
+    finish();
+    await expect(pending).rejects.toHaveProperty("code", "CANCELLED");
+    const key = new Bun.CryptoHasher("sha256").update(origin).digest("hex");
+    expect(
+      await readdir(join(root, "cache", "origins", key, "objects.git", "objects", "pack")),
+    ).toEqual([]);
   } finally {
-    await snapshot.close();
-    server.stop(true);
-    await fixture.close();
+    controller.abort();
+    finish();
+    await pending.catch(() => {});
+    await server.stop(true);
   }
 });
 
-test("enterprise meta distinguishes auth/capability/integrity and abnormal credential startup", async () => {
-  const root = await createExecutableFixture(),
-    previous = process.env.PATH;
+test("cache handles cannot escape their scope and independent callers survive another caller's abort", async () => {
+  const value = await fixture(),
+    api = serveRepository(value);
+  let escaped: Repository | undefined;
+  let escapedVersion: RepositoryReader | undefined;
+  const request = { ...binding, githubApiBaseUrl: api.server.url.toString() };
   try {
-    await mkdir(join(root, "bin"));
-    const gh = join(root, "bin", "gh");
-    await writeFile(gh, "#!/bin/sh\nprintf enterprise-token\n", { mode: 0o755 });
-    process.env.PATH = `${root}/bin:${previous}`;
-    const actualFetch = fetch;
-    for (const [status, body, code] of [
-      [403, "not-json", "PROVIDER_AUTH_FAILED"],
-      [404, "not-json", undefined],
-      [503, "not-json", undefined],
-      [200, "{}", "PROVIDER_INTEGRITY_FAILED"],
-      [200, '{"installed_version":"fixture"}', "success"],
-    ] as const) {
-      const injection = spyOn(globalThis, "fetch").mockImplementation(
-        Object.assign(async () => new Response(body, { status }), {
-          preconnect: actualFetch.preconnect,
-        }),
-      );
-      try {
-        const pending = resolveGitHubApi("https://enterprise.invalid/acme/skills");
-        if (code === "success") expect(await pending).toMatchObject({ token: "enterprise-token" });
-        else if (code) await expect(pending).rejects.toMatchObject({ code });
-        else expect(await pending).toBeUndefined();
-      } finally {
-        injection.mockRestore();
-      }
-    }
-    const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
-      throw Object.assign(new Error("credential executable permission denied"), { code: "EACCES" });
+    await withRepository(request, async (reader) => {
+      escaped = reader;
+      escapedVersion = await reader.revision({ commit: value.commit });
     });
-    try {
-      const error = await resolveGitHubApi("https://enterprise.invalid/acme/skills").catch(
-        (error) => error,
-      );
-      expect(error).toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
-      expect(error.message).toContain("credentials startup");
-    } finally {
-      spawn.mockRestore();
-    }
+    await expect(escaped!.revision({ commit: value.commit })).rejects.toHaveProperty(
+      "code",
+      "INTERNAL",
+    );
+    await expect(escapedVersion!.readTree(value.tree)).rejects.toHaveProperty("code", "INTERNAL");
+    const controller = new AbortController();
+    const cancelled = withRepository({ ...request, signal: controller.signal }, async (reader) => {
+      const version = await reader.revision({ commit: value.commit });
+      controller.abort();
+      return version!.readTree(version!.version.tree);
+    }).catch((error: unknown) => error);
+    const independent = withRepository(request, async (reader) => {
+      const version = await reader.revision({ commit: value.commit });
+      return version!.readTree(version!.version.tree);
+    });
+    expect(await cancelled).toMatchObject({ code: "CANCELLED" });
+    expect(await independent).toHaveLength(1);
   } finally {
-    process.env.PATH = previous;
-    await rm(root, { recursive: true, force: true });
+    await api.server.stop(true);
   }
 });
 
-test("method signal aborts actual raw body and cached inspect does not bypass shared deadline", async () => {
-  let ready!: () => void;
-  const started = new Promise<void>((resolve) => (ready = resolve));
-  const raw = createServer((_request, response) => {
-    response.writeHead(200, { "content-length": String(bytes.length) });
-    response.write(bytes.subarray(0, 1));
-    ready();
-  });
-  await new Promise<void>((resolve) => raw.listen(0, "127.0.0.1", resolve));
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      if (path.includes("/commits/"))
-        return Response.json({ sha: commit, commit: { tree: { sha: treeId } } });
-      if (path.includes("/trees/")) return Response.json({ sha: treeId, tree: [marker] });
-      return Response.json({ message: "unavailable" }, { status: 503 });
-    },
-  });
-  const snapshot = await openGitHubSource(
-    "reviewed",
-    "https://github.com/acme/skills",
-    commit,
-    "",
-    provenance,
-    undefined,
-    {
-      baseUrl: server.url.toString(),
-      rawBaseUrl: `http://127.0.0.1:${(raw.address() as AddressInfo).port}`,
-    },
+test("cancelling a real Git metadata/ref child leaves the next caller usable and cached reads cancellable", async () => {
+  const value = await fixture(),
+    executable = await createExecutableFixture();
+  roots.push(executable);
+  await mkdir(join(executable, "bin"));
+  const ready = join(root, "ready"),
+    block = join(root, "block");
+  await writeFile(
+    join(executable, "bin", "git"),
+    `#!/bin/sh\nif [ -f '${block}' ]; then case " $* " in *' fetch '*|*' ls-remote '*) : > '${ready}'; trap '' TERM; while :; do sleep 1; done;; esac; fi\nexec /usr/bin/git "$@"\n`,
+    { mode: 0o755 },
   );
-  try {
-    const caller = new AbortController();
-    const pending = snapshot.read("SKILL.md", caller.signal);
-    await started;
-    caller.abort();
-    await expect(pending).rejects.toMatchObject({ code: "CANCELLED" });
-  } finally {
-    await snapshot.close();
-    raw.closeAllConnections();
-    await new Promise<void>((resolve) => raw.close(() => resolve()));
-    server.stop(true);
-  }
-  const api = Bun.serve({
-    port: 0,
-    fetch(request) {
-      return new URL(request.url).pathname.includes("/commits/")
-        ? Response.json({ sha: commit, commit: { tree: { sha: treeId } } })
-        : Response.json({ sha: treeId, tree: [marker] });
-    },
-  });
-  const operation = createSourceOperation({ source: "reviewed", budgetMs: 80 }),
-    cached = await open(api.url.toString(), operation);
-  try {
-    await cached.inspectRoots([""]);
-    await Bun.sleep(100);
-    await expect(cached.inspectRoots([""])).rejects.toMatchObject({ code: "PROVIDER_TIMEOUT" });
-  } finally {
-    await cached.close();
-    operation.dispose();
-    api.stop(true);
-  }
-});
-
-test("R1 paused list emission ignores another admitted method abort during fallback cleanup", async () => {
-  const root = await mkdtemp(join(tmpdir(), "review-list-isolation-"));
-  const ready = join(root, "ready");
-  const server = Bun.serve({
-    port: 0,
-    fetch(request) {
-      const path = new URL(request.url).pathname;
-      if (path.includes("/commits/"))
-        return Response.json({ sha: commit, commit: { tree: { sha: treeId } } });
-      if (path.includes("/trees/"))
-        return Response.json({ sha: treeId, tree: [marker, { ...marker, path: "copy.md" }] });
-      return Response.json({ message: "unavailable" }, { status: 503 });
-    },
-  });
-  const original = Bun.spawn;
-  let fallbackChild: ReturnType<typeof Bun.spawn> | undefined;
-  const injection = spyOn(Bun, "spawn").mockImplementation((...args) => {
-    const [command] = args;
-    const cmd = Array.isArray(command) ? command : command.cmd;
-    if (cmd[0] === "git" && cmd.includes("fetch")) {
-      const child = original({
-        cmd: ["/bin/sh", "-c", `: > '${ready}'; trap '' TERM; while :; do sleep 1; done`],
-        stdout: "pipe",
-        stderr: "pipe",
-        detached: true,
-      });
-      fallbackChild = child;
-      return child;
-    }
-    return Array.isArray(command)
-      ? original({ cmd: command, stdout: "pipe", stderr: "pipe", detached: true })
-      : original(command);
-  });
-  const snapshot = await open(server.url.toString());
-  const caller = new AbortController();
-  let pending: Promise<unknown> | undefined;
-  try {
-    const iterator = snapshot.list("")[Symbol.asyncIterator]();
-    expect((await iterator.next()).done).toBe(false);
-    pending = snapshot.read("SKILL.md", caller.signal).catch((error) => error);
-    for (let i = 0; i < 100 && !(await Bun.file(ready).exists()); i++) await Bun.sleep(10);
-    expect(await Bun.file(ready).exists()).toBe(true);
-    let settled = false;
-    pending.then(() => {
-      settled = true;
-    });
-    caller.abort();
-    // The other admission still owns its signal until real TERM/KILL cleanup finishes.
-    expect(settled).toBe(false);
-    const second = await iterator.next();
-    expect(second.done).toBe(false);
-    expect(second.value?.path).toBe("copy.md");
-    expect((await iterator.next()).done).toBe(true);
-    expect(await pending).toMatchObject({ code: "CANCELLED" });
-    expect(await fallbackChild?.exited).not.toBeUndefined();
-  } finally {
-    caller.abort();
-    await pending;
-    await snapshot.close();
-    injection.mockRestore();
-    server.stop(true);
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("R2 nested fallback retains real pipe-drain failure ahead of method/shared abort", async () => {
-  for (const shared of [false, true]) {
-    const root = await mkdtemp(join(tmpdir(), "review-nested-drain-"));
-    const ready = join(root, "ready");
-    const caller = new AbortController();
-    const operation = createSourceOperation({
-      source: "reviewed",
-      ...(shared ? { signal: caller.signal } : {}),
-    });
-    const server = Bun.serve({
-      port: 0,
-      fetch: () => Response.json({ message: "unavailable" }, { status: 503 }),
-    });
-    const original = Bun.spawn;
-    let failDrain: (() => void) | undefined;
-    let fallbackChild: ReturnType<typeof Bun.spawn> | undefined;
-    const injection = spyOn(Bun, "spawn").mockImplementation((...args) => {
-      const [command] = args;
-      const cmd = Array.isArray(command) ? command : command.cmd;
-      if (cmd[0] === "git" && cmd.includes("fetch")) {
-        const child = original({
-          cmd: ["/bin/sh", "-c", `: > '${ready}'; trap '' TERM; while :; do sleep 1; done`],
-          stdout: "pipe",
-          stderr: "pipe",
-          detached: true,
-        });
-        fallbackChild = child;
-        const failedPipe = new ReadableStream<Uint8Array>({
-          start(controller) {
-            failDrain = () =>
-              controller.error(new Error("nested fixture pipe read failed; token=drain-secret"));
-          },
-        });
-        return new Proxy(child, {
-          get(target, key) {
-            return key === "stdout" ? failedPipe : Reflect.get(target, key, target);
-          },
-        });
-      }
-      return Array.isArray(command)
-        ? original({ cmd: command, stdout: "pipe", stderr: "pipe", detached: true })
-        : original(command);
-    });
-    const snapshot = await open(server.url.toString(), operation);
-    const pending = snapshot
-      .inspectRoots([""], shared ? undefined : caller.signal)
-      .catch((error) => error);
+  process.env.PATH = `${executable}/bin:${saved.PATH}`;
+  const request = { ...binding, kind: "git" as const, transport: () => value.bare };
+  for (const target of [{ commit: value.commit }, { current: true }] as const) {
+    await writeFile(block, "");
+    const controller = new AbortController();
+    const pending = withRepository({ ...request, signal: controller.signal }, async (reader) =>
+      reader.revision(target),
+    );
     try {
       for (let i = 0; i < 100 && !(await Bun.file(ready).exists()); i++) await Bun.sleep(10);
       expect(await Bun.file(ready).exists()).toBe(true);
-      expect(failDrain).toBeDefined();
-      failDrain!();
-      caller.abort();
-      const error = await pending;
-      expect(error).toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
-      expect(error.message).toContain("pipe drain failed");
-      expect(error.message).toContain("GitHub commit");
-      expect(error.message).toContain("fallback");
-      expect(error.message).not.toContain("drain-secret");
-      expect(await fallbackChild?.exited).not.toBeUndefined();
-      await Promise.all([snapshot.close(), snapshot.close()]);
+      controller.abort();
+      await expect(pending).rejects.toHaveProperty("code", "CANCELLED");
     } finally {
-      caller.abort();
-      await pending;
-      await snapshot.close();
-      operation.dispose();
-      injection.mockRestore();
-      server.stop(true);
-      await rm(root, { recursive: true, force: true });
+      controller.abort();
+      await pending.catch(() => {});
+      await rm(block);
+      await rm(ready, { force: true });
     }
+  }
+  await withRepository(request, async (reader) => {
+    const version = await reader.revision({ current: true });
+    expect((await version!.readTree(version!.version.tree)).length).toBe(1);
+  });
+  await expect(
+    withRepository({ ...request, signal: AbortSignal.abort() }, async (reader) =>
+      reader.revision({ current: true }),
+    ),
+  ).rejects.toHaveProperty("code", "CANCELLED");
+});
+
+test("nested fallback preserves a real pipe-drain failure ahead of cancellation and sanitizes it", async () => {
+  const value = await fixture(),
+    api = serveRepository(value, () => new Response("unavailable", { status: 503 }));
+  const original = Bun.spawn,
+    ready = join(root, "ready"),
+    controller = new AbortController();
+  let failDrain!: () => void;
+  spyOn(Bun, "spawn").mockImplementation((...args) => {
+    const [command] = args,
+      cmd = Array.isArray(command) ? command : command.cmd;
+    if (cmd[0] !== "git" || !cmd.includes("fetch")) return Reflect.apply(original, Bun, args);
+    const child = original(
+      ["/bin/sh", "-c", `: > '${ready}'; trap '' TERM; while :; do sleep 1; done`],
+      { stdout: "pipe", stderr: "pipe", detached: true },
+    );
+    const failed = new ReadableStream<Uint8Array>({
+      start(pipe) {
+        failDrain = () => pipe.error(new Error("nested pipe drain failed; token=drain-secret"));
+      },
+    });
+    return new Proxy(child, {
+      get(target, key) {
+        return key === "stdout" ? failed : Reflect.get(target, key, target);
+      },
+    });
+  });
+  const pending = withRepository(
+    {
+      ...binding,
+      signal: controller.signal,
+      githubApiBaseUrl: api.server.url.toString(),
+      transport: () => value.bare,
+    },
+    async (reader) => reader.revision({ current: true }),
+  ).catch((error: unknown) => error);
+  try {
+    for (let i = 0; i < 100 && !(await Bun.file(ready).exists()); i++) await Bun.sleep(10);
+    expect(await Bun.file(ready).exists()).toBe(true);
+    expect(failDrain).toBeDefined();
+    failDrain();
+    controller.abort();
+    expect(await pending).toMatchObject({
+      code: "CLEANUP_FAILED",
+      message: expect.stringContaining("pipe drain failed"),
+    });
+    expect(String(await pending)).not.toContain("drain-secret");
+  } finally {
+    controller.abort();
+    await pending;
+    await api.server.stop(true);
   }
 });
