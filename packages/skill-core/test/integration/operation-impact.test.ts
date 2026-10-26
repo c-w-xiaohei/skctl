@@ -23,7 +23,7 @@ async function installRemoteReview(
           name: "review",
           description: "Review",
           kind: "remote",
-          digest: "a".repeat(64),
+          snapshotId: "a".repeat(64),
           bindingDigest: bindingDigest({
             kind: "github",
             origin: "https://github.com/acme/skills",

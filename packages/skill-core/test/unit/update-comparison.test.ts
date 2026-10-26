@@ -31,7 +31,6 @@ test("comparison uses complete trees without marker parsing; incomplete facts ca
     for (const path of paths)
       installed.push({
         path,
-        digest: "a".repeat(64),
         tree: { objectFormat: "sha1" as const, objectId: await git("rev-parse", `HEAD:${path}`) },
       });
     await writeFile(join(work, "changed", "resource.txt"), "resource-only change");
@@ -71,7 +70,7 @@ test("comparison uses complete trees without marker parsing; incomplete facts ca
       ),
     ).not.toContain("blob");
     await expect(
-      compareSource(context, [{ path: "same", digest: "a".repeat(64) }], { commit: revision }),
+      compareSource(context, [{ path: "same" }], { commit: revision }),
     ).rejects.toHaveProperty("code", "PINNED_COMMIT_UNAVAILABLE");
     await expect(
       compareSource(context, installed, { commit: "f".repeat(40) }),

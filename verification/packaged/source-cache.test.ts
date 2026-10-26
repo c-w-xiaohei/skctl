@@ -86,7 +86,7 @@ test("packaged CLI processes share filtered objects and reinstall an exact revis
     );
     const state = JSON.parse(await readFile(join(stateRoot, "state.json"), "utf8"));
     const installed = state.installed[0];
-    const snapshot = join(stateRoot, "snapshots", installed.digest, "root");
+    const snapshot = join(stateRoot, "snapshots", installed.snapshotId, "root");
     expect(installed).toMatchObject({ source: "team", path: "", adoptedRevision: fixture.commit });
     const checkRequests = fixture.direct;
     const checked = JSON.parse(await command("update", "check", "team", "--json"));

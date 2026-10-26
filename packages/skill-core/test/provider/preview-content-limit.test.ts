@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withRepository } from "../../src/source/service/remote/cache";
-import { previewSource } from "../../src/source/service";
+import { previewFiles } from "../../src/source/service/preview";
 import { textLimit } from "../../src/content/text";
 import { repositoryFixture, serveRepository } from "./repository-fixture";
 
@@ -75,22 +75,17 @@ test("preview batches eligible content, refills after oversized files, and never
   process.env.SKCTL_SOURCE_CACHE_DIR = join(value.root, "cache");
   const api = serveRepository(value);
   try {
-    const result = await previewSource(
+    const result = await withRepository(
       {
-        binding: {
-          id: "remote",
-          kind: "github",
-          origin: "https://github.com/acme/skills",
-          ref: "main",
-          root: "",
-          selectors: [],
-          provenance: { level: "project" },
-        },
+        origin: "https://github.com/acme/skills",
+        kind: "github",
+        ref: "main",
         githubApiBaseUrl: api.server.url.toString(),
       },
-      "",
-      value.commit,
-      installed,
+      async (repository) => {
+        const reader = (await repository.revision({ commit: value.commit }))!;
+        return previewFiles(reader, reader.version.tree, "", installed, new Map());
+      },
     );
     expect(result.files.find((file) => file.path === "a-huge.txt")!.content).toEqual({
       kind: "unavailable",

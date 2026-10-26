@@ -6,6 +6,8 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { runProcess } from "../../src/runtime/process";
 import { repositoryFixture } from "../provider/repository-fixture";
+import { legacySnapshots } from "../snapshot-fixture";
+import { parseState } from "../../src/storage/transaction";
 
 type Outcome =
   | "available"
@@ -132,6 +134,7 @@ async function fixture(changed = true) {
   await api.installSkills(core, { source: "github", paths: ["other"], exactRevision: current });
   const state = JSON.parse(await readFile(stateFile, "utf8"));
   state.version = 2;
+  state.installed = await legacySnapshots(join(value.root, "state"), state.installed);
   for (const item of state.installed) delete item.treeIdentity;
   await writeFile(stateFile, JSON.stringify(state));
   // This scenario explicitly lacks shared old metadata. Installation content survives.
@@ -187,7 +190,7 @@ test("missing legacy comparison metadata fails check without content fallback; e
         });
         const updated = JSON.parse(await readFile(value.stateFile, "utf8"));
         expect(updated.installed.find((item: { path: string }) => item.path === "other")).toEqual(
-          JSON.parse(before).installed.find((item: { path: string }) => item.path === "other"),
+          parseState(Buffer.from(before)).installed.find((item) => item.path === "other"),
         );
         const chosen = updated.installed.find((item: { path: string }) => item.path === "chosen");
         expect(chosen).toMatchObject({
@@ -196,21 +199,23 @@ test("missing legacy comparison metadata fails check without content fallback; e
         });
         expect(
           await readFile(
-            join(value.root, "state", "snapshots", chosen.digest, "root", "resource.txt"),
+            join(value.root, "state", "snapshots", chosen.snapshotId, "root", "resource.txt"),
             "utf8",
           ),
         ).toBe("new resource\n");
         expect(value.requests).not.toContain(`/repos/acme/skills/commits/${value.old}`);
         expect(value.requests.filter((path) => path.includes("/blobs/"))).toHaveLength(2);
       } else {
-        await expect(
-          api.updateSkills(value.core, {
-            source: "github",
-            paths: ["chosen"],
-            exactRevision: value.current,
-          }),
-        ).rejects.toHaveProperty("code", "INVALID_ARGUMENT");
-        expect(await readFile(value.stateFile, "utf8")).toBe(before);
+        await api.updateSkills(value.core, {
+          source: "github",
+          paths: ["chosen"],
+          exactRevision: value.current,
+        });
+        const updated = JSON.parse(await readFile(value.stateFile, "utf8"));
+        expect(
+          updated.installed.find((item: { path: string }) => item.path === "chosen"),
+        ).toMatchObject({ adoptedRevision: value.current, treeIdentity: { objectFormat: "sha1" } });
+        expect(value.requests).not.toContain(`/repos/acme/skills/commits/${value.old}`);
       }
     } finally {
       await value.close();

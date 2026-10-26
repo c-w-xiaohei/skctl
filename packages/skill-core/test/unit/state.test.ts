@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resolveStateRoot, StateCoordinator } from "../../src/storage/state";
-import { digestDirectory } from "../../src/content/directory";
+import { snapshotId } from "../snapshot-fixture";
 import { withFileLock } from "../../src/storage/file-lock";
 import { processStatus, runProcess } from "../../src/runtime/process";
 import type { InstalledMaterialization } from "../../src/storage/schema";
@@ -90,7 +90,11 @@ test("state accepts only exact Local and Remote materialization facts", async ()
     await writeFile(state, JSON.stringify(valid));
     await expect(
       new StateCoordinator(root).withLock(async () => new StateCoordinator(root).read()),
-    ).resolves.toEqual(valid);
+    ).resolves.toMatchObject({
+      version: 4,
+      generation: 2,
+      installed: [{ kind: "local" }, { kind: "remote", snapshotId: "c".repeat(64) }],
+    });
     for (const mutation of [
       { ...valid, generation: 0.5 },
       { ...valid, extra: true },
@@ -130,13 +134,13 @@ test("state reads literal v1 bytes without rewriting and requires exact v2 ident
     await writeFile(state, legacy);
     const coordinator = new StateCoordinator(root);
     await expect(coordinator.withLock(() => coordinator.read())).resolves.toMatchObject({
-      version: 1,
-      installed: [legacyLocal],
+      version: 4,
+      installed: [{ kind: "local", identityEvidence: { status: "unavailable" } }],
     });
     expect(await readFile(state, "utf8")).toBe(legacy);
     await expect(
       coordinator.withLock(async () =>
-        coordinator.write({ installed: [legacyLocal], configs: {} }, 2),
+        coordinator.write({ installed: [legacyLocal] as never, configs: {} }, 2),
       ),
     ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
     expect(await readFile(state, "utf8")).toBe(legacy);
@@ -190,7 +194,7 @@ test("state publishes a derived v1 migration atomically with one generation adva
           configs: current.configs,
           installed: [
             {
-              ...legacyLocal,
+              ...current.installed[0]!,
               identityEvidence: {
                 status: "known",
                 canonicalOrigin: "/skills",
@@ -203,7 +207,7 @@ test("state publishes a derived v1 migration atomically with one generation adva
       );
     });
     expect(JSON.parse(await readFile(state, "utf8"))).toMatchObject({
-      version: 3,
+      version: 4,
       generation: 8,
       installed: [
         {
@@ -252,7 +256,7 @@ test("v3 persists exact Root tree evidence and retains literal legacy records wi
       });
       await writeFile(file, bytes);
       await expect(coordinator.withLock(() => coordinator.read())).resolves.toMatchObject({
-        version,
+        version: 4,
         generation: 7,
       });
       expect(await readFile(file, "utf8")).toBe(bytes);
@@ -278,12 +282,12 @@ test("v3 persists exact Root tree evidence and retains literal legacy records wi
     ];
     await writeFile(file, JSON.stringify({ version: 3, generation: 7, installed, configs: {} }));
     await expect(coordinator.withLock(() => coordinator.read())).resolves.toMatchObject({
-      installed,
+      installed: installed.map(({ digest, ...item }) => ({ ...item, snapshotId: digest })),
     });
     await coordinator.withLock(async () => {
       const current = await coordinator.read();
       const next = await coordinator.write({ installed: current.installed, configs: {} }, 7);
-      expect(next).toMatchObject({ version: 3, generation: 8, installed });
+      expect(next).toMatchObject({ version: 4, generation: 8, installed: current.installed });
     });
     // Absent tree evidence is retained legacy state, not invented on a mutation.
     await writeFile(
@@ -298,14 +302,14 @@ test("v3 persists exact Root tree evidence and retains literal legacy records wi
         configs: {},
       }),
     );
-    await expect(coordinator.read()).resolves.toMatchObject({ version: 3 });
+    await expect(coordinator.read()).resolves.toMatchObject({ version: 4 });
     const unresolved = { ...remote, adoptedRevision: undefined, revisionStatus: "unresolved" };
     await writeFile(
       file,
       JSON.stringify({ version: 2, generation: 0, installed: [unresolved], configs: {} }),
     );
     await expect(coordinator.read()).resolves.toMatchObject({
-      version: 2,
+      version: 4,
       installed: [{ revisionStatus: "unresolved" }],
     });
     await writeFile(
@@ -418,16 +422,29 @@ test("PID-only ownership is unprovable while normal use records are removed", as
     await mkdir(source);
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     const coordinator = new StateCoordinator(root);
-    const digest = await digestDirectory(source);
+    const digest = snapshotId();
     await coordinator.publishSnapshot(digest, source);
     let record: Record<string, unknown> | undefined;
-    await coordinator.withRemoteUse(digest, async () => {
-      const [name] = await Array.fromAsync(
-        new Bun.Glob("*.json").scan({ cwd: join(root, "uses") }),
-      );
-      record = JSON.parse(await Bun.file(join(root, "uses", name!)).text());
-    });
-    expect(record).toMatchObject({ digest, pid: process.pid });
+    await coordinator.withInstalledRoot(
+      async () => ({
+        source: "fixture",
+        path: "",
+        name: "fixture",
+        description: "Fixture",
+        kind: "remote",
+        snapshotId: digest,
+        adoptedRevision: "a".repeat(40),
+        bindingDigest: "b".repeat(64),
+        identityEvidence: { status: "unavailable" },
+      }),
+      async () => {
+        const [name] = await Array.fromAsync(
+          new Bun.Glob("*.json").scan({ cwd: join(root, "uses") }),
+        );
+        record = JSON.parse(await Bun.file(join(root, "uses", name!)).text());
+      },
+    );
+    expect(record).toMatchObject({ snapshotId: digest, pid: process.pid });
     expect(await processStatus({ pid: process.pid })).toBe("unknown");
     expect(await readdir(join(root, "uses"))).toEqual([]);
   } finally {

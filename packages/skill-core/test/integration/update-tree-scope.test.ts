@@ -7,10 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as service from "../../src/source/service";
-import * as directory from "../../src/content/directory";
 import type { PrivateState } from "../../src/storage/schema";
 import { GitObjects } from "../../src/source/service/remote/objects";
 import { createExecutableFixture } from "../executable-fixture";
+import { legacySnapshots } from "../snapshot-fixture";
 afterEach(() => mock.restore());
 const sourceRoot = "library/skills";
 const reviewPath = "group/review";
@@ -241,11 +241,14 @@ for (const legacy of [false, true]) {
           JSON.stringify({
             ...state,
             version: 2,
-            installed: state.installed.map((item) => {
-              if (item.kind !== "remote") return item;
-              const { treeIdentity: _treeIdentity, ...legacy } = item;
-              return legacy;
-            }),
+            installed: await legacySnapshots(
+              join(value.stateFile, "../"),
+              state.installed.map((item) => {
+                if (item.kind !== "remote") return item;
+                const { treeIdentity: _treeIdentity, ...legacy } = item;
+                return legacy;
+              }),
+            ),
           }),
         );
       }
@@ -445,7 +448,14 @@ test("W3 unresolved and unavailable old revisions fail without content fallback"
           ? { ...facts, adoptedRevision: "a".repeat(40) }
           : { ...facts, revisionStatus: "unresolved" };
       });
-      await writeFile(value.stateFile, JSON.stringify({ ...state, version: 2, installed }));
+      await writeFile(
+        value.stateFile,
+        JSON.stringify({
+          ...state,
+          version: 2,
+          installed: await legacySnapshots(join(value.stateFile, "../"), installed),
+        }),
+      );
       const before = await readFile(value.stateFile, "utf8");
       await value.clearTrace();
       await expect(api.checkUpdate(value.core, { source: "remote" })).rejects.toMatchObject({
@@ -657,11 +667,14 @@ test("W3 legacy missing-tree recovery uses retrievable old metadata without rewr
     const legacy = {
       ...state,
       version: 2,
-      installed: state.installed.map((item) => {
-        if (item.kind === "local") return item;
-        const { treeIdentity: _treeIdentity, ...retained } = item;
-        return retained;
-      }),
+      installed: await legacySnapshots(
+        join(value.stateFile, "../"),
+        state.installed.map((item) => {
+          if (item.kind === "local") return item;
+          const { treeIdentity: _treeIdentity, ...retained } = item;
+          return retained;
+        }),
+      ),
     };
     await writeFile(value.stateFile, `${JSON.stringify(legacy, null, 2)}\n`);
     const before = await readFile(value.stateFile, "utf8");
@@ -838,7 +851,14 @@ test("W3 legacy old-revision transport failure fails instead of authorizing dige
       const { treeIdentity: _treeIdentity, ...retained } = item;
       return { ...retained, adoptedRevision: "a".repeat(40) };
     });
-    await writeFile(value.stateFile, JSON.stringify({ ...state, version: 2, installed }));
+    await writeFile(
+      value.stateFile,
+      JSON.stringify({
+        ...state,
+        version: 2,
+        installed: await legacySnapshots(join(value.stateFile, "../"), installed),
+      }),
+    );
     const before = await readFile(value.stateFile, "utf8");
     // Transparent shim delegates all real work except the actual unavailable-old
     // fetch, where it reports a transport failure instead of a missing object.
@@ -938,7 +958,10 @@ test("W3 genuine tree change with normalized equal Snapshot digest still advance
       exactRevision: revision,
     });
     const after = (await value.state()).installed[0]!;
-    expect(after.digest).toBe(before.digest);
+    expect(after).not.toHaveProperty("digest");
+    if (after.kind !== "remote" || before.kind !== "remote")
+      throw new Error("Expected remote snapshots");
+    expect(after.snapshotId).not.toBe(before.snapshotId);
     expect(after).toMatchObject({
       adoptedRevision: revision,
       treeIdentity: {
@@ -1069,80 +1092,38 @@ test("W3 M1 Local prefix validation keeps marker shadowing inside the Source bou
     await value.cleanup();
   }
 });
-for (const changed of ["resource", "marker"] as const) {
-  test(`W3 M2 multi-Root Local reinstall rejects ${changed} drift after the first captured digest`, async () => {
-    const value = await localReviewFixture();
-    const originalDigest = directory.digestDirectory;
-    const one = join(value.boundary, "one");
-    const two = join(value.boundary, "two");
-    let mutations = 0;
-    const digestSpy = spyOn(directory, "digestDirectory").mockImplementation(async function (root) {
-      // Delegate every hash to the actual coordinator. Observing the second
-      // selected Root proves the first Root's metadata AND full digest have
-      // already been captured; no sleep or synthetic digest controls the race.
-      const digest = await originalDigest(root);
-      if (root === two && mutations === 0) {
-        mutations++;
-        await writeFile(
-          join(one, changed === "resource" ? "resource.txt" : "SKILL.md"),
-          changed === "resource"
-            ? "Changed between selected Roots\n"
-            : "---\nname: renamed\ndescription: Changed between selected Roots\n---\n",
-        );
-      }
-      return digest;
-    });
-    try {
-      const before = await readFile(value.stateFile, "utf8");
-      const outcome = await api
-        .installSkills(value.core, { source: "local-review", paths: ["one", "two"] })
-        .then(
-          () => ({ code: "UNEXPECTED_SUCCESS" }),
-          (error) => error,
-        );
-      expect(mutations).toBe(1);
-      expect(outcome).toMatchObject({ code: "TRANSACTION_CONFLICT" });
-      expect(await readFile(value.stateFile, "utf8")).toBe(before);
-      expect(JSON.parse(await readFile(value.stateFile, "utf8")).installed).toEqual(
-        JSON.parse(before).installed,
-      );
-    } finally {
-      digestSpy.mockRestore();
-      await value.cleanup();
-    }
-  });
-}
-test("W3 M2 Local metadata read and its full digest must describe the same marker bytes", async () => {
+test("Local resources are live and do not participate in metadata update baselines", async () => {
   const value = await localReviewFixture();
-  const originalDigest = directory.digestDirectory;
-  const one = join(value.boundary, "one");
-  let mutations = 0;
-  let hashes = 0;
-  const digestSpy = spyOn(directory, "digestDirectory").mockImplementation(async function (root) {
-    // localRoot has already parsed original SKILL.md here. Its actual digest
-    // now sees changed marker bytes, exercising the metadata/hash window itself.
-    if (root === one && ++hashes === 2) {
-      mutations++;
-      await writeFile(
-        join(one, "SKILL.md"),
-        "---\nname: renamed\ndescription: Changed during marker hash\n---\n",
-      );
-    }
-    return originalDigest(root);
-  });
   try {
-    const before = await readFile(value.stateFile, "utf8");
-    const outcome = await api
-      .installSkills(value.core, { source: "local-review", paths: ["one"] })
-      .then(
-        () => ({ code: "UNEXPECTED_SUCCESS" }),
-        (error) => error,
-      );
-    expect(mutations).toBe(1);
-    expect(outcome).toMatchObject({ code: "TRANSACTION_CONFLICT" });
-    expect(await readFile(value.stateFile, "utf8")).toBe(before);
+    const baseline = (await api.getUpdateBaseline(value.core, { source: "local-review" })).value;
+    await writeFile(join(value.boundary, "one/resource.txt"), "Live resource change");
+    expect((await api.getUpdateBaseline(value.core, { source: "local-review" })).value).toBe(
+      baseline,
+    );
+    expect(
+      (await api.checkUpdate(value.core, { source: "local-review" })).value.unchanged,
+    ).toHaveLength(1);
+    expect(
+      await api.readInstalledResource(value.core, {
+        address: { source: "local-review", path: "one" },
+        path: "resource.txt",
+      }),
+    ).toMatchObject({ kind: "text", text: "Live resource change" });
+    await writeFile(
+      join(value.boundary, "one/SKILL.md"),
+      "---\nname: one\ndescription: New metadata\n---\n",
+    );
+    expect(
+      (await api.checkUpdate(value.core, { source: "local-review" })).value.changed,
+    ).toHaveLength(1);
+    await expect(
+      api.updateSkills(value.core, {
+        source: "local-review",
+        paths: ["one"],
+        expectedBaseline: baseline,
+      }),
+    ).rejects.toHaveProperty("code", "TRANSACTION_CONFLICT");
   } finally {
-    digestSpy.mockRestore();
     await value.cleanup();
   }
 });

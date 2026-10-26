@@ -350,7 +350,7 @@ export async function removeConfig(
     parseDocument(next, owner.file, owner.level);
     const installed = await migrateLegacyInstalled(options, coordinator, captured.state);
     const state = {
-      version: 3,
+      version: 4,
       generation: captured.state.generation + 1,
       installed,
       configs: Object.fromEntries(

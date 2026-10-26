@@ -62,7 +62,6 @@ test("business discovery, comparison and preparation share exact versions withou
     });
     let installed!: {
       path: string;
-      digest: string;
       tree: { objectFormat: "sha1"; objectId: string };
       revision: string;
     };
@@ -74,15 +73,10 @@ test("business discovery, comparison and preparation share exact versions withou
       expect(await readFile(join(directory, "resource.txt"), "utf8")).toBe("original\n");
       // A nested cache operation proves the publication callback runs after releasing its lock.
       expect(
-        (
-          await compareSource(context, [
-            { path: skill.path, digest: skill.digest, tree: skill.tree },
-          ])
-        )?.unchanged,
+        (await compareSource(context, [{ path: skill.path, tree: skill.tree }]))?.unchanged,
       ).toEqual(["guide"]);
       installed = {
         path: skill.path,
-        digest: skill.digest,
         tree: skill.tree!,
         revision: skill.revision!,
       };

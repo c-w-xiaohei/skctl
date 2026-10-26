@@ -1,18 +1,19 @@
 import * as api from "../../src/index";
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateCoordinator } from "../../src/storage/state";
-import { digestDirectory } from "../../src/content/directory";
+import { snapshotId } from "../snapshot-fixture";
 import { bindingDigest, canonicalRemoteOrigin } from "../../src/source/identity";
+import { setContentHookForTest } from "../../src/content/operations";
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "skctl-use-"));
   const source = join(root, "source");
   const state = new StateCoordinator(join(root, "state"));
   await mkdir(source);
   await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\nbody\n");
-  const digest = await digestDirectory(source);
+  const digest = snapshotId();
   await state.publishSnapshot(digest, source);
   return { root, state, digest };
 }
@@ -20,11 +21,24 @@ test("USE-001/USE-002 creates a synced use only for a validated immutable snapsh
   const value = await fixture();
   try {
     let record: Record<string, unknown> | undefined;
-    await value.state.withRemoteUse(value.digest, async () => {
-      const names = await readdir(join(value.state.root, "uses"));
-      record = JSON.parse(await Bun.file(join(value.state.root, "uses", names[0]!)).text());
-    });
-    expect(record).toMatchObject({ digest: value.digest, pid: process.pid });
+    await value.state.withInstalledRoot(
+      async () => ({
+        source: "fixture",
+        path: "",
+        name: "fixture",
+        description: "Fixture",
+        kind: "remote",
+        snapshotId: value.digest,
+        adoptedRevision: "a".repeat(40),
+        bindingDigest: "b".repeat(64),
+        identityEvidence: { status: "unavailable" },
+      }),
+      async () => {
+        const names = await readdir(join(value.state.root, "uses"));
+        record = JSON.parse(await Bun.file(join(value.state.root, "uses", names[0]!)).text());
+      },
+    );
+    expect(record).toMatchObject({ snapshotId: value.digest, pid: process.pid });
     expect(typeof record?.startToken).toBe("string");
     expect(typeof record?.nonce).toBe("string");
     expect(await readdir(join(value.state.root, "uses"))).toEqual([]);
@@ -32,7 +46,7 @@ test("USE-001/USE-002 creates a synced use only for a validated immutable snapsh
     await rm(value.root, { recursive: true, force: true });
   }
 });
-test("USE-001 public Snapshot publication requires the canonical digest and rejects collisions without changing state", async () => {
+test("Snapshot allocation IDs reject collisions without overwriting content", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-digest-"));
   const state = join(root, "state");
   const source = join(root, "source");
@@ -42,9 +56,9 @@ test("USE-001 public Snapshot publication requires the canonical digest and reje
     await writeFile(join(root, "skctl.jsonc"), "{}\n");
     process.env.SKCTL_STATE_DIR = state;
     const coordinator = new StateCoordinator(state);
-    const digest = await digestDirectory(source);
-    await expect(coordinator.publishSnapshot("0".repeat(64), source)).rejects.toMatchObject({
-      code: "PROVIDER_INTEGRITY_FAILED",
+    const digest = snapshotId();
+    await expect(coordinator.publishSnapshot("../escape", source)).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
     });
     expect(
       await Bun.file(join(state, "snapshots", "0".repeat(64), "root", "SKILL.md")).exists(),
@@ -53,12 +67,12 @@ test("USE-001 public Snapshot publication requires the canonical digest and reje
     const original = await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).text();
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\ntwo\n");
     await expect(coordinator.publishSnapshot(digest, source)).rejects.toMatchObject({
-      code: "PROVIDER_INTEGRITY_FAILED",
+      code: "DESTINATION_EXISTS",
     });
     expect(await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).text()).toBe(
       original,
     );
-    expect(await digestDirectory(join(state, "snapshots", digest, "root"))).toBe(digest);
+    expect(await coordinator.snapshotRoot(digest)).toContain(digest);
   } finally {
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
@@ -88,7 +102,7 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
       }),
     );
     process.env.SKCTL_STATE_DIR = state;
-    const digest = await digestDirectory(source);
+    const digest = snapshotId();
     await new StateCoordinator(state).publishSnapshot(digest, source);
     await new StateCoordinator(state).write(
       {
@@ -100,7 +114,7 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
             name: "remote",
             description: "Remote",
             kind: "remote",
-            digest,
+            snapshotId: digest,
             bindingDigest: bindingDigest({
               kind: "git",
               origin: canonicalRemoteOrigin("https://example.test/repo"),
@@ -120,30 +134,22 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
     );
     const entry = join(import.meta.dir, "../../src/index.ts");
     const gcScript = `import { gc } from ${JSON.stringify(entry)}; await gc();`;
-    const uses = StateCoordinator.prototype.withRemoteUse;
-    const read = spyOn(StateCoordinator.prototype, "withRemoteUse").mockImplementation(function <T>(
-      this: StateCoordinator,
-      digest: string,
-      operation: () => Promise<T>,
-    ): Promise<T> {
-      return uses.bind(this)<T>(digest, async () => {
-        expect(await readdir(join(state, "uses"))).toHaveLength(1);
-        // Remove the state reference during the read: only its live use protects it.
-        const coordinator = new StateCoordinator(state),
-          current = await coordinator.read();
-        await coordinator.write({ configs: {}, installed: [] }, current.generation);
-        const gc = Bun.spawn({
-          cmd: [process.execPath, "-e", gcScript],
-          env: { ...process.env, SKCTL_STATE_DIR: state },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        expect(await gc.exited).toBe(0);
-        expect(await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).exists()).toBe(
-          true,
-        );
-        return operation();
+    setContentHookForTest(async () => {
+      expect(await readdir(join(state, "uses"))).toHaveLength(1);
+      // Remove the state reference during the read: only its live use protects it.
+      const coordinator = new StateCoordinator(state),
+        current = await coordinator.read();
+      await coordinator.write({ configs: {}, installed: [] }, current.generation);
+      const gc = Bun.spawn({
+        cmd: [process.execPath, "-e", gcScript],
+        env: { ...process.env, SKCTL_STATE_DIR: state },
+        stdout: "pipe",
+        stderr: "pipe",
       });
+      expect(await gc.exited).toBe(0);
+      expect(await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).exists()).toBe(
+        true,
+      );
     });
     try {
       expect(
@@ -155,7 +161,7 @@ test("USE-001/GC-001 public content read holds a use barrier against public GC",
         ).text,
       ).toContain("body");
     } finally {
-      read.mockRestore();
+      setContentHookForTest();
     }
     expect(await Bun.file(join(state, "snapshots", digest, "root", "SKILL.md")).exists()).toBe(
       true,
@@ -205,7 +211,7 @@ test("GC-003 public collection crash retains a recorded tombstone until a later 
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     await writeFile(join(root, "skctl.jsonc"), "{}\n");
     process.env.SKCTL_STATE_DIR = state;
-    const digest = await digestDirectory(source);
+    const digest = snapshotId();
     await new StateCoordinator(state).publishSnapshot(digest, source);
     delete process.env.SKCTL_STATE_DIR;
     const entry = join(import.meta.dir, "../../src/index.ts");
@@ -242,7 +248,7 @@ test("GC-001..003 retains malformed uses conservatively and collects only after 
   try {
     await mkdir(deadSource);
     await writeFile(join(deadSource, "SKILL.md"), "---\nname: dead\ndescription: Dead\n---\n");
-    const dead = await digestDirectory(deadSource);
+    const dead = snapshotId();
     await value.state.publishSnapshot(dead, deadSource);
     expect(
       await Bun.file(join(value.state.root, "snapshots", dead, "root", "SKILL.md")).exists(),

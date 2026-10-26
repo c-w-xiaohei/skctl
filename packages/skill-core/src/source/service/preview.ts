@@ -1,10 +1,7 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SkctlError } from "../../shared";
 import { decodeStrictText, SourceContentLimitError, textLimit } from "../../content/text";
-import { parseResourcePath } from "../../content/path";
 import type { SourceFileChange } from "../types";
 import type { RepositoryReader } from "./remote/types";
 import { skillTree, listFiles } from "./skills";
@@ -16,40 +13,6 @@ interface File {
 }
 type FileChange = { -readonly [K in keyof SourceFileChange]: SourceFileChange[K] };
 
-async function installedFiles(root: string, signal?: AbortSignal) {
-  const files = new Map<string, File>();
-  const walk = async (directory: string, prefix: string, depth: number) => {
-    if (depth > 32) throw new SkctlError("TEXT_TOO_LARGE", "Preview directory depth exceeded");
-    for (const name of await readdir(directory)) {
-      if (signal?.aborted) throw new SkctlError("CANCELLED", "Preview cancelled");
-      const path = prefix ? `${prefix}/${name}` : name,
-        file = join(directory, name);
-      parseResourcePath(path);
-      const stat = await lstat(file);
-      if (stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory()))
-        throw new SkctlError(
-          "PROVIDER_INTEGRITY_FAILED",
-          "Installed preview contains an unsafe entry",
-        );
-      if (stat.isDirectory()) {
-        await walk(file, path, depth + 1);
-        continue;
-      }
-      if (files.size >= 10_000)
-        throw new SkctlError("TEXT_TOO_LARGE", "Preview file count exceeded");
-      const hash = createHash("sha1").update(`blob ${stat.size}\0`);
-      for await (const bytes of createReadStream(file)) hash.update(bytes);
-      files.set(path, {
-        oid: hash.digest("hex"),
-        executable: Boolean(stat.mode & 0o111),
-        bytes: stat.size,
-      });
-    }
-  };
-  await walk(root, "", 0);
-  return files;
-}
-
 const unavailable = (
   reason: "binary" | "too-large" | "preview-limit",
 ): SourceFileChange["content"] => ({ kind: "unavailable", reason });
@@ -60,11 +23,11 @@ export async function previewFiles(
   boundary: string | undefined,
   path: string,
   installedRoot: string,
+  before: ReadonlyMap<string, File>,
   signal?: AbortSignal,
 ) {
   const tree = await skillTree(reader, boundary, path);
-  const before = await installedFiles(installedRoot, signal),
-    after = new Map<string, File>();
+  const after = new Map<string, File>();
   if (tree) {
     for (const file of await listFiles(reader, tree)) {
       if (!["100644", "100755"].includes(file.mode))

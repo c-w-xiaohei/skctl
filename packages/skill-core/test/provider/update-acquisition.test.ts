@@ -58,7 +58,6 @@ test.each(["git", "github"] as const)(
         },
         paths.map((path) => ({
           path,
-          digest: "a".repeat(64),
           tree: {
             objectFormat: "sha1",
             objectId: value.entries.find((entry) => entry.path === path)!.sha,
@@ -97,7 +96,6 @@ test("metadata transport failure rejects rather than inventing removed paths", a
       [
         {
           path: "review",
-          digest: "a".repeat(64),
           tree: { objectFormat: "sha1", objectId: "b".repeat(40) },
         },
       ],
@@ -152,7 +150,6 @@ test.each([
           [
             {
               path: "",
-              digest: "a".repeat(64),
               tree: { objectFormat: "sha1", objectId: value.tree },
             },
           ],

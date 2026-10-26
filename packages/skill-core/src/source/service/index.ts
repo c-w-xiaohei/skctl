@@ -4,7 +4,7 @@ import type { SourceBindingView, SourceNetwork } from "../types";
 import { withRepository } from "./remote/cache";
 import type { RemoteRequest, Revision } from "./remote/types";
 import { sourceCheckBudgetMs, sourceContentBudgetMs } from "./remote/network";
-import { candidateMarkers, skillTree, sourceTree, validateSkillPaths } from "./skills";
+import { candidateMarkers, skillTree, sourceTree, validateSkillPaths, listFiles } from "./skills";
 import { discoverLocal, inspectLocal } from "./local";
 import { skillMetadata } from "./skills";
 import { prepareRemote, type PreparedSkill } from "./prepare";
@@ -16,6 +16,7 @@ import { decodeStrictText } from "../../content/text";
 import { localBoundary } from "./local";
 import * as v from "valibot";
 import { gitTreeIdentitySchema } from "../schema";
+import { assertPath } from "../../storage/files";
 
 export interface SourceContext extends SourceNetwork {
   readonly binding: SourceBindingView;
@@ -25,7 +26,8 @@ export interface SourceContext extends SourceNetwork {
 }
 export const installedEvidenceSchema = v.object({
   path: v.string(),
-  digest: v.string(),
+  name: v.optional(v.string()),
+  description: v.optional(v.string()),
   tree: v.optional(gitTreeIdentitySchema),
   revision: v.optional(v.string()),
 });
@@ -103,7 +105,10 @@ export async function compareSource(
       if (current.status !== "present") removed.push(item.path);
       else {
         metadata.set(item.path, { name: current.name, description: current.description });
-        (current.digest === item.digest ? unchanged : changed).push(item.path);
+        (current.name === item.name && current.description === item.description
+          ? unchanged
+          : changed
+        ).push(item.path);
       }
     }
     return { changed, removed, unchanged, metadata, version: undefined as Revision | undefined };
@@ -163,7 +168,6 @@ export async function withPreparedSkills<T>(
         kind: "local",
         path,
         directory: found.root,
-        digest: found.digest,
         name: found.name,
         description: found.description,
       });
@@ -216,13 +220,34 @@ export async function previewSource(
   path: string,
   revision: string,
   installedRoot: string,
+  installedRevision: string,
 ) {
   cancelled(context);
   validateSkillPaths([path]);
   return withRepository(remote(context, sourceCheckBudgetMs), async (repository) => {
     const version = (await repository.revision({ commit: revision }))!;
     const boundary = await sourceTree(version, context.binding.root);
-    return previewFiles(version, boundary, path, installedRoot, context.signal);
+    const old = (await repository.revision({ commit: installedRevision }))!;
+    const oldTree = await skillTree(old, await sourceTree(old, context.binding.root), path);
+    if (!oldTree)
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Installed version Root is unavailable");
+    const before = new Map<string, { oid: string; executable: boolean; bytes: number }>();
+    for (const entry of await listFiles(old, oldTree)) {
+      if (context.signal?.aborted) throw new SkctlError("CANCELLED", "Preview cancelled");
+      if (!["100644", "100755"].includes(entry.mode))
+        throw new SkctlError(
+          "PROVIDER_INTEGRITY_FAILED",
+          "Installed version contains an unsafe entry",
+        );
+      const file = join(installedRoot, entry.path);
+      await assertPath(file, "file");
+      before.set(entry.path, {
+        oid: entry.oid,
+        executable: entry.mode === "100755",
+        bytes: Number((await lstat(file)).size),
+      });
+    }
+    return previewFiles(version, boundary, path, installedRoot, before, context.signal);
   });
 }
 

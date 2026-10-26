@@ -274,7 +274,7 @@ test("TX-003 a legacy migration combined with uninstall rolls forward once and p
     await rm(value.root, { recursive: true, force: true });
   }
 });
-test("TX-003 a crashed legacy migration and uninstall recovers as one v3 generation advance", async () => {
+test("TX-003 a crashed legacy migration and uninstall recovers as one v4 generation advance", async () => {
   const value = await installFixture();
   try {
     const origin = join(value.project, "skills");
@@ -305,7 +305,7 @@ test("TX-003 a crashed legacy migration and uninstall recovers as one v3 generat
     process.env.SKCTL_STATE_DIR = value.state;
     await api.getWorkspace({ cwd: value.project, userConfigPath: value.global });
     expect(JSON.parse(await readFile(join(value.state, "state.json"), "utf8"))).toEqual({
-      version: 3,
+      version: 4,
       generation: 5,
       installed: [],
       configs: {},

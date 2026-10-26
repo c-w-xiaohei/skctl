@@ -21,7 +21,6 @@ import { decodeStrictText, parseSkillFrontmatter, parseSkillMetadata, textLimit 
 import { parseNameSegment } from "../collection/names";
 import { parseResourcePath } from "./path";
 import { StateCoordinator } from "../storage/state";
-import { readWorkspace } from "../workspace/capture";
 import { resolveInstalledSelector } from "../collection/resolve";
 
 let contentHook: ((name: string) => void | Promise<void>) | undefined;
@@ -35,35 +34,37 @@ const resourceLimit = 10_000;
 const resourceDepthLimit = 32;
 const resourceWorkLimit = textLimit;
 
-async function target(factory: CoreOptions, selector: string) {
+async function withTarget<T>(
+  factory: CoreOptions,
+  selector: string,
+  operation: (found: {
+    readonly root: string;
+    readonly provenance: ReadResourceResult["provenance"];
+  }) => Promise<T>,
+) {
   const coordinator = new StateCoordinator();
-  return coordinator.withLock(async () => {
-    const { item } = await resolveInstalledSelector(factory, selector, coordinator);
-    const root = item.kind === "remote" ? await coordinator.verifySnapshot(item.digest) : item.root;
-    const stat = await lstat(root).catch(() => undefined);
-    if (
-      !stat?.isDirectory() ||
-      stat.isSymbolicLink() ||
-      !(await Bun.file(join(root, "SKILL.md")).exists())
-    )
-      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Installed snapshot is unavailable");
-    const workspace = await readWorkspace(factory);
-    const source =
-      workspace.value.effective.status === "complete"
-        ? workspace.value.effective.sources.find((candidate) => candidate.id === item.source)
-        : undefined;
-    return {
-      item,
-      root,
-      coordinator,
-      provenance: {
-        source: item.source,
-        origin: item.kind === "remote" ? ("git" as const) : ("local" as const),
-        ...(source ? { declaration: source.provenance } : {}),
-        stability: item.kind === "remote" ? ("immutable" as const) : ("mutable-local" as const),
-      },
-    };
-  });
+  let declaration: ReadResourceResult["provenance"]["declaration"];
+  return coordinator.withInstalledRoot(
+    async () => {
+      const found = await resolveInstalledSelector(factory, selector, coordinator);
+      declaration = found.declaration;
+      return found.item;
+    },
+    async ({ item, root }) => {
+      const marker = await lstat(join(root, "SKILL.md")).catch(() => undefined);
+      if (!marker?.isFile() || marker.isSymbolicLink())
+        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Installed Skill marker is unavailable");
+      return operation({
+        root,
+        provenance: {
+          source: item.source,
+          origin: item.kind === "remote" ? ("git" as const) : ("local" as const),
+          declaration,
+          stability: item.kind === "remote" ? ("immutable" as const) : ("mutable-local" as const),
+        },
+      });
+    },
+  );
 }
 function cancelled(options?: OperationOptions) {
   if (options?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
@@ -73,6 +74,12 @@ async function safeFile(root: string, path: string) {
   if (!stat?.isFile() || stat.isSymbolicLink())
     throw new SkctlError("RESOURCE_NOT_FOUND", "Resource not found");
   return candidate;
+}
+async function readText(root: string, path: string) {
+  const file = await safeFile(root, path);
+  if ((await lstat(file)).size > textLimit)
+    throw new SkctlError("TEXT_TOO_LARGE", "Text exceeds limit");
+  return decodeStrictText(await readFile(file));
 }
 
 async function safeEntry(root: string, path: string) {
@@ -152,14 +159,6 @@ async function safeTree(root: string): Promise<void> {
       throw new SkctlError("UNSUPPORTED_ENTRY", "Skill contains an unsafe entry");
     if (stat.isDirectory()) await safeTree(path);
   }
-}
-async function withContentUse<T>(
-  found: Awaited<ReturnType<typeof target>>,
-  operation: () => Promise<T>,
-): Promise<T> {
-  return found.item.kind === "remote"
-    ? found.coordinator.withRemoteUse(found.item.digest, operation)
-    : operation();
 }
 export async function loadInstalledSkill(
   environment: CoreOptions,
@@ -286,43 +285,42 @@ export async function loadSkill(
   factory: CoreOptions,
   request: LoadSkillRequest,
 ): Promise<LoadedSkill> {
-  const found = await target(factory, request.selector);
-  const text = await withContentUse(found, async () =>
-    decodeStrictText(await readFile(await safeFile(found.root, "SKILL.md"))),
-  );
-  return {
-    selector: request.selector,
-    ...parseSkillMetadata(text),
-    path: "SKILL.md" as const,
-    text,
-    provenance: found.provenance,
-  };
+  return withTarget(factory, request.selector, async (found) => {
+    const text = await readText(found.root, "SKILL.md");
+    return {
+      selector: request.selector,
+      ...parseSkillMetadata(text),
+      path: "SKILL.md" as const,
+      text,
+      provenance: found.provenance,
+    };
+  });
 }
 
 export async function readResource(
   factory: CoreOptions,
   request: ReadResourceRequest,
 ): Promise<ReadResourceResult> {
-  const found = await target(factory, request.selector);
-  const text = await withContentUse(found, async () =>
-    decodeStrictText(await readFile(await safeFile(found.root, request.path))),
-  );
-  return {
-    selector: request.selector,
-    path: request.path,
-    text,
-    provenance: found.provenance,
-  };
+  return withTarget(factory, request.selector, async (found) => {
+    await contentSignal("reader-before-read");
+    return {
+      selector: request.selector,
+      path: request.path,
+      text: await readText(found.root, request.path),
+      provenance: found.provenance,
+    };
+  });
 }
 
 export async function downloadResource(
   factory: CoreOptions,
   request: DownloadResourceRequest,
 ): Promise<DownloadResourceResult> {
-  const found = await target(factory, request.selector);
-  const bytes = await withContentUse(found, async () =>
-    readFile(await safeFile(found.root, request.path)),
-  );
+  const found = await withTarget(factory, request.selector, async (found) => ({
+    ...found,
+    bytes: await readFile(await safeFile(found.root, request.path)),
+  }));
+  const bytes = found.bytes;
   const output = resolve(request.output);
   const parent = resolve(output, "..");
   const parentStat = await lstat(parent).catch(() => undefined);
@@ -362,9 +360,8 @@ export async function runSkill(
   options?: OperationOptions,
 ): Promise<RunSkillResult> {
   if (options?.signal?.aborted) throw new SkctlError("CANCELLED", "Operation cancelled");
-  const found = await target(factory, request.selector);
-  return found.coordinator.withRunRoot(async (runRoot) => {
-    const copy = async () => {
+  return new StateCoordinator().withRunRoot(async (runRoot) => {
+    await withTarget(factory, request.selector, async (found) => {
       await cp(found.root, runRoot, {
         recursive: true,
         dereference: false,
@@ -372,10 +369,7 @@ export async function runSkill(
       });
       await safeTree(runRoot);
       await safeFile(runRoot, "SKILL.md");
-    };
-    if (found.item.kind === "remote")
-      await found.coordinator.withRemoteUse(found.item.digest, copy);
-    else await copy();
+    });
     let child: ReturnType<typeof Bun.spawn>;
     try {
       child = Bun.spawn({

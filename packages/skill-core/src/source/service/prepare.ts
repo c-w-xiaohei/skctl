@@ -1,7 +1,6 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { SkctlError } from "../../shared";
-import { digestDirectory } from "../../content/directory";
 import { gitTreeIdentitySchema } from "../schema";
 import { skillMetadataSchema } from "../../content/domain.schema";
 import * as v from "valibot";
@@ -12,13 +11,13 @@ const content = {
   ...skillMetadataSchema.entries,
   path: v.string(),
   directory: v.string(),
-  digest: v.string(),
 };
 export const preparedSkillSchema = v.variant("kind", [
   v.object({ ...content, kind: v.literal("local") }),
   v.object({
     ...content,
     kind: v.literal("remote"),
+    snapshotId: v.string(),
     tree: gitTreeIdentitySchema,
     revision: v.string(),
   }),
@@ -74,7 +73,7 @@ export async function prepareRemote(
       kind: "remote",
       path: plan.path,
       directory: plan.directory,
-      digest: await digestDirectory(plan.directory),
+      snapshotId: crypto.randomUUID(),
       ...metadata,
       revision: reader.version.commit,
       tree: { objectFormat: "sha1", objectId: plan.tree },

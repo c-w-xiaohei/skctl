@@ -392,7 +392,7 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
     ]);
     const alpha = state.installed.find((item: { path: string }) => item.path === "alpha");
     expect(
-      await Bun.file(join(root, "state", "snapshots", alpha.digest, "root", "SKILL.md")).text(),
+      await Bun.file(join(root, "state", "snapshots", alpha.snapshotId, "root", "SKILL.md")).text(),
     ).toContain("description: Two");
     expect(alpha).toMatchObject({ name: "alpha", description: "Two" });
     await writeFile(
@@ -435,7 +435,7 @@ test("MGMT-008 reports installed metadata, applies the reviewed revision after r
     await api.gc();
     const remaining = await readdir(join(root, "state", "snapshots"));
     const referenced = JSON.parse(await Bun.file(join(root, "state", "state.json")).text())
-      .installed.map((item: { digest: string }) => item.digest)
+      .installed.map((item: { snapshotId: string }) => item.snapshotId)
       .sort();
     expect(remaining.sort()).toEqual(referenced);
   } finally {

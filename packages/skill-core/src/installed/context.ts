@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { digestDirectory } from "../content/directory";
 import { assertPath } from "../storage/files";
 import { SkctlError, type CoreOptions, type OperationOptions } from "../shared";
 import type { InternalSourceBinding } from "../source/identity";
@@ -33,7 +32,9 @@ async function localEvidence(root: string) {
     throw error;
   });
   try {
-    return { digest: await digestDirectory(root) };
+    const marker = join(root, "SKILL.md");
+    await assertPath(marker, "file");
+    return { marker: (await readFile(marker)).toString("utf8") };
   } catch (error) {
     if (!(error instanceof SkctlError) && (error as NodeJS.ErrnoException).code !== "ENOENT")
       throw error;
@@ -43,7 +44,7 @@ async function localEvidence(root: string) {
     });
     return {
       error: error instanceof SkctlError ? error.code : "missing",
-      marker: marker && new Bun.CryptoHasher("sha256").update(marker).digest("hex"),
+      marker: marker?.toString("utf8"),
     };
   }
 }
@@ -73,7 +74,7 @@ export async function captureInstalled(
     const baseline = new Bun.CryptoHasher("sha256")
       .update(
         JSON.stringify({
-          version: 5,
+          version: 6,
           environment: coordinator.root,
           source,
           binding: captured.binding.bindingDigest,
@@ -96,7 +97,6 @@ export function preparedMaterializations(
     path: skill.path,
     name: skill.name,
     description: skill.description,
-    digest: skill.digest,
     bindingDigest: context.binding.bindingDigest,
     identityEvidence: {
       status: "known",
@@ -107,6 +107,7 @@ export function preparedMaterializations(
       ? { kind: "local" as const, root: skill.directory }
       : {
           kind: "remote" as const,
+          snapshotId: skill.snapshotId,
           adoptedRevision: skill.revision,
           treeIdentity: skill.tree,
           name: context.installed.find((item) => item.path === skill.path)?.name ?? skill.name,

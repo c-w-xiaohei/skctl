@@ -761,7 +761,8 @@ export async function migrateLegacyInstalled(
   coordinator: StateCoordinator,
   state: PrivateState,
 ): Promise<readonly InstalledMaterialization[]> {
-  if (state.version !== 1) return state.installed;
+  if (state.installed.every((item) => item.identityEvidence.status !== "unavailable"))
+    return state.installed;
   let sources: ReadonlyMap<string, InternalSourceBinding> | undefined;
   try {
     const workspace = await readWorkspaceUnlocked(options, coordinator);
@@ -770,6 +771,7 @@ export async function migrateLegacyInstalled(
     // An invalid capture cannot prove any legacy owner, but must not contact a provider.
   }
   return state.installed.map((item) => {
+    if (item.identityEvidence.status === "known") return item;
     const owner = sources?.get(item.source);
     return {
       ...item,

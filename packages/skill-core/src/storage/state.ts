@@ -1,7 +1,6 @@
 import { cp, lstat, mkdtemp, open, readdir, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { digestDirectory } from "../content/directory";
 import { decodeStrictText } from "../content/text";
 import { processIdentity, processStatus } from "../runtime/process";
 import { SkctlError } from "../shared";
@@ -19,6 +18,7 @@ import { contentHash, parseState, Transactions } from "./transaction";
 import {
   materializationSchema,
   snapshotUseSchema,
+  snapshotIdSchema,
   tombstoneOwnerSchema,
   type InstalledMaterialization,
   type PrivateState,
@@ -39,8 +39,14 @@ const entries = async (path: string) => {
 async function syncContent(path: string) {
   for (const entry of await readdir(path, { withFileTypes: true })) {
     const child = join(path, entry.name);
-    if (entry.isDirectory()) await syncContent(child);
-    else if (entry.isFile()) {
+    const stat = await lstat(child);
+    if (entry.name === ".git" || stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile()))
+      throw new SkctlError(
+        "PROVIDER_INTEGRITY_FAILED",
+        "Prepared content contains an unsafe entry",
+      );
+    if (stat.isDirectory()) await syncContent(child);
+    else {
       const file = await open(child, "r");
       try {
         await file.sync();
@@ -105,7 +111,7 @@ export class StateCoordinator {
       if (current.generation !== expected)
         throw new SkctlError("TRANSACTION_CONFLICT", "State generation changed");
       const value = {
-        version: 3 as const,
+        version: 4 as const,
         generation: expected + 1,
         installed: [...next.installed],
         configs: next.configs,
@@ -119,14 +125,14 @@ export class StateCoordinator {
     });
   }
 
-  private contentPath(kind: "snapshots" | "configs", digest: string) {
-    if (!digestPattern.test(digest))
-      throw new SkctlError("INVALID_ARGUMENT", "Invalid content digest");
-    return join(this.root, kind, digest, kind === "snapshots" ? "root" : "config.jsonc");
+  private contentPath(kind: "snapshots" | "configs", id: string) {
+    if (!(kind === "snapshots" ? v.is(snapshotIdSchema, id) : digestPattern.test(id)))
+      throw new SkctlError("INVALID_ARGUMENT", "Invalid content identity");
+    return join(this.root, kind, id, kind === "snapshots" ? "root" : "config.jsonc");
   }
 
-  async verifySnapshot(digest: string) {
-    const path = this.contentPath("snapshots", digest);
+  async snapshotRoot(snapshotId: string) {
+    const path = this.contentPath("snapshots", snapshotId);
     await assertPath(path, "directory", true);
     if (
       !(await lstat(path).catch((error: NodeJS.ErrnoException) => {
@@ -135,21 +141,19 @@ export class StateCoordinator {
       }))
     )
       throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Installed content is missing");
-    if ((await digestDirectory(path)) !== digest)
-      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Installed content digest mismatch");
+    const marker = await lstat(join(path, "SKILL.md")).catch(() => undefined);
+    if (!marker?.isFile() || marker.isSymbolicLink())
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Installed Skill marker is unavailable");
     return path;
   }
 
-  async publishSnapshot(digest: string, source: string) {
+  async publishSnapshot(snapshotId: string, source: string) {
     return this.withLock(async () => {
-      const destination = this.contentPath("snapshots", digest);
+      const destination = this.contentPath("snapshots", snapshotId);
       await assertPath(destination, "directory", true);
-      if ((await digestDirectory(source)) !== digest)
-        throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Prepared content digest mismatch");
-      if (await lstat(destination).catch(() => undefined)) {
-        await this.verifySnapshot(digest);
-        return;
-      }
+      if (await lstat(destination).catch(() => undefined))
+        throw new SkctlError("DESTINATION_EXISTS", "Snapshot already exists");
+      await assertPath(source, "directory");
       await ensureDirectory(join(this.root, "staging"));
       const stage = await mkdtemp(join(this.root, "staging", "content-"));
       try {
@@ -160,15 +164,13 @@ export class StateCoordinator {
           verbatimSymlinks: true,
           errorOnExist: true,
         });
-        if ((await digestDirectory(copy)) !== digest)
-          throw new SkctlError(
-            "PROVIDER_INTEGRITY_FAILED",
-            "Prepared content changed before publication",
-          );
+        const marker = await lstat(join(copy, "SKILL.md"));
+        if (!marker.isFile() || marker.isSymbolicLink())
+          throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Prepared Skill marker is unsafe");
         await syncContent(copy);
-        await ensureDirectory(join(this.root, "snapshots", digest));
+        await ensureDirectory(join(this.root, "snapshots", snapshotId));
         await rename(copy, destination);
-        await syncDirectory(join(this.root, "snapshots", digest));
+        await syncDirectory(join(this.root, "snapshots", snapshotId));
         await syncDirectory(join(this.root, "snapshots"));
       } finally {
         await rm(stage, { recursive: true, force: true });
@@ -191,12 +193,12 @@ export class StateCoordinator {
     return digest;
   }
 
-  private async createUse(digest: string) {
+  private async createUse(snapshotId: string) {
     const path = join(this.root, "uses", `${crypto.randomUUID()}.json`);
     await ensureDirectory(join(this.root, "uses"));
     await writeSynced(
       path,
-      JSON.stringify({ ...(await processIdentity()), digest, nonce: crypto.randomUUID() }),
+      JSON.stringify({ ...(await processIdentity()), snapshotId, nonce: crypto.randomUUID() }),
       true,
     );
     await syncDirectory(join(this.root, "uses"));
@@ -207,20 +209,8 @@ export class StateCoordinator {
     if (path) await this.withLock(() => rm(path, { force: true }));
   }
 
-  async withRemoteUse<T>(digest: string, operation: () => Promise<T>): Promise<T> {
-    const use = await this.withLock(async () => {
-      await this.verifySnapshot(digest);
-      return this.createUse(digest);
-    });
-    try {
-      return await operation();
-    } finally {
-      await this.finishUse(use);
-    }
-  }
-
   async withInstalledRoot<T>(
-    address: SkillAddress,
+    address: SkillAddress | (() => Promise<InstalledMaterialization>),
     operation: (found: {
       readonly item: InstalledMaterialization;
       readonly root: string;
@@ -228,13 +218,16 @@ export class StateCoordinator {
   ): Promise<T> {
     let use: string | undefined;
     const found = await this.withLock(async () => {
-      const item = (await this.read()).installed.find(
-        (item) => item.source === address.source && item.path === address.path,
-      );
+      const item =
+        typeof address === "function"
+          ? await address()
+          : (await this.read()).installed.find(
+              (item) => item.source === address.source && item.path === address.path,
+            );
       if (!item) throw new SkctlError("SKILL_NOT_FOUND", "Installed Skill not found");
-      const root = item.kind === "remote" ? await this.verifySnapshot(item.digest) : item.root;
+      const root = item.kind === "remote" ? await this.snapshotRoot(item.snapshotId) : item.root;
       await assertPath(root, "directory");
-      if (item.kind === "remote") use = await this.createUse(item.digest);
+      if (item.kind === "remote") use = await this.createUse(item.snapshotId);
       return { item, root };
     });
     try {
@@ -261,7 +254,7 @@ export class StateCoordinator {
     await this.withLock(async () => {
       const state = await this.read();
       const snapshots = new Set(
-        state.installed.filter((item) => item.kind === "remote").map((item) => item.digest),
+        state.installed.filter((item) => item.kind === "remote").map((item) => item.snapshotId),
       );
       const configs = new Set(Object.values(state.configs).map((item) => item.digest));
       const uses: (SnapshotUse & { path: string })[] = [];
@@ -270,14 +263,15 @@ export class StateCoordinator {
         await assertPath(path, "file");
         try {
           const record: unknown = JSON.parse((await readOptional(path))!.toString());
-          if (!v.is(snapshotUseSchema, record)) return;
-          uses.push({ ...record, path });
+          const parsed = v.safeParse(snapshotUseSchema, record);
+          if (!parsed.success) return;
+          uses.push({ ...parsed.output, path });
         } catch {
           return;
         }
       }
       for (const use of uses) {
-        if ((await processStatus(use)) !== "dead") snapshots.add(use.digest);
+        if ((await processStatus(use)) !== "dead") snapshots.add(use.snapshotId);
         else await rm(use.path);
       }
       const trash = join(this.root, "trash");
@@ -301,12 +295,15 @@ export class StateCoordinator {
         ["configs", configs],
       ] as const) {
         for (const digest of await entries(join(this.root, kind))) {
-          if (retained.has(digest) || !digestPattern.test(digest)) continue;
+          if (
+            retained.has(digest) ||
+            !(kind === "snapshots" ? v.is(snapshotIdSchema, digest) : digestPattern.test(digest))
+          )
+            continue;
           const path = join(this.root, kind, digest);
           try {
             await assertPath(path, "directory");
-            if (kind === "snapshots") await this.verifySnapshot(digest);
-            else {
+            if (kind === "configs") {
               const file = this.contentPath(kind, digest);
               await assertPath(file, "file");
               const bytes = await readOptional(file);

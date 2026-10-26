@@ -408,7 +408,6 @@ test("MGMT-024 and MGMT-025 reject Config Source lifecycle changes that orphan a
         name: "review",
         description: "Review",
         kind: "local",
-        digest: "a".repeat(64),
         bindingDigest: "a".repeat(64),
         identityEvidence: { status: "unavailable" },
       },

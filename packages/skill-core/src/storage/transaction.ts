@@ -22,7 +22,7 @@ const conflict = (message: string): never => {
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export function parseState(bytes?: Uint8Array): PrivateState {
-  if (!bytes) return { version: 3, generation: 0, installed: [], configs: {} };
+  if (!bytes) return { version: 4, generation: 0, installed: [], configs: {} };
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -30,7 +30,17 @@ export function parseState(bytes?: Uint8Array): PrivateState {
     throw new SkctlError("CONFIG_INVALID", "Invalid private state");
   }
   if (!v.is(stateSchema, value)) throw new SkctlError("CONFIG_INVALID", "Invalid private state");
-  return value;
+  if (value.version === 4) return value;
+  return {
+    ...value,
+    version: 4,
+    installed: value.installed.map(({ digest, ...item }) => {
+      const identityEvidence = item.identityEvidence ?? { status: "unavailable" as const };
+      return item.kind === "remote"
+        ? { ...item, identityEvidence, snapshotId: digest }
+        : { ...item, identityEvidence };
+    }),
+  };
 }
 
 /** Bounded child-process fault injection; no callback or alternate publication path. */

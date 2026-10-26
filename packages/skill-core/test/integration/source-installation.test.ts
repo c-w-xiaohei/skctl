@@ -57,14 +57,15 @@ test("actual install uses shared acquisition, publishes complete immutable conte
     const coordinator = new StateCoordinator();
     const state = await coordinator.withLock(() => coordinator.read());
     expect(state).toMatchObject({
-      version: 3,
+      version: 4,
       generation: 1,
       installed: [
         { source: "team", path: "guide", kind: "remote", treeIdentity: { objectFormat: "sha1" } },
       ],
     });
     const installed = state.installed[0]!;
-    const snapshot = await coordinator.verifySnapshot(installed.digest);
+    if (installed.kind !== "remote") throw new Error("Expected remote installation");
+    const snapshot = await coordinator.snapshotRoot(installed.snapshotId);
     expect(await readFile(join(snapshot, "resource.txt"), "utf8")).toBe("complete content");
     // A fixed-version reinstall works with an unavailable origin and no ref lookup.
     await installSkills(
@@ -108,7 +109,8 @@ test("actual install uses shared acquisition, publishes complete immutable conte
       },
     );
     const updated = (await coordinator.read()).installed[0]!;
-    expect(updated.digest).not.toBe(installed.digest);
+    if (updated.kind !== "remote") throw new Error("Expected remote installation");
+    expect(updated.snapshotId).not.toBe(installed.snapshotId);
     await expect(
       updateSkills(options, {
         source: "team",
@@ -126,11 +128,11 @@ test("actual install uses shared acquisition, publishes complete immutable conte
     await coordinator.gc();
     expect(
       await readFile(
-        join(await coordinator.verifySnapshot(updated.digest), "resource.txt"),
+        join(await coordinator.snapshotRoot(updated.snapshotId), "resource.txt"),
         "utf8",
       ),
     ).toBe("updated content");
-    await expect(coordinator.verifySnapshot(installed.digest)).rejects.toBeDefined();
+    await expect(coordinator.snapshotRoot(installed.snapshotId)).rejects.toBeDefined();
   } finally {
     if (savedState === undefined) delete process.env.SKCTL_STATE_DIR;
     else process.env.SKCTL_STATE_DIR = savedState;

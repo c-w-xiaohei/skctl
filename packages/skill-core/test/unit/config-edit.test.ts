@@ -436,7 +436,7 @@ test("network is rejected by actual Project Local and reusable readers", async (
     await cleanup();
   }
 });
-test("both manual Config state writers emit v3 and retain unrelated Remote tree evidence", async () => {
+test("both manual Config state writers emit v4 and retain unrelated Remote tree evidence", async () => {
   const { root, cleanup } = await configResources("skctl-config-state-v3-");
   try {
     await writeFile(
@@ -453,7 +453,7 @@ test("both manual Config state writers emit v3 and retain unrelated Remote tree 
       path: "review",
       name: "review",
       description: "Review",
-      digest: "b".repeat(64),
+      snapshotId: "b".repeat(64),
       bindingDigest: "c".repeat(64),
       adoptedRevision: "a".repeat(40),
       identityEvidence: {
@@ -477,13 +477,13 @@ test("both manual Config state writers emit v3 and retain unrelated Remote tree 
     );
     await api.forgetConfig(options, { id: "one" });
     expect(await coordinator.read()).toMatchObject({
-      version: 3,
+      version: 4,
       generation: 2,
       installed: [item],
     });
     await api.removeConfig(options, { id: "two" });
     expect(await coordinator.read()).toEqual({
-      version: 3,
+      version: 4,
       generation: 3,
       installed: [item],
       configs: {},

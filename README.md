@@ -155,6 +155,18 @@ Both programs read the same configuration and installed state:
 `SKCTL_STATE_DIR` overrides the state directory and requires an absolute path.
 Configuration files can declare `"$schema": "https://skctl.dev/schema.json"`.
 
+Installed state now uses format v4. Close older `skctl`/`sktui` processes before
+using this version with the same state directory. Older formats remain readable
+offline; the next successful management write upgrades state without moving or
+rehashing installed content. Agent reads do not rewrite state. Downgrading after
+a v4 write is not supported by older binaries.
+
+Remote installations are private write-once snapshots, not tamper-detection
+storage. Read commands check the selected path rather than hash every installed
+file. Local resource edits are visible immediately; Local updates refresh Skill
+name/description metadata. Remote previews compare installed and target Git
+versions, not untracked edits inside the private snapshot directory.
+
 ### Proxy
 
 Set an optional proxy in the **user** Config at

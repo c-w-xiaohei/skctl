@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { digestDirectory } from "../../src/content/directory";
 import { runProcess } from "../../src/runtime/process";
 import { withFileLock } from "../../src/storage/file-lock";
 
@@ -9,20 +8,6 @@ const fixture = async () => {
   await mkdir("/tmp/opencode", { recursive: true });
   return mkdtemp("/tmp/opencode/skctl-foundations-");
 };
-
-test("complete directory identity includes resources and executable modes", async () => {
-  const root = await fixture();
-  await writeFile(join(root, "SKILL.md"), "---\nname: guide\ndescription: Guide\n---\n");
-  await writeFile(join(root, "run.sh"), "echo first\n");
-  const before = await digestDirectory(root);
-  await writeFile(join(root, "run.sh"), "echo second\n");
-  const content = await digestDirectory(root);
-  expect(content).not.toBe(before);
-  await chmod(join(root, "run.sh"), 0o700);
-  expect(await digestDirectory(root)).not.toBe(content);
-  await symlink("../outside", join(root, "escape"));
-  await expect(digestDirectory(root)).rejects.toHaveProperty("code", "PROVIDER_INTEGRITY_FAILED");
-});
 
 test("file lock serializes independent callers and permits same-task reentry", async () => {
   const path = join(await fixture(), "operation.lock");

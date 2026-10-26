@@ -448,7 +448,7 @@ test("MGMT-016 imports contributed derived and composed effective Collections in
                 name,
                 description: name,
                 kind: "remote",
-                digest: new Bun.CryptoHasher("sha256").update(name).digest("hex"),
+                snapshotId: crypto.randomUUID(),
                 bindingDigest: bindingDigest({
                   kind: "github",
                   origin: "https://github.com/acme/skills",

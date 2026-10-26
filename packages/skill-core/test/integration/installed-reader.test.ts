@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateCoordinator } from "../../src/storage/state";
-import { digestDirectory } from "../../src/content/directory";
+import { snapshotId } from "../snapshot-fixture";
 import { setContentHookForTest } from "../../src/content/operations";
 test("READ-001/005/006 reads undisclosed installed content structurally and classifies non-text", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-reader-"));
@@ -93,7 +93,7 @@ test("READ-002/003/009 Remote structural reads use only an intact Snapshot despi
       "---\nname: remote\ndescription: Remote\n---\nbody\n",
     );
     const coordinator = new StateCoordinator(state);
-    const digest = await digestDirectory(source);
+    const digest = snapshotId();
     await coordinator.publishSnapshot(digest, source);
     await coordinator.write(
       {
@@ -105,7 +105,7 @@ test("READ-002/003/009 Remote structural reads use only an intact Snapshot despi
             name: "old",
             description: "Old",
             kind: "remote",
-            digest,
+            snapshotId: digest,
             bindingDigest: "a".repeat(64),
             adoptedRevision: "a".repeat(40),
             identityEvidence: { status: "unavailable" },
@@ -233,7 +233,7 @@ test("READ-008/010 cancels protected Remote traversal and releases it for later 
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     await writeFile(join(source, "note.txt"), "note");
     const coordinator = new StateCoordinator(state);
-    const digest = await digestDirectory(source);
+    const digest = snapshotId();
     await coordinator.publishSnapshot(digest, source);
     await coordinator.write(
       {
@@ -245,7 +245,7 @@ test("READ-008/010 cancels protected Remote traversal and releases it for later 
             name: "remote",
             description: "Remote",
             kind: "remote",
-            digest,
+            snapshotId: digest,
             bindingDigest: "a".repeat(64),
             adoptedRevision: "a".repeat(40),
             identityEvidence: { status: "unavailable" },
@@ -297,7 +297,7 @@ test("READ-007 structural Remote reads reject a missing or corrupt Snapshot with
     await writeFile(join(root, "skctl.jsonc"), "{}");
     await writeFile(join(source, "SKILL.md"), "---\nname: remote\ndescription: Remote\n---\n");
     const coordinator = new StateCoordinator(state);
-    const digest = await digestDirectory(source);
+    const digest = snapshotId();
     await coordinator.publishSnapshot(digest, source);
     await coordinator.write(
       {
@@ -309,7 +309,7 @@ test("READ-007 structural Remote reads reject a missing or corrupt Snapshot with
             name: "remote",
             description: "Remote",
             kind: "remote",
-            digest,
+            snapshotId: digest,
             bindingDigest: "a".repeat(64),
             adoptedRevision: "a".repeat(40),
             identityEvidence: { status: "unavailable" },

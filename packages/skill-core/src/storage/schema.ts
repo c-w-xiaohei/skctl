@@ -63,7 +63,7 @@ const v2 = v.union([
   v.strictObject({ ...v2Common, ...remote, ...unresolved }),
 ]);
 const v3Common = { ...common, path: rootPath, identityEvidence: identity };
-export const materializationSchema = v.union([
+const legacyMaterializationSchema = v.union([
   v.strictObject({ ...v3Common, ...local }),
   v.strictObject({ ...v3Common, ...remote, ...exact }),
   v.strictObject({ ...v3Common, ...remote, ...unresolved }),
@@ -73,6 +73,35 @@ export const materializationSchema = v.union([
     ...exact,
     identityEvidence: knownIdentity,
     treeIdentity: gitTreeIdentitySchema,
+  }),
+]);
+export const snapshotIdSchema = v.pipe(
+  v.string(),
+  v.regex(/^(?:[a-f0-9]{64}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/),
+);
+const installed = {
+  source: name,
+  path: rootPath,
+  name,
+  description: name,
+  bindingDigest: digestSchema,
+  identityEvidence: identity,
+};
+export const materializationSchema = v.union([
+  v.strictObject({ ...installed, ...local }),
+  v.strictObject({
+    ...installed,
+    kind: v.literal("remote"),
+    snapshotId: snapshotIdSchema,
+    ...exact,
+    treeIdentity: v.optional(gitTreeIdentitySchema),
+  }),
+  v.strictObject({
+    ...installed,
+    kind: v.literal("remote"),
+    snapshotId: snapshotIdSchema,
+    ...unresolved,
+    treeIdentity: v.optional(v.never()),
   }),
 ]);
 const configRecord = v.strictObject({ commit: gitObjectIdSchema, digest: digestSchema });
@@ -86,11 +115,16 @@ export const stateSchema = v.variant("version", [
   v.strictObject({
     ...stateFields,
     version: v.literal(3),
+    installed: v.array(legacyMaterializationSchema),
+  }),
+  v.strictObject({
+    ...stateFields,
+    version: v.literal(4),
     installed: v.array(materializationSchema),
   }),
 ]);
 export type IdentityEvidence = Readonly<v.InferOutput<typeof identity>>;
-export type PrivateState = Readonly<v.InferOutput<typeof stateSchema>>;
+export type PrivateState = Readonly<Extract<v.InferOutput<typeof stateSchema>, { version: 4 }>>;
 export type InstalledMaterialization = PrivateState["installed"][number];
 export type StateContents = Readonly<Pick<PrivateState, "configs">> & {
   readonly installed: readonly InstalledMaterialization[];
@@ -120,6 +154,12 @@ export type TransactionTarget = Transaction["targets"][number];
 const processOwner = { ...processIdentitySchema.entries, nonce: v.string() };
 export const lockOwnerSchema = v.looseObject(processOwner);
 export type LockOwner = v.InferOutput<typeof lockOwnerSchema>;
-export const snapshotUseSchema = v.looseObject({ ...processOwner, digest: v.string() });
+export const snapshotUseSchema = v.union([
+  v.looseObject({ ...processOwner, snapshotId: snapshotIdSchema, digest: v.optional(v.never()) }),
+  v.pipe(
+    v.looseObject({ ...processOwner, digest: digestSchema, snapshotId: v.optional(v.never()) }),
+    v.transform(({ digest, ...owner }) => ({ ...owner, snapshotId: digest })),
+  ),
+]);
 export type SnapshotUse = v.InferOutput<typeof snapshotUseSchema>;
 export const tombstoneOwnerSchema = v.looseObject({ ...processOwner, startToken: v.string() });

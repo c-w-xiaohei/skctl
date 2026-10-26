@@ -26,15 +26,14 @@ test("Local discovery and preparation retain live bytes, safe internal links and
     expect((await discoverSource(context(root))).candidates).toEqual([
       { path: "", name: "local", description: "Local" },
     ]);
-    let original = "";
     await withPreparedSkills(context(root), [""], undefined, async ([skill]) => {
       expect(skill!.kind).toBe("local");
       expect(await readFile(join(skill!.directory, "link"), "utf8")).toBe("#!/bin/sh\n");
-      original = skill!.digest;
     });
     await chmod(join(root, "nested", "run.sh"), 0o600);
     await withPreparedSkills(context(root), [""], undefined, async ([skill]) => {
-      expect(skill!.digest).not.toBe(original);
+      expect(Number((await lstat(join(skill!.directory, "nested/run.sh"))).mode) & 0o111).toBe(0);
+      expect(skill).not.toHaveProperty("digest");
     });
   } finally {
     await rm(root, { recursive: true, force: true });

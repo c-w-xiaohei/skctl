@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bindingDigest, canonicalLocalOrigin } from "../../src/source/identity";
 import * as service from "../../src/source/service";
-import { digestDirectory } from "../../src/content/directory";
+import { snapshotId } from "../snapshot-fixture";
 afterEach(() => {
   delete process.env.SKCTL_SOURCE_CACHE_DIR;
 });
@@ -408,7 +408,7 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
     expect(await readFile(join(value.root, "state", "state.json"), "utf8")).toBe(before);
     await api.installSkills(value.core, { source: "first", paths: ["two"] });
     const migrated = JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"));
-    expect(migrated).toMatchObject({ version: 3, generation: 5 });
+    expect(migrated).toMatchObject({ version: 4, generation: 5 });
     expect(migrated.installed[0]).toMatchObject({
       source: "first",
       path: "nested/one",
@@ -460,7 +460,7 @@ test("MGMT-009 degrades an already-missing literal v1 owner without provider acc
     };
     await api.installSkills(core, { source: "second", paths: ["two"] });
     const migrated = JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"));
-    expect(migrated).toMatchObject({ version: 3, generation: 3 });
+    expect(migrated).toMatchObject({ version: 4, generation: 3 });
     expect(migrated.installed[0]).toMatchObject({
       source: "missing",
       identityEvidence: { status: "unavailable" },
@@ -527,7 +527,7 @@ test("MGMT-009 derives literal v1 Remote evidence during a state-only uninstall 
     };
     await api.uninstallSkills(core, { source: "remote", paths: ["review"] });
     expect(JSON.parse(await readFile(join(value.root, "state", "state.json"), "utf8"))).toEqual({
-      version: 3,
+      version: 4,
       generation: 9,
       installed: [],
       configs: {},
@@ -582,13 +582,13 @@ test("private snapshot fixture publication cannot forge a Remote Installed ident
     const coordinator = new (await import("../../src/storage/state")).StateCoordinator(
       join(value.root, "state"),
     );
-    const digest = await digestDirectory(join(value.skills, "one"));
+    const digest = snapshotId();
     const state = Bun.file(join(value.root, "state", "state.json"));
     expect(await state.exists()).toBe(false);
     await expect(
-      coordinator.publishSnapshot("0".repeat(64), join(value.skills, "one")),
+      coordinator.publishSnapshot("../escape", join(value.skills, "one")),
     ).rejects.toMatchObject({
-      code: "PROVIDER_INTEGRITY_FAILED",
+      code: "INVALID_ARGUMENT",
     });
     expect(await state.exists()).toBe(false);
     expect(await Bun.file(join(value.root, "state", "snapshots", digest)).exists()).toBe(false);
@@ -668,12 +668,12 @@ test("MGMT-006 Remote discovery installs the reviewed exact commit after the tra
       });
       expect(
         await Bun.file(
-          join(root, "state", "snapshots", state.installed[0].digest, "root", "SKILL.md"),
+          join(root, "state", "snapshots", state.installed[0].snapshotId, "root", "SKILL.md"),
         ).exists(),
       ).toBe(true);
       expect(
         await Bun.file(
-          join(root, "state", "snapshots", state.installed[0].digest, "root", "SKILL.md"),
+          join(root, "state", "snapshots", state.installed[0].snapshotId, "root", "SKILL.md"),
         ).text(),
       ).toContain("description: Remote");
       expect(await Bun.file(join(root, "skctl.jsonc")).text()).not.toContain("members");

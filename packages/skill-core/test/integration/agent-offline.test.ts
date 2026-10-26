@@ -1,11 +1,11 @@
 import * as api from "../../src/index";
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bindingDigest, canonicalRemoteOrigin } from "../../src/source/identity";
 import { StateCoordinator } from "../../src/storage/state";
-import { digestDirectory } from "../../src/content/directory";
+import { snapshotId } from "../snapshot-fixture";
 const isolatedCore = (root: string) => ({
   cwd: root,
   userConfigPath: join(root, "global.jsonc"),
@@ -90,7 +90,7 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
     await api.installSkills(core, { source: "local", paths: ["local"] });
-    const digest = await digestDirectory(remote);
+    const digest = snapshotId();
     await new StateCoordinator(state).publishSnapshot(digest, remote);
     const coordinator = new StateCoordinator(state),
       current = await coordinator.read();
@@ -105,7 +105,7 @@ test("MGMT-033 browse refresh and Agent projection remain offline for Local and 
             name: "remote",
             description: "Remote",
             kind: "remote",
-            digest,
+            snapshotId: digest,
             bindingDigest: remoteBindingDigest("https://example.test/repo"),
             adoptedRevision: "a".repeat(40),
             identityEvidence: {
@@ -201,7 +201,7 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
     );
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
-    const digest = await digestDirectory(source);
+    const digest = snapshotId();
     await new StateCoordinator(state).publishSnapshot(digest, source);
     await new StateCoordinator(state).write(
       {
@@ -213,7 +213,7 @@ test("AGT-001/002 USE-002 exposes all catalog and content operations from a Remo
             name: "remote",
             description: "Remote review",
             kind: "remote",
-            digest,
+            snapshotId: digest,
             bindingDigest: remoteBindingDigest("https://example.test/skills"),
             adoptedRevision: "a".repeat(40),
             identityEvidence: {
@@ -286,7 +286,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
     );
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
-    const digest = await digestDirectory(source);
+    const digest = snapshotId();
     await new StateCoordinator(state).publishSnapshot(digest, source);
     await new StateCoordinator(state).write(
       {
@@ -298,7 +298,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
             name: "remote",
             description: "Remote",
             kind: "remote",
-            digest,
+            snapshotId: digest,
             bindingDigest: remoteBindingDigest("https://example.test/skills"),
             adoptedRevision: "a".repeat(40),
             identityEvidence: {
@@ -317,7 +317,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
     });
     expect(await Bun.file(join(state, "snapshots", digest)).exists()).toBe(false);
     await writeFile(join(source, "different.txt"), "different");
-    const corrupt = await digestDirectory(source);
+    const corrupt = snapshotId();
     await new StateCoordinator(state).publishSnapshot(corrupt, source);
     await new StateCoordinator(state).write(
       {
@@ -329,7 +329,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
             name: "remote",
             description: "Remote",
             kind: "remote",
-            digest: corrupt,
+            snapshotId: corrupt,
             bindingDigest: remoteBindingDigest("https://example.test/skills"),
             adoptedRevision: "b".repeat(40),
             identityEvidence: {
@@ -345,7 +345,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
     await symlink("SKILL.md", join(state, "snapshots", corrupt, "root", "corrupt-link"));
     await expect(
       api.listInstalledResources(core, { address: { source: "remote", path: "review" } }),
-    ).rejects.toMatchObject({ code: "PROVIDER_INTEGRITY_FAILED" });
+    ).rejects.toMatchObject({ code: "UNSUPPORTED_ENTRY" });
     expect(await Bun.file(join(state, "snapshots", corrupt, "root", "corrupt-link")).exists()).toBe(
       true,
     );
@@ -354,7 +354,7 @@ test("AGT-002 does not repair a missing or corrupt Remote Snapshot", async () =>
     await rm(root, { recursive: true, force: true });
   }
 });
-test("USE-001 rejects a live Remote Snapshot digest change before creating a use record", async () => {
+test("Remote reads trust published private content and protect its snapshot without hashing it", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-agent-remote-tamper-"));
   const state = join(root, "state");
   const source = join(root, "acquired");
@@ -377,7 +377,7 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
     );
     process.env.SKCTL_STATE_DIR = state;
     const core = isolatedCore(root);
-    const digest = await digestDirectory(source);
+    const digest = snapshotId();
     await new StateCoordinator(state).publishSnapshot(digest, source);
     await new StateCoordinator(state).write(
       {
@@ -389,7 +389,7 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
             name: "remote",
             description: "Remote",
             kind: "remote",
-            digest,
+            snapshotId: digest,
             bindingDigest: remoteBindingDigest("https://example.test/repo"),
             adoptedRevision: "a".repeat(40),
             identityEvidence: {
@@ -405,31 +405,20 @@ test("USE-001 rejects a live Remote Snapshot digest change before creating a use
     const snapshot = join(state, "snapshots", digest, "root", "SKILL.md");
     const stateBefore = await Bun.file(join(state, "state.json")).text();
     const cacheBefore = await Bun.file(join(state, "configs")).exists();
-    const verify = StateCoordinator.prototype.verifySnapshot;
-    const mutation = spyOn(StateCoordinator.prototype, "verifySnapshot").mockImplementation(
-      async function (this: StateCoordinator, digest) {
-        await writeFile(snapshot, "---\nname: remote\ndescription: Remote\n---\ntampered\n");
-        return verify.call(this, digest);
-      },
+    await writeFile(snapshot, "---\nname: remote\ndescription: Remote\n---\nchanged privately\n");
+    expect((await api.loadSkill(core, { selector: "c:remote" })).text).toContain(
+      "changed privately",
     );
-    try {
-      await expect(api.loadSkill(core, { selector: "c:remote" })).rejects.toHaveProperty(
-        "code",
-        "PROVIDER_INTEGRITY_FAILED",
-      );
-    } finally {
-      mutation.mockRestore();
-    }
-    expect(await Bun.file(join(state, "uses")).exists()).toBe(false);
+    expect(await readdir(join(state, "uses"))).toEqual([]);
     expect(await Bun.file(join(state, "state.json")).text()).toBe(stateBefore);
     expect(await Bun.file(join(state, "configs")).exists()).toBe(cacheBefore);
     await expect(
       api.readResource(core, { selector: "c:remote", path: "SKILL.md" }),
-    ).rejects.toMatchObject({ code: "PROVIDER_INTEGRITY_FAILED" });
+    ).resolves.toMatchObject({ text: expect.stringContaining("changed privately") });
     await expect(
       api.runSkill(core, { selector: "c:remote", argv: [process.execPath, "--eval", ""] }),
-    ).rejects.toMatchObject({ code: "PROVIDER_INTEGRITY_FAILED" });
-    expect(await Bun.file(join(state, "uses")).exists()).toBe(false);
+    ).resolves.toMatchObject({ exitCode: 0 });
+    expect(await readdir(join(state, "uses"))).toEqual([]);
   } finally {
     delete process.env.SKCTL_STATE_DIR;
     await rm(root, { recursive: true, force: true });
@@ -625,7 +614,7 @@ test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote run
     const core = isolatedCore(root);
     const coordinator = new StateCoordinator(state);
     await api.installSkills(core, { source: "local", paths: ["local"] });
-    const digest = await digestDirectory(remote);
+    const digest = snapshotId();
     await coordinator.publishSnapshot(digest, remote);
     const current = await coordinator.read();
     await coordinator.write(
@@ -639,7 +628,7 @@ test("CNT-001 coordinator rejects a symlinked runs tree for Local and Remote run
             name: "remote",
             description: "Remote",
             kind: "remote",
-            digest,
+            snapshotId: digest,
             bindingDigest: remoteBindingDigest("https://example.test/repo"),
             adoptedRevision: "a".repeat(40),
             identityEvidence: {

@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import type { WorkspaceView } from "../workspace/types";
+import type { DeclarationProvenance } from "../config/types";
 import { resolveCollections, type CollectionContribution } from "./graph";
 import { type SkillAddress } from "../source/schema";
 import { SkctlError } from "../shared";
@@ -21,11 +22,12 @@ export async function resolveInstalledSelector(
 ): Promise<{
   readonly address: SkillAddress;
   readonly item: PrivateState["installed"][number];
+  readonly declaration: DeclarationProvenance;
 }> {
   const [collection, name, extra] = selector.split(":");
   if (!collection || !name || extra)
     throw new SkctlError("INVALID_ARGUMENT", "Invalid Skill Selector");
-  const workspace = await readWorkspaceUnlocked(options);
+  const workspace = await readWorkspaceUnlocked(options, coordinator);
   const effective = workspace.value.effective;
   if (effective.status !== "complete")
     throw new SkctlError("CONFIG_INVALID", "Configuration is incomplete");
@@ -35,8 +37,9 @@ export async function resolveInstalledSelector(
       "CONFIG_INVALID",
       effective.agent.reasons[0]?.message ?? "Catalog unavailable",
     );
-  const state = await coordinator.read();
-  const resolved = await resolveEffectiveCollections(options, workspace.value, state, coordinator);
+  const capture = capturedWorkspace(workspace.value)!;
+  const state = capture.state;
+  const resolved = capture.resolved;
   const reachable = new Set<string>();
   const pending = [...effective.use];
   while (pending.length) {
@@ -57,7 +60,7 @@ export async function resolveInstalledSelector(
   const owner = capturedWorkspace(workspace.value)?.sources.get(item.source);
   if (!owner || owner.bindingDigest !== item.bindingDigest)
     throw new SkctlError("CONFIG_CONFLICT", "Installed Skill owner is not healthy");
-  return { address, item };
+  return { address, item, declaration: owner.provenance };
 }
 export async function resolveEffectiveCollections(
   options: ReadWorkspaceOptions,

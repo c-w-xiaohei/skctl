@@ -1,4 +1,3 @@
-import { digestDirectory } from "../content/directory";
 import { parseSkillMetadata, decodeStrictText } from "../content/text";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -46,16 +45,13 @@ export async function installSkills(
             const metadata = parseSkillMetadata(
               decodeStrictText(await readFile(join(skill.directory, "SKILL.md"))),
             );
-            if (
-              (await digestDirectory(skill.directory)) !== skill.digest ||
-              metadata.name !== skill.name ||
-              metadata.description !== skill.description
-            )
+            if (metadata.name !== skill.name || metadata.description !== skill.description)
               throw new SkctlError(
                 "TRANSACTION_CONFLICT",
                 "Local content changed during installation",
               );
-          } else await coordinator.publishSnapshot(skill.digest, skill.directory);
+          } else if (skill.kind === "remote")
+            await coordinator.publishSnapshot(skill.snapshotId, skill.directory);
         }
         if (operation?.signal?.aborted)
           throw new SkctlError("CANCELLED", "Installation cancelled before publication");

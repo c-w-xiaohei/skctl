@@ -2,7 +2,6 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { SkctlError, type Diagnostic } from "../../shared";
 import { assertPath } from "../../storage/files";
-import { digestDirectory } from "../../content/directory";
 import type { SourceBindingView } from "../types";
 import { joinSourcePath, skillMetadata, validateSkillPaths } from "./skills";
 
@@ -44,6 +43,8 @@ export async function inspectLocal(binding: SourceBindingView, path: string) {
       continue;
     }
     if (!marker?.isFile() || marker.isSymbolicLink()) return { status: "not-skill-root" as const };
+    if (await stat(join(root, ".git")))
+      throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Local Skill contains a gitlink");
     const bytes = await readFile(join(root, "SKILL.md"));
     let metadata;
     try {
@@ -52,13 +53,12 @@ export async function inspectLocal(binding: SourceBindingView, path: string) {
       if (!(error instanceof SkctlError)) throw error;
       return {
         status: "malformed" as const,
-        marker: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+        marker: bytes.toString("utf8"),
       };
     }
-    const digest = await digestDirectory(root);
     if (!bytes.equals(await readFile(join(root, "SKILL.md"))))
       throw new SkctlError("TRANSACTION_CONFLICT", "Local marker changed during inspection");
-    return { status: "present" as const, path, root, digest, ...metadata };
+    return { status: "present" as const, path, root, ...metadata };
   }
   throw new SkctlError("INTERNAL", "Unreachable Local inspection");
 }

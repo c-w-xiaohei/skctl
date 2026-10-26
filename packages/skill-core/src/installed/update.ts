@@ -46,7 +46,8 @@ function context(
 const evidence = (captured: InstalledContext) =>
   captured.installed.map((item) => ({
     path: item.path,
-    digest: item.digest,
+    name: item.name,
+    description: item.description,
     ...(item.kind === "remote"
       ? {
           tree: item.identityEvidence?.status === "known" ? item.treeIdentity : undefined,
@@ -134,14 +135,17 @@ export async function previewUpdate(
   if (!request.exactRevision)
     throw new SkctlError("INVALID_ARGUMENT", "Remote preview requires an exact revision");
   const revision = request.exactRevision;
+  if (!item.adoptedRevision)
+    throw new SkctlError("PINNED_COMMIT_UNAVAILABLE", "Installed version is unresolved");
   return coordinator.withInstalledRoot(address, async (found) => {
-    if (found.item.digest !== item.digest)
+    if (found.item.kind !== "remote" || found.item.snapshotId !== item.snapshotId)
       throw new SkctlError("TRANSACTION_CONFLICT", "Installed content changed before preview");
     const result = await previewSource(
       context(options, captured, operation),
       item.path,
       revision,
       found.root,
+      item.adoptedRevision,
     );
     await revalidateInstalled(options, captured, operation, coordinator);
     return {
@@ -184,12 +188,16 @@ export async function updateSkills(
   const publish = async (prepared: readonly PreparedSkill[]) => {
     for (const skill of prepared) {
       const previous = captured.installed.find((item) => item.path === skill.path)!;
-      if (previous.kind === "remote" && !previous.treeIdentity)
-        await coordinator.withRemoteUse(previous.digest, async () => {});
-      const unchanged =
-        previous.kind === "remote" && skill.kind === "remote" && previous.treeIdentity
+      let unchanged =
+        previous.kind === "local" &&
+        skill.kind === "local" &&
+        previous.name === skill.name &&
+        previous.description === skill.description;
+      if (previous.kind === "remote" && skill.kind === "remote") {
+        unchanged = previous.treeIdentity
           ? previous.treeIdentity.objectId === skill.tree.objectId
-          : previous.digest === skill.digest;
+          : previous.adoptedRevision === skill.revision;
+      }
       if (unchanged)
         throw new SkctlError("INVALID_ARGUMENT", "Select only changed Installed Skills");
     }
@@ -204,9 +212,9 @@ export async function updateSkills(
         request.remove,
       );
       for (const skill of prepared)
-        if (current.binding.kind !== "local")
-          await coordinator.publishSnapshot(skill.digest, skill.directory);
-      // Local baseline includes complete current directory evidence, and is checked again after preparation/publication.
+        if (skill.kind === "remote")
+          await coordinator.publishSnapshot(skill.snapshotId, skill.directory);
+      // Local content is live; only the marker and installation facts participate in publication.
       await revalidateInstalled(options, captured, operation, coordinator);
       if (operation?.signal?.aborted)
         throw new SkctlError("CANCELLED", "Update cancelled before publication");
