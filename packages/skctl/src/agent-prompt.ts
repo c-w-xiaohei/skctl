@@ -42,6 +42,7 @@ export function renderAgentCatalog(
           "- Enter: skctl agent browse <collection-id>",
           "- Load: skctl agent load <selector>",
           "Resources, as needed (paths relative to Skill Root):",
+          "- List: skctl agent ls <selector> [directory]",
           "- Read: skctl agent read <selector> <root-relative-path>",
           "- Copy: skctl agent download <selector> <root-relative-path> --output <host-path>",
           "- Run: skctl agent run <selector> -- <command> [args...] (temporary Skill copy; use absolute paths for persistent outputs)",

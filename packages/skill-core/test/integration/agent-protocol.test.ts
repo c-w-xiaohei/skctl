@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMain } from "../../../skctl/src/main";
@@ -227,7 +227,108 @@ test("agent read reports a missing resource directory as not found", async () =>
     const result = await command(root, global, ["read", "gingiris:router", "docs/missing.md"]);
     expect(result.code).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("Resource not found\n");
+    expect(result.stderr).toContain("Resource not found");
+    expect(result.stderr).toContain("skctl agent ls");
+  } finally {
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test("agent ls bounds output, supports navigation options and rejects inaccessible paths", async () => {
+  const previousState = process.env.SKCTL_STATE_DIR;
+  const { root, global } = await fixture();
+  try {
+    const skill = join(root, "skills", "router");
+    await mkdir(join(skill, "refs"));
+    await writeFile(join(skill, "refs", "one.md"), "one");
+    await writeFile(join(skill, "refs", "two\nlines.md"), "two");
+    await writeFile(join(skill, ".hidden"), "hidden");
+    await symlink("refs", join(skill, "link"));
+    const first = await command(root, global, ["list", "-1", "--limit", "2", "gingiris:router"]);
+    expect(first).toEqual({
+      code: 0,
+      stdout: "SKILL.md\n! link (unsupported)\n",
+      stderr: "More entries: --offset 2\n",
+    });
+    const second = await command(root, global, [
+      "ls",
+      "--limit",
+      "2",
+      "--offset",
+      "2",
+      "gingiris:router",
+    ]);
+    expect(second).toEqual({ code: 0, stdout: "refs/\n", stderr: "" });
+    const all = await command(root, global, ["ls", "-aR", "gingiris:router"]);
+    expect(all.code).toBe(0);
+    expect(all.stdout).toContain(".hidden\n");
+    expect(all.stdout).toContain('"refs/two\\nlines.md"\n');
+    expect(all.stdout).toContain("refs/one.md\n");
+    expect((await command(root, global, ["ls", "gingiris:router", "link"])).code).toBe(1);
+    expect((await command(root, global, ["ls", "gingiris:router", "../"])).code).toBe(1);
+    expect((await command(root, global, ["ls", "hidden:private"])).code).toBe(1);
+    expect((await command(root, global, ["ls", "--limit", "201", "gingiris:router"])).code).toBe(1);
+  } finally {
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test("agent ls discovers resource paths without loading content", async () => {
+  const previousState = process.env.SKCTL_STATE_DIR;
+  const { root, global } = await fixture();
+  try {
+    const skill = join(root, "skills", "router");
+    await mkdir(join(skill, "references"));
+    await writeFile(join(skill, "references", "orca.md"), "methodology");
+    expect(await command(root, global, ["ls", "gingiris:router"])).toEqual({
+      code: 0,
+      stdout: "SKILL.md\nreferences/\n",
+      stderr: "",
+    });
+    expect(await command(root, global, ["list", "gingiris:router", "references/"])).toEqual({
+      code: 0,
+      stdout: "references/orca.md\n",
+      stderr: "",
+    });
+  } finally {
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test("agent ls continues after the byte budget without losing paths", async () => {
+  const previousState = process.env.SKCTL_STATE_DIR;
+  const { root, global } = await fixture();
+  try {
+    const skill = join(root, "skills", "router");
+    await mkdir(join(skill, "refs"));
+    for (let index = 0; index < 45; index++)
+      await writeFile(
+        join(skill, "refs", `${String(index).padStart(2, "0")}-${"x".repeat(190)}.md`),
+        "",
+      );
+    const first = await command(root, global, ["ls", "--limit", "100", "gingiris:router", "refs"]);
+    expect(first.code).toBe(0);
+    expect(Buffer.byteLength(first.stdout)).toBeLessThanOrEqual(8192);
+    const offset = Number(/More entries: --offset (\d+)/u.exec(first.stderr)?.[1]);
+    expect(offset).toBeGreaterThan(0);
+    expect(offset).toBeLessThan(45);
+    const next = await command(root, global, [
+      "ls",
+      "--limit",
+      "100",
+      "--offset",
+      String(offset),
+      "gingiris:router",
+      "refs",
+    ]);
+    expect(next.code).toBe(0);
+    expect(next.stderr).toBe("");
+    expect([...first.stdout.trim().split("\n"), ...next.stdout.trim().split("\n")]).toHaveLength(
+      45,
+    );
   } finally {
     if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
     else process.env.SKCTL_STATE_DIR = previousState;
@@ -371,9 +472,8 @@ test("agent search includes each Use-root selector for one installed Skill", asy
     await rm(root, { recursive: true, force: true });
   }
 });
-test("agent commands reject the removed list protocol and JSON flags", async () => {
+test("agent commands reject unsupported protocol and JSON flags", async () => {
   for (const argv of [
-    ["list"],
     ["browse", "--json"],
     ["load", "gingiris:router", "--protocol", "1"],
     ["load", "gingiris:router", "--json"],
@@ -381,7 +481,7 @@ test("agent commands reject the removed list protocol and JSON flags", async () 
     const result = await command("/tmp", "/missing", argv);
     expect(result.code).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain(argv[0] === "list" ? "unknown command" : "unknown option");
+    expect(result.stderr).toContain("unknown option");
     expect(result.stderr).not.toContain("INVALID_ARGUMENT");
   }
 });

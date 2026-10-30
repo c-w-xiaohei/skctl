@@ -64,6 +64,14 @@ frontend-perf-analysis` reveals its custom instructions and member descriptions;
 `skctl agent load <selector>` still loads a selected Skill. See
 [PRODUCT.md](PRODUCT.md#organize-discovery-around-tasks) for the authoring model.
 
+To inspect a selected Skill's resources without loading their contents, use
+`skctl agent ls <selector> [directory]` (`list` is equivalent). Paths are relative
+to the Skill Root. `-a` includes hidden entries, `-R` lists recursively, and `-1`
+selects the default one-path-per-line format. Results are bounded to 50 entries
+and 8 KiB by default; `--limit` accepts 1–200 entries and `--offset` continues a
+truncated listing. Changes to the installed Skill between calls may cause offset
+pages to omit or repeat entries. Unsupported entries are marked and not followed.
+
 In the TUI, Collection **Info** shows its description and custom instructions.
 **Agent access** previews the selected Collection's instructions under
 "Instructions · disclosed on entry"; selecting a Reference previews its target's

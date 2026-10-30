@@ -21,6 +21,7 @@ export { checkUpdate, getUpdateBaseline, previewUpdate, updateSkills } from "./i
 export {
   loadInstalledSkill,
   listInstalledResources,
+  listResources,
   readInstalledResource,
   loadSkill,
   readResource,

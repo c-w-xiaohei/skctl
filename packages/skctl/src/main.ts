@@ -46,6 +46,7 @@ export async function runMain(argv: readonly string[], options: MainOptions = {}
   const context: CommandContext = {
     cwd,
     stdout,
+    stderr,
     api: { ...api, ...options.api },
     environment: (action) => ({
       ...options.environment,

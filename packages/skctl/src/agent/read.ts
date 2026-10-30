@@ -1,6 +1,7 @@
 import { Argument, type Command } from "commander";
 import type { CommandContext } from "../command-context";
 import { skillSelector } from "./arguments";
+import { SkctlError } from "@skctl/core";
 export function readCommand(parent: Command, { api, environment, stdout }: CommandContext) {
   return parent
     .command("read")
@@ -10,6 +11,15 @@ export function readCommand(parent: Command, { api, environment, stdout }: Comma
     .addArgument(new Argument("<selector>", "Skill selector").argParser(skillSelector))
     .argument("<root-relative-path>")
     .action(async (selector, path, _flags, action) => {
-      stdout.write((await api.readResource(environment(action), { selector, path })).text);
+      try {
+        stdout.write((await api.readResource(environment(action), { selector, path })).text);
+      } catch (error) {
+        if (error instanceof SkctlError && error.code === "RESOURCE_NOT_FOUND")
+          throw new SkctlError(
+            "RESOURCE_NOT_FOUND",
+            `Resource not found: ${JSON.stringify(path)}\nUse skctl agent ls <selector> to inspect resources.`,
+          );
+        throw error;
+      }
     });
 }

@@ -101,6 +101,88 @@ async function safeEntry(root: string, path: string) {
   return { candidate, stat: await lstat(candidate).catch(() => undefined) };
 }
 
+/** List a bounded page of resources in a discoverable installed Skill. */
+export async function listResources(
+  factory: CoreOptions,
+  request: {
+    readonly selector: string;
+    readonly directory?: string;
+    readonly all: boolean;
+    readonly recursive: boolean;
+    readonly offset: number;
+    readonly limit: number;
+  },
+): Promise<{
+  entries: { path: string; kind: "file" | "directory" | "unsupported" }[];
+  more: boolean;
+}> {
+  if (
+    !Number.isSafeInteger(request.offset) ||
+    request.offset < 0 ||
+    request.offset > resourceLimit ||
+    !Number.isSafeInteger(request.limit) ||
+    request.limit < 1 ||
+    request.limit > 200
+  )
+    throw new SkctlError("INVALID_ARGUMENT", "Invalid listing offset or limit");
+  return withTarget(factory, request.selector, async ({ root }) => {
+    const directory = request.directory?.replace(/\/$/u, "") || "";
+    if (request.directory && !directory)
+      throw new SkctlError("INVALID_RESOURCE_PATH", "Invalid resource path");
+    let base = root;
+    if (directory) {
+      const found = await safeEntry(root, directory);
+      if (!found.stat) throw new SkctlError("RESOURCE_NOT_FOUND", "Resource not found");
+      if (!found.stat.isDirectory() || found.stat.isSymbolicLink())
+        throw new SkctlError("UNSUPPORTED_ENTRY", "Resource is not a safe directory");
+      base = found.candidate;
+    }
+    const entries: { path: string; kind: "file" | "directory" | "unsupported" }[] = [];
+    let seen = 0;
+    let work = 0;
+    let more = false;
+    const visit = async (location: string, prefix: string, depth: number): Promise<void> => {
+      if (depth > resourceDepthLimit)
+        throw new SkctlError("TEXT_TOO_LARGE", "Resource traversal exceeds depth limit");
+      const children = await readdir(location, { withFileTypes: true });
+      work += children.reduce((sum, item) => sum + Buffer.byteLength(item.name) + 64, 0);
+      if (work > resourceWorkLimit || children.length > resourceLimit)
+        throw new SkctlError("TEXT_TOO_LARGE", "Resource traversal exceeds work limit");
+      children.sort((a, b) => Buffer.from(a.name).compare(Buffer.from(b.name)));
+      for (const child of children) {
+        if (!request.all && child.name.startsWith(".")) continue;
+        const path = prefix ? `${prefix}/${child.name}` : child.name;
+        const stat = await lstat(join(location, child.name));
+        const kind =
+          stat.isSymbolicLink() ||
+          child.name === ".git" ||
+          child.name.includes("\\") ||
+          (!stat.isFile() && !stat.isDirectory())
+            ? "unsupported"
+            : stat.isDirectory()
+              ? "directory"
+              : "file";
+        seen++;
+        if (seen > resourceLimit)
+          throw new SkctlError("TEXT_TOO_LARGE", "Resource traversal exceeds entry limit");
+        if (seen > request.offset) {
+          if (entries.length === request.limit) {
+            more = true;
+            return;
+          }
+          entries.push({ path, kind });
+        }
+        if (request.recursive && kind === "directory") {
+          await visit(join(location, child.name), path, depth + 1);
+          if (more) return;
+        }
+      }
+    };
+    await visit(base, directory, 0);
+    return { entries, more };
+  });
+}
+
 function descriptor(path: string, stat: Awaited<ReturnType<typeof lstat>>): ResourceDescriptor {
   return {
     path,

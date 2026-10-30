@@ -6,6 +6,7 @@ import { loadCommand } from "./load";
 import { readCommand } from "./read";
 import { downloadCommand } from "./download";
 import { runCommand } from "./run";
+import { listCommand } from "./list";
 
 export function agentCommand(
   parent: Command,
@@ -34,6 +35,7 @@ export function agentCommand(
   browseCommand(agent, context);
   searchCommand(agent, context);
   loadCommand(agent, context);
+  listCommand(agent, context);
   readCommand(agent, context);
   downloadCommand(agent, context);
   runCommand(agent, context, setExitCode);
