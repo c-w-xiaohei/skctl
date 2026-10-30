@@ -98,6 +98,11 @@ export const collectionRequestSchema = v.object({
   collection: v.string(),
   expectedOwner: v.optional(owner),
 });
+export const createCollectionRequestSchema = v.object({
+  level: configLevelSchema,
+  collection: v.string(),
+  description: collectionSchema.entries.description,
+});
 export const setCollectionContentRequestSchema = v.object({
   ...collectionRequestSchema.entries,
   description: v.optional(v.nullable(v.unwrap(collectionSchema.entries.description))),

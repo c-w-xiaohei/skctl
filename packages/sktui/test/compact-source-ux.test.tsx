@@ -100,11 +100,11 @@ test("RENDER compact Sources keeps native rows, source identity, and every detai
       expect(command.screenY + command.height).toBeLessThanOrEqual(footer.screenY);
       expect(command.id).toBe(id);
     }
-    // An empty Source exposes discovery, not a fabricated All Skills target.
+    // Discovery and the Source's installed inventory are both reachable, even empty.
     const discover = await focusLive(setup, "workspace-action-add-skills");
     await setup.flush();
     assertInsidePane(discover, pane);
-    expect(setup.renderer.root.findDescendantById("source-command-skills")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("source-command-skills")).toBe(true);
 
     await parsedEscape(setup);
     const restored = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;

@@ -149,7 +149,7 @@ test("compact Reader keeps technical disclosure across resize and details reentr
     const resizedMetadata = live(setup, "reader-details-metadata");
     expect(resizedMetadata.screenY).toBeGreaterThanOrEqual(0);
     expect(resizedMetadata.screenY + resizedMetadata.height).toBeLessThanOrEqual(24);
-    expect(setup.captureCharFrame()).toContain("▾ Technical details");
+    expect(setup.captureCharFrame()).toContain("https://github.com/acme/main");
     expect(
       (live(setup, "reader-details-metadata") as AccordionTriggerRenderable).getState().open,
     ).toBe(true);
@@ -160,7 +160,11 @@ test("compact Reader keeps technical disclosure across resize and details reentr
     expect(live(setup, "reader-scrollbox")).toBeInstanceOf(ScrollBoxRenderable);
     await openReaderTab(setup, 2);
     await setup.flush();
-    expect(setup.captureCharFrame()).toContain("▾ Technical details");
+    await focusLive(setup, "reader-details-metadata");
+    await setup.flush();
+    expect(
+      (live(setup, "reader-details-metadata") as AccordionTriggerRenderable).getState().open,
+    ).toBe(true);
     await focusLive(setup, "reader-tabs-tab-details");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-tabs-tab-details");
     expect(live(setup, "reader-details-metadata")).toBeDefined();

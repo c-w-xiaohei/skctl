@@ -4,7 +4,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { parsedEscape } from "./reader-test-controls";
+import { openAllInstalledSkills, parsedEscape } from "./reader-test-controls";
 
 test("live filter popup keeps both panes visible and applies values without closing", async () => {
   const projection = readerProjection();
@@ -20,9 +20,7 @@ test("live filter popup keeps both panes visible and applies values without clos
     await setup.renderOnce();
   };
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
+    await openAllInstalledSkills(setup);
     const query = setup.renderer.root.findDescendantById("skills-query")!;
     query.focus();
     for (const character of "guide") setup.mockInput.pressKey(character);
@@ -35,7 +33,7 @@ test("live filter popup keeps both panes visible and applies values without clos
     const categories = setup.renderer.root.findDescendantById("skills-filter-dimensions")!;
     const values = setup.renderer.root.findDescendantById("skills-filter-values")!;
     expect(categories.screenX).toBeLessThan(values.screenX);
-    expect(categories.screenY).toBe(values.screenY - 1);
+    expect(categories.screenY).toBeLessThan(values.screenY);
     expect(popup.width).toBeLessThanOrEqual(78);
     const initialX = popup.screenX;
 
@@ -88,9 +86,7 @@ test("value search retains its native input and highlighting does not apply a fi
     { width: 100, height: 30 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
+    await openAllInstalledSkills(setup);
     const trigger = setup.renderer.root.findDescendantById("open-skills-filter")!;
     await setup.mockMouse.click(trigger.screenX + 1, trigger.screenY);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-filter-dimensions"));
@@ -118,8 +114,10 @@ test("value search retains its native input and highlighting does not apply a fi
         setup.renderer.currentFocusedRenderable === search,
         `Focus moved after ${char} to ${setup.renderer.currentFocusedRenderable?.id}`,
       ).toBe(true);
-      expect(setup.renderer.root.findDescendantById("skills-filter-dimensions")).toBe(category);
-      expect(setup.renderer.root.findDescendantById("skills-filter-values")).toBe(values);
+      expect(setup.renderer.root.findDescendantById("skills-filter-dimensions") === category).toBe(
+        true,
+      );
+      expect(setup.renderer.root.findDescendantById("skills-filter-values") === values).toBe(true);
     }
     setup.mockInput.pressArrow("left");
     await setup.renderOnce();
@@ -132,7 +130,7 @@ test("value search retains its native input and highlighting does not apply a fi
     await setup.renderOnce();
     setup.mockInput.pressArrow("right");
     await setup.renderOnce();
-    expect(setup.renderer.root.findDescendantById("clear-skills-filter-source")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("clear-skills-filter-source")).toBe(false);
     expect(!!setup.renderer.root.findDescendantById("skills-filter-overlay")).toBe(true);
     await parsedEscape(setup);
     expect(!!setup.renderer.root.findDescendantById("skills-filter-overlay")).toBe(false);
@@ -147,21 +145,23 @@ test("narrow live filter popup stays bounded and Tab does not leave its controls
     { width: 43, height: 13 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
+    await openAllInstalledSkills(setup);
     const trigger = setup.renderer.root.findDescendantById("open-skills-filter")!;
     await setup.mockMouse.click(trigger.screenX + 1, trigger.screenY);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-filter-overlay"));
     const popup = setup.renderer.root.findDescendantById("skills-filter-overlay")!;
     expect(popup.width).toBeLessThanOrEqual(41);
     expect(popup.screenY + popup.height).toBeLessThanOrEqual(13);
-    expect(setup.captureCharFrame()).toMatch(/Collection\s+Search Collections/);
-    expect(setup.captureCharFrame()).toContain("All · 2");
-    const before = setup.renderer.currentFocusedRenderable;
+    expect(setup.captureCharFrame()).toContain("Search Collections");
+    expect(
+      setup.renderer.root.findDescendantById("skills-filter-dimensions")!.screenX,
+    ).toBeLessThan(setup.renderer.root.findDescendantById("skills-filter-search")!.screenX);
+    expect(setup.captureCharFrame()).toContain("2 results");
     setup.mockInput.pressTab();
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable).toBe(before);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "skills-filter-search",
+    );
   } finally {
     setup.renderer.destroy();
   }

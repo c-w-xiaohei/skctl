@@ -4,7 +4,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { parsedEscape } from "./reader-test-controls";
+import { enterLive, focusLive, openAllInstalledSkills, parsedEscape } from "./reader-test-controls";
 
 test("filter chips clear one dimension without clearing the search query", async () => {
   const fixture = readerProjection();
@@ -21,9 +21,7 @@ test("filter chips clear one dimension without clearing the search query", async
     height: 40,
   });
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
+    await openAllInstalledSkills(setup);
     const query = setup.renderer.root.findDescendantById("skills-query") as InputRenderable;
     expect(query).toBeDefined();
     await setup.mockMouse.click(query.screenX + 1, query.screenY);
@@ -76,6 +74,8 @@ test("filter chips clear one dimension without clearing the search query", async
     await setup.renderOnce();
 
     await parsedEscape(setup);
+    await focusLive(setup, "clear-skills-filter-source");
+    await setup.flush();
     await setup.waitForFrame((frame) => frame.includes("Source: team-main ×"));
     expect(setup.renderer.root.findDescendantById("clear-skills-filter-source")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("clear-skills-filter-collection")).toBeDefined();
@@ -85,22 +85,15 @@ test("filter chips clear one dimension without clearing the search query", async
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "guide",
     );
-    expect(setup.renderer.root.findDescendantById("clear-skills-filter-source")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("clear-skills-filter-source")).toBe(false);
     expect(setup.renderer.root.findDescendantById("clear-skills-filter-collection")).toBeDefined();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "open-skills-filter");
-    setup.mockInput.pressArrow("down");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "clear-skills-filter-collection",
-    );
-    const clear = setup.renderer.root.findDescendantById("clear-all-skills-filters")!;
-    await setup.mockMouse.click(clear.screenX + 1, clear.screenY);
+    await enterLive(setup, "clear-all-skills-filters");
     await setup.renderOnce();
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "guide",
     );
-    expect(
-      setup.renderer.root.findDescendantById("clear-skills-filter-collection"),
-    ).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("clear-skills-filter-collection")).toBe(false);
   } finally {
     setup.renderer.destroy();
   }

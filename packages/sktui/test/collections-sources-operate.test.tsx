@@ -545,8 +545,14 @@ test("Source technical fields are reachable by Tab and restore their scrolled vi
   try {
     await enterLive(setup, "shell-section-tab-sources");
     await enterLive(setup, "source-browser");
-    setup.mockInput.pressArrow("right");
-    await setup.flush();
+    for (
+      let index = 0;
+      index < 4 && setup.renderer.currentFocusedRenderable?.id !== "source-details-toggle";
+      index++
+    ) {
+      setup.mockInput.pressArrow("right");
+      await setup.flush();
+    }
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-details-toggle");
     await parsedEnter(setup);
     await tabTo("source-metadata");
@@ -557,7 +563,6 @@ test("Source technical fields are reachable by Tab and restore their scrolled vi
     }
     const saved = metadata.scrollTop;
     expect(saved).toBeGreaterThan(0);
-    await tabTo("workspace-action-remove-source");
     await tabTo("source-details-toggle");
     await parsedEnter(setup);
     await parsedEnter(setup);

@@ -192,6 +192,161 @@ async function openContents(setup: Setup) {
   );
   await setup.flush();
 }
+test("Collection Info opens the existing editor and saves to the selected declaration", async () => {
+  const writes: unknown[] = [];
+  const mounted = await mount(100, 24, projection(), {
+    setCollectionContent: async (_environment, request) => {
+      writes.push(request);
+      return {
+        value: { level: request.level, file: request.expectedOwner!.file, changed: true },
+        diagnostics: [],
+      };
+    },
+  });
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await enterLive(setup, "collection-about");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-info"));
+    await enterLive(setup, "collection-action-edit-collection-content");
+    await focusLive(setup, "collection-content-description");
+    const input = setup.renderer.currentFocusedRenderable as InputRenderable;
+    input.value = "Team workflows";
+    await enterLive(setup, "collection-content-save");
+    await setup.waitFor(() => writes.length === 1);
+    const workspace = projection();
+    if (workspace.effective.status !== "complete") throw new Error("Expected complete workspace");
+    expect(writes[0]).toMatchObject({
+      collection: "team",
+      description: "Team workflows",
+      expectedOwner: workspace.effective.collectionsView[0]!.declared[0],
+    });
+    expect(writes[0]).not.toHaveProperty("instructions");
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test("Relations exposes Reference, Link, and Import at 43 by 13", async () => {
+  const mounted = await mount(43, 13);
+  const { setup } = mounted;
+  try {
+    await openContents(setup);
+    await enterLive(setup, "collection-tabs-tab-relations");
+    await setup.flush();
+    for (const id of ["add-reference", "add-link", "import-collection"]) {
+      const control = setup.renderer.root.findDescendantById(`collection-action-${id}`);
+      expect(!!control).toBe(true);
+      expect(control!.screenX + control!.width).toBeLessThanOrEqual(42);
+      expect(control!.screenY + control!.height).toBeLessThanOrEqual(11);
+    }
+    await enterLive(setup, "collection-action-add-link");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("link-target"));
+  } finally {
+    await mounted.dispose();
+  }
+});
+
+test.each(["link", "reference", "import"] as const)(
+  "%s review Back restores edited fields and repeats the same owner-bound preview",
+  async (kind) => {
+    const base = projection();
+    if (base.effective.status !== "complete") throw new Error("Expected complete fixture");
+    const owner = base.effective.collectionsView[0]!.declared[0]!;
+    const previews: unknown[] = [];
+    const mounted = await mount(100, 24, base, {
+      previewAddReference: async (_environment, request) => {
+        previews.push(request);
+        return {
+          value: {
+            kind: "reference",
+            collection: request.collection,
+            name: request.name,
+            referencedCollection: request.target,
+            description: request.description,
+            owner,
+            decision: { kind: "direct", owner },
+            allowed: true,
+          },
+          diagnostics: [],
+        };
+      },
+      previewImport: async (_environment, request) => {
+        previews.push(request);
+        return {
+          value: {
+            kind: "collection-import",
+            source: request.from,
+            destination: request.into,
+            owner,
+            additions: [],
+            skipped: [],
+            conflicts: [],
+            allowed: true,
+          },
+          diagnostics: [],
+        };
+      },
+      previewLinkChange: async (_environment, request) => {
+        previews.push(request);
+        return {
+          value: {
+            kind: "link-change",
+            collection: request.collection,
+            target: request.target,
+            owner,
+            linked: request.linked,
+            members: [],
+            disappearingSelectors: [],
+            retainedSelectors: [],
+            blockers: [],
+            allowed: true,
+          },
+          diagnostics: [],
+        };
+      },
+    });
+    const { setup } = mounted;
+    try {
+      await openContents(setup);
+      await enterLive(setup, "collection-tabs-tab-relations");
+      await enterLive(
+        setup,
+        kind === "import" ? "collection-action-import-collection" : `collection-action-add-${kind}`,
+      );
+      const fields =
+        kind === "link"
+          ? [["link-target", "docs"]]
+          : kind === "reference"
+            ? [
+                ["reference-name", "read-docs"],
+                ["reference-target", "docs"],
+                ["reference-description", "Read this guidance"],
+              ]
+            : [
+                ["collection-import-from", "docs"],
+                ["collection-import-into", "team-copy"],
+              ];
+      const review = kind === "import" ? "collection-import-review" : `${kind}-review`;
+      for (const [id, value] of fields) {
+        await focusLive(setup, id!);
+        (setup.renderer.currentFocusedRenderable as InputRenderable).value = value!;
+      }
+      await enterLive(setup, review);
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-review-back"));
+      await enterLive(setup, "collection-review-back");
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById(fields[0]![0]!));
+      for (const [id, value] of fields)
+        expect((setup.renderer.root.findDescendantById(id!) as InputRenderable).value).toBe(value!);
+      await enterLive(setup, review);
+      await setup.waitFor(() => previews.length === 2);
+      expect(previews[1]).toEqual(previews[0]);
+    } finally {
+      await mounted.dispose();
+    }
+  },
+);
+
 test.each([
   [144, 40],
   [100, 24],
@@ -213,7 +368,7 @@ test.each([
         );
       }
       expect(
-        setup.renderer.root.findDescendantById("collection-action-add-reference"),
+        setup.renderer.root.findDescendantById("collection-action-add-membership"),
       ).toBeDefined();
       const header = setup.renderer.root.findDescendantById(
         "collection-relationships-header-actions",
@@ -664,6 +819,7 @@ test("Collection unified preview preserves mounted Reference draft on failure an
   const { setup } = mounted;
   try {
     await openContents(setup);
+    await enterLive(setup, "collection-tabs-tab-relations");
     await enterLive(setup, "collection-action-add-reference");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reference-name"));
     const name = (await focusLive(setup, "reference-name")) as InputRenderable;

@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { BoxRenderable, SelectRenderable, TextBufferRenderable } from "@opentui/core";
+import {
+  BoxRenderable,
+  ScrollBoxRenderable,
+  SelectRenderable,
+  TextBufferRenderable,
+} from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { SkctlError } from "@skctl/core";
 import { App } from "../src/app";
@@ -12,6 +17,7 @@ import {
   openAllInstalledSkills,
   parsedEnter,
   parsedEscape,
+  waitForReaderBody,
 } from "./reader-test-controls";
 function textIn(renderable: { getChildren(): readonly unknown[] }): string {
   return (
@@ -54,9 +60,8 @@ async function navigateToAllInstalledSkills(setup: Awaited<ReturnType<typeof tes
   await openAllInstalledSkills(setup);
 }
 async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-  await focusLive(setup, "shell-section-tab-skills");
-  setup.mockInput.pressArrow("right");
+  await setup.flush();
+  await enterLive(setup, "shell-section-tab-collections");
   await setup.waitFor(
     () => setup.renderer.root.findDescendantById("collection-browser") !== undefined,
   );
@@ -108,7 +113,7 @@ test("RENDER Sources replaces the Collection browser native target", async () =>
     setup.mockInput.pressArrow("right");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
     await focusLive(setup, "source-browser");
-    expect(setup.renderer.root.findDescendantById("source-browser")).not.toBe(collections);
+    expect(setup.renderer.root.findDescendantById("source-browser") === collections).toBe(false);
   } finally {
     setup.renderer.destroy();
   }
@@ -129,8 +134,8 @@ test("RENDER Workspace Sources keeps source identity primary and origin secondar
     await navigateToSources(setup);
     const browser = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;
     expect(browser.options[0]).toEqual({
-      name: "team-main · github -> Source details",
-      description: "https://github.com/acme/main · skills · Direct",
+      name: "team-main",
+      description: "github · Direct",
       value: "team-main",
     });
     expect(browser.showDescription).toBe(false);
@@ -192,6 +197,7 @@ test("RENDER Current Exposure collection detail is a vertical Work Area document
     effective: {
       ...base.effective,
       managed: true,
+      agent: { ...base.effective.agent, status: "available" as const },
       use: ["root"],
       collectionsView: [
         {
@@ -224,8 +230,8 @@ test("RENDER Current Exposure collection detail is a vertical Work Area document
   );
   try {
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
-    await enterLive(setup, "current-exposure-browser");
-    await setup.waitForFrame((frame) => frame.includes("root") && frame.includes("Entries"));
+    await enterLive(setup, "agent-access-collection-details");
+    await setup.waitForFrame((frame) => frame.includes("root") && frame.includes("Contents"));
     await setup.renderOnce();
     const frame = setup.captureCharFrame().split("\n");
     const line = (text: string) => frame.findIndex((value) => value.includes(text));
@@ -272,6 +278,7 @@ test("RENDER Current Exposure keeps deep Reference paths bounded while retaining
     effective: {
       ...base.effective,
       managed: true,
+      agent: { ...base.effective.agent, status: "available" as const },
       use: ["root"],
       collectionsView,
     },
@@ -285,31 +292,36 @@ test("RENDER Current Exposure keeps deep Reference paths bounded while retaining
     await focusLive(setup, "current-exposure-browser");
     const exposure = setup.renderer.root.findDescendantById(
       "current-exposure-browser",
-    ) as SelectRenderable;
-    await setup.renderOnce();
-    expect(exposure.options).toHaveLength(2);
+    ) as ScrollBoxRenderable;
+    for (let index = 0; index < 7; index++) {
+      setup.mockInput.pressArrow("right");
+      await setup.flush();
+      setup.mockInput.pressArrow("down");
+      await setup.flush();
+    }
+    expect(textIn(exposure)).toContain("branch-6");
     expect(
-      exposure.options.every((option) => Bun.stringWidth(option.name) <= exposure.width - 3),
-    ).toBe(true);
-    expect(exposure.options.at(-1)?.name).toContain("branch-0");
-    expect(exposure.options.at(-1)?.value).toBe("root/branch-0");
-    expect(exposure.options.at(-1)?.name).toContain("node-1");
+      (setup.renderer.root.findDescendantById("agent-node-title") as TextBufferRenderable)
+        .plainText,
+    ).toBe("branch-6");
+    await enterLive(setup, "agent-access-collection-details");
+    await setup.waitForFrame((frame) => frame.includes("node-7"));
+    expect(exposure.screenX + exposure.width).toBeLessThanOrEqual(80);
+    expect(exposure.screenY + exposure.height).toBeLessThanOrEqual(24);
   } finally {
     setup.renderer.destroy();
   }
 });
-test("RENDER unavailable Current Exposure owns the separated Work Area focus target", async () => {
+test("RENDER unconfigured Agent access owns a usable setup action", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
     { width: 120, height: 40 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("workspace-content"));
-    const workArea = setup.renderer.root.findDescendantById("workspace-content") as BoxRenderable;
-    expect(workArea.border).toEqual(["left"]);
-    await focusLive(setup, "current-exposure-unavailable");
+    await setup.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
+    await focusLive(setup, "skills-setup-primary");
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("current-exposure-unavailable");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-setup-primary");
   } finally {
     setup.renderer.destroy();
   }
@@ -350,20 +362,17 @@ test("RENDER App follows the layout too-small boundaries", async () => {
       { width, height },
     );
     try {
-      if (tooSmall) await setup.waitForFrame((frame) => frame.includes("Terminal is too small."));
-      else await setup.waitForFrame((frame) => frame.includes("Workspace / Skills"));
-      expect(setup.captureCharFrame().includes("Terminal is too small.")).toBe(tooSmall);
+      if (tooSmall) await setup.waitForFrame((frame) => frame.includes("More room needed"));
+      else
+        await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-scope-select"));
+      expect(setup.captureCharFrame().includes("More room needed")).toBe(tooSmall);
     } finally {
       setup.renderer.destroy();
     }
   }
 });
 async function openPaletteAddSkills(setup: Awaited<ReturnType<typeof testRender>>) {
-  setup.mockInput.pressKey("P", { ctrl: true });
-  await setup.waitFor(
-    () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
-  );
-  await enterLive(setup, "palette-add-skills");
+  await enterLive(setup, "workspace-action-add-skills");
 }
 test("RENDER narrow Source browser shows one level and preserves selection through resize", async () => {
   const setup = await testRender(
@@ -386,23 +395,21 @@ test("RENDER narrow Source browser shows one level and preserves selection throu
     const scroll = selectScrollOffset(browser);
     expect(setup.renderer.currentFocusedRenderable).toBe(browser);
     await parsedEnter(setup);
-    await setup.waitFor(() =>
-      textIn(setup.renderer.root).includes("Canonical Origin  https://github.com/acme/main"),
-    );
+    await enterLive(setup, "source-details-toggle");
+    await setup.waitForFrame((frame) => frame.includes("https://github.com/acme/main"));
     expect(setup.renderer.root.findDescendantById("shell-section-tab-sources")).toBeDefined();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-command-config");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-details-toggle");
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
     const restoredBrowser = setup.renderer.root.findDescendantById(
       "source-browser",
     ) as SelectRenderable;
-    expect(restoredBrowser).not.toBe(browser);
-    expect(setup.renderer.currentFocusedRenderable).toBe(restoredBrowser);
+    expect(setup.renderer.currentFocusedRenderable === restoredBrowser).toBe(true);
     expect(restoredBrowser.getSelectedIndex()).toBe(selectedIndex);
     expect(selectScrollOffset(restoredBrowser)).toBe(scroll);
     expect(setup.captureCharFrame()).toContain("team-main");
     await parsedEscape(setup);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-browser");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-section-tab-sources");
     expect(setup.renderer.root.findDescendantById("shell-section-tab-sources")).toBeDefined();
   } finally {
     setup.renderer.destroy();
@@ -424,8 +431,9 @@ test("RENDER 43x30 narrow detail returns to the retained Source browser on Escap
     const scroll = selectScrollOffset(browser);
     expect(setup.renderer.currentFocusedRenderable).toBe(browser);
     await parsedEnter(setup);
-    await setup.waitFor(() =>
-      textIn(setup.renderer.root).includes("Canonical Origin  https://github.com/acme/main"),
+    await enterLive(setup, "source-details-toggle");
+    await setup.waitForFrame(
+      (frame) => frame.includes("https://github.com/") && frame.includes("acme/main"),
     );
     expect(setup.renderer.root.findDescendantById("shell-section-tab-sources")).toBeDefined();
     await parsedEscape(setup);
@@ -433,13 +441,12 @@ test("RENDER 43x30 narrow detail returns to the retained Source browser on Escap
     const restoredBrowser = setup.renderer.root.findDescendantById(
       "source-browser",
     ) as SelectRenderable;
-    expect(restoredBrowser).not.toBe(browser);
-    expect(setup.renderer.currentFocusedRenderable).toBe(restoredBrowser);
+    expect(setup.renderer.currentFocusedRenderable === restoredBrowser).toBe(true);
     expect(restoredBrowser.getSelectedIndex()).toBe(selectedIndex);
     expect(selectScrollOffset(restoredBrowser)).toBe(scroll);
     expect(setup.captureCharFrame()).toContain("team-main");
     await parsedEscape(setup);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-browser");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-section-tab-sources");
     expect(setup.renderer.root.findDescendantById("source-browser")).toBeDefined();
   } finally {
     setup.renderer.destroy();
@@ -453,23 +460,18 @@ test("RENDER 43x30 keeps human Context and Section controls above a Source Inspe
   try {
     await navigateToSources(setup);
     await parsedEnter(setup);
-    await setup.waitFor(() =>
-      textIn(setup.renderer.root).includes("Canonical Origin  https://github.com/acme/main"),
-    );
-    await setup.waitForFrame((frame) => frame.includes("Workspace / Sources / Details"));
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-toggle"));
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("Workspace / Sources / Details");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-command-config");
-    expect(frame).toContain("Open owning Config");
-    expect(frame).toContain("View Installed Skills");
-    expect(frame).not.toContain("Actions");
+    expect(frame).toContain("Workspace");
+    expect(frame).toContain("All Skills");
+    expect(frame).toContain("Find and install");
     expect(frame).not.toMatch(/\bW G P L\b/);
     expect(frame).not.toContain("Scop Sou Con Co I");
   } finally {
     setup.renderer.destroy();
   }
 });
-test("RENDER Source View Skills opens a Skill Inspector and Escape restores both retained frames", async () => {
+test("RENDER Source inventory opens Reader and Escape restores the inventory and Source", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
     { width: 79, height: 24 },
@@ -477,10 +479,6 @@ test("RENDER Source View Skills opens a Skill Inspector and Escape restores both
   try {
     await navigateToSources(setup);
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-command-config",
-    );
-    await enterLive(setup, "source-command-skills");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
@@ -491,24 +489,18 @@ test("RENDER Source View Skills opens a Skill Inspector and Escape restores both
     expect(browser.options[0]?.value).toBe('["team-main","guide"]');
     expect(browser.getSelectedOption()?.value).toBe('["team-main","guide"]');
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
-    );
+    await waitForReaderBody(setup, "guide");
     await parsedEscape(setup);
-    await setup.waitForFrame((frame) => frame.includes("Installed Skills from team-main"));
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
-    expect(setup.captureCharFrame()).toContain("Installed Skills from team-main");
+    expect(!!setup.renderer.root.findDescendantById("clear-source-filter")).toBe(true);
     expect(
       (
         setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable
       ).getSelectedOption()?.value,
     ).toBe('["team-main","guide"]');
-    await parsedEscape(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-command-skills",
-    );
-    expect(setup.renderer.root.findDescendantById("source-command-skills")).toBeDefined();
-    expect(setup.captureCharFrame()).toContain("team-main");
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
   } finally {
@@ -543,18 +535,12 @@ test("RENDER narrow observation progress remains bounded at 79x24 and 43x30", as
       await Promise.resolve();
       await navigateToSources(setup);
       await setup.waitForFrame((frame) => frame.includes("team-main"));
-      setup.mockInput.pressEnter();
-      await setup.waitFor(() =>
-        textIn(setup.renderer.root).includes("Canonical Origin  https://github.com/acme/main"),
-      );
+      await parsedEnter(setup);
       await openPaletteAddSkills(setup);
-      await setup.waitForFrame(
-        (frame) => frame.includes("Discovering Skills") && frame.includes("Observing"),
-      );
+      await setup.waitForFrame((frame) => frame.includes("Discovering Skills"));
       if (width === 79) {
         const frame = setup.captureCharFrame();
-        expect(frame).toContain("Escape Cancel");
-        expect(textIn(setup.renderer.root)).toContain("Esc cancel");
+        expect(frame).toContain("Cancel");
         await parsedEscape(setup);
         await setup.waitFor(() => aborts === 1);
         await setup.waitFor(
@@ -577,19 +563,7 @@ test("RENDER narrow selection remains bounded through resize at 79x24 and 43x30"
           core={directSourceCore(
             {
               ...workspaceProjection(),
-              installedSkills: [
-                {
-                  address: { source: "team-main", path: "installed" },
-                  name: "installed",
-                  description: "Installed",
-                  owner: { source: "team-main", health: "healthy" as const },
-                  collections: [],
-                  selectors: [],
-                  selectorViews: { status: "unavailable" as const },
-                  aliases: [],
-                  problems: [],
-                },
-              ],
+              installedSkills: [],
             },
             {
               discoverSkills: async (_environment: import("@skctl/core").CoreOptions, request) => ({
@@ -626,10 +600,7 @@ test("RENDER narrow selection remains bounded through resize at 79x24 and 43x30"
       await Promise.resolve();
       await navigateToSources(setup);
       await setup.waitForFrame((frame) => frame.includes("team-main"));
-      setup.mockInput.pressEnter();
-      await setup.waitFor(() =>
-        textIn(setup.renderer.root).includes("Canonical Origin  https://github.com/acme/main"),
-      );
+      await parsedEnter(setup);
       await openPaletteAddSkills(setup);
       await setup.waitForFrame((frame) => frame.includes("[ ] Available review"));
       const selection = setup.renderer.root.findDescendantById("source-operation-selection");

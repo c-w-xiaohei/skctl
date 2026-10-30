@@ -40,12 +40,10 @@ test("a command's physical focus cue follows focus and preserves its danger labe
     { width: 80, height: 12 },
   );
   try {
-    await setup.waitForFrame((frame) => frame.includes(">Cancel -> Keep content<"));
+    await setup.waitForFrame((frame) => frame.includes("›Cancel"));
     await focusLive(setup, "remove");
-    await setup.waitForFrame((frame) =>
-      frame.includes(">DANGER Remove -> Apply reviewed removal<"),
-    );
-    expect(setup.captureCharFrame()).not.toContain(">Cancel");
+    await setup.waitForFrame((frame) => frame.includes("›Remove"));
+    expect(setup.captureCharFrame()).not.toContain("›Cancel");
     await parsedEnter(setup);
     expect(executions).toBe(1);
   } finally {

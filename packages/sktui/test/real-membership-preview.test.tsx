@@ -88,10 +88,6 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
           writes++;
           throw new Error("Preview/cancel must not mutate the real fixture");
         },
-        setManagedOpenCode: async () => {
-          writes++;
-          throw new Error("Preview/cancel must not mutate the real fixture");
-        },
         removeSource: async () => {
           writes++;
           throw new Error("Preview/cancel must not mutate the real fixture");

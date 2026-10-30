@@ -4,42 +4,21 @@ import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { parsedEscape } from "./reader-test-controls";
+import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
+import { selectScrollOffset } from "../src/select-scroll";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
-type NativeSelect = Omit<SelectRenderable, "scrollOffset"> & {
-  readonly getSelectedIndex: () => number;
-  scrollOffset: number;
-};
-
-function native(id: string, setup: Setup): NativeSelect {
+function native(id: string, setup: Setup): SelectRenderable {
   const target = setup.renderer.root.findDescendantById(id);
   if (!(target instanceof SelectRenderable)) throw new Error(`${id} is not a SelectRenderable`);
-  return target as unknown as NativeSelect;
+  return target;
 }
 
 async function openSources(setup: Setup) {
-  await setup.waitFor(() => !!setup.renderer.currentFocusedRenderable?.parent);
-  for (
-    let step = 0;
-    step < 5 && setup.renderer.currentFocusedRenderable?.id !== "shell-section-navigation";
-    step++
-  ) {
-    setup.mockInput.pressTab();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await setup.renderOnce();
-  }
-  await setup.waitFor(
-    () => setup.renderer.currentFocusedRenderable?.id === "shell-section-navigation",
-  );
-  for (let step = 0; step < 2; step++) {
-    setup.mockInput.pressArrow("down");
-    await setup.renderOnce();
-  }
-  setup.mockInput.pressEnter();
+  await enterLive(setup, "shell-section-tab-sources");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
+  await focusLive(setup, "source-browser");
 }
 
 function sourcesProjection(): WorkspaceView {
@@ -94,15 +73,17 @@ test("RENDER Sources restores exact selected source and native offset after Insp
       await setup.renderOnce();
     }
     const selected = browser.getSelectedOption()?.value;
-    const offset = browser.scrollOffset;
+    const offset = selectScrollOffset(browser);
     expect(selected).toBe("source-10");
-    setup.mockInput.pressEnter();
+    await parsedEnter(setup);
     await setup.flush();
+    await enterLive(setup, "source-details-toggle");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-command-skills"));
+    await setup.waitForFrame((frame) => frame.includes("https://github.com/acme/source-10"));
     const detailFrame = setup.captureCharFrame();
     expect(detailFrame).toContain("source-10");
     expect(detailFrame).toContain("https://github.com/acme/source-10");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("workspace-action-check-updates");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-details-toggle");
     let escapeCount = 0;
     const onEscape = (event: { readonly name: string }) => {
       if (event.name === "escape" || event.name === "esc") escapeCount += 1;
@@ -114,7 +95,7 @@ test("RENDER Sources restores exact selected source and native offset after Insp
     expect(setup.renderer.root.findDescendantById("source-browser")).toBeDefined();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-browser");
     expect(native("source-browser", setup).getSelectedOption()?.value).toBe(selected);
-    expect(native("source-browser", setup).scrollOffset).toBe(offset);
+    expect(selectScrollOffset(native("source-browser", setup))).toBe(offset);
     expect(escapeCount).toBe(1);
   } finally {
     setup.renderer.destroy();

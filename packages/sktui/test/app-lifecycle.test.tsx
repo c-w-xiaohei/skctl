@@ -12,6 +12,7 @@ import {
   parsedEscape,
   readerTab,
   selectedReaderTab,
+  waitForReaderBody,
 } from "./reader-test-controls";
 import {
   readerContent,
@@ -133,19 +134,8 @@ test.serial(
       expect(selectedReaderTab(setup)).toBe(2);
       await parsedEscape(setup);
       await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-      );
-      setup.renderer.root.findDescendantById("skill-inspector-open-reader")!.focus();
-      await setup.renderOnce();
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
-      );
-      expect(setup.captureCharFrame()).toContain("guide");
-      await parsedEscape(setup);
-      await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
       );
-      expect(setup.captureCharFrame()).toContain("Installed Skills");
       const browser = setup.renderer.root.findDescendantById("installed-skill-browser")!;
       browser.focus();
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
@@ -156,13 +146,6 @@ test.serial(
           ?.value;
         return value === JSON.stringify([readerSecondAddress.source, readerSecondAddress.path]);
       });
-      await parsedEnter(setup);
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-      );
-      const secondOpen = setup.renderer.root.findDescendantById("skill-inspector-open-reader")!;
-      secondOpen.focus();
-      await setup.waitFor(() => setup.renderer.currentFocusedRenderable === secondOpen);
       await parsedEnter(setup);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
       await setup.waitFor(() => {
@@ -255,16 +238,9 @@ test("RENDER closing the palette settles focus back on the originating browser, 
   try {
     await openInstalledSkills(setup);
     setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
-    );
-    await setup.waitForFrame(
-      (frame) => frame.includes("Enter select") && frame.includes("Tab next control"),
-    );
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
     await parsedEscape(setup);
-    await setup.waitFor(
-      () => !setup.renderer.root.findDescendantById("palette-navigate.workspace"),
-    );
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("palette-choices"));
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
@@ -314,11 +290,9 @@ test("RENDER nested palette close restores the original browser focus", async ()
   try {
     await openInstalledSkills(setup);
     setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
-    );
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
     setup.mockInput.pressKey("p", { ctrl: true });
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-navigate.workspace");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-choices");
     await parsedEscape(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
@@ -327,7 +301,7 @@ test("RENDER nested palette close restores the original browser focus", async ()
     setup.renderer.destroy();
   }
 });
-test("RENDER Problems Installed Skill drill-in replaces its browser with the Inspector and Reader", async () => {
+test("RENDER Problems Installed Skill drill-in opens Reader and restores its browser", async () => {
   const base = readerProjection();
   const projection = {
     ...base,
@@ -364,18 +338,8 @@ test("RENDER Problems Installed Skill drill-in replaces its browser with the Ins
     ) as SelectRenderable;
     const firstProblemValue = firstProblem.getSelectedOption()?.value;
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-    );
-    expect(setup.renderer.root.findDescendantById("problems-browser")).toBeUndefined();
-    setup.renderer.root.findDescendantById("skill-inspector-open-reader")!.focus();
-    await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
-    expect(setup.renderer.root.findDescendantById("problems-browser")).toBeUndefined();
-    await parsedEscape(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
-    );
+    expect(!!setup.renderer.root.findDescendantById("problems-browser")).toBe(false);
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
     expect(setup.renderer.root.findDescendantById("problems-browser")).toBeDefined();
@@ -388,7 +352,7 @@ test("RENDER Problems Installed Skill drill-in replaces its browser with the Ins
     setup.renderer.destroy();
   }
 });
-test("RENDER Problems diagnostic query keeps its structural Inspector Skill and restores the selected row", async () => {
+test("RENDER Problems diagnostic query keeps its exact Reader Skill and restores the selected row", async () => {
   const base = readerProjection();
   const first = {
     code: "FIRST_DIAGNOSTIC",
@@ -414,7 +378,12 @@ test("RENDER Problems diagnostic query keeps its structural Inspector Skill and 
     const setup = await testRender(
       () => (
         <App
-          core={directSourceCore(projection, { loadInstalledSkill: async () => readerContent })}
+          core={directSourceCore(projection, {
+            loadInstalledSkill: async (_environment, request) =>
+              request.address.path === readerSecondAddress.path
+                ? readerSecondContent
+                : readerContent,
+          })}
           exit={() => {}}
         />
       ),
@@ -425,27 +394,26 @@ test("RENDER Problems diagnostic query keeps its structural Inspector Skill and 
       const query = setup.renderer.root.findDescendantById("problems-query")!;
       query.focus();
       for (const character of "SECOND_DIAGNOSTIC") setup.mockInput.pressKey(character);
-      await setup.waitForFrame((frame) => frame.includes("Problems 1/2"));
+      await setup.waitFor(
+        () =>
+          (setup.renderer.root.findDescendantById("problems-browser") as SelectRenderable).options
+            .length === 1,
+      );
       const filtered = setup.renderer.root.findDescendantById(
         "problems-browser",
       ) as SelectRenderable;
       filtered.focus();
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable === filtered);
+      const selected = filtered.getSelectedOption()?.value;
       await parsedEnter(setup);
-      await setup.waitFor(
-        () =>
-          setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader" &&
-          !!setup.renderer.root.findDescendantById("skill-inspector-open-reader") &&
-          setup.captureCharFrame().includes("Address  team-main/reference"),
-      );
-      expect(setup.renderer.root.findDescendantById("problems-browser")).toBeUndefined();
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("skill-inspector-open-reader");
+      await waitForReaderBody(setup, "reference needle");
+      expect(!!setup.renderer.root.findDescendantById("problems-browser")).toBe(false);
       await parsedEscape(setup);
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
       const restored = setup.renderer.root.findDescendantById(
         "problems-browser",
       ) as SelectRenderable;
-      expect(restored.getSelectedOption()?.value).toBe(filtered.getSelectedOption()?.value);
+      expect(restored.getSelectedOption()?.value).toBe(selected);
     } finally {
       setup.renderer.destroy();
     }
@@ -524,16 +492,7 @@ test("RENDER Problems Reader return restores a non-first diagnostic row", async 
     await setup.waitFor(() => browser.getSelectedIndex() === 1);
     const selected = browser.getSelectedOption()?.value;
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
-    );
-    setup.renderer.root.findDescendantById("skill-inspector-open-reader")!.focus();
-    await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
-    await parsedEscape(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
-    );
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
     const restored = setup.renderer.root.findDescendantById("problems-browser") as SelectRenderable;
@@ -573,16 +532,7 @@ test("RENDER Problems drill-in restores native viewport and selected semantic ro
     const scroll = selectScrollOffset(browser);
     browser.focus();
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
-    );
-    setup.renderer.root.findDescendantById("skill-inspector-open-reader")!.focus();
-    await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
-    await parsedEscape(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
-    );
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
     const restored = setup.renderer.root.findDescendantById("problems-browser") as SelectRenderable;

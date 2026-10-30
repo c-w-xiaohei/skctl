@@ -27,8 +27,8 @@ test("page navigation is in the top bar and startup enters Agent access", async 
   const top = setup!.renderer.root.findDescendantById("global-bar")!;
   const pages = top.findDescendantById("shell-section");
   expect(pages).toBeDefined();
-  await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("agent-access-pane"));
-  expect(setup!.renderer.root.findDescendantById("installed-skill-browser")).toBeUndefined();
+  await setup!.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
+  expect(!!setup!.renderer.root.findDescendantById("installed-skill-browser")).toBe(false);
 });
 
 test("scope choices navigate only on activation and cancellation restores the trigger", async () => {

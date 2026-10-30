@@ -26,6 +26,3 @@ export type ConfigSourceObservation = Readonly<
   v.InferOutput<typeof schema.configSourceObservationSchema>
 >;
 export type AdoptConfigRequest = Readonly<v.InferOutput<typeof schema.adoptConfigRequestSchema>>;
-export type ManagedOpenCodeRequest = Readonly<
-  v.InferOutput<typeof schema.managedOpenCodeRequestSchema>
->;

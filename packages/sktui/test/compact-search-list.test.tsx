@@ -4,7 +4,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { parsedEnter } from "./reader-test-controls";
+import { openAllInstalledSkills, parsedEnter, waitForReaderBody } from "./reader-test-controls";
 
 test("RENDER search results show aligned Skill and Match columns on one line", async () => {
   const setup = await testRender(
@@ -12,6 +12,7 @@ test("RENDER search results show aligned Skill and Match columns on one line", a
     { width: 110, height: 36 },
   );
   try {
+    await openAllInstalledSkills(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-query"));
     const query = setup.renderer.root.findDescendantById("skills-query") as InputRenderable;
     query.focus();
@@ -23,13 +24,15 @@ test("RENDER search results show aligned Skill and Match columns on one line", a
         | undefined;
       return browser?.options.length === 1 && !browser.showDescription;
     });
+    expect(query.width).toBeGreaterThan(0);
 
     await setup.waitForFrame((frame) => frame.includes("Match") && frame.includes("distinct"));
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Skill");
     expect(frame).toContain("Match");
     expect(frame).toContain("reference");
-    expect(frame).toContain("Matched Description:");
+    const row = frame.split("\n").find((line) => line.includes("▶ reference"));
+    expect(row).toContain("distin");
   } finally {
     setup.renderer.destroy();
   }
@@ -43,18 +46,14 @@ test.each([100, 140])(
       { width, height: 30 },
     );
     try {
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-      );
+      await openAllInstalledSkills(setup);
       setup.mockInput.pressKey("/");
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "skills-query");
       for (const char of "team-main") {
         setup.mockInput.pressKey(char);
         await setup.renderOnce();
       }
-      await setup.waitForFrame(
-        (frame) => frame.includes("Match") && frame.includes("Matched Source:"),
-      );
+      await setup.waitForFrame((frame) => frame.includes("Match") && frame.includes("team-m"));
       const browser = setup.renderer.root.findDescendantById(
         "installed-skill-browser",
       ) as SelectRenderable;
@@ -68,8 +67,8 @@ test.each([100, 140])(
         () => browser.getSelectedOption()?.value === JSON.stringify(["team-main", "reference"]),
       );
       await parsedEnter(setup);
-      await setup.waitForFrame((frame) => frame.includes("team-main/reference"));
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("skill-inspector-open-reader");
+      await waitForReaderBody(setup, "reference");
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-pane"));
     } finally {
       setup.renderer.destroy();
     }

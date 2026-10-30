@@ -196,7 +196,7 @@ test("RENDER 80x16 Collection Contents reads directly, Manage opens ownership, a
       if (!setup.renderer.root.findDescendantById("source-metadata"))
         await enterLive(setup, "source-details-toggle");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
-      expect(setup.captureCharFrame()).toContain("https://github.com/acme/main");
+      await setup.waitForFrame((frame) => frame.includes("https://github.com/acme/main"));
       await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),

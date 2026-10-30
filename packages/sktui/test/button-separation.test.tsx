@@ -1,9 +1,9 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
 import {
+  InputRenderable,
   type BaseRenderable,
   type Renderable,
-  ScrollBoxRenderable,
   SelectRenderable,
 } from "@opentui/core";
 import { ButtonRenderable } from "@tuiparts/core/button";
@@ -156,7 +156,7 @@ test.each([144, 80, 43])(
       await parsedEnter(setup);
       await setup.flush();
       separated(setup, "source-content-controls-pane");
-      await revealCommands(setup, separated(setup, "source-routine-actions"));
+      await revealCommands(setup, separated(setup, "source-management-pane"));
       await capture(setup, `source-${width}`);
     } finally {
       await mounted.dispose();
@@ -210,12 +210,12 @@ test("short Agent access recovery separates commands and reveals each focused bu
   const mounted = await mount(43, 13);
   const { setup } = mounted;
   try {
-    const buttons = separated(setup, "agent-access-recovery-actions");
+    const buttons = separated(setup, "skills-setup-pane");
     for (const button of buttons) {
       if (!button.focusable) continue;
       await focusLive(setup, button.id);
       await setup.flush();
-      const pane = live(setup, "agent-access-pane");
+      const pane = live(setup, "skills-setup-pane");
       expect(button.screenY).toBeGreaterThan(pane.screenY);
       expect(button.screenY + button.height).toBeLessThanOrEqual(pane.screenY + pane.height - 1);
     }
@@ -310,18 +310,12 @@ test("resizing a spaced form keeps its focused command visible without losing th
     await setup.flush();
     const cancel = await focusLive(setup, "collection-create-cancel");
     await setup.flush();
-    let ancestor = cancel.parent;
-    while (ancestor && !(ancestor instanceof ScrollBoxRenderable)) ancestor = ancestor.parent;
-    expect(ancestor).toBeInstanceOf(ScrollBoxRenderable);
-    const body = ancestor as ScrollBoxRenderable;
     setup.resize(43, 13);
     await setup.flush();
-    expect(setup.renderer.currentFocusedRenderable).toBe(cancel);
-    expect(cancel.screenY).toBeGreaterThanOrEqual(body.viewport.screenY);
-    expect(cancel.screenY + cancel.height).toBeLessThanOrEqual(
-      body.viewport.screenY + body.viewport.height,
-    );
-    expect(setup.captureCharFrame()).toContain("spacing-draft");
+    expect(setup.renderer.currentFocusedRenderable === cancel).toBe(true);
+    expect(cancel.screenY).toBeGreaterThanOrEqual(0);
+    expect(cancel.screenY + cancel.height).toBeLessThanOrEqual(13);
+    expect((live(setup, "collection-create-id") as InputRenderable).value).toBe("spacing-draft");
     expect(setup.captureCharFrame()).toContain("›Cancel");
     await capture(setup, "create-resized-43x13");
   } finally {

@@ -876,7 +876,13 @@ function UpdateWorkbench(
           }}
         >
           <Show when={!compact()}>
-            <Show when={scope().entry.kind === "collection" || scope().entry.kind === "skill"}>
+            <Show
+              when={
+                scope().entry.kind === "collection" ||
+                scope().entry.kind === "skill" ||
+                scope().entry.kind === "selected"
+              }
+            >
               <text
                 height={1}
                 flexShrink={0}
@@ -1205,7 +1211,9 @@ function scopeLabel(state: UpdatesState) {
   const entry = state.scope.entry;
   return entry.kind === "collection"
     ? `Collection ${entry.collection}${state.scope.includesReferences ? " · includes References" : ""}`
-    : entry.kind === "skill"
-      ? `${entry.address.source}/${entry.address.path}`
-      : "Workspace";
+    : entry.kind === "selected"
+      ? `${entry.addresses.length} selected Skills`
+      : entry.kind === "skill"
+        ? `${entry.address.source}/${entry.address.path}`
+        : "Workspace";
 }

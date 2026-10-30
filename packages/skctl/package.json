@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@skctl/core": "workspace:*",
+    "@skctl/integrations": "workspace:*",
     "commander": "15.0.0"
   }
 }

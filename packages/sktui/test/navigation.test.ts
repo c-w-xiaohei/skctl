@@ -180,20 +180,19 @@ test("Config Source inspector Back wins over a return route from the browser", (
   });
 });
 
-test("Integration surfaces Back before a return route from the browser", () => {
+test("host integrations return through their originating route", () => {
   expect(
     resolve(
       facts({
         destination: "project",
         focus: "browser",
         canReturn: true,
-        configIntegrationSurface: true,
       }),
       key("escape"),
     ),
   ).toEqual({
     kind: "events",
-    events: [{ type: "config.integration.back" }],
+    events: [{ type: "route.back" }],
   });
 });
 

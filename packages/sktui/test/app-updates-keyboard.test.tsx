@@ -97,13 +97,16 @@ test("App keyboard navigation reaches Updates commands and active Stop without f
     await setup.waitFor(
       () =>
         checks.length === 2 &&
-        setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-skills",
+        setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
     );
     // Start from App-owned focus; do not force focus onto a test-only target.
     stage = "Tab traversal to section navigation";
-    await tab(setup);
-    expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("shell-section-tab-skills");
-    await tab(setup, true);
+    for (
+      let i = 0;
+      i < 12 && setup.renderer.currentFocusedRenderable?.id !== "shell-section-tab-skills";
+      i++
+    )
+      await tab(setup);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-section-tab-skills");
     stage = "section navigation to Updates";
     for (let i = 0; i < 3; i++) await key(setup, "ARROW_RIGHT");

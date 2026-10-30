@@ -126,19 +126,16 @@ test("Reader action and selector relationship return from the exposure Tree to t
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
     }
     await parsedEnter(setup);
+    await setup.flush();
+    const listeners = [
+      setup.renderer.listenerCount("frame"),
+      setup.renderer.listenerCount("selection"),
+    ];
     for (const [key, path] of [
-      [
-        "ARROW_DOWN",
-        [
-          "reader-reload",
-          "reader-details-action-skill-add-to-collection",
-          "reader-details-action-skill-open-collection-use",
-        ],
-      ],
+      ["ARROW_DOWN", ["reader-reload", "reader-details-action-skill-open-collection-use"]],
       [
         "ARROW_UP",
         [
-          "reader-details-action-skill-add-to-collection",
           "reader-reload",
           "reader-details-manage",
           "reader-details-metadata",
@@ -184,6 +181,11 @@ test("Reader action and selector relationship return from the exposure Tree to t
       expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
       expect(setup.captureCharFrame()).toContain("guide");
       expect(contentReads).toBe(1);
+      await setup.flush();
+      expect([
+        setup.renderer.listenerCount("frame"),
+        setup.renderer.listenerCount("selection"),
+      ]).toEqual(listeners);
     }
   } finally {
     setup.renderer.destroy();

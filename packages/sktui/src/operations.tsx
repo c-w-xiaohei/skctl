@@ -16,11 +16,7 @@ export {
   ReferenceOverlay,
   LinkChangeOverlay,
 } from "./operations/collection-forms";
-export {
-  MembershipAddOverlay,
-  MembershipBatchDraftOverlay,
-  MembershipRemovalPlanOverlay,
-} from "./operations/membership";
+export { MembershipRemovalPlanOverlay } from "./operations/membership";
 export { CollectionUseOverlay } from "./operations/collection-use";
 export { CollectionReviewOverlay } from "./operations/collection-review";
 export { SourceRegistrationOverlay } from "./operations/source-registration";

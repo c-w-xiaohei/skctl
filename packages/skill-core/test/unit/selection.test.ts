@@ -27,7 +27,7 @@ test("rejects legacy declarations rather than importing or shadowing them", asyn
   }
 });
 
-test("requires a nonempty, fully installed explicit Collection Use", () => {
+test("empty Collection Use is complete; nonempty Use requires installed roots", () => {
   const resolved = resolveCollections(
     [
       {
@@ -37,7 +37,7 @@ test("requires a nonempty, fully installed explicit Collection Use", () => {
     ],
     [{ source: "local", path: "review", name: "review" }],
   );
-  expect(resolveCollectionUse(resolved, [])).toMatchObject({ complete: false });
+  expect(resolveCollectionUse(resolved, [])).toMatchObject({ complete: true });
   expect(resolveCollectionUse(resolved, ["missing"])).toMatchObject({ complete: false });
   expect(resolveCollectionUse(resolved, ["engineering"])).toMatchObject({ complete: true });
 });

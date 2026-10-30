@@ -224,13 +224,13 @@ export function Reader(props: {
     if (native.scrollTop > 0 && native.scrollTop !== reader().scroll)
       props.onPatch({ scroll: native.scrollTop });
   };
-  const renderedContent = () => {
+  const renderedContent = createMemo(() => {
     const resource = reader().resource;
     if (reader().tab === "resources" && resource?.kind === "not-text") {
       return `Cannot preview ${resource.reason} resource\n${resource.metadata.path}  ${resource.metadata.kind}${resource.metadata.size === undefined ? "" : ` ${resource.metadata.size} bytes`}${resource.metadata.executable ? " executable" : ""}${resource.metadata.gitlinkCommit ? ` ${resource.metadata.gitlinkCommit}` : ""}`;
     }
     return source();
-  };
+  });
   const textResource = () => {
     const resource = reader().resource;
     return resource?.kind === "text" ? resource : undefined;
@@ -610,13 +610,6 @@ export function Reader(props: {
     renderer.once("frame", restore);
     renderer.requestRender();
   });
-  createEffect(() => {
-    const raw = reader().raw;
-    const markdown = showMarkdown();
-    const line = raw ? reader().scroll : current()?.line;
-    if (!scrollbox() || markdown || line === undefined) return;
-    queueMicrotask(() => revealCurrent(raw, line));
-  });
   const readerActions = () =>
     props.actions
       .filter(
@@ -640,7 +633,9 @@ export function Reader(props: {
   const inlineActions = () =>
     readerActions().filter((action) => action.id === "skill-check-updates");
   const detailActions = () =>
-    readerActions().filter((action) => action.id !== "skill-check-updates");
+    readerActions().filter(
+      (action) => action.id !== "skill-check-updates" && action.id !== "skill-add-to-collection",
+    );
   // These are the controls rendered by this page, not an App pane-ID heuristic.
   const focusOwner = (owner: FocusOwner): DispatchResult => {
     const target = props.focusRegistry?.target(owner);
@@ -855,7 +850,7 @@ export function Reader(props: {
       props.onResourceBack();
       return "consumed";
     }
-    if (owner === "command:skill-check-updates") {
+    if (owner === "command:skill-check-updates" || owner === "command:reader.add-to-collection") {
       if (key.name === "down") return focusOwner("reader-tabs");
       if (["up", "left", "right"].includes(key.name)) return "consumed";
       return "declined";
@@ -975,6 +970,18 @@ export function Reader(props: {
           </For>
         </Show>
       </box>
+      <Show when={readerActions().find((action) => action.id === "skill-add-to-collection")} keyed>
+        {(action) => (
+          <box id="reader-collection-actions" height={1} flexShrink={0}>
+            {commandZone(
+              "reader-details-action-skill-add-to-collection",
+              { ...action, id: "reader.add-to-collection" },
+              () => props.onDetailsAction(action.id),
+              true,
+            )}
+          </box>
+        )}
+      </Show>
       <box
         id="reader-tools"
         flexDirection="row"

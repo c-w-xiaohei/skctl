@@ -63,6 +63,10 @@ test.each([
       }
       expect(setup.renderer.currentFocusedRenderable?.id).toBe(ids[0]);
       for (let index = ids.length - 1; index >= 0; index--) {
+        // Returning to the inventory dismisses the Reader's contextual Back.
+        // Only the currently mounted panels participate in the reverse cycle.
+        if (ids[index] === "route-back" && !setup.renderer.root.findDescendantById("route-back"))
+          continue;
         expect(await pressTab(true)).toBe(ids[index]);
       }
     } finally {

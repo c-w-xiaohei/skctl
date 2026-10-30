@@ -1,11 +1,12 @@
 import { SkctlError, type OperationOptions } from "../shared";
 import * as v from "valibot";
-import { setCollectionContentRequestSchema } from "./domain.schema";
+import { createCollectionRequestSchema, setCollectionContentRequestSchema } from "./domain.schema";
 import { type CoreOptions } from "../shared";
 import type {
   AddMemberRequest,
   AddReferenceRequest,
   CollectionRequest,
+  CreateCollectionRequest,
   ImportMembersRequest,
   RemoveMemberRequest,
   RemoveReferenceRequest,
@@ -40,17 +41,21 @@ function collection(edit: ConfigEdit, request: CollectionRequest, memberName?: s
 }
 export function createCollection(
   options: CoreOptions,
-  request: Pick<CollectionRequest, "level" | "collection">,
+  request: CreateCollectionRequest,
   operation?: OperationOptions,
 ) {
+  const parsed = v.safeParse(createCollectionRequestSchema, request);
+  if (!parsed.success)
+    throw new SkctlError("INVALID_ARGUMENT", "Invalid Collection creation request");
+  const { level, collection, ...content } = parsed.output;
   return writeConfig(
     options,
-    request.level,
+    level,
     (edit) => {
-      parseQualifiedName(request.collection);
-      if (edit.document().collections?.[request.collection])
+      parseQualifiedName(collection);
+      if (edit.document().collections?.[collection])
         throw new SkctlError("CONFIG_CONFLICT", "Collection already exists");
-      edit.set(["collections", request.collection], {});
+      edit.set(["collections", collection], content);
       return {};
     },
     operation,

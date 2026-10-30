@@ -22,7 +22,6 @@ import type { ConfigReadonly } from "./config/state";
 import type { ConfigDeclarationOwner, SourceBindingView } from "@skctl/core";
 import type { FocusRegistry, FocusTarget } from "./focus";
 import type { NavKey } from "./navigation";
-import { configIntegrationRows } from "./config/state";
 import { CommandControl } from "./command-control";
 import { usePageReturn } from "./page-navigation";
 import { DataList } from "./ui/data-list";
@@ -35,8 +34,6 @@ type ConfigActionId =
   | "add-config-source"
   | "new-collection"
   | "set-collection-use"
-  | "enable-managed-opencode"
-  | "disable-managed-opencode"
   | "config-observe"
   | "config-forget"
   | "config-remove"
@@ -82,8 +79,6 @@ export function ConfigPage(props: {
   readonly onAction: (id: ConfigActionId) => void;
   readonly onOpenConfigSourceInspector?: () => void;
   readonly onBackConfigSourceInspector?: () => void;
-  readonly onBackIntegrationSurface?: () => void;
-  readonly onIntegrationOwner?: (owner: ConfigDeclarationOwner) => void;
   readonly onCollectionOwner?: (collection: string, owner: ConfigDeclarationOwner) => void;
   readonly onContribution: (
     value:
@@ -141,10 +136,6 @@ export function ConfigPage(props: {
     return file && file.status !== "valid" && file.status !== "missing" ? file : undefined;
   };
   const selection = () => props.config.selection(props.destination, section() as ConfigSection);
-  const backIntegrationSurface = () => {
-    if (props.onBackIntegrationSurface) props.onBackIntegrationSurface();
-    else props.config.backIntegrationSurface(props.destination);
-  };
   const backConfigSource = () => {
     if (props.onBackConfigSourceInspector) props.onBackConfigSourceInspector();
     else props.config.backConfigSourceSurface(props.destination);
@@ -186,8 +177,6 @@ export function ConfigPage(props: {
         : `Agent Link handoff  ${handoff.collection}->${handoff.linkedCollection}\nOwner  ${owner}`;
     if (handoff.kind === "agent-use")
       return `Agent Collection Use handoff  ${handoff.collection}\nOwner  ${owner}`;
-    if (handoff.kind === "config-integration")
-      return `Managed OpenCode integration\nOwner  ${owner}\nRead-only owner context. Edit the owning Config directly.`;
     if (handoff.kind === "uninstall-membership")
       return `Uninstall Membership handoff  ${handoff.address.source}/${handoff.address.path}\nCollection  ${handoff.collection ?? "Unavailable"}${handoff.entry ? `\nEntry  ${handoff.entry}` : ""}\nOwner  ${owner}\nEdit this exact Membership owner to resolve the blocker.`;
     return undefined;
@@ -221,49 +210,19 @@ export function ConfigPage(props: {
     const source = selectedConfigSource();
     return source ? { source, ...configSourceDetails(source) } : undefined;
   });
-  const integrationRows = () => configIntegrationRows(props.projection(), value());
-  const selectedIntegration = () => integrationRows().find((row) => row.key === selection());
-  const integrationStatus = () => props.projection()?.effective.agent.status;
-  const integrationReasons = () => props.projection()?.effective.agent.reasons ?? [];
-  const integrationCatalog = () => props.projection()?.effective.agent.catalog ?? [];
-  // Select mutates its native index before notifying Solid. Keep the controlled
-  // index in this mounted page so a config snapshot repaint cannot restore the
-  // previous row between ArrowDown and Enter.
-  const [catalogSelectedIndex, setCatalogSelectedIndex] = createSignal(0);
-  let integrationCatalogBrowser: SelectRenderable | undefined;
-  const selectedCatalogEntry = () =>
-    integrationCatalog().find(
-      (entry) => entry.selector === props.config.integrationCatalogSelection(props.destination),
-    );
   const sharedReturn = usePageReturn(() => {
     if (fileProblem() || !props.projection()) return undefined;
     // Owner/selection changes invalidate the previous layer's registered instance.
     void selection();
-    void props.config.integrationCatalogSelection(props.destination);
     const sourceInspector =
       section() === "config-sources" &&
       props.config.configSourceSurface(props.destination) === "inspector" &&
       !!selectedConfigSource();
-    const integrationSurface = props.config.integrationSurface(props.destination);
-    const integrationInspector = section() === "integrations" && integrationSurface !== "list";
-    if (!sourceInspector && !integrationInspector) return undefined;
-    const catalogEntry = integrationInspector && integrationSurface === "catalog-entry";
+    if (!sourceInspector) return undefined;
     const record: CommandRecord = {
-      id: sourceInspector
-        ? "config.source.back"
-        : catalogEntry
-          ? "config.catalog.back"
-          : "config.integration.back",
-      verb: sourceInspector
-        ? "Back to Config Sources"
-        : catalogEntry
-          ? "Back to Integration"
-          : "Back to Integrations",
-      destination: sourceInspector
-        ? "Config Sources"
-        : catalogEntry
-          ? "Integration inspector"
-          : "Integrations",
+      id: "config.source.back",
+      verb: "Back to Config Sources",
+      destination: "Config Sources",
       scope: "page",
       keys: ["enter", "return"],
       enabled: true,
@@ -272,7 +231,7 @@ export function ConfigPage(props: {
     return {
       record,
       anchor: pageRoot,
-      execute: sourceInspector ? backConfigSource : backIntegrationSurface,
+      execute: backConfigSource,
     };
   });
   const selectedCollection = () =>
@@ -393,16 +352,7 @@ export function ConfigPage(props: {
             ]
           : section() === "collections"
             ? ["set-collection-use", "config.collection.open-owner", "new-collection"]
-            : props.config.integrationSurface(props.destination) === "catalog-entry"
-              ? !sharedReturn
-                ? ["config.catalog.back"]
-                : []
-              : [
-                  "enable-managed-opencode",
-                  "disable-managed-opencode",
-                  "config.integration.open-owner",
-                  ...(!sharedReturn ? ["config.integration.back"] : []),
-                ];
+            : [];
     return ids.flatMap((id) => {
       const owner = enabledCommand(id);
       return owner ? [owner] : [];
@@ -434,7 +384,7 @@ export function ConfigPage(props: {
             ? !value()?.direct.configSources.length
             : section() === "collections"
               ? !value()?.direct.collections.length && !value()?.contributed.collections.length
-              : integrationRows().length === 0;
+              : true;
       const owner =
         selectedAction ??
         (empty ? controls()[0] : undefined) ??
@@ -479,10 +429,7 @@ export function ConfigPage(props: {
         if (!option) return "consumed" as const;
         props.onSelect(option.value);
         if (section() === "config-sources") enterConfigSource();
-        else if (section() === "integrations") {
-          props.config.openIntegrationInspector(props.destination);
-          queueMicrotask(() => props.focusRegistry?.applyFocus("inspector") || enterPrimary());
-        } else enterPrimary();
+        else enterPrimary();
         return "consumed" as const;
       }
       if (key.name === "up" && target.getSelectedIndex() === 0) {
@@ -517,22 +464,12 @@ export function ConfigPage(props: {
       enterPrimary();
       return "consumed" as const;
     }
-    if (owner === "inspector" && target instanceof SelectRenderable && key.name === "right") {
-      const entry = integrationCatalog()[target.getSelectedIndex()];
-      if (entry) {
-        props.config.openIntegrationCatalogEntry(props.destination, entry.selector);
-        queueMicrotask(() => props.focusRegistry?.applyFocus("inspector"));
-      }
-      return "consumed" as const;
-    }
     if (owner === "details-metadata" && (key.name === "right" || key.name === "enter")) {
       enterPrimary();
       return "consumed" as const;
     }
     if (owner === "work-area" && (key.name === "right" || key.name === "enter")) {
-      if (section() === "integrations" && mounted("inspector"))
-        props.focusRegistry?.applyFocus("inspector");
-      else enterPrimary();
+      enterPrimary();
       return "consumed" as const;
     }
     if (!owner.startsWith("command:")) return "declined" as const;
@@ -542,8 +479,7 @@ export function ConfigPage(props: {
           enterConfigSource();
           queueMicrotask(enterContributions);
         } else enterContributions();
-      } else if (section() === "integrations") props.focusRegistry?.applyFocus("inspector");
-      else if (!props.focusRegistry?.applyFocus("details-metadata"))
+      } else if (!props.focusRegistry?.applyFocus("details-metadata"))
         props.focusRegistry?.applyFocus("work-area");
       return "consumed" as const;
     }
@@ -704,7 +640,7 @@ export function ConfigPage(props: {
         <Show
           when={fileProblem()}
           fallback={
-            <>
+            <Show when={props.projection()} fallback={<text>Loading Config…</text>}>
               <Show
                 when={
                   compactSourceLayout() &&
@@ -1138,301 +1074,8 @@ export function ConfigPage(props: {
                     </Show>
                   </>
                 </Show>
-                <Show
-                  when={section() === "integrations" && props.projection() === undefined}
-                  fallback={null}
-                >
-                  <text>Loading Config integrations...</text>
-                </Show>
-                <Show
-                  when={section() === "integrations" && props.projection() !== undefined}
-                  fallback={null}
-                >
-                  <>
-                    {props.config.integrationSurface(props.destination) === "list" && (
-                      <>
-                        <Show when={integrationRows().length > 0} fallback={null}>
-                          <DataList
-                            id="config-integrations-browser"
-                            ref={(item: SelectRenderable) => {
-                              revealBrowser(item);
-                              bind("browser", item);
-                            }}
-                            height={Math.max(3, Math.min(8, integrationRows().length))}
-                            minHeight={3}
-                            flexShrink={0}
-                            options={integrationRows().map((row) => ({
-                              name: `Managed OpenCode · ${row.direct ? "Direct" : "Read-only"}`,
-                              description: `${row.owner.level} ${row.owner.file} ${row.owner.pointer}`,
-                              value: row.key,
-                            }))}
-                            selectedIndex={Math.max(
-                              0,
-                              integrationRows().findIndex((row) => row.key === selection()),
-                            )}
-                            showDescription={false}
-                            showSelectionIndicator
-                            showScrollIndicator
-                            onChange={(index) => {
-                              const row = integrationRows()[index];
-                              if (row) props.onSelect(row.key);
-                            }}
-                            onSelect={(index) => {
-                              const row = integrationRows()[index];
-                              if (row) {
-                                props.onSelect(row.key);
-                                props.config.openIntegrationInspector(props.destination);
-                                queueMicrotask(
-                                  () =>
-                                    props.focusRegistry?.applyFocus("inspector") || enterPrimary(),
-                                );
-                              }
-                            }}
-                          />
-                        </Show>
-                        <Show
-                          when={!integrationRows().length && integrationStatus() === "available"}
-                          fallback={null}
-                        >
-                          <box flexDirection="column">
-                            <text>Managed OpenCode Available · Catalog empty</text>
-                            <text>No catalog entries are currently exposed.</text>
-                          </box>
-                        </Show>
-                        <Show
-                          when={!integrationRows().length && integrationStatus() !== "available"}
-                          fallback={null}
-                        >
-                          <box flexDirection="column">
-                            <text>Managed OpenCode Unavailable</text>
-                            {integrationReasons().map((reason) => (
-                              <text>{reason.message}</text>
-                            ))}
-                            {actionCommand("enable-managed-opencode")}
-                          </box>
-                        </Show>
-                      </>
-                    )}
-                    <Show
-                      keyed
-                      when={
-                        props.config.integrationSurface(props.destination) !== "list"
-                          ? props.config.integrationSurface(props.destination)
-                          : undefined
-                      }
-                    >
-                      {(_surface) => (
-                        <scrollbox
-                          id={
-                            props.config.integrationSurface(props.destination) === "catalog-entry"
-                              ? "config-catalog-entry-inspector"
-                              : "config-integration-inspector"
-                          }
-                          ref={(target: ScrollBoxRenderable) =>
-                            bind(
-                              props.config.integrationSurface(props.destination) === "catalog-entry"
-                                ? "inspector"
-                                : "work-area",
-                              target,
-                            )
-                          }
-                          flexGrow={1}
-                          minHeight={0}
-                        >
-                          <Show
-                            when={
-                              props.config.integrationSurface(props.destination) !== "catalog-entry"
-                            }
-                            fallback={
-                              <Show
-                                when={selectedCatalogEntry()}
-                                fallback={
-                                  <>
-                                    <text>Catalog entry unavailable.</text>
-                                    <Show when={!sharedReturn}>
-                                      {localCommand(
-                                        "config.catalog.back",
-                                        "Back to Integration",
-                                        "Integration inspector",
-                                        backIntegrationSurface,
-                                      )}
-                                    </Show>
-                                  </>
-                                }
-                              >
-                                {(entry) => (
-                                  <>
-                                    <text>{`Catalog Entry  ${entry().selector}`}</text>
-                                    <text>{`Name  ${entry().name}`}</text>
-                                    <text>{`Description  ${entry().description || "None"}`}</text>
-                                    <text>{`Aliases  ${entry().aliases.join(", ") || "None"}`}</text>
-                                    <Show when={!sharedReturn}>
-                                      {localCommand(
-                                        "config.catalog.back",
-                                        "Back to Integration",
-                                        "Integration inspector",
-                                        backIntegrationSurface,
-                                      )}
-                                    </Show>
-                                  </>
-                                )}
-                              </Show>
-                            }
-                          >
-                            <text>Managed OpenCode</text>
-                            <text>{`Status  ${integrationStatus() === "available" ? "Available" : "Unavailable"}`}</text>
-                            <text>{`Owner  ${selectedIntegration()?.owner.level ?? props.destination} ${selectedIntegration()?.owner.file ?? value()?.file.file ?? "Config"} ${selectedIntegration()?.owner.pointer ?? "Unavailable"}`}</text>
-                            <text>{`Collection Use  ${
-                              props
-                                .projection()
-                                ?.effective.agent.use.map((owner) => owner.level)
-                                .join(", ") || "none"
-                            }`}</text>
-                            <Show
-                              when={integrationStatus() === "available"}
-                              fallback={
-                                <>
-                                  {integrationReasons().map((reason) => (
-                                    <text>{`Reason  ${reason.message}`}</text>
-                                  ))}
-                                  <text>
-                                    No catalog is available until Managed OpenCode dependencies are
-                                    complete.
-                                  </text>
-                                </>
-                              }
-                            >
-                              <text>{`Catalog  ${integrationCatalog().length === 0 ? "available · empty" : `${integrationCatalog().length} entries`}`}</text>
-                              {integrationCatalog().length > 0 && (
-                                <DataList
-                                  id="config-integration-catalog"
-                                  ref={(item: SelectRenderable) => {
-                                    integrationCatalogBrowser = item;
-                                    const selected = props.config.integrationCatalogSelection(
-                                      props.destination,
-                                    );
-                                    const restoredIndex = Math.max(
-                                      0,
-                                      integrationCatalog().findIndex(
-                                        (entry) => entry.selector === selected,
-                                      ),
-                                    );
-                                    setCatalogSelectedIndex(restoredIndex);
-                                    bind("inspector", item);
-                                    queueMicrotask(() => {
-                                      if (
-                                        !item.isDestroyed &&
-                                        props.config.integrationSurface(props.destination) ===
-                                          "inspector"
-                                      ) {
-                                        item.setSelectedIndex(restoredIndex);
-                                        props.focusRegistry?.applyFocus("inspector");
-                                      }
-                                    });
-                                  }}
-                                  height={Math.min(8, integrationCatalog().length + 1)}
-                                  options={integrationCatalog().map((entry) => ({
-                                    name: `${entry.selector} · ${entry.name}`,
-                                    description: `${entry.description || "No description"}${entry.aliases.length ? ` · aliases: ${entry.aliases.join(", ")}` : ""}`,
-                                    value: entry.selector,
-                                  }))}
-                                  showDescription
-                                  showSelectionIndicator
-                                  showScrollIndicator
-                                  selectedIndex={catalogSelectedIndex()}
-                                  onChange={(_index, option) => {
-                                    if (
-                                      option &&
-                                      renderer.currentFocusedRenderable ===
-                                        integrationCatalogBrowser &&
-                                      props.config.integrationSurface(props.destination) ===
-                                        "inspector"
-                                    ) {
-                                      setCatalogSelectedIndex(_index);
-                                      props.config.selectIntegrationCatalogEntry(
-                                        props.destination,
-                                        option.value,
-                                      );
-                                    }
-                                  }}
-                                  onSelect={(_index, option) => {
-                                    const selected =
-                                      integrationCatalogBrowser?.getSelectedOption() ?? option;
-                                    const entry = selected
-                                      ? integrationCatalog().find(
-                                          (candidate) => candidate.selector === selected.value,
-                                        )
-                                      : undefined;
-                                    if (entry) {
-                                      setCatalogSelectedIndex(
-                                        integrationCatalogBrowser?.getSelectedIndex() ?? _index,
-                                      );
-                                      props.config.openIntegrationCatalogEntry(
-                                        props.destination,
-                                        entry.selector,
-                                      );
-                                      queueMicrotask(() =>
-                                        props.focusRegistry?.applyFocus("inspector"),
-                                      );
-                                    }
-                                  }}
-                                />
-                              )}
-                            </Show>
-                            <box flexDirection="column" gap={1} flexShrink={0}>
-                              {selectedIntegration()?.direct ? (
-                                <box
-                                  id="config-integration-management"
-                                  flexDirection="column"
-                                  gap={1}
-                                  minWidth={0}
-                                  flexShrink={0}
-                                >
-                                  <box
-                                    flexDirection="row"
-                                    flexWrap="wrap"
-                                    gap={1}
-                                    minWidth={0}
-                                    flexShrink={0}
-                                  >
-                                    {actionCommand("enable-managed-opencode")}
-                                  </box>
-                                  <box
-                                    flexDirection="row"
-                                    flexWrap="wrap"
-                                    gap={1}
-                                    minWidth={0}
-                                    flexShrink={0}
-                                  >
-                                    {actionCommand("disable-managed-opencode")}
-                                  </box>
-                                </box>
-                              ) : (
-                                !!selectedIntegration()?.owner &&
-                                localCommand(
-                                  "config.integration.open-owner",
-                                  "Open owning Config",
-                                  `${selectedIntegration()!.owner.level} ${selectedIntegration()!.owner.file} ${selectedIntegration()!.owner.pointer}`,
-                                  () => props.onIntegrationOwner?.(selectedIntegration()!.owner),
-                                )
-                              )}
-                              <Show when={!sharedReturn}>
-                                {localCommand(
-                                  "config.integration.back",
-                                  "Back to Integrations",
-                                  "Integrations",
-                                  backIntegrationSurface,
-                                )}
-                              </Show>
-                            </box>
-                          </Show>
-                        </scrollbox>
-                      )}
-                    </Show>
-                  </>
-                </Show>
               </scrollbox>
-            </>
+            </Show>
           }
         >
           {(file) => (

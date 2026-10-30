@@ -89,6 +89,28 @@ async function choosePaletteAction(setup: Setup, choices: SelectRenderable, id: 
   await parsedEnter(setup);
   await setup.flush();
 }
+test("populated Agent access offers catalog selection and Agent connections directly", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(projection())} exit={() => {}} />,
+    { width: 80, height: 24 },
+  );
+  try {
+    await openAgentAccess(setup);
+    await enterLive(setup, "agent-access-collections");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
+    await parsedEnter(setup);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-use-values"));
+    await parsedEscape(setup);
+    await enterLive(setup, "agent-access-connect");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
+    await parsedEnter(setup);
+    await setup.waitForFrame((frame) => frame.includes("Harness integrations"));
+    await enterLive(setup, "route-back");
+    await setup.waitForFrame((frame) => frame.includes("Prepared in the Agent catalog"));
+  } finally {
+    setup.renderer.destroy();
+  }
+});
 test("RENDER Agent access Reference full text is adjacent and scrollable; global Actions preserves its exact update scope", async () => {
   let contentLoads = 0;
   const setup = await testRender(
@@ -488,13 +510,13 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
     expect(childIndex).toBeGreaterThanOrEqual(0);
     destinations.setSelectedIndex(childIndex);
     await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership-batch-review"));
-    await enterLive(setup, "membership-batch-review");
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("installed-skill-choice-submit"),
+    );
+    await enterLive(setup, "installed-skill-choice-submit");
     try {
       await setup.waitFor(() => batches.length === 1);
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("collection-review-choice"),
-      );
+      await setup.waitFor(() => !setup.renderer.root.findDescendantById("installed-skill-choice"));
     } catch (error) {
       console.error(
         "Membership preview",
@@ -510,8 +532,10 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
     ]);
     expect(batches[0]!.removals).toEqual([]);
     expect(batches[0]!.collection).toBe("child");
-    expect(mutations).toBe(0);
-    await parsedEscape(setup);
+    expect(mutations).toBe(1);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
+    await enterLive(setup, "route-back");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
     await setup.flush();
     await focusLive(setup, "current-exposure-browser");
     await selectTreeName(setup, rootPathKey);
@@ -535,7 +559,7 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
       ),
     ).toBe(true);
     expect(previews).toHaveLength(1);
-    expect(mutations).toBe(0);
+    expect(mutations).toBe(1);
   } finally {
     setup.renderer.destroy();
   }

@@ -3,7 +3,7 @@ import { SelectRenderable, type BaseRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { focusLive, parsedEnter } from "./reader-test-controls";
+import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
 
 function countById(root: BaseRenderable, id: string): number {
   const visit = (node: BaseRenderable): number =>
@@ -12,18 +12,20 @@ function countById(root: BaseRenderable, id: string): number {
 }
 
 async function openConfig(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("top-navigation-tab-workspace"),
-  );
-  const tab = setup.renderer.root.findDescendantById("top-navigation-tab-global")!;
-  await setup.mockMouse.click(tab.screenX + 1, tab.screenY);
-  await setup.waitForFrame((frame) => frame.includes("Global Config / Sources"));
+  await setup.flush();
+  await enterLive(setup, "shell-scope-select");
+  const choices = (await focusLive(setup, "scope-choices")) as SelectRenderable;
+  choices.setSelectedIndex(choices.options.findIndex((option) => option.value === "global"));
+  await parsedEnter(setup);
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-work-area"));
 }
 
 async function openConfigSources(setup: Awaited<ReturnType<typeof testRender>>) {
-  await focusLive(setup, "shell-section-tab-sources");
+  await focusLive(setup, "shell-section-global-tab-sources");
   await setup.mockInput.pressArrow("right");
-  await setup.waitForFrame((frame) => frame.includes("Global Config / Config Sources"));
+  await setup.waitFor(
+    () => setup.renderer.currentFocusedRenderable?.id === "shell-section-global-tab-config-sources",
+  );
 }
 
 test("RENDER compact Global Sources shows selection/list and reveals every source action inside its pane", async () => {
@@ -72,7 +74,7 @@ test("RENDER compact Global Sources shows selection/list and reveals every sourc
     const frame = setup.captureCharFrame();
     expect(frame).toContain("global-source-1");
     expect(frame).toContain("Selected Source");
-    for (const label of ["Check / update", "Find and install"]) expect(frame).toContain(label);
+    for (const label of ["Check updates", "Find and install"]) expect(frame).toContain(label);
     for (const id of ["check-updates", "add-skills", "remove-source"]) {
       const control = await focusLive(setup, `config-command-${id}`);
       await setup.renderOnce();
@@ -80,7 +82,7 @@ test("RENDER compact Global Sources shows selection/list and reveals every sourc
       expect(control.screenY + control.height).toBeLessThan(pane.screenY + pane.height);
       expect(setup.captureCharFrame()).toContain(
         control.id === "config-command-check-updates"
-          ? "Check / update"
+          ? "Check updates"
           : id === "add-skills"
             ? "Find and install"
             : "Remove Source",
@@ -182,7 +184,6 @@ test("RENDER compact populated Config Sources has one list action owner and keep
     const labels: Record<string, string> = {
       "config-observe": "Check / review Config update",
       "config-remove": "Remove Config Source",
-      "config.source.back": "Back to Config Sources",
     };
     for (const id of Object.keys(labels)) {
       const control = await focusLive(setup, `config-command-${id}`);

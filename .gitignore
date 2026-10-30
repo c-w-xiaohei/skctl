@@ -18,6 +18,7 @@ CONTEXT.md
 DESIGN.md
 /docs/*
 !/docs/skctl-use-cases-and-positioning.md
+!/docs/integrations.md
 !/docs/adr/
 /docs/adr/*
 !/docs/adr/0006-business-aware-source-acquisition.md

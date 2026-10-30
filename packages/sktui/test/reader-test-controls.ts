@@ -237,10 +237,7 @@ export async function enterReaderDetailsAction(setup: ReaderSetup, actionId: str
 }
 
 export async function openReaderManagement(setup: ReaderSetup) {
-  if (
-    !setup.renderer.root.findDescendantById("reader-reload") &&
-    !setup.renderer.root.findDescendantById("reader-details-action-skill-add-to-collection")
-  ) {
+  if (!setup.renderer.root.findDescendantById("reader-details-action-skill-uninstall")) {
     await focusLive(setup, "reader-details-manage");
     await parsedEnter(setup);
   }

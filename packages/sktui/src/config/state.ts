@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import type { ConfigLevelView, WorkspaceView } from "@skctl/core";
+import type { WorkspaceView } from "@skctl/core";
 import { validSections, type ConfigSection, type Destination } from "../types";
 
 type ConfigDestination = Exclude<Destination, "workspace">;
@@ -14,14 +14,11 @@ export const configDeclarationOwnerKey = (owner: {
 export interface ConfigSnapshot {
   readonly section: ConfigSection;
   readonly selection: Readonly<Record<ConfigSection, string | undefined>>;
-  readonly integrationSurface: "list" | "inspector" | "catalog-entry";
-  readonly integrationCatalogSelection?: string;
   readonly configSourceSurface: "list" | "inspector";
 }
 const initial = (): ConfigSnapshot => ({
   section: "sources",
   selection: {} as Record<ConfigSection, string | undefined>,
-  integrationSurface: "list",
   configSourceSurface: "list",
 });
 
@@ -38,25 +35,7 @@ const valuesFor = (
     return config.direct.configSources.map((item) => item.owner.pointer);
   if (section === "collections")
     return [...config.direct.collections.map((item) => item.id), ...config.contributed.collections];
-  return configIntegrationRows(projection, config).map((row) => row.key);
-};
-
-export const configIntegrationRows = (
-  projection: WorkspaceView | undefined,
-  config: ConfigLevelView | undefined,
-) => {
-  if (!config) return [];
-  const direct = config.direct.integrations.map(({ owner }) => ({
-    owner,
-    direct: true,
-    key: configDeclarationOwnerKey(owner),
-  }));
-  return [
-    ...direct,
-    ...(projection?.effective.agent.integration ?? [])
-      .filter((owner) => !direct.some((row) => row.key === configDeclarationOwnerKey(owner)))
-      .map((owner) => ({ owner, direct: false, key: configDeclarationOwnerKey(owner) })),
-  ];
+  return [];
 };
 
 const nearest = (
@@ -106,13 +85,7 @@ export function createConfigState() {
         update(destination, (current) => ({
           ...current,
           section,
-          ...(section === "integrations"
-            ? {}
-            : {
-                integrationSurface: "list",
-                integrationCatalogSelection: undefined,
-                configSourceSurface: "list",
-              }),
+          configSourceSurface: "list",
         }));
     },
     land(destination: ConfigDestination, section: ConfigSection, selection?: string) {
@@ -121,13 +94,7 @@ export function createConfigState() {
           ...current,
           section,
           selection: { ...current.selection, [section]: selection },
-          ...(section === "integrations"
-            ? {}
-            : {
-                integrationSurface: "list",
-                integrationCatalogSelection: undefined,
-                configSourceSurface: "list",
-              }),
+          configSourceSurface: "list",
         }));
     },
     configSourceSurface: (destination: ConfigDestination) =>
@@ -138,48 +105,6 @@ export function createConfigState() {
     backConfigSourceSurface(destination: ConfigDestination) {
       update(destination, (current) => ({ ...current, configSourceSurface: "list" }));
     },
-    integrationSurface: (destination: ConfigDestination) =>
-      snapshot(destination).integrationSurface,
-    integrationCatalogSelection: (destination: ConfigDestination) =>
-      snapshot(destination).integrationCatalogSelection,
-    selectIntegrationCatalogEntry(destination: ConfigDestination, selector: string) {
-      update(destination, (current) =>
-        current.integrationSurface === "inspector"
-          ? { ...current, integrationCatalogSelection: selector }
-          : current,
-      );
-    },
-    openIntegrationInspector(destination: ConfigDestination) {
-      update(destination, (current) => ({
-        ...current,
-        integrationSurface: "inspector",
-        integrationCatalogSelection: undefined,
-      }));
-    },
-    openIntegrationCatalogEntry(destination: ConfigDestination, selector: string) {
-      update(destination, (current) => ({
-        ...current,
-        integrationSurface: "catalog-entry",
-        integrationCatalogSelection: selector,
-      }));
-    },
-    backIntegrationSurface(destination: ConfigDestination) {
-      update(destination, (current) => ({
-        ...current,
-        integrationSurface: current.integrationSurface === "catalog-entry" ? "inspector" : "list",
-        integrationCatalogSelection:
-          current.integrationSurface === "catalog-entry"
-            ? current.integrationCatalogSelection
-            : undefined,
-      }));
-    },
-    closeIntegrationSurface(destination: ConfigDestination) {
-      update(destination, (current) => ({
-        ...current,
-        integrationSurface: "list",
-        integrationCatalogSelection: undefined,
-      }));
-    },
     reconcile(previous: WorkspaceView | undefined, current: WorkspaceView) {
       setSnapshots((snapshots) => {
         let changed = false;
@@ -189,6 +114,7 @@ export function createConfigState() {
           const selection = { ...snapshot.selection };
           let destinationChanged = false;
           for (const section of validSections(destination) as readonly ConfigSection[]) {
+            if (section === "integrations") continue;
             const reconciled = nearest(
               selection[section],
               valuesFor(current, destination, section),
@@ -214,14 +140,7 @@ export type ConfigReadonly = Pick<
   | "snapshot"
   | "section"
   | "selection"
-  | "integrationSurface"
-  | "integrationCatalogSelection"
   | "configSourceSurface"
-  | "selectIntegrationCatalogEntry"
-  | "openIntegrationInspector"
-  | "openIntegrationCatalogEntry"
-  | "backIntegrationSurface"
-  | "closeIntegrationSurface"
   | "openConfigSourceInspector"
   | "backConfigSourceSurface"
 >;

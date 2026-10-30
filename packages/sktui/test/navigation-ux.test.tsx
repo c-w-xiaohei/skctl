@@ -8,7 +8,7 @@ import { createFocusRegistry } from "../src/focus";
 import { DataList } from "../src/ui/data-list";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { enterLive, parsedEscape } from "./reader-test-controls";
+import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 test("DataList keeps the selected label column fixed when physical focus changes", async () => {
   const setup = await testRender(
     () => (
@@ -160,13 +160,10 @@ function wideCollectionProjection() {
   };
 }
 async function openCollections(setup: Awaited<ReturnType<typeof testRender>>) {
-  const sidebar = setup.renderer.root.findDescendantById(
-    "shell-section-navigation",
-  ) as SelectRenderable;
-  sidebar.setSelectedIndex(1);
-  await setup.renderOnce();
-  await setup.mockMouse.click(sidebar.screenX + 1, sidebar.screenY + 1);
+  await setup.flush();
+  await enterLive(setup, "shell-section-tab-collections");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
+  await setup.flush();
 }
 test("wide Collections retain the browser beside root details without a Back frame", async () => {
   const setup = await testRender(
@@ -175,51 +172,34 @@ test("wide Collections retain the browser beside root details without a Back fra
   );
   try {
     await openCollections(setup);
-    const browser = setup.renderer.root.findDescendantById(
-      "collection-browser",
-    ) as SelectRenderable;
-    expect(browser.options.length).toBe(2);
+    const browser = setup.renderer.root.findDescendantById("collection-browser")!;
+    await enterLive(setup, "collection-browser");
     expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeDefined();
-    browser.focus();
-    browser.selectCurrent();
+    await focusLive(setup, "collection-relationships");
+    setup.mockInput.pressArrow("right");
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+      () => setup.renderer.currentFocusedRenderable?.id.includes(":action-") === true,
     );
+    await parsedEnter(setup);
     expect(setup.renderer.root.findDescendantById("collection-browser")).toBeDefined();
-    expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeDefined();
-    expect(setup.renderer.root.findDescendantById("route-back")).toBeUndefined();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-relationships");
-    const rows = setup.renderer.root.findDescendantById(
-      "collection-relationships",
-    ) as SelectRenderable;
-    rows.focus();
-    rows.selectCurrent();
+    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(false);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
     );
     expect(setup.renderer.root.findDescendantById("collection-browser")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("collection-membership-inspector")).toBeDefined();
-    expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeUndefined();
-    expect(setup.renderer.root.findDescendantById("route-back")).toBeUndefined();
-    const retainedBrowser = setup.renderer.root.findDescendantById(
-      "collection-browser",
-    ) as SelectRenderable;
+    const retainedBrowser = setup.renderer.root.findDescendantById("collection-browser")!;
+    expect(retainedBrowser === browser).toBe(true);
     retainedBrowser.focus();
-    retainedBrowser.setSelectedIndex(1);
+    setup.mockInput.pressArrow("down");
     await setup.renderOnce();
-    await setup.mockMouse.click(retainedBrowser.screenX + 1, retainedBrowser.screenY + 1);
-    await setup.waitFor(
-      () =>
-        (
-          setup.renderer.root.findDescendantById("collection-browser") as SelectRenderable
-        ).getSelectedOption()?.value === "bravo",
-    );
+    await setup.waitForFrame((frame) => frame.includes("bravo"));
+    await enterLive(setup, "collection-browser");
     expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeDefined();
-    expect(
-      setup.renderer.root.findDescendantById("collection-membership-inspector"),
-    ).toBeUndefined();
-    expect(setup.renderer.root.findDescendantById("collection-browser")).toBe(retainedBrowser);
-    expect(setup.renderer.root.findDescendantById("route-back")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(false);
+    expect(setup.renderer.root.findDescendantById("collection-browser") === retainedBrowser).toBe(
+      true,
+    );
   } finally {
     setup.renderer.destroy();
   }

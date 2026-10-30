@@ -45,16 +45,11 @@ export function skillsStatus(
       message: previous.message,
       action: "configuration" as const,
     };
-  if (
-    agentAccess &&
-    effective.managed &&
-    effective.agent.status === "available" &&
-    effective.use.length
-  )
+  if (agentAccess && effective.agent.status === "available" && effective.use.length)
     return undefined;
   if (!installedSkills.length && !effective.sources.length)
     return {
-      title: "Add your first Skills",
+      title: "Add your first Source",
       message:
         "No Sources or installed Skills yet. Add a Git repository or local folder to get started.",
       action: "add-source" as const,
@@ -69,20 +64,27 @@ export function skillsStatus(
   if (!effective.collections.length)
     return {
       title: "Organize Skills into a Collection",
-      message:
-        "Agent setup is optional. Create a Collection and add the Skills you want OpenCode to discover.",
+      message: "Create a Collection and add the Skills you want agents to discover.",
       action: "create-collection" as const,
     };
-  if (!effective.managed)
+  if (
+    !effective.use.length &&
+    effective.collectionsView.every(
+      (collection) => !collection.members.length && !collection.references.length,
+    )
+  )
     return {
-      title: "Choose what OpenCode can discover",
-      message: `${installedSkills.length} Skills installed. Agent setup is optional; you can manage and read your Skills without it.`,
-      action: "enable-agent" as const,
+      title: "Add Skills to a Collection",
+      message:
+        "Your Skills are installed. Open a Collection to choose its members; catalog settings can be added when ready.",
+      action: "organize-collection" as const,
+      collection: effective.collectionsView[0]?.id,
     };
   if (!effective.use.length)
     return {
-      title: "Choose Collections for OpenCode",
-      message: "OpenCode integration is enabled. Choose which Collections appear in its catalog.",
+      title: "Choose Collections for agents",
+      message:
+        "Choose which Collections appear in the catalog. Configure host entries separately in Integrations.",
       action: "choose-collections" as const,
     };
   if (effective.agent.status !== "available")

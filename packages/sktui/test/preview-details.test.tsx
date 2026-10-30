@@ -5,6 +5,7 @@ import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection, sourceFilteredReaderProjection } from "./installed-reader.fixture";
 import {
+  enterReaderDetailsRelationship,
   focusLive,
   openAllInstalledSkills,
   openReaderTab,
@@ -12,41 +13,12 @@ import {
   parsedEscape,
   waitForReaderBody,
 } from "./reader-test-controls";
-async function openSources(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-sources"));
-  await focusLive(setup, "shell-section-tab-sources");
-  await parsedEnter(setup);
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
-}
 async function openSourceDetails(setup: Awaited<ReturnType<typeof testRender>>) {
-  await openSources(setup);
-  const browser = (await focusLive(setup, "source-browser")) as SelectRenderable;
-  const sourceIndex = browser.options.findIndex((option) => option.value === "team-main");
-  expect(sourceIndex).toBeGreaterThanOrEqual(0);
-  browser.setSelectedIndex(sourceIndex);
-  await setup.flush();
-  await focusLive(setup, "source-browser");
+  await openAllInstalledSkills(setup);
   await parsedEnter(setup);
-  try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-updates-browser"));
-  } catch (error) {
-    console.error(
-      "Source update entry",
-      setup.renderer.currentFocusedRenderable?.id,
-      setup.captureCharFrame(),
-    );
-    throw error;
-  }
-  setup.mockInput.pressKey("p", { ctrl: true });
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
-  const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
-  const index = choices.options.findIndex(
-    (option) => option.value.id === "source-updates.source-details",
-  );
-  expect(index).toBeGreaterThanOrEqual(0);
-  choices.setSelectedIndex(index);
-  await parsedEnter(setup);
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
+  await openReaderTab(setup, 2);
+  await enterReaderDetailsRelationship(setup, "source");
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-pane"));
   await setup.flush();
 }
 test("All Skills selection keeps a persistent Reader, loads its exact address, and has no Inspector step", async () => {
@@ -143,13 +115,13 @@ test("compact Skills defaults to Agent access without mounting an installed brow
     { width: 80, height: 16 },
   );
   try {
-    expect(setup.renderer.root.findDescendantById("agent-access-pane")).toBeDefined();
+    await setup.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
     expect(setup.renderer.root.findDescendantById("installed-skill-browser")).toBeUndefined();
     await openAllInstalledSkills(setup);
     expect(setup.renderer.root.findDescendantById("installed-skill-browser")).toBeDefined();
     await focusLive(setup, "skills-view-tab-current-exposure");
     await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("agent-access-pane"));
+    await setup.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
   } finally {
     setup.renderer.destroy();
   }
@@ -162,44 +134,35 @@ test("Source details disclose management actions and provenance only on request"
   try {
     await openSourceDetails(setup);
     const initial = setup.captureCharFrame();
-    expect(initial).toContain("View installed Skills · 2");
+    expect(initial).toContain("All Skills");
     expect(initial).toContain("Check updates");
     expect(initial).not.toContain("Tracked ref");
     expect(initial).not.toContain("Remove Source declaration");
     await focusLive(setup, "source-details-toggle");
     await parsedEnter(setup);
-    expect(setup.captureCharFrame()).toContain("Tracked ref");
-    await focusLive(setup, "source-actions-toggle");
-    await parsedEnter(setup);
+    await setup.waitForFrame((frame) => frame.includes("Tracked ref"));
+    await focusLive(setup, "workspace-action-remove-source");
     await setup.waitForFrame((frame) => frame.includes("Remove Source declaration"));
   } finally {
     setup.renderer.destroy();
   }
 });
-test("Source action/detail disclosures close without losing the selected source", async () => {
+test("Source action/detail disclosures return to the originating Skill relationship", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
     { width: 43, height: 30 },
   );
   try {
     await openSourceDetails(setup);
-    for (const id of [
-      "source-actions-toggle",
-      "source-actions-toggle",
-      "source-details-toggle",
-      "source-details-toggle",
-    ]) {
+    for (const id of ["source-details-toggle", "source-details-toggle"]) {
       await focusLive(setup, id);
       await parsedEnter(setup);
     }
     await parsedEscape(setup);
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-updates-browser",
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-relationship-source",
     );
-    await parsedEscape(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
-    const returned = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;
-    expect(returned.getSelectedOption()?.value).toBe("team-main");
+    await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
   } finally {
     setup.renderer.destroy();
   }

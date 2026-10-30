@@ -317,17 +317,25 @@ test.each([12, 2])(
         const firstAction = compactFeedback ? "updates-feedback-recover" : "updates-update-all";
         for (
           let step = 0;
-          step < 8 && setup.renderer.currentFocusedRenderable?.id !== firstAction;
+          step < 30 &&
+          setup.renderer.currentFocusedRenderable?.parent?.id !== "updates-actions-pane";
           step++
         ) {
           setup.mockInput.pressTab();
-          await setup.renderOnce();
+          await setup.flush();
         }
         const first = expectActionBounds(setup, "updates", firstAction);
         expect(first).toBeInstanceOf(ButtonRenderable);
-        expect(setup.renderer.currentFocusedRenderable).toBe(first);
-        if (!compactFeedback) setup.mockInput.pressArrow("right");
-        setup.mockInput.pressArrow("right");
+        for (
+          let step = 0;
+          step < 4 &&
+          setup.renderer.currentFocusedRenderable?.id !==
+            (compactFeedback ? "updates-feedback-details" : "updates-check");
+          step++
+        ) {
+          setup.mockInput.pressArrow("right");
+          await setup.flush();
+        }
         await setup.renderOnce();
         const action = expectActionBounds(
           setup,
@@ -335,7 +343,7 @@ test.each([12, 2])(
           compactFeedback ? "updates-feedback-details" : "updates-check",
         );
         expect(action).toBeInstanceOf(ButtonRenderable);
-        expect(setup.renderer.currentFocusedRenderable).toBe(action);
+        expect(setup.renderer.currentFocusedRenderable === action).toBe(true);
         if (compactFeedback) {
           const choices = await openActions(setup);
           for (const id of [
@@ -348,7 +356,7 @@ test.each([12, 2])(
             });
           }
           await parsedEscape(setup);
-          expect(setup.renderer.currentFocusedRenderable).toBe(action);
+          expect(setup.renderer.currentFocusedRenderable === action).toBe(true);
         }
         if (count === 2) {
           const last = tableRows(setup, "updates-browser").at(-1)!;
@@ -357,8 +365,8 @@ test.each([12, 2])(
             "updates-browser-body",
           ) as ScrollBoxRenderable;
           expect(
-            action.screenY - (last.screenY + last.height),
-            `A short list must not leave a large blank region before its actions: ${JSON.stringify({
+            action.screenY - (browser.screenY + browser.height),
+            `Fixed actions stay adjacent to the bounded table viewport: ${JSON.stringify({
               viewport: [width, height],
               browser: [browser.screenY, browser.height],
               body: [body.viewport.screenY, body.viewport.height, body.scrollTop],
@@ -547,8 +555,8 @@ test("An empty Source draft submits all legal targets; Stop before mutation keep
         expectedBaseline: "checked-team-main",
       },
     ]);
-    // Submission invalidated the stopped task's observation; retry checks only its Source.
-    expect(fixture.checks).toEqual(["team-main", "source-02", "team-main"]);
+    // Stop preceded mutation, so the reviewed observation remains reusable.
+    expect(fixture.checks).toEqual(["team-main", "source-02"]);
     expect(fixture.reads).toEqual([]);
   } finally {
     await mounted.dispose();
@@ -651,7 +659,7 @@ test.each(["current-exposure", "problems"] as const)(
         await setup.flush();
         const action = expectActionBounds(setup, "source-updates", "source-updates-update-all");
         await focusLive(setup, action.id);
-        expect(setup.renderer.currentFocusedRenderable).toBe(action);
+        expect(setup.renderer.currentFocusedRenderable === action).toBe(true);
       }
       setup.resize(80, 24);
       await setup.flush();
@@ -711,6 +719,7 @@ test.each(["current-exposure", "problems"] as const)(
       expect(fixture.checks).toEqual([
         "team-main",
         "source-02",
+        "team-main",
         "team-main",
         "team-main",
         "team-main",

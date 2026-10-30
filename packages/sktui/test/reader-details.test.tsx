@@ -215,7 +215,7 @@ test("Details renders provenance and routes Collection Use to its owning Config 
       const row = setup.renderer.root.findDescendantById(exposureRootId);
       return row instanceof BoxRenderable && row.backgroundColor.a > 0;
     });
-    expect(setup.captureCharFrame()).toContain("Shared with your agent");
+    expect(setup.captureCharFrame()).toContain("Prepared in the Agent catalog");
     expect(setup.captureCharFrame()).toContain("engineering");
     const exposureName = live(setup, `${exposureRootId}-name`);
     expect(exposureName).toBeInstanceOf(TextRenderable);
@@ -255,7 +255,7 @@ test("Details renders provenance and routes Collection Use to its owning Config 
       (frame) =>
         frame.includes("Selected Collection  engineering") &&
         frame.includes(engineeringOwner.file) &&
-        /\/collections\/[^\n]*\n[^\n]*engineering/.test(frame),
+        frame.includes("/collections/engineering"),
     );
     expect(nativeText(live(setup, "config-declaration-metadata"))).toContain(
       `Selected Collection  engineering\nOwner  ${engineeringOwner.file} ${engineeringOwner.pointer}`,
@@ -285,7 +285,7 @@ test("Details renders provenance and routes Collection Use to its owning Config 
       () => setup.renderer.currentFocusedRenderable?.id === "agent-access-collection-details",
     );
     await setup.waitForFrame(
-      (frame) => frame.includes("Shared with your agent") && frame.includes("engineering"),
+      (frame) => frame.includes("Prepared in the Agent catalog") && frame.includes("engineering"),
     );
     expect(nativeText(live(setup, `${exposureRootId}-name`)).trim()).toBe("engineering");
     expect((live(setup, exposureRootId) as BoxRenderable).backgroundColor.a).toBeGreaterThan(0);

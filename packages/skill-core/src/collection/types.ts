@@ -28,6 +28,9 @@ export type CollectionInspection = Readonly<
   v.InferOutput<typeof schema.collectionInspectionSchema>
 >;
 export type CollectionRequest = Readonly<v.InferOutput<typeof schema.collectionRequestSchema>>;
+export type CreateCollectionRequest = Readonly<
+  v.InferOutput<typeof schema.createCollectionRequestSchema>
+>;
 export type SetCollectionContentRequest = Readonly<
   v.InferOutput<typeof schema.setCollectionContentRequestSchema>
 >;

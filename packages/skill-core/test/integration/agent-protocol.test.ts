@@ -66,6 +66,32 @@ async function command(
   });
   return { code, stdout, stderr };
 }
+test("agent load returns exact installed text even when frontmatter cannot be parsed", async () => {
+  const previousState = process.env.SKCTL_STATE_DIR;
+  const { root, global } = await fixture();
+  try {
+    for (const text of [
+      "# Plain instructions\nUse this Skill without frontmatter.",
+      "---\nname: [broken\n---\n# Instructions\nKeep this text.",
+      "---\nname: router\n# Missing closing delimiter\n",
+      "---\nname: router\nname: duplicate\ndescription: Duplicate YAML keys\n---\nbody",
+      "---\nname: 42\ndescription: [not, a, string]\n---\nbody",
+      "---\nname: router\ndescription: &instructions Read carefully\n---\nbody",
+      "---\r\nname: [broken\r\n---\r\nNo final newline",
+    ]) {
+      await writeFile(join(root, "skills", "router", "SKILL.md"), text);
+      expect(await command(root, global, ["load", "gingiris:router"])).toEqual({
+        code: 0,
+        stdout: text,
+        stderr: "",
+      });
+    }
+  } finally {
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test("agent browse returns only Use roots before progressively disclosing collection contents", async () => {
   const previousState = process.env.SKCTL_STATE_DIR;
   const { root, global } = await fixture();
@@ -359,10 +385,10 @@ test("agent commands reject the removed list protocol and JSON flags", async () 
     expect(result.stderr).not.toContain("INVALID_ARGUMENT");
   }
 });
-test("agent reports unavailable catalogs as system-prompt guidance", async () => {
+test("agent reports an empty catalog when no Collections are exposed", async () => {
   const result = await command("/tmp", "/missing", ["browse"]);
   expect(result.code).toBe(0);
-  expect(result.stdout).toContain("managed catalog is unavailable");
+  expect(result.stdout).toContain("No managed Collections are currently exposed.");
   expect(result.stderr).toBe("");
 });
 test("agent rejects collection IDs and Skill Selectors in the wrong address positions before Core", async () => {

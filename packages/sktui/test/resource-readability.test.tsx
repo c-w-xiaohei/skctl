@@ -125,16 +125,20 @@ test.each([
   }
   expect(browser.getSelectedOption()?.value).toBe(path);
   await parsedEnter(setup!);
-  await waitForReaderBody(setup!, "Resource prose.");
+  await waitForReaderBody(setup!, "Resource heading");
   expect(reads).toEqual([path]);
   const body = setup!.renderer.root.findDescendantById("resource-content") as ScrollBoxRenderable;
-  const back = setup!.renderer.root.findDescendantById("reader-resource-back")!;
+  const back = setup!.renderer.root.findDescendantById("route-back")!;
   const selectedPath = setup!.renderer.root.findDescendantById(
     "reader-resource-path",
   ) as TextRenderable;
   expect(selectedPath.plainText).toBe(path);
-  expect(back.screenY).toBe(selectedPath.screenY);
-  expect(body.height).toBeGreaterThanOrEqual(height === 13 ? 2 : 6);
+  expect(back.screenY).toBeLessThan(selectedPath.screenY);
+  expect(body.height).toBeGreaterThanOrEqual(height === 13 ? 1 : 6);
+  await focusLive(setup!, "resource-content");
+  setup!.mockInput.pressArrow("down");
+  await setup!.flush();
+  await setup!.waitForFrame((frame) => frame.includes("Resource prose."));
   if (width >= 100) {
     const context = setup!.renderer.root.findDescendantById("resource-browser")!;
     expect(context.height).toBeLessThanOrEqual(3);
@@ -165,7 +169,7 @@ test("compact return restores a deeply scrolled resource, and a positive executa
   const selected = browser.getSelectedOption()!.value as string;
   expect(browser.getSelectedOption()!.name).toContain("README.md");
   await parsedEnter(setup!);
-  await waitForReaderBody(setup!, "Resource prose.");
+  await waitForReaderBody(setup!, "Resource heading");
   await parsedEscape(setup!);
   await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "resource-browser");
   await setup!.flush();
@@ -179,7 +183,7 @@ test("compact return restores a deeply scrolled resource, and a positive executa
   expect(unicodeLabel.endsWith("/操作指南.md")).toBe(true);
   expect(Bun.stringWidth(unicodeLabel)).toBeLessThanOrEqual(returned.width - 5);
   await parsedEnter(setup!);
-  await waitForReaderBody(setup!, "Resource prose.");
+  await waitForReaderBody(setup!, "Resource heading");
   expect(
     (setup!.renderer.root.findDescendantById("reader-resource-path") as TextRenderable).plainText,
   ).toBe(unicodePath);

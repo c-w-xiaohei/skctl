@@ -12,9 +12,10 @@ export function CollectionReviewOverlay(props: {
   readonly error?: { readonly code: string; readonly message: string };
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
+  readonly onBack?: () => void;
 }) {
   const controls = createModalControlRegistry();
-  useModalControlTraversal(controls, props.onCancel);
+  useModalControlTraversal(controls, () => (props.onBack ?? props.onCancel)());
   const impact = props.review.impact;
   const destructive =
     props.review.kind === "membership-removal" ||
@@ -121,42 +122,59 @@ export function CollectionReviewOverlay(props: {
   };
   return (
     <ModalShell>
-      <ModalBody controls={controls}>
-        <text>{verb}</text>
+      <ModalBody
+        controls={controls}
+        header={<text>{verb}</text>}
+        footer={
+          <box flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}>
+            <ModalCommand
+              id="collection-review-choice"
+              controls={controls}
+              record={modalCommand(
+                "collection-review.cancel",
+                "Cancel",
+                "Keep current configuration",
+              )}
+              initialFocus
+              execute={props.onCancel}
+            />
+            {props.onBack && (
+              <ModalCommand
+                id="collection-review-back"
+                controls={controls}
+                record={modalCommand(
+                  "collection-review.back",
+                  "Back",
+                  "Keep draft and edit",
+                  !props.pending,
+                )}
+                execute={props.onBack}
+              />
+            )}
+            {impact.allowed && (
+              <ModalCommand
+                id="collection-review-confirm"
+                intent="primary"
+                controls={controls}
+                record={modalCommand(
+                  "collection-review.confirm",
+                  props.pending ? `${verb}...` : props.error ? `Retry ${verb}` : verb,
+                  `Apply reviewed ${verb.toLowerCase()}`,
+                  !props.pending,
+                  destructive,
+                  props.pending ? "Wait for the current operation to settle" : undefined,
+                )}
+                execute={props.onConfirm}
+              />
+            )}
+          </box>
+        }
+      >
         {lines().map((line) => (
           <text>{line}</text>
         ))}
         {!impact.allowed && <text>Operation is blocked by current dependencies.</text>}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <box flexDirection="column" gap={1} flexShrink={0}>
-          <ModalCommand
-            id="collection-review-choice"
-            controls={controls}
-            record={modalCommand(
-              "collection-review.cancel",
-              "Cancel",
-              "Keep current configuration",
-            )}
-            initialFocus
-            execute={props.onCancel}
-          />
-          {impact.allowed && (
-            <ModalCommand
-              id="collection-review-confirm"
-              intent="primary"
-              controls={controls}
-              record={modalCommand(
-                "collection-review.confirm",
-                props.pending ? `${verb}...` : props.error ? `Retry ${verb}` : verb,
-                `Apply reviewed ${verb.toLowerCase()}`,
-                !props.pending,
-                destructive,
-                props.pending ? "Wait for the current operation to settle" : undefined,
-              )}
-              execute={props.onConfirm}
-            />
-          )}
-        </box>
         <text>Cancel is selected by default</text>
       </ModalBody>
     </ModalShell>

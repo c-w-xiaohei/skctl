@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
-import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
+import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
-import { parsedEnter } from "./reader-test-controls";
+import {
+  enterLive,
+  openAllInstalledSkills,
+  parsedEnter,
+  parsedEscape,
+} from "./reader-test-controls";
 type Setup = Awaited<ReturnType<typeof testRender>>;
 async function boot(width = 120) {
   const setup = await testRender(
@@ -17,14 +22,15 @@ async function boot(width = 120) {
     ),
     { width, height: 24 },
   );
-  await openReaderFromInspector(setup);
+  await openAllInstalledSkills(setup);
+  await parsedEnter(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-scrollbox"));
   return setup;
 }
 async function openRawMatch(setup: Setup) {
   setup.renderer.root.findDescendantById("reader-scrollbox")!.focus();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
-  setup.mockInput.pressKey("TAB");
+  await enterLive(setup, "reader-find-open");
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-find");
   await setup.mockInput.pressKeys(["n", "e", "e", "d", "l", "e"]);
   await setup.renderOnce();
@@ -43,19 +49,20 @@ async function openRawMatch(setup: Setup) {
   const raw = setup.renderer.root.findDescendantById("reader-raw")!;
   raw.focus();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === raw);
-  setup.mockInput.pressKey("TAB");
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-find-previous");
-  setup.mockInput.pressKey("TAB", { shift: true });
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-raw");
+  await enterLive(setup, "reader-find-open");
+  await parsedEnter(setup);
+  await enterLive(setup, "reader-find-previous");
+  await setup.waitForFrame((frame) => frame.includes("1/3"));
+  await enterLive(setup, "reader-find-next");
+  await setup.waitForFrame((frame) => frame.includes("2/3"));
+  await parsedEscape(setup);
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-raw"));
 }
 test("RENDER raw match handoff keeps typed Raw order after Open Raw removes its action", async () => {
   const setup = await boot();
   try {
     await openRawMatch(setup);
-    expect(setup.captureCharFrame()).toContain("2/3");
-    const previous = setup.renderer.root.findDescendantById("reader-find-previous")!;
-    previous.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === previous);
+    expect(!!setup.renderer.root.findDescendantById("reader-line-0")).toBe(true);
     const raw = setup.renderer.root.findDescendantById("reader-raw")!;
     raw.focus();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === raw);

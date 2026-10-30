@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   BoxRenderable,
+  InputRenderable,
   ScrollBoxRenderable,
   SelectRenderable,
   TextBufferRenderable,
@@ -18,7 +19,6 @@ import {
   live,
   openAllInstalledSkills,
   openReaderTab,
-  openReaderManagement,
   parsedEnter,
   parsedEscape,
   selectedReaderTab,
@@ -239,7 +239,7 @@ function membershipConfiguration<L extends ConfigLevel>(
         allowed: true,
       });
     },
-    editMembers: (request) => {
+    editMembers: (_environment, request) => {
       changes.push({ method: "editMembers", request });
       return writing.promise;
     },
@@ -453,12 +453,59 @@ async function openDetailsActions(
   await openAllInstalledSkills(setup);
   await enterInstalledAddress(setup, expectedAddress);
   await openReaderTab(setup, 2);
-  await openReaderManagement(setup);
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("reader-details-action-skill-add-to-collection"),
   );
   if (focusAction) await focusLive(setup, "reader-details-action-skill-add-to-collection");
 }
+
+test.each([120, 43])(
+  "Reader exposes current-Skill Collection action without opening Details at %i columns",
+  async (width) => {
+    const snapshot = projection();
+    const other = {
+      ...snapshot.installedSkills[0]!,
+      address: { source: address.source, path: "other" },
+      name: "other",
+    };
+    const setup = await testRender(
+      () => (
+        <App
+          core={directSourceCore({
+            ...snapshot,
+            installedSkills: [...snapshot.installedSkills, other],
+          })}
+          exit={() => {}}
+        />
+      ),
+      { width, height: 24 },
+    );
+    try {
+      await openAllInstalledSkills(setup);
+      await focusLive(setup, "installed-skill-browser");
+      setup.mockInput.pressArrow("down");
+      await setup.flush();
+      await setup.mockInput.typeText(" ");
+      await setup.flush();
+      await enterInstalledAddress(setup, address);
+      await setup.waitFor(
+        () =>
+          !!setup.renderer.root.findDescendantById("reader-details-action-skill-add-to-collection"),
+      );
+      expect(selectedReaderTab(setup)).toBe(0);
+      const action = live(setup, "reader-details-action-skill-add-to-collection");
+      expect(action.screenY + action.height).toBeLessThanOrEqual(24);
+      await focusLive(setup, action.id);
+      await parsedEnter(setup);
+      await chooseCollection(setup, 0);
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-name-0"));
+      expect((live(setup, "installed-skill-name-0") as InputRenderable).value).toBe("guide");
+      expect(!!setup.renderer.root.findDescendantById("installed-skill-name-1")).toBe(false);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 async function chooseCollection(setup: Awaited<ReturnType<typeof testRender>>, count: number) {
   await focusLive(setup, "collection-handoff-choice");
   await setup.mockInput.pressKeys(Array.from({ length: count }, () => "ARROW_DOWN"));
@@ -474,10 +521,6 @@ async function openRelationships(
   await enterInstalledAddress(setup, expectedAddress);
   await openReaderTab(setup, 2);
   await enterReaderDetailsRelationship(setup, value);
-}
-async function confirmReview(setup: Awaited<ReturnType<typeof testRender>>) {
-  live(setup, "collection-review-confirm").focus();
-  await parsedEnter(setup);
 }
 async function returnToReaderDetails(
   setup: Awaited<ReturnType<typeof testRender>>,
@@ -509,7 +552,7 @@ test("Details Add to collection previews Core-authorized membership and commits 
   const core = {
     ...base,
     getWorkspace: async () => result(projection()),
-    collections: membershipConfiguration(base, globalOwner, changes, previews, writing),
+    ...membershipConfiguration(base, globalOwner, changes, previews, writing),
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 120,
@@ -522,21 +565,19 @@ test("Details Add to collection previews Core-authorized membership and commits 
       "reader-details-action-skill-add-to-collection",
     );
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-handoff-choice",
+    await setup.waitForFrame(
+      () => !!setup.renderer.root.findDescendantById("collection-handoff-choice"),
     );
     const chooser = setup.renderer.root.findDescendantById("collection-handoff-choice") as
       | SelectRenderable
       | undefined;
     expect(chooser?.getSelectedIndex()).toBe(0);
     await chooseCollection(setup, 0);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-name-0",
-    );
-    expect(setup.renderer.root.findDescendantById("membership-batch-review")).toBeDefined();
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-name-0"));
+    expect(setup.renderer.root.findDescendantById("installed-skill-choice-submit")).toBeDefined();
     expect(previews).toEqual([]);
     expect(setup.captureCharFrame()).toContain("guide");
-    await focusLive(setup, "membership-batch-review");
+    await focusLive(setup, "installed-skill-choice-submit");
     await parsedEnter(setup);
     await setup.waitFor(() => previews.length === 1);
     expect(previews).toEqual([
@@ -548,10 +589,6 @@ test("Details Add to collection previews Core-authorized membership and commits 
         expectedOwner: globalOwner,
       },
     ]);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-review-choice"));
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-review-choice");
-    expect(changes).toEqual([]);
-    await confirmReview(setup);
     await setup.waitFor(() => changes.length === 1);
     expect(changes).toEqual([
       {
@@ -586,7 +623,7 @@ test("Details Add to collection previews and commits the second same-ID direct o
   const core = {
     ...base,
     getWorkspace: async () => result(projection()),
-    collections: membershipConfiguration(base, projectOwner, changes, previews, writing),
+    ...membershipConfiguration(base, projectOwner, changes, previews, writing),
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 120,
@@ -603,13 +640,11 @@ test("Details Add to collection previews and commits the second same-ID direct o
       () => setup.renderer.currentFocusedRenderable?.id === "collection-handoff-choice",
     );
     await chooseCollection(setup, 1);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-name-0",
-    );
-    expect(setup.renderer.root.findDescendantById("membership-batch-review")).toBeDefined();
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-name-0"));
+    expect(setup.renderer.root.findDescendantById("installed-skill-choice-submit")).toBeDefined();
     expect(previews).toEqual([]);
     expect(setup.captureCharFrame()).toContain("guide");
-    await focusLive(setup, "membership-batch-review");
+    await focusLive(setup, "installed-skill-choice-submit");
     await parsedEnter(setup);
     await setup.waitFor(() => previews.length === 1);
     expect(previews).toEqual([
@@ -621,11 +656,6 @@ test("Details Add to collection previews and commits the second same-ID direct o
         expectedOwner: projectOwner,
       },
     ]);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-review-choice",
-    );
-    expect(changes).toEqual([]);
-    await confirmReview(setup);
     await setup.waitFor(() => changes.length === 1);
     expect(changes).toEqual([
       {
@@ -671,9 +701,7 @@ test("Details Add to collection owner cancellation leaves membership unchanged a
       () => setup.renderer.currentFocusedRenderable?.id === "collection-handoff-choice",
     );
     await chooseCollection(setup, 0);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-name-0",
-    );
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-name-0"));
     await parsedEscape(setup);
     await setup.waitFor(
       () =>
@@ -696,7 +724,7 @@ test("Details Add to collection owner cancellation leaves membership unchanged a
     setup.renderer.destroy();
   }
 });
-test("Details disables Add to collection when no editable Collection destination exists", async () => {
+test("Details offers creation when the installed Skill has no Collection destination", async () => {
   const noChoices = projection();
   const setup = await testRender(
     () => (
@@ -725,25 +753,12 @@ test("Details disables Add to collection when no editable Collection destination
   try {
     await openDetailsActions(setup, false);
     const action = live(setup, "reader-details-action-skill-add-to-collection");
-    expect(action.focusable).toBe(false);
-    setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
-    const choices = live(setup, "palette-choices") as SelectRenderable;
-    const disabled = choices.options.find(
-      (option) => option.value.id === "skill-add-to-collection",
-    );
-    expect(disabled?.value.enabled).toBe(false);
-    expect(disabled?.value.disabledReason).toContain("No direct or repository-derived Collection");
-    const disabledIndex = choices.options.findIndex(
-      (option) => option.value.id === "skill-add-to-collection",
-    );
-    expect(disabledIndex).toBeGreaterThanOrEqual(0);
-    choices.setSelectedIndex(disabledIndex);
-    await setup.renderOnce();
-    expect((live(setup, "palette-action-reason") as TextRenderable).plainText).toContain(
-      disabled!.value.disabledReason!,
-    );
-    expect(setup.renderer.root.findDescendantById("collection-handoff-choice")).toBeUndefined();
+    expect(action.focusable).toBe(true);
+    await focusLive(setup, action.id);
+    await parsedEnter(setup);
+    await focusLive(setup, "collection-handoff-create");
+    await parsedEnter(setup);
+    expect(setup.renderer.root.findDescendantById("collection-create-id")).toBeDefined();
   } finally {
     setup.renderer.destroy();
   }

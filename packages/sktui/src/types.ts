@@ -66,6 +66,7 @@ export type FocusOwner =
   | "collections-filter-values"
   | "collection-relationships"
   | "config-source-contributions"
+  | "integration-entries"
   | "route-back"
   | `command:${string}`;
 
@@ -220,16 +221,14 @@ export type RouteHandoff =
       readonly owner: import("@skctl/core").ConfigDeclarationOwner;
       readonly collection?: string;
       readonly entry?: string;
-    }
-  | {
-      readonly kind: "config-integration";
-      readonly owner: import("@skctl/core").ConfigDeclarationOwner;
     };
 
 export const validSections = (destination: Destination): readonly Section[] =>
   destination === "workspace"
     ? ["skills", "collections", "sources", "updates"]
-    : ["sources", "config-sources", "collections", "integrations"];
+    : destination === "local"
+      ? ["sources", "config-sources", "collections"]
+      : ["sources", "config-sources", "collections", "integrations"];
 
 export const projectionOwnerExists = (snapshot: WorkspaceView, owner: ProjectionOwner): boolean =>
   owner.kind === "source"

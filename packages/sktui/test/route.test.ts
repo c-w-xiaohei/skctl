@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { WorkspaceView } from "@skctl/core";
-import { configDeclarationOwnerKey, createConfigState } from "../src/config/state";
+import { createConfigState } from "../src/config/state";
 import { createRoute } from "../src/route";
 import { validSections } from "../src/types";
 import { createWorkspaceState } from "../src/workspace/state";
@@ -542,7 +542,7 @@ test("projection revalidation recovers a removed frame object without restoring 
   expect(workspace.readerOpen()).toBe(false);
 });
 
-test("projection revalidation retains and recovers exact integration owners with colliding pointers", () => {
+test("Config refresh keeps the host integrations route independent of Config declaration owners", () => {
   const workspace = createWorkspaceState();
   const config = createConfigState();
   const global = {
@@ -587,14 +587,13 @@ test("projection revalidation retains and recovers exact integration owners with
     },
   };
   const route = createRoute({ workspace, config });
-  const selection = configDeclarationOwnerKey(selected);
-  route.activate({ destination: "project", section: "integrations", selection });
+  route.activate({ destination: "project", section: "integrations" });
   const frame = route.snapshot().current;
 
   route.revalidate(current);
 
   expect(route.snapshot().current).toBe(frame);
-  expect(route.snapshot().current.object).toBe(selection);
+  expect(route.snapshot().current.object).toBeUndefined();
 
   route.revalidate({
     ...current,
@@ -610,9 +609,8 @@ test("projection revalidation retains and recovers exact integration owners with
   expect(route.snapshot().current).toMatchObject({
     context: "project",
     section: "integrations",
-    object: undefined,
-    recovery: "unavailable",
   });
+  expect(route.snapshot().current.recovery).toBeUndefined();
 });
 
 test("a route transition publishes its target only after the landing callback", () => {

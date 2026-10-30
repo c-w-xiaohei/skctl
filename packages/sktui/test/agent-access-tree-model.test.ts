@@ -215,13 +215,13 @@ test("Agent Skill leaves retain metadata but explicitly mark unhealthy installed
   }
 });
 
-test("Agent access fails closed when managed integration or complete projection is unavailable", () => {
+test("Agent catalog is independent of host connection and requires complete catalog data", () => {
   const source = projection();
   if (source.effective.status !== "complete") throw new Error("expected complete projection");
   expect(deriveAgentAccessTree(undefined)).toMatchObject({ status: "unavailable" });
   expect(
     deriveAgentAccessTree({ ...source, effective: { ...source.effective, managed: false } }),
-  ).toMatchObject({ status: "unavailable" });
+  ).toEqual(deriveAgentAccessTree(source));
   expect(
     deriveAgentAccessTree({
       ...source,

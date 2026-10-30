@@ -149,12 +149,18 @@ async function writeReleaseMetadata(outputRoot: string): Promise<void> {
 }
 
 async function buildNative(kind: "cli" | "tui", outputRoot: string): Promise<void> {
+  await buildPlugin(outputRoot);
   await prepareReleaseOutput(outputRoot);
   const staging = await mkdtemp(join(outputRoot, ".skctl-native-build-"));
   try {
     const result = await Bun.build({
       entrypoints: [join(workspace, `packages/${kind === "cli" ? "skctl" : "sktui"}/src/main.ts`)],
       plugins: kind === "tui" ? [(await import("@opentui/solid/bun-plugin")).default] : [],
+      define: {
+        SKCTL_OPENCODE_ARTIFACT: JSON.stringify(
+          await readFile(join(outputRoot, "opencode-adapter.js"), "utf8"),
+        ),
+      },
       compile: {
         target: currentNative.target,
         autoloadDotenv: false,
@@ -221,13 +227,22 @@ async function buildPlugin(outputRoot: string): Promise<void> {
     const exported = await import(
       `${pathToFileURL(join(dist, "index.js")).href}?build=${Date.now()}`
     );
-    if (Object.keys(exported).length !== 1 || typeof exported.default !== "function")
-      throw new Error("Plugin build must export only a default function");
+    if (
+      Object.keys(exported).length !== 1 ||
+      exported.default?.id !== "skctl.managed-catalog" ||
+      typeof exported.default?.setup !== "function"
+    )
+      throw new Error("Plugin build must export a V2 definition with id and setup");
     const files = await regularFiles(packageRoot);
     if (JSON.stringify(files) !== JSON.stringify(pluginPackageFiles))
       throw new Error(`Unexpected plugin package contents: ${files.join(", ")}`);
     const tarball = join(outputRoot, "opencode-adapter.tgz");
     await copyFile(join(dist, "index.js"), join(outputRoot, "opencode-adapter.js"));
+    await mkdir(join(workspace, "packages/opencode-adapter/dist"), { recursive: true });
+    await copyFile(
+      join(dist, "index.js"),
+      join(workspace, "packages/opencode-adapter/dist/index.js"),
+    );
     await run(["tar", "-C", staging, "-czf", tarball, "package"]);
     const tarContents = (await run(["tar", "-tzf", tarball])).stdout;
     const expected = pluginPackageFiles.map((file) => `package/${file}`).sort();

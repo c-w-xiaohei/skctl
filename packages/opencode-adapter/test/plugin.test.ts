@@ -1,109 +1,83 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { afterEach, expect, test } from "bun:test";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { PluginInput } from "@opencode-ai/plugin";
+import type { Plugin } from "@opencode/plugin";
+import type { SessionContext } from "@opencode/plugin/promise/session";
 import plugin from "../src/index.ts";
 
 const roots: string[] = [];
 const originalPath = process.env.PATH;
-const catalog =
-  "Use `skctl agent browse <collection-id>` to inspect a Collection and `skctl agent load <selector>` to load a Skill.\n" +
-  '<managed_skill_catalog scope="root"><collection><id>engineering</id><name>engineering</name><description>Code review</description></collection></managed_skill_catalog>\n';
-
 afterEach(async () => {
   process.env.PATH = originalPath;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
-
-async function fixture(catalog: string) {
+async function fixture() {
   const parent = join(import.meta.dir, "../../../tmp");
   await mkdir(parent, { recursive: true });
-  const root = await mkdtemp(join(parent, "skctl-adapter-test-"));
+  const root = await mkdtemp(join(parent, "v2-plugin-"));
   roots.push(root);
-  const catalogPath = join(root, "catalog.json");
-  await writeFile(catalogPath, catalog);
-  await writeFile(join(root, "skctl"), `#!/bin/sh\n/bin/cat '${catalogPath}'\n`);
-  await chmod(join(root, "skctl"), 0o755);
-  process.env.PATH = root;
-  return root;
-}
-
-function input(directory: string): PluginInput {
-  return { directory, project: {} as PluginInput["project"], worktree: directory } as PluginInput;
-}
-
-describe("OpenCode plugin", () => {
-  test("passes the root browse prompt through unchanged", async () => {
-    const root = await fixture(catalog);
-    const hooks = await plugin(input(root));
-    const output = { system: [] as string[] };
-    await hooks["experimental.chat.system.transform"]!({ model: {} as never }, output);
-    expect(output.system).toEqual([catalog]);
-    await hooks["experimental.chat.system.transform"]!({ model: {} as never }, output);
-    expect(output.system).toHaveLength(1);
-  });
-
-  test("preserves the managed catalog in compaction context", async () => {
-    const root = await fixture(catalog);
-    const hooks = await plugin(input(root));
-    const output = { context: [] as string[], prompt: undefined };
-
-    await hooks["experimental.session.compacting"]!({ sessionID: "session" }, output);
-
-    expect(output.context).toEqual([catalog]);
-  });
-
-  test("refreshes the root prompt for compaction and subsequent chat requests", async () => {
-    const root = await fixture(catalog);
-    const hooks = await plugin(input(root));
-    const initial = { system: [] as string[] };
-    await hooks["experimental.chat.system.transform"]!({ model: {} as never }, initial);
-
-    const refreshed = catalog.replace("Code review", "Deployment review");
-    await writeFile(join(root, "catalog.json"), refreshed);
-    const compacted = { context: [] as string[], prompt: undefined };
-    await hooks["experimental.session.compacting"]!({ sessionID: "session" }, compacted);
-    const continued = { system: [] as string[] };
-    await hooks["experimental.chat.system.transform"]!({ model: {} as never }, continued);
-
-    expect(initial.system).toEqual([catalog]);
-    expect(compacted.context).toEqual([refreshed]);
-    expect(continued.system).toEqual([refreshed]);
-  });
-
-  test.each(["missing CLI", "nonzero CLI with hostile output"])(
-    "both hooks fail open and report only once for %s",
-    async (failure) => {
-      const parent = join(import.meta.dir, "../../../tmp");
-      await mkdir(parent, { recursive: true });
-      const root = await mkdtemp(join(parent, "skctl-adapter-test-"));
-      roots.push(root);
-      if (failure === "nonzero CLI with hostile output") {
-        const stderr = `secret-token=very-secret\\000\\001\\037\\177😀${"x".repeat(2048)}`;
-        await writeFile(
-          join(root, "skctl"),
-          `#!/bin/sh\n/bin/printf '%s' 'stdout-sensitive-marker'\n/bin/printf '%b' '${stderr}' >&2\nexit 7\n`,
-        );
-        await chmod(join(root, "skctl"), 0o755);
-      }
-      process.env.PATH = root;
-      const log = console.error;
-      const diagnostics: string[] = [];
-      console.error = (value) => diagnostics.push(String(value));
-      try {
-        const hooks = await plugin(input(root));
-        const chatOutput = { system: [] as string[] };
-        const compactionOutput = { context: [] as string[], prompt: undefined };
-
-        await hooks["experimental.chat.system.transform"]!({ model: {} as never }, chatOutput);
-        await hooks["experimental.session.compacting"]!({ sessionID: "session" }, compactionOutput);
-
-        expect(chatOutput.system).toEqual([]);
-        expect(compactionOutput.context).toEqual([]);
-        expect(diagnostics).toEqual(["skctl managed catalog is unavailable"]);
-      } finally {
-        console.error = log;
-      }
-    },
+  await writeFile(
+    join(root, "skctl"),
+    '#!/bin/sh\npwd > called-cwd\nprintf "%s" "$SKCTL_AGENT" > called-agent\n/bin/cat catalog.txt\n',
   );
+  await chmod(join(root, "skctl"), 0o755);
+  await writeFile(join(root, "catalog.txt"), "current catalog");
+  process.env.PATH = root;
+  const callbacks = new Map<string, (event: SessionContext) => Promise<void>>();
+  const context = {
+    location: { directory: "/wrong-instance-directory" },
+    session: {
+      get: async () => ({ location: { directory: root } }),
+      hook: async (name: string, callback: (event: SessionContext) => Promise<void>) => {
+        callbacks.set(name, callback);
+      },
+    },
+  } as unknown as Plugin.Context;
+  const cleanup = await plugin.setup(context);
+  const event = () =>
+    ({
+      sessionID: "session",
+      system: [{ type: "text", text: "user instructions" }],
+    }) as SessionContext;
+  return { root, callbacks, cleanup, event };
+}
+test("V2 hooks use the session directory, preserve instructions and refresh on compaction", async () => {
+  const { root, callbacks, cleanup, event } = await fixture();
+  try {
+    const first = event();
+    await callbacks.get("context")!(first);
+    await callbacks.get("context")!(first);
+    expect(first.system).toEqual([
+      { type: "text", text: "user instructions" },
+      { type: "text", text: "current catalog" },
+    ]);
+    expect((await readFile(join(root, "called-cwd"), "utf8")).trim()).toBe(root);
+    expect(await readFile(join(root, "called-agent"), "utf8")).toBe("opencode");
+    await writeFile(join(root, "catalog.txt"), "updated catalog");
+    const compacted = event();
+    await callbacks.get("compaction")!(compacted);
+    expect(compacted.system.at(-1)).toEqual({ type: "text", text: "updated catalog" });
+  } finally {
+    cleanup();
+  }
+});
+test("unloaded plugin stops injecting and a missing command does not erase instructions", async () => {
+  const { root, callbacks, cleanup, event } = await fixture();
+  await rm(join(root, "skctl"));
+  const original = console.error;
+  const diagnostics: string[] = [];
+  console.error = (value) => diagnostics.push(value);
+  try {
+    const request = event();
+    await callbacks.get("context")!(request);
+    await callbacks.get("compaction")!(request);
+    expect(request.system).toHaveLength(1);
+    expect(diagnostics).toHaveLength(1);
+    cleanup();
+    await callbacks.get("context")!(request);
+    expect(request.system).toHaveLength(1);
+  } finally {
+    cleanup();
+    console.error = original;
+  }
 });

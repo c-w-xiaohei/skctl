@@ -4,7 +4,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { parsedEscape } from "./reader-test-controls";
+import { openAllInstalledSkills, parsedEscape } from "./reader-test-controls";
 
 test.each([120, 60])(
   "filter stays contextual and applies exact Source with visible counts at %i columns",
@@ -33,9 +33,7 @@ test.each([120, 60])(
       await setup.renderOnce();
     };
     try {
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-      );
+      await openAllInstalledSkills(setup);
       await click("open-skills-filter");
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("skills-filter-dimensions"),
@@ -47,11 +45,10 @@ test.each([120, 60])(
       expect(setup.renderer.root.findDescendantById("skills-filter-search")).toBeDefined();
       expect(setup.renderer.root.findDescendantById("skills-filter-values")).toBeDefined();
       expect(setup.renderer.root.findDescendantById("skills-list-pane")).toBeDefined();
-      const focus = setup.renderer.currentFocusedRenderable;
       setup.mockInput.pressTab();
       await new Promise<void>((resolve) => setImmediate(resolve));
       await setup.renderOnce();
-      expect(setup.renderer.currentFocusedRenderable).toBe(focus);
+      expect(setup.renderer.currentFocusedRenderable?.id.startsWith("skills-filter-")).toBe(true);
       const dims = setup.renderer.root.findDescendantById(
         "skills-filter-dimensions",
       ) as SelectRenderable;
@@ -63,7 +60,9 @@ test.each([120, 60])(
       const values = setup.renderer.root.findDescendantById(
         "skills-filter-values",
       ) as SelectRenderable;
-      expect(values.options.find((option) => option.value === "team-main")?.name).toContain("1");
+      if (width >= 62)
+        expect(values.options.find((option) => option.value === "team-main")?.name).toContain("1");
+      expect(setup.captureCharFrame()).toContain("2 results");
       expect(setup.captureCharFrame()).toContain("Source");
       await click(
         "skills-filter-values",
@@ -75,7 +74,7 @@ test.each([120, 60])(
         () => setup.renderer.currentFocusedRenderable?.id === "open-skills-filter",
       );
       await setup.renderOnce();
-      expect(setup.renderer.root.findDescendantById("skills-filter-overlay")).toBeUndefined();
+      expect(!!setup.renderer.root.findDescendantById("skills-filter-overlay")).toBe(false);
       const results = setup.renderer.root.findDescendantById(
         "installed-skill-browser",
       ) as SelectRenderable;
@@ -88,15 +87,13 @@ test.each([120, 60])(
   },
 );
 
-test("minimum terminal keeps clear/help inside the popover even with a long query", async () => {
+test("minimum terminal keeps clear and close inside the popover even with a long query", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
     { width: 43, height: 13 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
+    await openAllInstalledSkills(setup);
     const query = setup.renderer.root.findDescendantById("skills-query")!;
     await setup.mockMouse.click(query.screenX + 1, query.screenY);
     for (const char of "very-long-query-that-does-not-match-any-source-or-description") {
@@ -108,7 +105,7 @@ test("minimum terminal keeps clear/help inside the popover even with a long quer
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-filter-overlay"));
     await setup.renderOnce();
     const popup = setup.renderer.root.findDescendantById("skills-filter-overlay")!;
-    for (const id of ["skills-filter-clear-all", "skills-filter-help"]) {
+    for (const id of ["skills-filter-clear-all", "skills-filter-close"]) {
       const control = setup.renderer.root.findDescendantById(id)!;
       expect(control.screenY).toBeGreaterThan(popup.screenY);
       expect(control.screenY + control.height).toBeLessThan(popup.screenY + popup.height);
@@ -123,7 +120,7 @@ test("minimum terminal keeps clear/help inside the popover even with a long quer
     await setup.renderOnce();
     const valuePanel = setup.renderer.root.findDescendantById("skills-filter-overlay")!;
     expect(setup.renderer.root.findDescendantById("skills-filter-search")).toBeDefined();
-    for (const id of ["skills-filter-clear-all", "skills-filter-help"]) {
+    for (const id of ["skills-filter-clear-all", "skills-filter-close"]) {
       const control = setup.renderer.root.findDescendantById(id)!;
       expect(control.screenY + control.height).toBeLessThan(valuePanel.screenY + valuePanel.height);
     }

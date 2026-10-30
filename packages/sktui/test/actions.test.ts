@@ -146,9 +146,15 @@ test("K6/K7 hidden checked targets remain reachable with no current visible row"
     skillCollectionTargets("skill-add-to-collection", "workspace", projection, owners.facts),
   ).toEqual({ addresses: [], reason: "No current visible Installed Skill is selected" });
   expect(reachableActions("workspace", projection, owners.facts)).toEqual([
+    expect.objectContaining({ id: "new-collection", enabled: true }),
     expect.objectContaining({
       id: "skill-add-selected-to-collection",
       verb: "Add 2 selected to Collection",
+      enabled: true,
+    }),
+    expect.objectContaining({
+      id: "update-selected-skills",
+      verb: "Update 2 selected Skills",
       enabled: true,
     }),
   ]);
@@ -379,9 +385,9 @@ test("Collection chooser eligibility preserves repository-derived destinations a
       ...projection,
       effective: { ...projection.effective, status: "complete" as const, collectionsView: [] },
     };
-    expect(skillCollectionTargets(id, "workspace", emptyCollections, owners.facts).reason).toBe(
-      "No direct or repository-derived Collection is available for these targets",
-    );
+    expect(skillCollectionTargets(id, "workspace", emptyCollections, owners.facts)).toEqual({
+      addresses: [b],
+    });
     const unavailable: WorkspaceView = {
       ...projection,
       effective: {
@@ -393,7 +399,7 @@ test("Collection chooser eligibility preserves repository-derived destinations a
       },
     };
     expect(skillCollectionTargets(id, "workspace", unavailable, owners.facts).reason).toBe(
-      "No direct or repository-derived Collection is available for these targets",
+      "Resolve the configuration problems before choosing or creating a Collection",
     );
   }
   owners.workspace.selectSection("sources");
@@ -760,6 +766,7 @@ test("Collection actions retain read-only update access while edits use direct o
     "collection-check-updates",
     "new-collection",
     "add-membership",
+    "edit-collection-content",
     "import-collection",
     "add-reference",
     "add-link",
@@ -799,6 +806,12 @@ test("Config Collection actions retain their direct owner wording and Use eligib
   ).toEqual([
     ["new-collection", "New Collection", "Collection form", false],
     ["add-membership", "Add Membership", "Membership form", false],
+    [
+      "edit-collection-content",
+      "Edit Collection description and instructions",
+      "Collection form",
+      false,
+    ],
     ["import-collection", "Import Collection", "Import form", false],
     ["add-reference", "Add Reference", "Review form", false],
     ["add-link", "Add Link", "Review form", false],
@@ -806,12 +819,12 @@ test("Config Collection actions retain their direct owner wording and Use eligib
     ["set-collection-use", "Set Collection Use", "Collection Use form", false],
   ]);
   const noSkills = { ...projection, installedSkills: [] };
-  expect(reachableActions("project", noSkills, owners.facts).slice(1, 6)).toMatchObject([
+  expect(reachableActions("project", noSkills, owners.facts).slice(1, 7)).toMatchObject([
     {
       id: "add-membership",
-      enabled: false,
-      disabledReason: "No Installed Skill is available",
+      enabled: true,
     },
+    { id: "edit-collection-content", enabled: true },
     { id: "import-collection", enabled: true },
     { id: "add-reference", enabled: true },
     { id: "add-link", enabled: true },
@@ -819,7 +832,7 @@ test("Config Collection actions retain their direct owner wording and Use eligib
   ]);
 });
 
-test("Config integration Actions open an inherited owner instead of enabling the current Config", () => {
+test("Config declarations do not supply host mutation commands for an inherited integration", () => {
   const base = workspaceProjection();
   const inheritedOwner = {
     level: "global" as const,
@@ -846,12 +859,10 @@ test("Config integration Actions open an inherited owner instead of enabling the
   };
   const owners = pages();
   owners.config.land("project", "integrations", configDeclarationOwnerKey(inheritedOwner));
-  expect(reachableActions("project", projection, owners.facts).map((action) => action.id)).toEqual([
-    "open-config-integration",
-  ]);
+  expect(reachableActions("project", projection, owners.facts)).toEqual([]);
 });
 
-test("Config integration Actions follow the selected owner when direct and inherited rows coexist", () => {
+test("mixed Config integration owners cannot override commands from host inspection", () => {
   const base = workspaceProjection();
   const projectOwner = {
     level: "project" as const,
@@ -889,13 +900,9 @@ test("Config integration Actions follow the selected owner when direct and inher
   };
   const owners = pages();
   owners.config.land("project", "integrations", configDeclarationOwnerKey(globalOwner));
-  expect(reachableActions("project", projection, owners.facts).map((action) => action.id)).toEqual([
-    "open-config-integration",
-  ]);
+  expect(reachableActions("project", projection, owners.facts)).toEqual([]);
   owners.config.land("project", "integrations", configDeclarationOwnerKey(projectOwner));
-  expect(reachableActions("project", projection, owners.facts).map((action) => action.id)).toEqual([
-    "disable-managed-opencode",
-  ]);
+  expect(reachableActions("project", projection, owners.facts)).toEqual([]);
 });
 
 test.each(["invalid", "unreadable"] as const)(

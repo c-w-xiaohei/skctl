@@ -5,6 +5,7 @@
     "packages/skill-core",
     "packages/skctl",
     "packages/sktui",
+    "packages/integrations",
     "packages/opencode-adapter"
   ],
   "scripts": {
@@ -22,7 +23,7 @@
     "test:cli": "bun test packages/skctl/test",
     "test:tui": "./scripts/resource-run.sh bun test --max-concurrency=1 --preload @opentui/solid/preload --preload ./packages/sktui/test/test-renderer-preload.ts packages/sktui/test",
     "dev:tui": "bun --preload @opentui/solid/preload packages/sktui/src/main.ts",
-    "test:interfaces": "bun run test:cli && bun run test:tui && bun test packages/opencode-adapter/test",
+    "test:interfaces": "bun run test:cli && bun run test:tui && bun test packages/opencode-adapter/test packages/integrations/test",
     "test:packaged": "bun test verification/packaged",
     "smoke:packaged": "bun verification/packaged/smoke.ts",
     "build:cli": "./scripts/resource-run.sh bun scripts/build.ts cli",

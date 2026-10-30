@@ -689,23 +689,15 @@ export async function readWorkspaceUnlocked(
     );
   const agentReasons = incomplete
     ? diagnostics
-    : !managed
+    : !selected?.complete
       ? [
           {
             code: "CONFIG_INVALID",
             severity: "warning" as const,
-            message: "agents.opencode must be managed",
+            message: selected?.reason ?? "Collection Use is incomplete",
           },
         ]
-      : !selected?.complete
-        ? [
-            {
-              code: "CONFIG_INVALID",
-              severity: "warning" as const,
-              message: selected?.reason ?? "Collection Use is incomplete",
-            },
-          ]
-        : [];
+      : [];
   const agent: ManagedAgentView = {
     status: agentReasons.length ? "unavailable" : "available",
     integration: integrationOwners,
@@ -723,6 +715,13 @@ export async function readWorkspaceUnlocked(
           }))
           .sort((left, right) => left.selector.localeCompare(right.selector)),
   };
+  if (managed)
+    diagnostics.push({
+      code: "LEGACY_MANAGED_IGNORED",
+      severity: "info",
+      message:
+        "agents.opencode is deprecated and no longer controls catalog access. Manage host entries with integration connect/disconnect.",
+    });
   const value: WorkspaceView = {
     project,
     configs,

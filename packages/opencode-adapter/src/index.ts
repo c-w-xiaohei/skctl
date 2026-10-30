@@ -1,4 +1,5 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import type { Plugin } from "@opencode/plugin";
+import type { SessionContext } from "@opencode/plugin/promise/session";
 import { createProcessClient } from "./process.ts";
 
 function report(_error: unknown): void {
@@ -6,28 +7,33 @@ function report(_error: unknown): void {
   console.error("skctl managed catalog is unavailable");
 }
 
-const SkctlOpenCodePlugin: Plugin = async (input) => {
-  const client = createProcessClient();
-  let hasReportedFailure = false;
-  const appendFreshCatalog = async (target: string[]) => {
-    try {
-      const prompt = await client.browse(input.directory);
-      if (!target.includes(prompt)) target.push(prompt);
-    } catch (error) {
-      if (hasReportedFailure) return;
-      report(error);
-      hasReportedFailure = true;
-    }
-  };
+const SkctlOpenCodePlugin = {
+  id: "skctl.managed-catalog",
+  async setup(input: Plugin.Context) {
+    const controller = new AbortController();
+    const client = createProcessClient({ signal: controller.signal, timeoutMs: 30_000 });
+    let hasReportedFailure = false;
+    const appendFreshCatalog = async (event: SessionContext) => {
+      try {
+        const session = await input.session.get({ sessionID: event.sessionID });
+        if (controller.signal.aborted) return;
+        const prompt = await client.browse(session.location.directory);
+        if (
+          !controller.signal.aborted &&
+          !event.system.some((part) => part.type === "text" && part.text === prompt)
+        )
+          event.system.push({ type: "text", text: prompt });
+      } catch (error) {
+        if (hasReportedFailure) return;
+        report(error);
+        hasReportedFailure = true;
+      }
+    };
 
-  return {
-    "experimental.chat.system.transform": async (_request, output) => {
-      await appendFreshCatalog(output.system);
-    },
-    "experimental.session.compacting": async (_request, output) => {
-      await appendFreshCatalog(output.context);
-    },
-  };
-};
+    await input.session.hook("context", appendFreshCatalog);
+    await input.session.hook("compaction", appendFreshCatalog);
+    return () => controller.abort();
+  },
+} satisfies Plugin.Plugin;
 
 export default SkctlOpenCodePlugin;

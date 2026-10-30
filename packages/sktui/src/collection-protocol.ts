@@ -4,6 +4,7 @@ import {
   type AddMemberRequest,
   type AddReferenceRequest,
   type CollectionRequest,
+  type CreateCollectionRequest,
   type ConfigDeclarationOwner,
   type ConfigLevel,
   type ImportMembersRequest,
@@ -49,11 +50,9 @@ export type CollectionPreviewIntent =
     } & CollectionRequest);
 export type CollectionIntent =
   | CollectionPreviewIntent
-  | {
+  | ({
       readonly kind: "collection-create";
-      readonly level: ConfigLevel;
-      readonly collection: string;
-    };
+    } & CreateCollectionRequest);
 export type AddMembershipPreviewRequest = Extract<
   CollectionPreviewIntent,
   {
@@ -140,7 +139,23 @@ export async function previewCollection(
           impact.collection === intent.collection &&
           impact.decision.kind === "direct" &&
           impact.decision.owner.level === intent.level &&
-          (!intent.expectedOwner || sameOwner(impact.decision.owner, intent.expectedOwner)),
+          (!intent.expectedOwner || sameOwner(impact.decision.owner, intent.expectedOwner)) &&
+          impact.additions.length === intent.additions.length &&
+          impact.additions.every((entry, index) => {
+            const requested = intent.additions[index]!;
+            return (
+              entry.name === requested.name.normalize("NFC") &&
+              sameAddress(entry.address, requested.address)
+            );
+          }) &&
+          impact.removals.length === intent.removals.length &&
+          impact.removals.every((entry, index) => {
+            const requested = intent.removals[index]!;
+            return (
+              entry.name === requested.name.normalize("NFC") &&
+              sameAddress(entry.expectedAddress, requested.expectedAddress)
+            );
+          }),
       );
       return { kind: intent.kind, id, intent, impact } as const;
     }
@@ -211,7 +226,8 @@ export async function previewCollection(
       return { kind: intent.kind, id, intent, impact } as const;
     }
     case "collection-removal": {
-      const impact = (await core.previewCollectionRemoval(environment, intent, { signal })).value;
+      const { kind: _, ...request } = intent;
+      const impact = (await core.previewCollectionRemoval(environment, request, { signal })).value;
       matches(
         impact.kind === "collection-removal" &&
           impact.owner?.level === intent.level &&

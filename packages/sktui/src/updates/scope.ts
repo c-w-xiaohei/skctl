@@ -4,6 +4,7 @@ import type { UpdateIssue } from "./state";
 export type UpdateAddress = SkillAddress;
 export type UpdateScopeEntry =
   | { readonly kind: "workspace" }
+  | { readonly kind: "selected"; readonly addresses: readonly UpdateAddress[] }
   | { readonly kind: "source"; readonly source: string }
   | { readonly kind: "collection"; readonly collection: string }
   | { readonly kind: "skill"; readonly address: UpdateAddress };
@@ -32,7 +33,12 @@ export function deriveUpdateScope(projection: WorkspaceView, entry: UpdateScopeE
   let unavailableReason: string | undefined;
   if (entry.kind === "source")
     addresses = addresses.filter((address) => address.source === entry.source);
-  else if (entry.kind === "skill") {
+  else if (entry.kind === "selected") {
+    addresses = [...new Map(entry.addresses.map((address) => [key(address), address])).values()];
+    if (!addresses.length) unavailableReason = "No Skills selected";
+    else if (addresses.some((address) => !installed.has(key(address))))
+      unavailableReason = "Selected Skills are no longer installed";
+  } else if (entry.kind === "skill") {
     addresses = installed.has(key(entry.address)) ? [entry.address] : [];
     if (!addresses.length) unavailableReason = "Skill is no longer installed";
   } else if (entry.kind === "collection" && projection.effective.status !== "complete") {

@@ -31,7 +31,6 @@ export async function resolveInstalledSelector(
   const effective = workspace.value.effective;
   if (effective.status !== "complete")
     throw new SkctlError("CONFIG_INVALID", "Configuration is incomplete");
-  if (!effective.managed) throw new SkctlError("CONFIG_INVALID", "agents.opencode must be managed");
   if (effective.agent.status !== "available")
     throw new SkctlError(
       "CONFIG_INVALID",

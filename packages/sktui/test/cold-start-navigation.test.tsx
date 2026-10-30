@@ -4,7 +4,7 @@ import { SelectRenderable } from "@opentui/core";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { parsedEscape } from "./reader-test-controls";
+import { parsedEscape, waitForReaderBody } from "./reader-test-controls";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
@@ -18,6 +18,23 @@ async function expectFocus(setup: Setup, id: string, source: string) {
   } catch (error) {
     throw new Error(`${source}: expected focus ${id}; ${focusSnapshot(setup)}`, { cause: error });
   }
+}
+
+async function tabTo(setup: Setup, id: string) {
+  for (let step = 0; step < 40; step++) {
+    if (setup.renderer.currentFocusedRenderable?.id === id) return;
+    setup.mockInput.pressTab();
+    await setup.flush();
+  }
+  throw new Error(`Tab could not reach ${id}; ${focusSnapshot(setup)}`);
+}
+
+async function openSkills(setup: Setup) {
+  await setup.flush();
+  await tabTo(setup, "skills-view-tab-current-exposure");
+  await press(setup, "ARROW_RIGHT");
+  await press(setup, "ENTER");
+  await tabTo(setup, "installed-skill-browser");
 }
 
 async function press(setup: Setup, key: "ARROW_LEFT" | "ARROW_RIGHT" | "ARROW_DOWN" | "ENTER") {
@@ -38,7 +55,7 @@ async function press(setup: Setup, key: "ARROW_LEFT" | "ARROW_RIGHT" | "ARROW_DO
 }
 
 test.each([120, 80, 43])(
-  "cold startup at %i columns operates Skill list without Tab or imperative focus",
+  "cold startup at %i columns reaches All Skills by keyboard and reads the selected Skill",
   async (width) => {
     const setup = await testRender(
       () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
@@ -48,9 +65,7 @@ test.each([120, 80, 43])(
       },
     );
     try {
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
-      );
+      await openSkills(setup);
       await setup.renderOnce();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
       const list = setup.renderer.root.findDescendantById(
@@ -60,7 +75,7 @@ test.each([120, 80, 43])(
       await press(setup, "ARROW_DOWN");
       await setup.waitFor(() => list.getSelectedIndex() === initial + 1);
       await press(setup, "ENTER");
-      await expectFocus(setup, "skill-inspector-open-reader", `cold startup ${width} Enter`);
+      await waitForReaderBody(setup, "reference");
       await parsedEscape(setup);
       await expectFocus(setup, "installed-skill-browser", `cold startup ${width} Escape`);
     } finally {
@@ -69,7 +84,7 @@ test.each([120, 80, 43])(
   },
 );
 
-test("page and context navigation are reachable from cold startup without mouse or Tab", async () => {
+test("page and Scope navigation are reachable from cold startup by keyboard", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
     {
@@ -78,29 +93,22 @@ test("page and context navigation are reachable from cold startup without mouse 
     },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-    await press(setup, "ARROW_LEFT");
-    await expectFocus(
-      setup,
-      "shell-section-navigation",
-      "cold navigation after Left from All Skills",
-    );
-    await press(setup, "ARROW_LEFT");
-    await expectFocus(
-      setup,
-      "top-navigation-tab-workspace",
-      "cold navigation after Left from sections",
-    );
-    await press(setup, "ARROW_RIGHT");
-    await expectFocus(setup, "top-navigation-tab-global", "cold navigation after Right to Global");
-    expect(setup.captureCharFrame()).toContain("Global Config / Sources");
-    await press(setup, "ARROW_DOWN");
-    await expectFocus(setup, "shell-section-navigation", "cold navigation after Down from Global");
+    await setup.flush();
+    await tabTo(setup, "shell-scope-select");
     await press(setup, "ENTER");
-    await setup.waitFor(() => !!setup.renderer.currentFocusedRenderable?.parent);
-    expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("shell-section-navigation");
-    // This fixture has no Global Source; empty entry uses its mounted work area.
-    expect(setup.captureCharFrame()).toContain("No Source");
+    await expectFocus(setup, "scope-choices", "Scope opened");
+    const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+    for (
+      let step = 0;
+      step < choices.options.length && choices.getSelectedOption()?.value !== "global";
+      step++
+    )
+      await press(setup, "ARROW_DOWN");
+    expect(choices.getSelectedOption()?.value).toBe("global");
+    await press(setup, "ENTER");
+    await tabTo(setup, "shell-section-global-tab-sources");
+    await press(setup, "ENTER");
+    await setup.waitForFrame((frame) => frame.includes("Sources"));
   } finally {
     setup.renderer.destroy();
   }
@@ -112,14 +120,9 @@ test("More actions is reachable and activates from its real shell control", asyn
     { width: 120, height: 40 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
-    await press(setup, "ARROW_LEFT");
-    await press(setup, "ARROW_LEFT");
-    setup.mockInput.pressArrow("up");
-    await expectFocus(setup, "shell-more-actions", "Context Up reaches More actions");
-    await press(setup, "ENTER");
+    await setup.flush();
+    const actions = setup.renderer.root.findDescendantById("shell-more-actions")!;
+    await setup.mockMouse.click(actions.screenX + 1, actions.screenY);
     await expectFocus(setup, "palette-choices", "More actions Enter opens palette");
     await parsedEscape(setup);
     await expectFocus(

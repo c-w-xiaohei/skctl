@@ -147,6 +147,8 @@ const result = <T>(value: T): OperationResult<T> => ({
 });
 export function directSourceCore(projection: WorkspaceView, hooks: Partial<TuiCore> = {}): TuiCore {
   return {
+    setCollectionContent: async () =>
+      result({ level: "project", file: directOwner.file, changed: true }),
     inspectCollection: async () => {
       throw new Error("Unexpected inspection");
     },
@@ -463,8 +465,6 @@ export function directSourceCore(projection: WorkspaceView, hooks: Partial<TuiCo
         blockers: [],
         allowed: true,
       }),
-    setManagedOpenCode: async () =>
-      result({ level: "project", file: directOwner.file, changed: true }),
     ...hooks,
   };
 }

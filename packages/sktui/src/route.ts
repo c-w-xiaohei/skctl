@@ -17,7 +17,6 @@ import {
 import type { WorkspaceSnapshot, WorkspaceState } from "./workspace/state";
 import type { ConfigSnapshot, ConfigState } from "./config/state";
 import type { CollectionsSnapshot, CollectionsState } from "./collections/state";
-import { configDeclarationOwnerKey } from "./config/state";
 import type { UpdatesState } from "./updates/state";
 import type { UpdateScopeEntry } from "./updates/scope";
 
@@ -167,8 +166,6 @@ const handoffKey = (handoff: RouteHandoff | undefined): string | undefined => {
         handoff.source.selectors,
         contributionIdentity(handoff.source.contribution),
       ]);
-    case "config-integration":
-      return JSON.stringify([handoff.kind, owner]);
   }
 };
 
@@ -185,7 +182,9 @@ const sublocationKey = (location: RouteSublocation | undefined): string | undefi
         ? entry.collection
         : entry.kind === "skill"
           ? [entry.address.source, entry.address.path]
-          : undefined,
+          : entry.kind === "selected"
+            ? entry.addresses.map((address) => [address.source, address.path])
+            : undefined,
     location.source,
   ]);
 };
@@ -483,6 +482,7 @@ export function createRoute(
     });
 
   const available = (frame: NavigationFrame, projection: WorkspaceView) => {
+    if (frame.section === "integrations") return true;
     if (frame.object === undefined) return true;
     if (typeof frame.object !== "string") {
       const address = frame.object;
@@ -508,14 +508,7 @@ export function createRoute(
         ...config.direct.collections.map((collection) => collection.id),
         ...config.contributed.collections,
       ].includes(frame.object);
-    return [
-      ...config.direct.integrations.map((integration) =>
-        configDeclarationOwnerKey(integration.owner),
-      ),
-      ...(projection.effective.agent.integration ?? []).map((owner) =>
-        configDeclarationOwnerKey(owner),
-      ),
-    ].includes(frame.object);
+    return false;
   };
   const recover = (frame: NavigationFrame): NavigationFrame => ({
     ...frame,
@@ -554,7 +547,6 @@ export function createRoute(
         } else {
           pages.config.selectSection(destination, section as ConfigSection);
           pages.config.backConfigSourceSurface(destination);
-          pages.config.closeIntegrationSurface(destination);
         }
       },
       false,
@@ -568,9 +560,7 @@ export function createRoute(
     pages.workspace.snapshot().sourceUpdatesSource !== undefined ||
     !!pages.collections?.inspector() ||
     !!pages.collections?.filter().open ||
-    (destination !== "workspace" &&
-      (pages.config.configSourceSurface(destination) !== "list" ||
-        pages.config.integrationSurface(destination) !== "list"));
+    (destination !== "workspace" && pages.config.configSourceSurface(destination) !== "list");
 
   return {
     snapshot,

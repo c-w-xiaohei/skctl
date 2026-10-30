@@ -90,10 +90,6 @@ function core(calls: unknown[]): Partial<typeof api> {
       };
     },
     previewCollectionUse: unsupported,
-    setManagedOpenCode: async (_environment, request) => {
-      calls.push({ method: "managed", request });
-      return write(request);
-    },
     registerSource: async (_environment, request) => {
       calls.push(["source.register", request]);
       return write(request);
@@ -279,7 +275,7 @@ test("CLI-001/PROJ-023 maps finalized source and management commands through Cor
     ["uninstall", { source: "local", paths: ["review"] }],
   ]);
 });
-test("CLI-001 maps collection, use, managed, and content commands through named APIs", async () => {
+test("CLI-001 maps collection, use, and content commands through named APIs", async () => {
   const calls: unknown[] = [];
   const options = {
     cwd: "/tmp",
@@ -308,7 +304,6 @@ test("CLI-001 maps collection, use, managed, and content commands through named 
     ["collection", "link", "add", "engineering", "other"],
     ["collection", "link", "remove", "engineering", "other"],
     ["use", "set", "engineering"],
-    ["managed", "set"],
     ["content", "load", "engineering:review"],
     ["content", "run", "engineering:review", "--", "true"],
   ]) {
@@ -369,7 +364,6 @@ test("CLI-001 maps collection, use, managed, and content commands through named 
     method: "use.set",
     request: { level: "project", collections: ["engineering"] },
   });
-  expect(calls).toContainEqual({ method: "managed", request: { level: "project", managed: true } });
   expect(calls).toContainEqual(["load", { selector: "engineering:review" }]);
   expect(calls).toContainEqual(["run", { selector: "engineering:review", argv: ["true"] }]);
   expect(await runMain(["profile", "set", "x"], options)).toBe(2);
@@ -616,7 +610,7 @@ test("human mutations describe their completed action, level, target file, and i
     ),
   ).toBe(0);
   expect(await runMain(["use", "set", "engineering"], options)).toBe(0);
-  expect(await runMain(["managed", "set"], options)).toBe(0);
+  expect(await runMain(["managed", "set"], options)).toBe(2);
   expect(
     await runMain(["install", "workspace", "review", "--revision", "a".repeat(40)], options),
   ).toBe(0);
@@ -629,7 +623,7 @@ test("human mutations describe their completed action, level, target file, and i
   expect(output.join("")).toContain("Scope: project.");
   expect(output.join("")).toContain("Added: engineering. Retained: none. Removed: none.");
   expect(output.join("")).not.toContain("Set collection use");
-  expect(output.join("")).toContain(
+  expect(output.join("")).not.toContain(
     "Enabled managed OpenCode at project level in /tmp/project.jsonc.",
   );
   expect(output.join("")).toContain(
@@ -691,7 +685,7 @@ test("human mutations report no-op configuration writes and affected update path
   const calls: unknown[] = [];
   const output: string[] = [];
   const fake = core(calls);
-  fake.setManagedOpenCode = async (_environment, request) => ({
+  fake.createCollection = async (_environment, request) => ({
     value: { changed: false, level: request.level, file: "/tmp/project.jsonc" },
     diagnostics: [],
   });
@@ -701,7 +695,7 @@ test("human mutations report no-op configuration writes and affected update path
     stdout: { write: (value: string) => output.push(value) },
     stderr: { write() {} },
   };
-  expect(await runMain(["managed", "set"], options)).toBe(0);
+  expect(await runMain(["collection", "create", "existing"], options)).toBe(0);
   expect(
     await runMain(
       ["update", "apply", "workspace", "review", "docs", "--remove", "old", "legacy"],
@@ -834,11 +828,11 @@ test("human errors do not treat application errors as Commander help", async () 
     const stdout: string[] = [];
     const stderr: string[] = [];
     const fake = core([]);
-    fake.setManagedOpenCode = async () => {
+    fake.createCollection = async () => {
       throw error;
     };
     expect(
-      await runMain(["managed", "set"], {
+      await runMain(["collection", "create", "example"], {
         cwd: "/tmp",
         api: fake,
         stdout: { write: (value) => stdout.push(String(value)) },

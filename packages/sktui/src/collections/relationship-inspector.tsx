@@ -5,7 +5,7 @@ import {
   type BaseRenderable,
   type BoxRenderable,
 } from "@opentui/core";
-import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
+import { createMemo, createSignal, For, Match, Show, Switch, type JSX } from "solid-js";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import type { CollectionView, ConfigDeclarationOwner } from "@skctl/core";
 import type { MemberOriginPath } from "@skctl/core";
@@ -144,6 +144,7 @@ const compactAddress = (address: { readonly source: string; readonly path: strin
   `${address.source}/${address.path}`;
 
 export function RelationshipInspector(props: {
+  readonly editContent?: () => JSX.Element;
   readonly collection: CollectionView;
   readonly contextIssue?: string;
   readonly memberOrigins: readonly CollectionMemberOriginRow[];
@@ -390,6 +391,7 @@ export function RelationshipInspector(props: {
           )}
         </Show>
       </scrollbox>
+      {props.editContent?.()}
       <Actions commands={[]} />
     </>
   );

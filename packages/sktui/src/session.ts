@@ -39,6 +39,7 @@ export type TuiCore = Pick<
   | "getWorkspace"
   | "inspectCollection"
   | "createCollection"
+  | "setCollectionContent"
   | "removeCollection"
   | "addMember"
   | "removeMember"
@@ -83,7 +84,6 @@ export type TuiCore = Pick<
   | "getUpdateBaseline"
   | "previewUpdate"
   | "updateSkills"
-  | "setManagedOpenCode"
 >;
 export interface SourceRemovalReview {
   readonly id: string;
@@ -798,6 +798,7 @@ export function createTuiSession(
     const stable = structuredClone(intent);
     return withForeground("preview", undefined, async ({ id, signal, active }) => {
       liveReview = undefined;
+      operation.clearProblem();
       const { value: impact } = await core.previewSourceRemoval(
         environment,
         {
@@ -1032,13 +1033,10 @@ export function createTuiSession(
       "Updating Collection",
       semanticOwner,
       async (signal) => {
-        if (reviewed.kind === "collection-create")
-          await core.createCollection(
-            environment,
-            { level: reviewed.level, collection: reviewed.collection },
-            { signal },
-          );
-        else
+        if (reviewed.kind === "collection-create") {
+          const { kind: _, ...request } = reviewed;
+          await core.createCollection(environment, request, { signal });
+        } else
           switch (reviewed.kind) {
             case "add-to-collection": {
               const { kind: _, ...request } = reviewed.intent;
@@ -1116,6 +1114,12 @@ export function createTuiSession(
     confirmCollection: (reviewed: CollectionReview) => executeCollection(reviewed),
     createCollection: (intent: Extract<CollectionIntent, { readonly kind: "collection-create" }>) =>
       executeCollection(intent),
+    setCollectionContent: (request: api.SetCollectionContentRequest) =>
+      execute(
+        "Saving Collection content",
+        { kind: "collection", id: request.collection },
+        (signal) => core.setCollectionContent(environment, request, { signal }),
+      ),
     selectUpdatesScope,
     restoreUpdatesScope: (state: UpdatesState, snapshot?: api.WorkspaceView) => {
       if (drafts.get(JSON.stringify(state.scope.entry)) !== state) return undefined;
@@ -1278,12 +1282,6 @@ export function createTuiSession(
     removeConfig: (id: string) =>
       execute("Removing Config Source", { kind: "config-source", id }, (signal) =>
         core.removeConfig(environment, { id }, { signal }),
-      ),
-    setManagedOpenCode: (level: api.ConfigLevel, managed: boolean) =>
-      execute(
-        `${managed ? "Enabling" : "Disabling"} Managed OpenCode`,
-        { kind: "config", level },
-        (signal) => core.setManagedOpenCode(environment, { level, managed }, { signal }),
       ),
     registerSource: (
       registration: { readonly kind: "source" | "config-source" } & api.RegisterSourceRequest,

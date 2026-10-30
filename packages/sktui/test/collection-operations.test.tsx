@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { enterLive } from "./reader-test-controls";
 import { InputRenderable, SelectRenderable, type Renderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { createSignal, type Accessor, type JSX } from "solid-js";
@@ -8,8 +9,7 @@ import {
   CollectionReviewOverlay,
   CollectionUseOverlay,
   LinkChangeOverlay,
-  MembershipBatchDraftOverlay,
-  MembershipAddOverlay,
+  InstalledSkillChooserOverlay,
   MembershipRemovalPlanOverlay,
   ReferenceOverlay,
 } from "../src/operations";
@@ -54,40 +54,11 @@ const input = (setup: Awaited<ReturnType<typeof testRender>>, id: string) =>
   })();
 
 async function tabToCreateSubmit(setup: Awaited<ReturnType<typeof testRender>>) {
-  if (setup.renderer.currentFocusedRenderable?.id !== "collection-create-cancel") {
+  for (const id of ["collection-create-description", "collection-create-submit"]) {
     setup.mockInput.pressKey("TAB");
-    await setup.waitFor(() => {
-      const cancel = setup.renderer.root.findDescendantById("collection-create-cancel");
-      return (
-        !!cancel &&
-        !cancel.isDestroyed &&
-        cancel.parent !== null &&
-        setup.renderer.currentFocusedRenderable === cancel
-      );
-    });
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
   }
-  const cancel = liveRenderable(setup, "collection-create-cancel");
-  expect(setup.renderer.currentFocusedRenderable).toBe(cancel);
-
-  await setup.waitFor(() => {
-    const submit = setup.renderer.root.findDescendantById("collection-create-submit");
-    return !!submit && !submit.isDestroyed && submit.parent !== null && submit.focusable;
-  });
-  await setup.renderOnce();
-  setup.mockInput.pressKey("TAB");
-  await setup.waitFor(() => {
-    const submit = setup.renderer.root.findDescendantById("collection-create-submit");
-    return (
-      !!submit &&
-      !submit.isDestroyed &&
-      submit.parent !== null &&
-      submit.focusable &&
-      setup.renderer.currentFocusedRenderable === submit
-    );
-  });
-  const submit = liveRenderable(setup, "collection-create-submit");
-  expect(setup.renderer.currentFocusedRenderable).toBe(submit);
-  return submit;
+  return liveRenderable(setup, "collection-create-submit");
 }
 
 async function tabToCommand(
@@ -122,7 +93,7 @@ const owner = {
   pointer: "/collections/team",
 };
 
-test("collection creation renders an ID input and Cancel-first choice", async () => {
+test("collection creation renders editable fields and explicit submit and cancel actions", async () => {
   let submitted:
     | { readonly level: "global" | "project" | "local"; readonly collection: string }
     | undefined;
@@ -396,7 +367,7 @@ test("fixed-level Collection Create retains its editable ID through same-mounted
   }
 });
 
-test("selectable Workspace Collection Create traverses level, ID, and Cancel-first action", async () => {
+test("selectable Workspace Collection Create traverses level, ID, description, and submit", async () => {
   const submitted: unknown[] = [];
   const form = await renderReactiveForm((state) => (
     <CollectionCreateOverlay
@@ -418,7 +389,7 @@ test("selectable Workspace Collection Create traverses level, ID, and Cancel-fir
       throw new Error("collection-create-level is not a live renderable");
     }
     expect(form.setup.renderer.currentFocusedRenderable).toBe(level);
-    form.setup.mockInput.pressKey("ARROW_DOWN");
+    expect((level as SelectRenderable).getSelectedOption()?.value).toBe("project");
     form.setup.mockInput.pressEnter();
     form.setup.mockInput.pressKey("TAB");
     await form.setup.renderOnce();
@@ -501,40 +472,30 @@ test("Membership Add is keyboard-editable, retains its draft, and previews the a
   const previews: unknown[] = [];
   const setup = await testRender(
     () => (
-      <MembershipAddOverlay
-        level="project"
+      <InstalledSkillChooserOverlay
+        owner={{ level: "project", file: "/project/skctl.jsonc", pointer: "/collections/team" }}
         collection="team"
-        address={{ source: "source", path: "skill" }}
-        initialName="review"
+        skills={[]}
+        initialSelected={[{ name: "review", address: { source: "source", path: "skill" } }]}
         pending={false}
         error={{ code: "WRITE_FAILED", message: "retry" }}
-        onPreview={(value) => previews.push(value)}
-        onCancel={() => {}}
+        onSelect={(value) => previews.push(value)}
+        onClose={() => {}}
       />
     ),
     { width: 100, height: 20 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-add-name",
-    );
-    expect(setup.captureCharFrame()).toContain("review");
-    setup.mockInput.pressKey("TAB");
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("membership-add-cancel");
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-add-preview",
-    );
-    setup.mockInput.pressEnter();
+    expect(setup.captureCharFrame()).toContain("review");
+    await enterLive(setup, "installed-skill-choice-submit");
     expect(previews).toEqual([
-      {
-        kind: "add-to-collection",
-        level: "project",
-        collection: "team",
-        address: { source: "source", path: "skill" },
-        name: "review",
-      },
+      [
+        {
+          address: { source: "source", path: "skill" },
+          name: "review",
+        },
+      ],
     ]);
   } finally {
     setup.renderer.destroy();
@@ -545,49 +506,30 @@ test("Membership batch draft edits retained names, blocks local duplicates, and 
   const previews: unknown[] = [];
   const setup = await testRender(
     () => {
-      const [additions, setAdditions] = createSignal([
+      const additions = [
         { name: "guide", address: { source: "team-main", path: "docs/guide" } },
         { name: "guide", address: { source: "team-main", path: "review" } },
-      ]);
+      ];
       return (
-        <MembershipBatchDraftOverlay
-          level="project"
+        <InstalledSkillChooserOverlay
+          owner={{ level: "project", file: "/project/skctl.jsonc", pointer: "/collections/team" }}
           collection="team"
-          additions={additions()}
+          skills={additions.map((item) => ({ ...item, description: "" }))}
+          initialSelected={additions}
           pending={false}
-          onChange={(index, name) =>
-            setAdditions((current) =>
-              current.map((item, currentIndex) =>
-                currentIndex === index ? { ...item, name } : item,
-              ),
-            )
-          }
-          onPreview={() => previews.push(additions())}
-          onCancel={() => {}}
+          onSelect={(items) => previews.push(items)}
+          onClose={() => {}}
         />
       );
     },
     { width: 100, height: 24 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-name-0",
-    );
+    await setup.renderOnce();
     expect(setup.captureCharFrame()).toContain("team-main/docs/guide");
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-name-1",
-    );
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-cancel",
-    );
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressEnter();
+    expect(liveRenderable(setup, "installed-skill-choice-submit").focusable).toBe(false);
     expect(previews).toEqual([]);
-    expect(setup.captureCharFrame()).toContain(
-      "Duplicate entry names must be changed before review.",
-    );
+    expect(setup.captureCharFrame()).toContain("Choose unique, nonempty names");
   } finally {
     setup.renderer.destroy();
   }
@@ -758,54 +700,50 @@ test("Link and Collection Use drafts are keyboard-editable and emit their exact 
 test("Membership retains the same mounted input and exact retry draft", async () => {
   const previews: unknown[] = [];
   const member = await renderReactiveForm((state) => (
-    <MembershipAddOverlay
-      level="project"
+    <InstalledSkillChooserOverlay
+      owner={{ level: "project", file: "/project/skctl.jsonc", pointer: "/collections/team" }}
       collection="team"
-      address={{ source: "source", path: "skill" }}
-      initialName="review"
+      skills={[]}
+      initialSelected={[{ name: "review", address: { source: "source", path: "skill" } }]}
       pending={state().pending}
       error={state().error}
-      onPreview={(value) => previews.push(value)}
-      onCancel={() => {}}
+      onSelect={(value) => previews.push(value)}
+      onClose={() => {}}
     />
   ));
   try {
-    await member.setup.waitFor(
-      () => member.setup.renderer.currentFocusedRenderable?.id === "membership-add-name",
-    );
-    const name = input(member.setup, "membership-add-name");
+    await member.setup.renderOnce();
+    const name = input(member.setup, "installed-skill-name-0");
     member.setup.mockInput.pressKey("TAB");
     await member.setup.renderOnce();
-    const submit = await retryChoice(member.setup, "membership-add-preview");
+    const submit = await retryChoice(member.setup, "installed-skill-choice-submit");
     expect(member.setup.renderer.currentFocusedRenderable).toBe(submit);
     member.patch({ error: { code: "CANCELLED", message: "cancelled" } });
     await member.setup.renderOnce();
-    expect(input(member.setup, "membership-add-name")).toBe(name);
+    expect(input(member.setup, "installed-skill-name-0")).toBe(name);
     expect(name.value).toBe("review");
-    const retrySubmit = liveRenderable(member.setup, "membership-add-preview");
+    const retrySubmit = liveRenderable(member.setup, "installed-skill-choice-submit");
     expect(retrySubmit).toBe(submit);
     expect(member.setup.renderer.currentFocusedRenderable).toBe(retrySubmit);
     member.patch({ error: undefined });
     await member.setup.renderOnce();
-    const finalSubmit = liveRenderable(member.setup, "membership-add-preview");
+    const finalSubmit = liveRenderable(member.setup, "installed-skill-choice-submit");
     expect(finalSubmit).toBe(submit);
     expect(member.setup.renderer.currentFocusedRenderable).toBe(finalSubmit);
     member.setup.mockInput.pressEnter();
     expect(previews).toEqual([
-      {
-        kind: "add-to-collection",
-        level: "project",
-        collection: "team",
-        address: { source: "source", path: "skill" },
-        name: "review",
-      },
-      {
-        kind: "add-to-collection",
-        level: "project",
-        collection: "team",
-        address: { source: "source", path: "skill" },
-        name: "review",
-      },
+      [
+        {
+          address: { source: "source", path: "skill" },
+          name: "review",
+        },
+      ],
+      [
+        {
+          address: { source: "source", path: "skill" },
+          name: "review",
+        },
+      ],
     ]);
   } finally {
     member.setup.renderer.destroy();

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getWorkspace, registerSource, setManagedOpenCode } from "../../src/index";
+import { getWorkspace, registerSource } from "../../src/index";
 
 test("missing configuration is writable while previous namespace data is detected without importing or overwriting it", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-first-use-"));
@@ -29,10 +29,6 @@ test("missing configuration is writable while previous namespace data is detecte
     );
     expect(await readFile(path, "utf8")).toBe("saved original bytes");
     expect(await Bun.file(join(root, "state", "skctl", "state.json")).exists()).toBe(false);
-    await setManagedOpenCode(options, { level: "project", managed: true });
-    expect(JSON.parse(await readFile(join(root, "skctl.jsonc"), "utf8"))).toEqual({
-      agents: { opencode: "managed" },
-    });
     await registerSource(options, {
       level: "project",
       id: "mine",

@@ -7,6 +7,7 @@ import {
   enterLive,
   focusLive,
   openReaderTab,
+  openAllInstalledSkills,
   parsedEnter,
   readerTab,
   selectedReaderTab,
@@ -14,34 +15,6 @@ import {
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection, readerResources } from "./installed-reader.fixture";
 type Setup = Awaited<ReturnType<typeof testRender>>;
-async function openReaderFromInspector(setup: Setup) {
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("skills-view-tab-current-exposure"),
-  );
-  const currentExposure = setup.renderer.root.findDescendantById(
-    "skills-view-tab-current-exposure",
-  )!;
-  currentExposure.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === currentExposure);
-  setup.mockInput.pressKey("ARROW_RIGHT");
-  await setup.waitFor(
-    () =>
-      setup.captureCharFrame().includes("[ All Skills ]") &&
-      !!setup.renderer.root.findDescendantById("installed-skill-browser"),
-  );
-  const browser = setup.renderer.root.findDescendantById("installed-skill-browser")!;
-  browser.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
-  setup.mockInput.pressEnter();
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-  );
-  const control = setup.renderer.root.findDescendantById("skill-inspector-open-reader")!;
-  control.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === control);
-  setup.mockInput.pressEnter();
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
-}
 function selectionText(setup: Setup) {
   return setup.renderer.getSelection()?.getSelectedText() ?? "";
 }
@@ -59,7 +32,8 @@ async function pressParsedEscape(setup: Setup) {
   await setup.renderOnce();
 }
 async function openReader(setup: Setup) {
-  await openReaderFromInspector(setup);
+  await openAllInstalledSkills(setup);
+  await parsedEnter(setup);
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
 }
 async function chooseReaderTab(setup: Setup, stepsRight: number) {
@@ -76,6 +50,7 @@ async function openResources(setup: Setup) {
   await openReader(setup);
   await chooseReaderTab(setup, 1);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
+  await focusLive(setup, "resource-browser");
 }
 async function openDetails(setup: Setup) {
   await openReader(setup);
@@ -113,6 +88,7 @@ test("RENDER native Details selection exposes Source provenance through the rend
   try {
     await openDetails(setup);
     await enterLive(setup, "reader-details-metadata");
+    await setup.flush();
     const details = setup.renderer.root.findDescendantById("reader-details") as ScrollBoxRenderable;
     const binding = (node: {
       getChildren(): readonly unknown[];
@@ -121,7 +97,7 @@ test("RENDER native Details selection exposes Source provenance through the rend
         .getChildren()
         .find(
           (child): child is TextBufferRenderable =>
-            child instanceof TextBufferRenderable && child.plainText.includes("Binding  github"),
+            child instanceof TextBufferRenderable && child.plainText === "github",
         ) ??
       node
         .getChildren()
@@ -138,12 +114,12 @@ test("RENDER native Details selection exposes Source provenance through the rend
     expect(provenance).toBeDefined();
     await setup.mockMouse.drag(
       provenance!.screenX,
-      provenance!.screenY + 2,
-      provenance!.screenX + 19,
-      provenance!.screenY + 2,
+      provenance!.screenY,
+      provenance!.screenX + 6,
+      provenance!.screenY,
     );
     await setup.flush();
-    expect(selectionText(setup)).toBe("Binding  github");
+    expect(selectionText(setup).trim()).toBe("github");
   } finally {
     setup.renderer.destroy();
   }
@@ -172,7 +148,7 @@ test("RENDER native text resource selection exposes file content through the ren
     await parsedEnter(setup);
     await setup.waitForFrame((frame) => frame.includes("selectable resource text"));
     await dragFirstLine(setup, "resource-content", 20);
-    expect(selectionText(setup)).toBe("electable resource ");
+    expect(selectionText(setup)).toBe("electable resource t");
     await pressParsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
   } finally {
@@ -238,16 +214,24 @@ test("RENDER native resource read errors expose their typed code and message", a
     await setup.renderOnce();
     setup.mockInput.pressEnter();
     await setup.waitForFrame((frame) => frame.includes("RESOURCE_NOT_FOUND: resource moved"));
-    const retry = setup.renderer.root.findDescendantById("resource-retry");
-    expect(retry).toBeDefined();
+    await setup.flush();
+    const findError = (
+      node: import("@opentui/core").BaseRenderable,
+    ): TextBufferRenderable | undefined => {
+      if (node instanceof TextBufferRenderable && node.plainText.includes("RESOURCE_NOT_FOUND"))
+        return node;
+      return node.getChildren().map(findError).find(Boolean);
+    };
+    const error = findError(setup.renderer.root)!;
+    expect(!!error).toBe(true);
     await setup.mockMouse.drag(
-      retry!.screenX,
-      retry!.screenY - 1,
-      retry!.screenX + 35,
-      retry!.screenY - 1,
+      error.screenX,
+      error.screenY,
+      error.screenX + "RESOURCE_NOT_FOUND: resource moved".length,
+      error.screenY,
     );
     await setup.flush();
-    expect(selectionText(setup)).toBe("RESOURCE_NOT_FOUND: resource moved");
+    expect(selectionText(setup).trim()).toBe("RESOURCE_NOT_FOUND: resource moved");
   } finally {
     setup.renderer.destroy();
   }

@@ -42,7 +42,7 @@ test("READ-001/005/006 reads undisclosed installed content structurally and clas
     await rm(root, { recursive: true, force: true });
   }
 });
-test("READ-001/003 structural load ignores disclosure and owner health but validates installed text", async () => {
+test("READ-001/003 structural load preserves malformed frontmatter while enforcing text limits", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-reader-load-"));
   const state = join(root, "state");
   const skill = join(root, "skill");
@@ -66,10 +66,20 @@ test("READ-001/003 structural load ignores disclosure and owner health but valid
       owner: { health: "missing" },
       problems: [{ code: "CONFIG_INVALID" }],
     });
-    await writeFile(join(skill, "SKILL.md"), "---\nname: [broken\n---\nbody\n");
-    await expect(
-      api.loadInstalledSkill(core, { address: { source: "missing", path: "skill" } }),
-    ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+    for (const text of [
+      "---\nname: [broken\n---\nbody\n",
+      "---\nname: unfinished\n",
+      "---\nname: 42\ndescription: invalid\n---\nbody",
+      "---\nname: invalid/name\ndescription: invalid\n---\nbody",
+      "---\nname: &alias live\ndescription: Live\n---\nbody",
+      "---\nname: live\nname: duplicate\n---\nbody",
+      "# Plain Skill text",
+    ]) {
+      await writeFile(join(skill, "SKILL.md"), text);
+      expect(
+        await api.loadInstalledSkill(core, { address: { source: "missing", path: "skill" } }),
+      ).toMatchObject({ name: "live", description: "Live", rawText: text, markdownText: text });
+    }
     await writeFile(join(skill, "SKILL.md"), Buffer.alloc(1048577, "x"));
     await expect(
       api.loadInstalledSkill(core, { address: { source: "missing", path: "skill" } }),

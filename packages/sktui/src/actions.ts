@@ -14,7 +14,7 @@ import {
   type WorkspaceSnapshot,
 } from "./workspace/state";
 import { unassignedSkills, type CollectionsSnapshot } from "./collections/state";
-import { configDeclarationOwnerKey, type ConfigSnapshot } from "./config/state";
+import type { ConfigSnapshot } from "./config/state";
 import { skillsStatus } from "./workspace/skills-status";
 
 export interface PageActionFacts {
@@ -35,6 +35,7 @@ export const actionIds = [
   "open-config-source",
   "remove-source",
   "new-collection",
+  "edit-collection-content",
   "add-membership",
   "remove-membership",
   "import-collection",
@@ -49,14 +50,12 @@ export const actionIds = [
   "skill-open-collection-use",
   "skill-open-source",
   "skill-check-updates",
+  "update-selected-skills",
   "skill-rebind",
   "skill-uninstall",
   "config-observe",
   "config-forget",
   "config-remove",
-  "enable-managed-opencode",
-  "disable-managed-opencode",
-  "open-config-integration",
   "add-source",
   "add-config-source",
 ] as const;
@@ -76,23 +75,6 @@ export type ActionRecord = CommandRecord & {
   /** Exact current-object or checked-set scope for Collection chooser actions. */
   readonly description?: string;
 };
-
-export function selectedConfigIntegrationOwner(
-  projection: WorkspaceView,
-  destination: Exclude<Destination, "workspace">,
-  config: ConfigSnapshot,
-): ConfigDeclarationOwner | undefined {
-  const selected = config.selection.integrations;
-  if (!selected) return undefined;
-  const current = projection.configs.find((item) => item.level === destination);
-  const direct = current?.direct.integrations.find(
-    (item) => configDeclarationOwnerKey(item.owner) === selected,
-  );
-  if (direct) return direct.owner;
-  return projection.effective.agent.integration.find(
-    (owner) => configDeclarationOwnerKey(owner) === selected,
-  );
-}
 
 export type DirectSourceIntent = {
   readonly kind: "source-removal";
@@ -204,17 +186,11 @@ export function skillCollectionTargets(
           .join(", ")}; clear or reselect the checked set`,
       };
   }
-  const available =
-    projection.effective.status === "complete" &&
-    projection.effective.collectionsView.some(
-      (collection) =>
-        collection.declared.some((owner) => !owner.contribution) || collection.repository.derived,
-    );
-  return available
+  return projection.effective.status === "complete"
     ? { addresses }
     : {
         addresses,
-        reason: "No direct or repository-derived Collection is available for these targets",
+        reason: "Resolve the configuration problems before choosing or creating a Collection",
       };
 }
 
@@ -293,7 +269,7 @@ function reachableActionIntents(
         enabled: true,
       },
       ...(direct
-        ? collectionMutationIntents(projection.installedSkills.length)
+        ? collectionMutationIntents()
         : collection?.repository.derived
           ? [
               {
@@ -305,6 +281,8 @@ function reachableActionIntents(
           : []),
     ];
   }
+  if (destination !== "workspace" && pages.config(destination).section === "integrations")
+    return [];
   if (projection && destination !== "workspace") {
     const config = projection.configs.find((item) => item.level === destination);
     // A missing Config can be created, but parsed failures have no editable declarations.
@@ -319,36 +297,6 @@ function reachableActionIntents(
         item.collection ===
         pages.config(destination as Exclude<Destination, "workspace">).selection.collections,
     );
-    if (pages.config(destination as Exclude<Destination, "workspace">).section === "integrations") {
-      const selectedOwner = selectedConfigIntegrationOwner(
-        projection,
-        destination as Exclude<Destination, "workspace">,
-        pages.config(destination as Exclude<Destination, "workspace">),
-      );
-      const direct = config?.direct.integrations.find(
-        (item) =>
-          selectedOwner &&
-          configDeclarationOwnerKey(item.owner) === configDeclarationOwnerKey(selectedOwner),
-      );
-      if (selectedOwner && !direct)
-        return [
-          {
-            id: "open-config-integration",
-            title: "Open owning Config",
-            enabled: true,
-          },
-        ];
-      if (!selectedOwner && projection.effective.agent.integration.length > 0) return [];
-      const managed = direct?.kind === "opencode";
-      if (selectedOwner && !managed) return [];
-      return [
-        {
-          id: managed ? "disable-managed-opencode" : "enable-managed-opencode",
-          title: managed ? "Disable Managed OpenCode" : "Enable Managed OpenCode",
-          enabled: true,
-        },
-      ];
-    }
     if (
       pages.config(destination as Exclude<Destination, "workspace">).section === "config-sources"
     ) {
@@ -405,7 +353,7 @@ function reachableActionIntents(
         },
         ...(collection || collectionUse
           ? [
-              ...(collection ? collectionMutationIntents(projection.installedSkills.length) : []),
+              ...(collection ? collectionMutationIntents() : []),
               {
                 id: "set-collection-use" as const,
                 title: "Set Collection Use",
@@ -495,14 +443,17 @@ function reachableActionIntents(
     : [...common, addSource];
 }
 
-function collectionMutationIntents(installedSkillCount: number): readonly ActionIntent[] {
-  const hasSkills = installedSkillCount > 0;
+function collectionMutationIntents(): readonly ActionIntent[] {
   return [
     {
       id: "add-membership",
       title: "Add Membership",
-      enabled: hasSkills,
-      reason: hasSkills ? undefined : "No Installed Skill is available",
+      enabled: true,
+    },
+    {
+      id: "edit-collection-content",
+      title: "Edit Collection description and instructions",
+      enabled: true,
     },
     {
       id: "import-collection",
@@ -613,13 +564,26 @@ function checkedSkillActionIntents(
       enabled: !targets.reason,
       reason: targets.reason,
     },
+    {
+      id: "update-selected-skills",
+      title: `Update ${pages.workspace.selectedSkills.length} selected Skills`,
+      description: "Review updates for exactly the checked Skills, including hidden selections",
+      enabled: pages.workspace.selectedSkills.every((address) =>
+        projection.installedSkills.some(
+          (skill) =>
+            sameSkillAddress(skill.address, address) &&
+            skill.owner.health === "healthy" &&
+            !!skill.source,
+        ),
+      ),
+      reason: "Selected Skills must be installed with healthy, available Sources",
+    },
   ];
 }
 
 const actionDestination = (id: ActionId): string => {
   switch (id) {
     case "open-config":
-    case "open-config-integration":
       return "Config";
     case "open-config-source":
       return "Config Source";
@@ -627,6 +591,7 @@ const actionDestination = (id: ActionId): string => {
       return "Source selection";
     case "check-updates":
     case "skill-check-updates":
+    case "update-selected-skills":
     case "collection-check-updates":
       return "Updates";
     case "view-installed-skills":
@@ -634,6 +599,7 @@ const actionDestination = (id: ActionId): string => {
     case "remove-source":
       return "Review Source removal";
     case "new-collection":
+    case "edit-collection-content":
       return "Collection form";
     case "add-membership":
       return "Membership form";
@@ -665,9 +631,6 @@ const actionDestination = (id: ActionId): string => {
     case "config-forget":
     case "config-remove":
       return "Review Config removal";
-    case "enable-managed-opencode":
-    case "disable-managed-opencode":
-      return "Managed OpenCode review";
     case "add-source":
       return "Source registration form";
     case "add-config-source":
@@ -687,7 +650,6 @@ const dangerousAction = (id: ActionId) =>
     "skill-uninstall",
     "config-forget",
     "config-remove",
-    "disable-managed-opencode",
   ].includes(id);
 
 const commandRecord = (intent: ActionIntent): ActionRecord => ({

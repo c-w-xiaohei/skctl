@@ -153,6 +153,71 @@ async function enterWithFocusContext(setup: Awaited<ReturnType<typeof testRender
     );
   }
 }
+test.each([100, 43])(
+  "checked update entry includes hidden checked Skills without expanding their Source at %i columns",
+  async (width) => {
+    const base = updatesProjection();
+    const projection = {
+      ...base,
+      installedSkills: [
+        ...base.installedSkills,
+        {
+          ...base.installedSkills[0]!,
+          address: { source: addresses.first.source, path: "unselected" },
+          name: "unselected",
+        },
+      ],
+    };
+    const updates: unknown[] = [];
+    const setup = await testRender(
+      () => (
+        <App
+          core={directSourceCore(projection, {
+            getUpdateBaseline: async () => ({ value: "baseline:test", diagnostics: [] }),
+            checkUpdate: async (_environment, { source }) => ({
+              value: observation(
+                source,
+                source === addresses.first.source ? ["guide", "unselected"] : ["other"],
+              ),
+              diagnostics: [],
+            }),
+            updateSkills: async (_environment, request) => {
+              updates.push(request);
+              return { value: undefined, diagnostics: [] };
+            },
+          })}
+          exit={() => {}}
+        />
+      ),
+      { width, height: 24 },
+    );
+    try {
+      await openAllInstalledSkills(setup);
+      await focusLive(setup, "installed-skill-browser");
+      await setup.mockInput.typeText(" ");
+      await focusLive(setup, "skills-query");
+      await setup.mockInput.typeText("no-matches");
+      await setup.waitForFrame((frame) => frame.includes("No matching Skills"));
+      await enterLive(setup, "workspace-batch-update-skills");
+      await setup.waitForFrame(
+        (frame) => frame.includes("1 selected Skills") && frame.includes("Updates available"),
+      );
+      await chooseAction(setup, "updates.update-source");
+      await setup.waitFor(() => updates.length === 1);
+      expect(updates).toEqual([
+        {
+          source: addresses.first.source,
+          paths: ["guide"],
+          exactRevision: revision,
+          expectedBaseline: "baseline:test",
+        },
+      ]);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
+
 test("App automatic checks stay read-only and updating the current Source preserves its exact reviewed target", async () => {
   let current = updatesProjection();
   const checks: string[] = [];

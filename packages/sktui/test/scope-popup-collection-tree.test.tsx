@@ -271,14 +271,31 @@ test("Tab reaches bulk tree controls and their arrows stay within that region", 
   try {
     await enterLive(setup, "shell-section-tab-collections");
     await waitFocus("collection-browser", "initial entry");
-    setup.mockInput.pressTab();
+    for (
+      let step = 0;
+      step < 24 &&
+      setup.renderer.currentFocusedRenderable?.id !== "collection-action-new-collection";
+      step++
+    ) {
+      setup.mockInput.pressTab();
+      await setup.flush();
+    }
+    await waitFocus("collection-action-new-collection");
+    setup.mockInput.pressArrow("right");
     await waitFocus("collections-expand-all");
     await parsedEnter(setup);
     await setup.flush();
     setup.mockInput.pressArrow("right");
     await waitFocus("collections-collapse-all");
     await parsedEnter(setup);
-    setup.mockInput.pressTab({ shift: true });
+    for (
+      let step = 0;
+      step < 24 && setup.renderer.currentFocusedRenderable?.id !== "collection-browser";
+      step++
+    ) {
+      setup.mockInput.pressTab({ shift: true });
+      await setup.flush();
+    }
     await waitFocus("collection-browser", "return from bulk controls");
     expect(mounted.reads).toEqual([]);
   } finally {

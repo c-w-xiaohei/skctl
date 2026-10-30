@@ -27,18 +27,20 @@ test("Source updates replace the browser and Back restores its exact selected So
     { width: 120, height: 40 },
   );
   try {
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-setup-primary"));
     await openSources(setup);
     const browser = (await focusLive(setup, "source-browser")) as SelectRenderable;
     browser.setSelectedIndex(browser.options.findIndex((option) => option.value === "team-main"));
     await setup.flush();
     await focusLive(setup, "source-browser");
     const selected = browser.getSelectedOption()?.value;
-    await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-updates-page"));
-    expect(setup.renderer.root.findDescendantById("source-browser")).toBeUndefined();
+    await setup.waitForFrame((frame) => frame.includes("Check updates"));
+    await enterLive(setup, "workspace-action-check-updates");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-page"));
+    expect(!!setup.renderer.root.findDescendantById("source-browser")).toBe(false);
     setup.resize(80, 16);
     await setup.renderOnce();
-    expect(setup.renderer.root.findDescendantById("source-updates-page")).toBeDefined();
+    expect(!!setup.renderer.root.findDescendantById("updates-page")).toBe(true);
     await parsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
     expect(
@@ -220,10 +222,14 @@ for (const originKind of ["direct", "via-link"] as const) {
       { width: 120, height: 40 },
     );
     try {
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-setup-primary"));
       await enterLive(setup, "shell-section-tab-collections");
       await enterLive(setup, "collection-browser");
-      const rows = (await focusLive(setup, "collection-relationships")) as SelectRenderable;
-      await setup.waitFor(() => rows.options.some((option) => option.value.includes("reference")));
+      await focusLive(setup, "collection-relationships");
+      setup.mockInput.pressArrow("right");
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id.endsWith(".manage") === true,
+      );
       await parsedEnter(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),

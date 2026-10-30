@@ -17,7 +17,7 @@ import type { OperationOptions } from "../shared";
 import type { SkillAddress } from "../source/schema";
 import type { ResourceDescriptor } from "./types";
 import { SkctlError } from "../shared";
-import { decodeStrictText, parseSkillFrontmatter, parseSkillMetadata, textLimit } from "./text";
+import { decodeStrictText, parseSkillFrontmatter, textLimit, type SkillMetadata } from "./text";
 import { parseNameSegment } from "../collection/names";
 import { parseResourcePath } from "./path";
 import { StateCoordinator } from "../storage/state";
@@ -39,6 +39,7 @@ async function withTarget<T>(
   selector: string,
   operation: (found: {
     readonly root: string;
+    readonly metadata: SkillMetadata;
     readonly provenance: ReadResourceResult["provenance"];
   }) => Promise<T>,
 ) {
@@ -56,6 +57,7 @@ async function withTarget<T>(
         throw new SkctlError("PROVIDER_INTEGRITY_FAILED", "Installed Skill marker is unavailable");
       return operation({
         root,
+        metadata: { name: item.name, description: item.description },
         provenance: {
           source: item.source,
           origin: item.kind === "remote" ? ("git" as const) : ("local" as const),
@@ -112,26 +114,31 @@ function installedSkillText(
   rawText: string,
   fallback: { readonly name: string; readonly description: string },
 ) {
-  if (rawText.startsWith("---") && !/^---\r?\n/u.test(rawText))
-    throw new SkctlError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(rawText);
-  if (rawText.startsWith("---") && !frontmatter)
-    throw new SkctlError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
   if (!frontmatter) return { ...fallback, rawText, markdownText: rawText };
-  const values = parseSkillFrontmatter(frontmatter[1]!);
-  const field = (name: "name" | "description", fallbackValue: string) => {
-    const value = values[name];
-    if (value === undefined) return fallbackValue;
-    if (typeof value !== "string" || !value.trim())
-      throw new SkctlError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
-    return name === "name" ? parseNameSegment(value.trim()) : value.trim();
-  };
-  return {
-    name: field("name", fallback.name),
-    description: field("description", fallback.description),
-    rawText,
-    markdownText: rawText.slice(frontmatter[0].length),
-  };
+  try {
+    const values = parseSkillFrontmatter(frontmatter[1]!);
+    const field = (name: "name" | "description", fallbackValue: string) => {
+      const value = values[name];
+      if (value === undefined) return fallbackValue;
+      if (typeof value !== "string" || !value.trim())
+        throw new SkctlError("CONFIG_INVALID", "SKILL.md frontmatter is invalid");
+      return name === "name" ? parseNameSegment(value.trim()) : value.trim();
+    };
+    return {
+      name: field("name", fallback.name),
+      description: field("description", fallback.description),
+      rawText,
+      markdownText: rawText.slice(frontmatter[0].length),
+    };
+  } catch (error) {
+    if (
+      !(error instanceof SkctlError) ||
+      !["CONFIG_INVALID", "INVALID_ARGUMENT"].includes(error.code)
+    )
+      throw error;
+    return { ...fallback, rawText, markdownText: rawText };
+  }
 }
 async function safeTree(root: string): Promise<void> {
   for (const entry of await readdir(root, { withFileTypes: true })) {
@@ -287,9 +294,11 @@ export async function loadSkill(
 ): Promise<LoadedSkill> {
   return withTarget(factory, request.selector, async (found) => {
     const text = await readText(found.root, "SKILL.md");
+    const { name, description } = installedSkillText(text, found.metadata);
     return {
       selector: request.selector,
-      ...parseSkillMetadata(text),
+      name,
+      description,
       path: "SKILL.md" as const,
       text,
       provenance: found.provenance,

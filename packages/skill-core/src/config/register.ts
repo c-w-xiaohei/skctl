@@ -2,7 +2,6 @@ import { SkctlError, type OperationOptions } from "../shared";
 import { type CoreOptions } from "../shared";
 
 import type { RegisterSourceRequest } from "../source/types";
-import type { ManagedOpenCodeRequest } from "./types";
 
 import { parseQualifiedName } from "../collection/names";
 import { validateSourceRoot } from "./document";
@@ -46,19 +45,4 @@ export function registerConfigSource(
   operation?: OperationOptions,
 ) {
   return register(options, request, "configSources", operation);
-}
-export function setManagedOpenCode(
-  options: CoreOptions,
-  request: ManagedOpenCodeRequest,
-  operation?: OperationOptions,
-) {
-  return writeConfig(
-    options,
-    request.level,
-    (edit) => {
-      edit.set(["agents"], request.managed ? { opencode: "managed" } : undefined);
-      return {};
-    },
-    operation,
-  );
 }

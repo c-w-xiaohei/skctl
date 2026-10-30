@@ -1,6 +1,11 @@
 import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { createSignal, onMount } from "solid-js";
 import type { CollectionReview } from "../session";
+import type {
+  ConfigDeclarationOwner,
+  CreateCollectionRequest,
+  SetCollectionContentRequest,
+} from "@skctl/core";
 import {
   createModalControlRegistry,
   useModalControl,
@@ -9,6 +14,121 @@ import {
 import { DataList } from "../ui/data-list";
 import { Input } from "../ui/input";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
+
+export function CollectionContentOverlay(props: {
+  readonly collection: string;
+  readonly owner: ConfigDeclarationOwner;
+  readonly owners?: readonly ConfigDeclarationOwner[];
+  readonly description?: string;
+  readonly instructions?: string;
+  readonly pending: boolean;
+  readonly error?: { readonly code: string; readonly message: string };
+  readonly onSave: (request: SetCollectionContentRequest) => void;
+  readonly onCancel: () => void;
+}) {
+  const controls = createModalControlRegistry();
+  const [owner, setOwner] = createSignal(props.owner);
+  const [description, setDescription] = createSignal(props.description ?? "");
+  const [changedDescription, setChangedDescription] = createSignal(false);
+  const [changedInstructions, setChangedInstructions] = createSignal(false);
+  let instructions: import("@opentui/core").TextareaRenderable | undefined;
+  useModalControlTraversal(controls, props.onCancel);
+  return (
+    <ModalShell>
+      <ModalBody
+        controls={controls}
+        header={<text>{`Edit ${props.collection}`}</text>}
+        footer={
+          <box flexDirection="row" gap={1} flexWrap="wrap">
+            <ModalCommand
+              id="collection-content-save"
+              controls={controls}
+              order={30}
+              intent="primary"
+              record={modalCommand(
+                "collection-content.save",
+                props.pending ? "Saving…" : "Save",
+                "Collection description and instructions",
+                !props.pending && (changedDescription() || changedInstructions()),
+              )}
+              execute={() =>
+                props.onSave({
+                  level: owner().level,
+                  collection: props.collection,
+                  expectedOwner: owner(),
+                  ...(changedDescription() ? { description: description() || null } : {}),
+                  ...(changedInstructions()
+                    ? { instructions: instructions?.plainText || null }
+                    : {}),
+                })
+              }
+            />
+            <ModalCommand
+              id="collection-content-cancel"
+              controls={controls}
+              order={40}
+              record={modalCommand("collection-content.cancel", "Cancel", "Discard edits")}
+              execute={props.onCancel}
+            />
+          </box>
+        }
+      >
+        {(props.owners?.length ?? 0) > 1 && (
+          <DataList
+            id="collection-content-owner"
+            height={props.owners!.length}
+            ref={useModalControl("collection-content-owner", controls, 0)}
+            focused={false}
+            showDescription={false}
+            options={props.owners!.map((value) => ({
+              name: `${value.level}: ${value.file}`,
+              description: "Save location",
+              value,
+            }))}
+            onChange={(_index, option) => option && setOwner(option.value)}
+          />
+        )}
+        <text wrapMode="word">{`Save to ${owner().level}: ${owner().file}`}</text>
+        <text>Description</text>
+        <Input
+          id="collection-content-description"
+          ref={useModalControl("collection-content-description", controls, 10)}
+          focused
+          value={description()}
+          onInput={(value) => {
+            setDescription(value);
+            setChangedDescription(value !== (props.description ?? ""));
+          }}
+        />
+        <text>Instructions</text>
+        <text wrapMode="word">
+          Current effective content; only edited fields are written to this location.
+        </text>
+        <textarea
+          id="collection-content-instructions"
+          height={8}
+          initialValue={props.instructions ?? ""}
+          onContentChange={() =>
+            setChangedInstructions(instructions?.plainText !== (props.instructions ?? ""))
+          }
+          ref={(target) => {
+            instructions = target;
+            useModalControl("collection-content-instructions", controls, 20)(target);
+          }}
+        />
+        {props.error && (
+          <text wrapMode="word">{`${props.error.code}: ${props.error.message}`}</text>
+        )}
+      </ModalBody>
+    </ModalShell>
+  );
+}
+
+export interface CollectionCreateDraft {
+  readonly collection: string;
+  readonly description: string;
+  readonly level: "global" | "project" | "local";
+}
 
 type CollectionCreateLevelProps =
   | {
@@ -23,33 +143,94 @@ type CollectionCreateLevelProps =
 export function CollectionCreateOverlay(
   props: CollectionCreateLevelProps & {
     readonly collection: string;
+    readonly initialDraft?: CollectionCreateDraft;
+    readonly onBack?: (draft: CollectionCreateDraft) => void;
     readonly configFile?: (level: "global" | "project" | "local") => string | undefined;
     readonly fixed?: boolean;
     readonly pending: boolean;
     readonly error?: { readonly code: string; readonly message: string };
-    readonly onSubmit: (value: {
-      readonly level: "global" | "project" | "local";
-      readonly collection: string;
-    }) => void;
+    readonly onSubmit: (value: CreateCollectionRequest) => void;
     readonly onCancel: () => void;
   },
 ) {
   const controls = createModalControlRegistry();
   const allowedLevels = props.allowedLevels ?? [];
   const selectable = allowedLevels.length > 0;
-  const initialLevel = props.level ?? allowedLevels[0]!;
-  const [collection, setCollection] = createSignal(props.collection);
+  const initialLevel =
+    props.level ??
+    (props.initialDraft && allowedLevels.includes(props.initialDraft.level)
+      ? props.initialDraft.level
+      : allowedLevels.includes("project")
+        ? "project"
+        : allowedLevels[0]!);
+  const [collection, setCollection] = createSignal(
+    props.fixed ? props.collection : (props.initialDraft?.collection ?? props.collection),
+  );
+  const [description, setDescription] = createSignal(props.initialDraft?.description ?? "");
   const [level, setLevel] = createSignal(initialLevel);
-  const registerLevel = useModalControl("collection-create-level", controls);
-  const registerId = useModalControl("collection-create-id", controls);
-  useModalControlTraversal(controls, props.onCancel);
+  const registerLevel = useModalControl("collection-create-level", controls, 10);
+  const registerId = useModalControl("collection-create-id", controls, 20);
+  const back = () =>
+    props.onBack
+      ? props.onBack({ collection: collection(), description: description(), level: level() })
+      : props.onCancel();
+  useModalControlTraversal(controls, back);
   let levelChoice: SelectRenderable | undefined;
   let idInput: InputRenderable | undefined;
   onMount(() => queueMicrotask(() => (selectable ? levelChoice : idInput)?.focus()));
   return (
     <ModalShell>
-      <ModalBody>
-        <text>Create Collection</text>
+      <ModalBody
+        controls={controls}
+        header={<text>Create Collection</text>}
+        footer={
+          <box flexDirection="row" gap={1} flexWrap="wrap">
+            {props.onBack && (
+              <ModalCommand
+                id="collection-create-back"
+                controls={controls}
+                order={35}
+                record={modalCommand(
+                  "collection-create.back",
+                  "Back",
+                  "Keep creation draft",
+                  !props.pending,
+                )}
+                execute={back}
+              />
+            )}
+            <ModalCommand
+              id="collection-create-submit"
+              intent="primary"
+              controls={controls}
+              order={40}
+              record={modalCommand(
+                "collection-create.submit",
+                props.pending ? "Creating" : "Create",
+                "Create this collection",
+                !props.pending && !!collection().trim(),
+                false,
+                props.pending ? "Wait for creation to settle" : "Enter a Collection ID",
+              )}
+              execute={() =>
+                props.onSubmit({
+                  level: level()!,
+                  collection: collection().trim(),
+                  ...(description().trim() ? { description: description().trim() } : {}),
+                })
+              }
+            />
+            <ModalCommand
+              id="collection-create-cancel"
+              controls={controls}
+              order={50}
+              record={modalCommand("collection-create.cancel", "Cancel", "Discard draft")}
+              initialFocus={props.fixed && !selectable}
+              execute={props.onCancel}
+            />
+          </box>
+        }
+      >
         {selectable ? (
           <DataList
             id="collection-create-level"
@@ -95,31 +276,15 @@ export function CollectionCreateOverlay(
             onInput={setCollection}
           />
         )}
+        <text>Description (optional)</text>
+        <Input
+          id="collection-create-description"
+          ref={useModalControl("collection-create-description", controls, 30)}
+          value={description()}
+          onInput={setDescription}
+        />
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <box flexDirection="column" gap={1} flexShrink={0}>
-          <ModalCommand
-            id="collection-create-cancel"
-            controls={controls}
-            record={modalCommand("collection-create.cancel", "Cancel", "Discard draft")}
-            initialFocus={props.fixed && !selectable}
-            execute={props.onCancel}
-          />
-          <ModalCommand
-            id="collection-create-submit"
-            intent="primary"
-            controls={controls}
-            record={modalCommand(
-              "collection-create.submit",
-              props.pending ? "Creating" : "Create",
-              "Create this collection",
-              !props.pending && !!collection().trim(),
-              false,
-              props.pending ? "Wait for creation to settle" : "Enter a Collection ID",
-            )}
-            execute={() => props.onSubmit({ level: level()!, collection: collection().trim() })}
-          />
-        </box>
-        <text>↑↓ move between controls · Enter create · Esc discard draft</text>
+        <text>{`Tab switch controls · Enter activate · Esc ${props.onBack ? "back" : "discard draft"}`}</text>
       </ModalBody>
     </ModalShell>
   );
@@ -144,8 +309,44 @@ export function CollectionImportOverlay(props: {
   useModalControlTraversal(controls, props.onCancel);
   return (
     <ModalShell>
-      <ModalBody>
-        <text>Import Collection</text>
+      <ModalBody
+        controls={controls}
+        header={<text>Import Collection</text>}
+        footer={
+          <box flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}>
+            <ModalCommand
+              id="collection-import-cancel"
+              controls={controls}
+              record={modalCommand("collection-import.cancel", "Cancel", "Discard draft")}
+              execute={props.onCancel}
+            />
+            <ModalCommand
+              id="collection-import-review"
+              intent="primary"
+              controls={controls}
+              record={modalCommand(
+                "collection-import.review",
+                "Review Import",
+                "Preview all-or-none import",
+                !props.pending && !!from().trim() && !!into().trim(),
+                false,
+                props.pending
+                  ? "Wait for the current review to settle"
+                  : "Enter both collection IDs",
+              )}
+              execute={() =>
+                props.onPreview({
+                  kind: "collection-import",
+                  level: props.level,
+                  from: from().trim(),
+                  into: into().trim(),
+                })
+              }
+            />
+          </box>
+        }
+      >
+        <text>{`Save to ${props.level}`}</text>
         <Input
           id="collection-import-from"
           ref={registerFrom}
@@ -163,35 +364,6 @@ export function CollectionImportOverlay(props: {
           onInput={setInto}
         />
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <box flexDirection="column" gap={1} flexShrink={0}>
-          <ModalCommand
-            id="collection-import-cancel"
-            controls={controls}
-            record={modalCommand("collection-import.cancel", "Cancel", "Discard draft")}
-            execute={props.onCancel}
-          />
-          <ModalCommand
-            id="collection-import-review"
-            intent="primary"
-            controls={controls}
-            record={modalCommand(
-              "collection-import.review",
-              "Review Import",
-              "Preview all-or-none import",
-              !props.pending && !!from().trim() && !!into().trim(),
-              false,
-              props.pending ? "Wait for the current review to settle" : "Enter both collection IDs",
-            )}
-            execute={() =>
-              props.onPreview({
-                kind: "collection-import",
-                level: props.level,
-                from: from().trim(),
-                into: into().trim(),
-              })
-            }
-          />
-        </box>
       </ModalBody>
     </ModalShell>
   );
@@ -226,8 +398,62 @@ export function ReferenceOverlay(props: {
   const verb = props.remove ? "Remove Reference" : "Add Reference";
   return (
     <ModalShell>
-      <ModalBody>
-        <text>{verb}</text>
+      <ModalBody
+        controls={controls}
+        header={<text>{verb}</text>}
+        footer={
+          <box flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}>
+            <ModalCommand
+              id="reference-cancel"
+              controls={controls}
+              record={modalCommand("reference.cancel", "Cancel", "Discard draft")}
+              execute={props.onCancel}
+            />
+            <ModalCommand
+              id="reference-review"
+              intent="primary"
+              controls={controls}
+              record={modalCommand(
+                "reference.review",
+                props.pending ? "Reviewing" : `Review ${verb}`,
+                "Preview this reference",
+                !props.pending && !!name().trim() && !!target().trim(),
+                false,
+                props.pending
+                  ? "Wait for the current review to settle"
+                  : "Enter a reference name and target",
+              )}
+              execute={() => {
+                const shared = {
+                  level: props.level,
+                  collection: props.collection,
+                  name: name().trim(),
+                };
+                props.onPreview(
+                  props.remove
+                    ? {
+                        kind: "reference-remove",
+                        ...shared,
+                        ...(props.expectedOwner ? { expectedOwner: props.expectedOwner } : {}),
+                        expected: {
+                          collection: target().trim(),
+                          description: description().trim(),
+                        },
+                      }
+                    : {
+                        kind: "reference-add",
+                        ...shared,
+                        ...(props.expectedOwner ? { expectedOwner: props.expectedOwner } : {}),
+                        target: target().trim(),
+                        description: description().trim(),
+                      },
+                );
+              }}
+            />
+          </box>
+        }
+      >
+        <text>{`Collection: ${props.collection} · ${props.level}`}</text>
         <Input
           id="reference-name"
           ref={registerName}
@@ -255,52 +481,6 @@ export function ReferenceOverlay(props: {
           />
         )}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <box flexDirection="column" gap={1} flexShrink={0}>
-          <ModalCommand
-            id="reference-cancel"
-            controls={controls}
-            record={modalCommand("reference.cancel", "Cancel", "Discard draft")}
-            execute={props.onCancel}
-          />
-          <ModalCommand
-            id="reference-review"
-            intent="primary"
-            controls={controls}
-            record={modalCommand(
-              "reference.review",
-              props.pending ? "Reviewing" : `Review ${verb}`,
-              "Preview this reference",
-              !props.pending && !!name().trim() && !!target().trim(),
-              false,
-              props.pending
-                ? "Wait for the current review to settle"
-                : "Enter a reference name and target",
-            )}
-            execute={() => {
-              const shared = {
-                level: props.level,
-                collection: props.collection,
-                name: name().trim(),
-              };
-              props.onPreview(
-                props.remove
-                  ? {
-                      kind: "reference-remove",
-                      ...shared,
-                      ...(props.expectedOwner ? { expectedOwner: props.expectedOwner } : {}),
-                      expected: { collection: target().trim(), description: description().trim() },
-                    }
-                  : {
-                      kind: "reference-add",
-                      ...shared,
-                      ...(props.expectedOwner ? { expectedOwner: props.expectedOwner } : {}),
-                      target: target().trim(),
-                      description: description().trim(),
-                    },
-              );
-            }}
-          />
-        </box>
       </ModalBody>
     </ModalShell>
   );
@@ -326,8 +506,46 @@ export function LinkChangeOverlay(props: {
   const verb = props.linked ? "Add Link" : "Remove Link";
   return (
     <ModalShell>
-      <ModalBody>
-        <text>{verb}</text>
+      <ModalBody
+        controls={controls}
+        header={<text>{verb}</text>}
+        footer={
+          <box flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}>
+            <ModalCommand
+              id="link-cancel"
+              controls={controls}
+              record={modalCommand("link.cancel", "Cancel", "Discard draft")}
+              execute={props.onCancel}
+            />
+            <ModalCommand
+              id="link-review"
+              intent="primary"
+              controls={controls}
+              record={modalCommand(
+                "link.review",
+                props.pending ? "Reviewing" : `Review ${verb}`,
+                "Preview link paths",
+                !props.pending && !!target().trim(),
+                false,
+                props.pending
+                  ? "Wait for the current review to settle"
+                  : "Enter a target collection",
+              )}
+              execute={() =>
+                props.onPreview({
+                  kind: "link-change",
+                  level: props.level,
+                  ...(props.expectedOwner ? { expectedOwner: props.expectedOwner } : {}),
+                  collection: props.collection,
+                  target: target().trim(),
+                  linked: props.linked,
+                })
+              }
+            />
+          </box>
+        }
+      >
+        <text>{`Collection: ${props.collection} · ${props.level}`}</text>
         <Input
           id="link-target"
           ref={registerTarget}
@@ -337,37 +555,6 @@ export function LinkChangeOverlay(props: {
           onInput={setTarget}
         />
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <box flexDirection="column" gap={1} flexShrink={0}>
-          <ModalCommand
-            id="link-cancel"
-            controls={controls}
-            record={modalCommand("link.cancel", "Cancel", "Discard draft")}
-            execute={props.onCancel}
-          />
-          <ModalCommand
-            id="link-review"
-            intent="primary"
-            controls={controls}
-            record={modalCommand(
-              "link.review",
-              props.pending ? "Reviewing" : `Review ${verb}`,
-              "Preview link paths",
-              !props.pending && !!target().trim(),
-              false,
-              props.pending ? "Wait for the current review to settle" : "Enter a target collection",
-            )}
-            execute={() =>
-              props.onPreview({
-                kind: "link-change",
-                level: props.level,
-                ...(props.expectedOwner ? { expectedOwner: props.expectedOwner } : {}),
-                collection: props.collection,
-                target: target().trim(),
-                linked: props.linked,
-              })
-            }
-          />
-        </box>
       </ModalBody>
     </ModalShell>
   );

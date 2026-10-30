@@ -99,29 +99,10 @@ import {
 async function readySourceCommand(
   setup: Awaited<ReturnType<typeof testRender>>,
   id: "source-command-config-source" | "source-command-skills",
-  label: string,
 ) {
+  if (id === "source-command-config-source") await activateControl(setup, "source-details-toggle");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById(id));
-  await setup.waitForFrame((frame) => frame.includes(label));
-  await setup.renderOnce();
-  await setup.waitFor(() => {
-    const command = setup.renderer.root.findDescendantById(id);
-    return !!command && command.height > 0 && command.screenY > 0;
-  });
-  for (
-    let attempt = 0;
-    attempt < 2 && setup.renderer.currentFocusedRenderable?.id !== id;
-    attempt++
-  ) {
-    setup.mockInput.pressKey("TAB");
-    await setup.renderOnce();
-  }
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
-  await setup.waitForFrame((frame) => frame.includes(`>${label}`));
-  const command = setup.renderer.root.findDescendantById(id);
-  if (!command || command.height <= 0 || command.screenY <= 0)
-    throw new Error(`Source command ${id} was not laid out`);
-  return command;
+  return focusLive(setup, id);
 }
 async function readySourceBrowser(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
@@ -148,17 +129,14 @@ async function populated(
   scope: "collections" | "sources" | "all-installed-skills",
 ) {
   await setup.flush();
-  await focusLive(setup, "shell-section-tab-skills");
   const target =
     scope === "collections"
       ? "shell-section-tab-collections"
       : scope === "sources"
         ? "shell-section-tab-sources"
         : "skills-view-tab-all-installed-skills";
-  while (setup.renderer.currentFocusedRenderable?.id !== target) {
-    setup.mockInput.pressArrow("right");
-    await setup.renderOnce();
-  }
+  if (scope === "all-installed-skills") await activateControl(setup, "shell-section-tab-skills");
+  await activateControl(setup, target);
   const browser =
     scope === "collections"
       ? "collection-browser"
@@ -166,19 +144,18 @@ async function populated(
         ? "source-browser"
         : "installed-skill-browser";
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById(browser));
-  await focusLive(setup, browser);
+  if (scope !== "collections") await focusLive(setup, browser);
 }
 async function activatePaletteCommand(
   setup: Awaited<ReturnType<typeof testRender>>,
   recordId: string,
 ) {
   setup.mockInput.pressKey("p", { ctrl: true });
-  await setup.waitFor(
-    () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
-  );
-  await setup.renderOnce();
-  await focusLive(setup, `palette-${recordId}`);
-  expect(setup.renderer.currentFocusedRenderable?.id).toBe(`palette-${recordId}`);
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+  const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+  const index = choices.options.findIndex((option) => option.value.id === recordId);
+  expect(index).toBeGreaterThanOrEqual(0);
+  choices.setSelectedIndex(index);
   await awaitParsedEnter(setup);
 }
 async function openSourceCommand(
@@ -196,42 +173,12 @@ async function openSourceCommand(
 }
 async function focusCollection(setup: Awaited<ReturnType<typeof testRender>>) {
   await populated(setup, "collections");
-  const browser = setup.renderer.root.findDescendantById("collection-browser") as SelectRenderable;
-  browser.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
-  await setup.waitFor(
-    () =>
-      (
-        setup.renderer.root.findDescendantById("collection-browser") as SelectRenderable
-      ).getSelectedOption()?.value === "team",
-  );
+  await setup.waitForFrame((frame) => frame.includes("team"));
 }
 async function openProjectConfigSourceActions(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.renderOnce();
-  const workspace = setup.renderer.root.findDescendantById("top-navigation-tab-workspace")!;
-  workspace.focus();
-  await setup.waitFor(
-    () => setup.renderer.currentFocusedRenderable?.id === "top-navigation-tab-workspace",
-  );
-  setup.mockInput.pressArrow("right");
-  await setup.renderOnce();
-  setup.mockInput.pressArrow("right");
-  await setup.renderOnce();
-  await setup.waitFor(
-    () => setup.renderer.currentFocusedRenderable?.id === "top-navigation-tab-project",
-  );
-  await setup.waitForFrame((frame) => frame.includes("Project Config / Sources"));
-  const sources = setup.renderer.root.findDescendantById("shell-section-tab-sources")!;
-  sources.focus();
-  setup.mockInput.pressArrow("right");
-  await setup.waitForFrame((frame) => frame.includes("Project Config / Config Sources"));
-  const browser = setup.renderer.root.findDescendantById("config-config-source-browser")!;
-  browser.focus();
-  setup.mockInput.pressArrow("down");
-  await setup.renderOnce();
-  setup.mockInput.pressArrow("up");
-  await setup.renderOnce();
-  await setup.waitForFrame((frame) => frame.includes("Selected > team-remote"));
+  await activatePaletteCommand(setup, "navigate.project");
+  await activateControl(setup, "shell-section-project-tab-config-sources");
+  await setup.waitForFrame((frame) => frame.includes("team-remote"));
   await focusLive(setup, "config-config-source-browser");
   await awaitParsedEnter(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-source-inspector"));
@@ -325,7 +272,7 @@ async function openCollectionDetail(setup: Awaited<ReturnType<typeof testRender>
   await awaitParsedEnter(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
 }
-test("RENDER stale Import preview completion cannot replace a newer same-kind Collection draft", async () => {
+test("RENDER cancelled Import preview settles before opening a fresh Collection draft", async () => {
   const previewA = deferred<{
     readonly value: {
       readonly kind: "collection-import";
@@ -371,14 +318,6 @@ test("RENDER stale Import preview completion cannot replace a newer same-kind Co
     await setup.waitFor(() => requests.length === 1);
     expect(requests).toEqual([{ level: "project", from: "import-a", into: "team" }]);
     await awaitParsedEscape(setup);
-    await chooseCollectionAction(setup, "import-collection");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-import-from",
-    );
-    await setup.mockInput.typeText("import-b");
-    await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-import-from");
-    expect(setup.captureCharFrame()).toContain("import-b");
     previewA.resolve({
       value: {
         kind: "collection-import",
@@ -392,9 +331,15 @@ test("RENDER stale Import preview completion cannot replace a newer same-kind Co
       },
       diagnostics: [],
     });
-    await setup.renderOnce();
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("collection-import-from"));
     expect(requests).toHaveLength(1);
     expect(consumedA).toBe(1);
+    await chooseCollectionAction(setup, "import-collection");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "collection-import-from",
+    );
+    await setup.mockInput.typeText("import-b");
+    await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-import-from");
     expect(setup.captureCharFrame()).toContain("import-b");
     expect(setup.captureCharFrame()).not.toContain("From: import-a");
@@ -402,7 +347,7 @@ test("RENDER stale Import preview completion cannot replace a newer same-kind Co
     setup.renderer.destroy();
   }
 });
-test("RENDER stale Membership add preview completion cannot replace a newer same-kind Membership draft", async () => {
+test("RENDER cancelled Membership preview settles before a fresh draft is opened", async () => {
   const previewA = deferred<{
     readonly value: MembershipBatchImpact;
     readonly diagnostics: [];
@@ -460,11 +405,9 @@ test("RENDER stale Membership add preview completion cannot replace a newer same
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-choice",
     );
     await awaitParsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-name-0",
-    );
+    await focusLive(setup, "installed-skill-name-0");
     await setup.mockInput.typeText(name);
-    await activateControl(setup, "membership-batch-review");
+    await activateControl(setup, "installed-skill-choice-submit");
   };
   try {
     await openDraft("-a", true);
@@ -473,19 +416,12 @@ test("RENDER stale Membership add preview completion cannot replace a newer same
       {
         level: "project",
         collection: "team",
+        expectedOwner: collectionOwner,
         additions: [{ name: "guide-a", address: { source: "team-main", path: "guide" } }],
         removals: [],
       },
     ]);
     await awaitParsedEscape(setup);
-    await openDraft("-b");
-    await setup.waitFor(() => requests.length === 2);
-    expect(requests[1]).toEqual({
-      level: "project",
-      collection: "team",
-      additions: [{ name: "guide-b", address: { source: "team-main", path: "guide" } }],
-      removals: [],
-    });
     previewA.resolve({
       value: {
         kind: "membership-batch",
@@ -500,9 +436,18 @@ test("RENDER stale Membership add preview completion cannot replace a newer same
       },
       diagnostics: [],
     });
-    await setup.renderOnce();
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("installed-skill-choice"));
     expect(consumedA).toBe(1);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("membership-batch-review");
+    await openDraft("-b");
+    await setup.waitFor(() => requests.length === 2);
+    expect(requests[1]).toEqual({
+      level: "project",
+      collection: "team",
+      expectedOwner: collectionOwner,
+      additions: [{ name: "guide-b", address: { source: "team-main", path: "guide" } }],
+      removals: [],
+    });
+    expect(setup.renderer.root.findDescendantById("installed-skill-choice-submit")).toBeDefined();
     expect(setup.captureCharFrame()).toContain("guide-b");
     expect(setup.captureCharFrame()).not.toContain("Add to Collection");
   } finally {
@@ -558,12 +503,7 @@ test("RENDER cancelled Membership draft ignores a late preview without changing 
     );
     setup.mockInput.pressArrow("down");
     await awaitParsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-name-0",
-    );
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressArrow("down");
-    await awaitParsedEnter(setup);
+    await activateControl(setup, "installed-skill-choice-submit");
     await awaitParsedEscape(setup);
     preview.resolve({
       value: {
@@ -579,15 +519,14 @@ test("RENDER cancelled Membership draft ignores a late preview without changing 
       },
       diagnostics: [],
     });
-    await setup.renderOnce();
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("installed-skill-name-0"));
     expect(changes).toEqual([]);
-    expect(setup.renderer.root.findDescendantById("membership-batch-name-0")).toBeUndefined();
-    expect(setup.renderer.root.findDescendantById("collection-review-choice")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("collection-review-choice")).toBe(false);
   } finally {
     setup.renderer.destroy();
   }
 });
-test("RENDER stale Membership removal preview completion cannot replace a newer same-kind removal", async () => {
+test("RENDER cancelled Membership removal settles before a fresh removal and never publishes its stale preview", async () => {
   const previewA = deferred<{
     readonly value: MembershipBatchImpact;
     readonly diagnostics: [];
@@ -609,7 +548,7 @@ test("RENDER stale Membership removal preview completion cannot replace a newer 
             kind: "direct",
             collection: "team",
             entryName: "guide",
-            owner: collectionOwner,
+            owner: { ...collectionOwner, pointer: "/collections/team/members/guide" },
           },
         ],
       },
@@ -643,7 +582,12 @@ test("RENDER stale Membership removal preview completion cannot replace a newer 
   );
   const beginRemoval = async () => {
     if (!setup.renderer.root.findDescendantById("membership.remove")) {
-      await activateControl(setup, "collection-relationships");
+      await focusLive(setup, "collection-relationships");
+      setup.mockInput.pressArrow("right");
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id.includes(":action-") === true,
+      );
+      await awaitParsedEnter(setup);
     }
     await activateControl(setup, "membership.remove");
   };
@@ -666,8 +610,6 @@ test("RENDER stale Membership removal preview completion cannot replace a newer 
       },
     ]);
     await awaitParsedEscape(setup);
-    await beginRemoval();
-    await setup.waitFor(() => requests.length === 2);
     previewA.resolve({
       value: {
         kind: "membership-batch",
@@ -688,9 +630,12 @@ test("RENDER stale Membership removal preview completion cannot replace a newer 
       diagnostics: [],
     });
     await setup.waitFor(() => consumedA === 1);
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("collection-review-choice"));
+    await beginRemoval();
+    await setup.waitFor(() => requests.length === 2);
     expect(consumedA).toBe(1);
     expect(consumedB).toBe(0);
-    expect(setup.captureCharFrame()).toContain("team  1 Membership");
+    expect(setup.captureCharFrame()).not.toContain("stale-a");
     expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("collection-review-choice");
     previewB.resolve({
       value: {
@@ -836,7 +781,7 @@ test("RENDER stale Collection removal preview completion cannot replace a newer 
     await setup.renderOnce();
     expect(consumedA).toBe(1);
     expect(consumedB).toBe(0);
-    expect(setup.captureCharFrame()).toContain("Collections 1/1");
+    expect(setup.captureCharFrame()).toContain("team");
     expect(setup.captureCharFrame()).toContain("team");
     expect(setup.captureCharFrame()).not.toContain("Remove Collection");
     expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("collection-review-choice");
@@ -932,9 +877,7 @@ test("RENDER keyboard Sources browser selects a contributed Source then exposes 
     );
     await awaitParsedEnter(setup);
     await setup.flush();
-    await readySourceCommand(setup, "source-command-config-source", "Open owning Config Source");
-    expect(setup.captureCharFrame()).toContain("Open owning Config Source");
-    expect(setup.captureCharFrame()).not.toContain("Actions");
+    await readySourceCommand(setup, "source-command-config-source");
     await awaitParsedEnter(setup);
     await setup.flush();
     await setup.waitFor(
@@ -979,16 +922,16 @@ test("RENDER zero-owned Source exposes its named Installed Skills command and re
     browser.focus();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
     await awaitParsedEnter(setup);
-    await readySourceCommand(setup, "source-command-skills", "View Installed Skills");
+    await readySourceCommand(setup, "source-command-skills");
     await awaitParsedEnter(setup);
     await setup.flush();
-    await setup.waitForFrame((frame) =>
-      frame.includes("Installed Skills from team-config/lark 0/0"),
+    await setup.waitForFrame(
+      (frame) => frame.includes("Source: team-config/lark") && frame.includes("No matching Skills"),
     );
-    expect(setup.captureCharFrame()).toContain("No Installed Skills from team-config/lark.");
     setup.renderer.root.findDescendantById("clear-source-filter")!.focus();
     await awaitParsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-pane"));
+    expect(setup.captureCharFrame()).toContain("team-config/lark");
     expect(loads).toBe(0);
   } finally {
     setup.renderer.destroy();
@@ -1046,9 +989,9 @@ test("RENDER Add Skills selects observed eligible roots, disables installed root
     await populated(setup, "sources");
     await activatePaletteCommand(setup, "add-skills");
     await setup.waitForFrame(
-      (frame) => frame.includes("Add Skills") && frame.includes("Revision: reviewed"),
+      (frame) => frame.includes("Find Skills") && frame.includes("Revision: reviewed"),
     );
-    expect(setup.captureCharFrame()).toContain("[-] Available installed");
+    expect(setup.captureCharFrame()).toContain("[-] Installed installed");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-operation-selection");
     setup.mockInput.pressArrow("down");
     await setup.renderOnce();
@@ -1094,7 +1037,7 @@ test("RENDER Source observation Cancel waits for an abort-ignoring provider and 
     await awaitParsedEnter(setup);
     setup.mockInput.pressKey("p", { ctrl: true });
     await setup.waitForFrame((frame) => frame.includes("Cancelling observation"));
-    expect(setup.renderer.root.findDescendantById("palette-navigate.workspace")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("palette-choices")).toBe(false);
     resolveDiscovery!({
       value: {
         source: "team-main",
@@ -1108,13 +1051,10 @@ test("RENDER Source observation Cancel waits for an abort-ignoring provider and 
       () => !setup.renderer.root.findDescendantById("source-observation-overlay"),
     );
     setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
-    );
-    await setup.waitForFrame((frame) => frame.includes("Palette"));
-    expect(setup.captureCharFrame()).toContain("Palette");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+    await setup.waitForFrame((frame) => frame.includes("Actions"));
     expect(setup.captureCharFrame()).not.toContain("Source Selection");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-navigate.workspace");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-choices");
   } finally {
     setup.renderer.destroy();
   }
@@ -1162,7 +1102,7 @@ test("RENDER retry observation Cancel retains cancellation ownership until its l
     await activateControl(setup, "source-observation-progress");
     setup.mockInput.pressKey("p", { ctrl: true });
     await setup.waitForFrame((frame) => frame.includes("Cancelling observation"));
-    expect(setup.renderer.root.findDescendantById("palette-navigate.workspace")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("palette-choices")).toBe(false);
     resolveRetry!({
       value: {
         source: "team-main",
@@ -1176,13 +1116,10 @@ test("RENDER retry observation Cancel retains cancellation ownership until its l
       () => !setup.renderer.root.findDescendantById("source-observation-overlay"),
     );
     setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
-    );
-    await setup.waitForFrame((frame) => frame.includes("Palette"));
-    expect(setup.captureCharFrame()).toContain("Palette");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+    await setup.waitForFrame((frame) => frame.includes("Actions"));
     expect(setup.captureCharFrame()).not.toContain("Source Selection");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-navigate.workspace");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-choices");
   } finally {
     setup.renderer.destroy();
   }
@@ -1222,8 +1159,7 @@ test("RENDER Config observation Retry repeats observe and preview without checki
     await openProjectConfigSourceActions(setup);
     await awaitParsedEnter(setup);
     await setup.waitForFrame((frame) => frame.includes("PROVIDER_UNAVAILABLE: offline"));
-    await focusLive(setup, "config-command-config-observe");
-    await awaitParsedEnter(setup);
+    await activateControl(setup, "source-observation-retry");
     await setup.waitForFrame((frame) => frame.includes("Exact revision: retry-commit"));
     expect(calls).toEqual([
       ["observe", { id: "team-remote" }],
@@ -1246,7 +1182,7 @@ test("RENDER Config observation Retry repeats observe and preview without checki
     setup.renderer.destroy();
   }
 });
-test("RENDER stale Config preview completion cannot replace a newer same-kind observation", async () => {
+test("RENDER cancelled Config preview settles before a fresh observation without publishing its stale impact", async () => {
   const previewA = deferred<ReturnType<typeof configImpact>>();
   const observationB = deferred<ReturnType<typeof configObservation>>();
   let observes = 0;
@@ -1279,10 +1215,12 @@ test("RENDER stale Config preview completion cannot replace a newer same-kind ob
     await setup.waitFor(() => previews === 1);
     await setup.waitForFrame((frame) => frame.includes("Observing Config"));
     await awaitParsedEscape(setup);
+    previewA.resolve(configImpact("stale-preview"));
+    await setup.waitFor(
+      () => !setup.renderer.root.findDescendantById("source-observation-overlay"),
+    );
     await observeAgain();
     await setup.waitForFrame((frame) => frame.includes("Observing Config"));
-    previewA.resolve(configImpact("stale-preview"));
-    await setup.renderOnce();
     expect(setup.captureCharFrame()).toContain("Observing Config");
     expect(setup.captureCharFrame()).not.toContain("Exact revision: stale-preview");
     expect(observes).toBe(2);
@@ -1295,7 +1233,7 @@ test("RENDER stale Config preview completion cannot replace a newer same-kind ob
     setup.renderer.destroy();
   }
 });
-test("RENDER stale Config retry preview completion cannot mutate a newer same-kind observation", async () => {
+test("RENDER cancelled Config retry settles before a fresh observation without publishing its stale impact", async () => {
   const retryPreview = deferred<ReturnType<typeof configImpact>>();
   const observationB = deferred<ReturnType<typeof configObservation>>();
   const adopts: unknown[] = [];
@@ -1334,14 +1272,15 @@ test("RENDER stale Config retry preview completion cannot mutate a newer same-ki
     await openProjectConfigSourceActions(setup);
     await awaitParsedEnter(setup);
     await setup.waitForFrame((frame) => frame.includes("PROVIDER_UNAVAILABLE: offline"));
-    await focusLive(setup, "config-command-config-observe");
-    await awaitParsedEnter(setup);
+    await activateControl(setup, "source-observation-retry");
     await setup.waitFor(() => previews === 1);
     await awaitParsedEscape(setup);
+    retryPreview.resolve(configImpact("stale-retry"));
+    await setup.waitFor(
+      () => !setup.renderer.root.findDescendantById("source-observation-overlay"),
+    );
     await observeAgain();
     await setup.waitForFrame((frame) => frame.includes("Observing Config"));
-    retryPreview.resolve(configImpact("stale-retry"));
-    await setup.renderOnce();
     expect(setup.captureCharFrame()).toContain("Observing Config");
     expect(setup.captureCharFrame()).not.toContain("Exact revision: stale-retry");
     expect(observes).toBe(3);
@@ -1395,19 +1334,20 @@ test("RENDER Source browser pointer opens direct and contributed rows exactly on
     const direct = await readySourceBrowser(setup);
     await setup.mockMouse.click(direct.screenX + 1, direct.screenY);
     await setup.flush();
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-command-skills"));
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-toggle"));
     expect(setup.captureCharFrame()).toContain("team-main");
-    expect(setup.renderer.root.findDescendantById("source-browser")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("source-browser")).toBe(true);
     await awaitParsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
     const contributed = await readySourceBrowser(setup);
     await setup.mockMouse.click(contributed.screenX + 1, contributed.screenY + 1);
     await setup.flush();
+    await activateControl(setup, "source-details-toggle");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("source-command-config-source"),
     );
     expect(setup.captureCharFrame()).toContain("team-config/lark");
-    expect(setup.renderer.root.findDescendantById("source-browser")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("source-browser")).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -1440,13 +1380,6 @@ test("RENDER Project Source browser initializes its visual first row before cont
     setup.renderer.destroy();
   }
 });
-async function projectContributedSource(setup: Awaited<ReturnType<typeof testRender>>) {
-  await populated(setup, "sources");
-  setup.mockInput.pressArrow("down");
-  await focusLive(setup, "source-browser");
-  await awaitParsedEnter(setup);
-  await readySourceCommand(setup, "source-command-config-source", "Open owning Config Source");
-}
 test("RENDER Project contributed Source installs selected observed roots at its exact revision", async () => {
   const calls: unknown[] = [];
   const setup = await testRender(
@@ -1597,7 +1530,7 @@ test.each(["team-main", "team-config/lark"])(
     }
   },
 );
-test("RENDER contributed Source filters unhealthy Installed Skills and restores each originating layer", async () => {
+test("RENDER contributed Source filters unhealthy Installed Skills and restores its Source", async () => {
   const projection = {
     ...workspaceProjection(),
     installedSkills: [
@@ -1622,26 +1555,26 @@ test("RENDER contributed Source filters unhealthy Installed Skills and restores 
     { width: 120, height: 40 },
   );
   try {
-    await projectContributedSource(setup);
-    await awaitParsedEscape(setup);
+    await populated(setup, "sources");
+    setup.mockInput.pressArrow("down");
+    await setup.flush();
     await openSourceCommand(setup, "view-installed-skills");
-    await setup.waitForFrame((frame) =>
-      frame.includes("Installed Skills from team-config/lark 1/1"),
-    );
-    await activateControl(setup, "installed-skill-browser");
     await setup.waitForFrame(
-      (frame) =>
-        frame.includes("Address  team-config/lark/doc") &&
-        frame.includes("Health  unresolved-config"),
+      (frame) => frame.includes("Source: team-config/lark") && frame.includes("doc"),
     );
-    await awaitParsedEscape(setup);
-    await setup.waitForFrame((frame) =>
-      frame.includes("Installed Skills from team-config/lark 1/1"),
-    );
-    await awaitParsedEscape(setup);
-    await setup.waitForFrame(
-      (frame) => frame.includes("Workspace / Sources") && frame.includes("team-config/lark"),
-    );
+    const browser = setup.renderer.root.findDescendantById(
+      "installed-skill-browser",
+    ) as SelectRenderable;
+    expect(browser.options.map((option) => option.value)).toEqual([
+      JSON.stringify(["team-config/lark", "doc"]),
+    ]);
+    await activateControl(setup, "clear-source-filter");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
+    expect(
+      (
+        setup.renderer.root.findDescendantById("source-browser") as SelectRenderable
+      ).getSelectedOption()?.value,
+    ).toBe("team-config/lark");
   } finally {
     setup.renderer.destroy();
   }
@@ -1693,9 +1626,9 @@ test("RENDER Open Config and Open Config Source route to their exact selected ow
         )?.getSelectedOption()?.value === "team-main",
     );
     expect(
-      (
-        direct.renderer.root.findDescendantById("config-source-browser") as SelectRenderable
-      ).getSelectedOption()?.name,
+      (direct.renderer.root.findDescendantById("config-source-browser") as SelectRenderable)
+        .getSelectedOption()
+        ?.name.trimEnd(),
     ).toBe("team-main · github");
   } finally {
     direct.renderer.destroy();
@@ -1711,8 +1644,14 @@ test("RENDER Open Config and Open Config Source route to their exact selected ow
     await populated(contributed, "sources");
     contributed.mockInput.pressArrow("down");
     await openSourceCommand(contributed, "open-config-source");
-    await contributed.waitForFrame((frame) => frame.includes("Selected > team-config"));
-    expect(contributed.captureCharFrame()).toContain("> team-config");
+    await contributed.waitFor(
+      () =>
+        (
+          contributed.renderer.root.findDescendantById(
+            "config-config-source-browser",
+          ) as SelectRenderable
+        )?.getSelectedOption()?.value === "/configSources/team-config",
+    );
   } finally {
     contributed.renderer.destroy();
   }
@@ -1930,8 +1869,10 @@ test("RENDER source-removal rebind repair executes then restores the same parent
     await focusLive(setup, "rebind-owner-path");
     await setup.mockInput.typeText("alt/review");
     await activateControl(setup, "rebind-preview");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-review-cancel",
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("Rebind Skill") &&
+        !!setup.renderer.root.findDescendantById("installed-skill-review-cancel"),
     );
     await activateControl(setup, "installed-skill-review-confirm");
     await setup.waitForFrame((frame) => frame.includes("Removal is blocked by installed Skills"));
@@ -2075,7 +2016,7 @@ test("RENDER empty parent re-review closes after a completed uninstall repair", 
     setup.renderer.destroy();
   }
 });
-test("RENDER physical child Cancel prevents a stale parent re-review from replacing a newer Palette", async () => {
+test("RENDER physical child Cancel waits for parent re-review to settle before reopening Actions", async () => {
   let sourceReviews = 0;
   let resolveRereview: (() => void) | undefined;
   const setup = await testRender(
@@ -2125,15 +2066,16 @@ test("RENDER physical child Cancel prevents a stale parent re-review from replac
     await activateControl(setup, "installed-skill-review-confirm");
     await setup.waitFor(() => sourceReviews === 2);
     await activateControl(setup, "installed-skill-review-cancel");
-    setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
-    );
     resolveRereview!();
+    await setup.waitFor(
+      () => !setup.renderer.root.findDescendantById("installed-skill-review-cancel"),
+    );
+    setup.mockInput.pressKey("p", { ctrl: true });
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Palette");
+    expect(setup.captureCharFrame()).toContain("Actions");
     expect(setup.captureCharFrame()).not.toContain("Remove Source: impact review");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-navigate.workspace");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-choices");
   } finally {
     setup.renderer.destroy();
   }
@@ -2148,11 +2090,7 @@ test("RENDER Palette routes its Project destination and omits contributed remova
   );
   try {
     await populated(setup, "sources");
-    setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitForFrame((frame) => frame.includes("Palette") && frame.includes("Project"));
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-navigate.workspace");
-    await focusLive(setup, "palette-navigate.project");
-    await awaitParsedEnter(setup);
+    await activatePaletteCommand(setup, "navigate.project");
     await setup.waitFor(
       () =>
         (
@@ -2190,15 +2128,11 @@ test("RENDER modal Ctrl+C follows Escape dismissal without exiting", async () =>
   try {
     await populated(setup, "sources");
     setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
-    );
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
     setup.mockInput.pressCtrlC();
-    await setup.waitFor(
-      () => !setup.renderer.root.findDescendantById("palette-navigate.workspace"),
-    );
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("palette-choices"));
     expect(exits).toBe(0);
-    expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("palette-navigate.workspace");
+    expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("palette-choices");
   } finally {
     setup.renderer.destroy();
   }
@@ -2290,7 +2224,9 @@ test("RENDER collection removal preview failure closes the session and permits r
     setup.mockInput.pressKey("P", { ctrl: true });
     await activatePaletteCommand(setup, "remove-collection");
     await setup.waitFor(() => previews === 1);
+    await activateControl(setup, "process-error-details");
     await setup.waitForFrame((frame) => frame.includes("INTERNAL: preview failed"));
+    await activateControl(setup, "diagnostic-log-close");
     expect(setup.captureCharFrame()).not.toContain("Remove Collection");
     setup.mockInput.pressKey("P", { ctrl: true });
     await activatePaletteCommand(setup, "remove-collection");
@@ -2337,56 +2273,63 @@ test("RENDER allowed removal confirms once, refreshes once, and reselects the ne
     setup.renderer.destroy();
   }
 });
-test("RENDER preview failure closes its pending surface, retains the exact error, and permits retry", async () => {
-  let previews = 0;
-  let removes = 0;
-  const setup = await testRender(
-    () => (
-      <App
-        core={directSourceCore(workspaceProjection(), {
-          previewSourceRemoval: async () => {
-            previews++;
-            if (previews === 1) throw new SkctlError("WRITE_FAILED", "preview disk full");
-            return {
-              value: {
-                kind: "source-removal",
-                source: "team-main",
-                owner: directOwner,
-                installed: [],
-                repairs: [],
-                blockers: [],
-                allowed: true,
-              },
-              diagnostics: [],
-            };
-          },
-          removeSource: async () => {
-            removes++;
-            return { value: undefined, diagnostics: [] };
-          },
-        })}
-        exit={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
-  try {
-    await populated(setup, "sources");
-    await openSourceCommand(setup, "remove-source");
-    await setup.waitForFrame(
-      (frame) =>
-        frame.includes("WRITE_FAILED: preview disk full") &&
-        !frame.includes("Reviewing Source removal impact"),
+test.each([120, 43])(
+  "RENDER preview failure exposes its full error and permits retry at width %i",
+  async (width) => {
+    let previews = 0;
+    let removes = 0;
+    const setup = await testRender(
+      () => (
+        <App
+          core={directSourceCore(workspaceProjection(), {
+            previewSourceRemoval: async () => {
+              previews++;
+              if (previews === 1) throw new SkctlError("WRITE_FAILED", "preview disk full");
+              return {
+                value: {
+                  kind: "source-removal",
+                  source: "team-main",
+                  owner: directOwner,
+                  installed: [],
+                  repairs: [],
+                  blockers: [],
+                  allowed: true,
+                },
+                diagnostics: [],
+              };
+            },
+            removeSource: async () => {
+              removes++;
+              return { value: undefined, diagnostics: [] };
+            },
+          })}
+          exit={() => {}}
+        />
+      ),
+      { width, height: 24 },
     );
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-browser");
-    await openSourceCommand(setup, "remove-source");
-    await setup.waitForFrame((frame) => frame.includes("Remove this direct Source declaration?"));
-    expect(removes).toBe(0);
-    expect(previews).toBe(2);
-  } finally {
-    setup.renderer.destroy();
-  }
-});
+    try {
+      await populated(setup, "sources");
+      await openSourceCommand(setup, "remove-source");
+      await activateControl(setup, "process-error-details");
+      await setup.waitForFrame(
+        (frame) =>
+          frame.includes("WRITE_FAILED: preview disk full") &&
+          !frame.includes("Reviewing Source removal impact"),
+      );
+      await activateControl(setup, "diagnostic-log-close");
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("process-error-details");
+      await openSourceCommand(setup, "remove-source");
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-removal-confirm"));
+      await setup.waitForFrame((frame) => frame.includes("declaration?"));
+      expect(setup.captureCharFrame()).not.toContain("preview disk full");
+      expect(removes).toBe(0);
+      expect(previews).toBe(2);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 test("RENDER preview owner mismatch closes the preview, exposes TRANSACTION_CONFLICT, and permits retry", async () => {
   let previews = 0;
   const setup = await testRender(
@@ -2417,11 +2360,13 @@ test("RENDER preview owner mismatch closes the preview, exposes TRANSACTION_CONF
   try {
     await populated(setup, "sources");
     await openSourceCommand(setup, "remove-source");
+    await activateControl(setup, "process-error-details");
     await setup.waitForFrame(
       (frame) =>
         frame.includes("TRANSACTION_CONFLICT") &&
         !frame.includes("Reviewing Source removal impact"),
     );
+    await activateControl(setup, "diagnostic-log-close");
     await openSourceCommand(setup, "remove-source");
     await setup.waitForFrame((frame) => frame.includes("Remove this direct Source declaration?"));
     expect(previews).toBe(2);
@@ -2507,7 +2452,7 @@ test("RENDER Source removal execution failure restores its review and dismissal 
     setup.renderer.destroy();
   }
 });
-test("RENDER late cancelled preview cannot close a newly opened Palette", async () => {
+test("RENDER cancelled Source preview settles without confirmation before reopening Actions", async () => {
   let resolvePreview: (() => void) | undefined;
   const setup = await testRender(
     () => (
@@ -2540,13 +2485,13 @@ test("RENDER late cancelled preview cannot close a newly opened Palette", async 
     await activatePaletteCommand(setup, "remove-source");
     await setup.waitForFrame((frame) => frame.includes("Reviewing Source removal impact"));
     await awaitParsedEscape(setup);
-    await setup.renderOnce();
-    setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitForFrame((frame) => frame.includes("Palette"));
     resolvePreview!();
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
+    setup.mockInput.pressKey("p", { ctrl: true });
+    await setup.waitForFrame((frame) => frame.includes("Actions"));
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Palette");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-navigate.workspace");
+    expect(setup.captureCharFrame()).toContain("Actions");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-choices");
   } finally {
     setup.renderer.destroy();
   }

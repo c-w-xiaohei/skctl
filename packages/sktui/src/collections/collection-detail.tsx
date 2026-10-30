@@ -383,7 +383,7 @@ export function CollectionDetail(
         <box
           id="collection-content-controls-pane"
           flexDirection="row"
-          height={1}
+          flexWrap="wrap"
           flexShrink={0}
           gap={1}
           ref={(value: BoxRenderable) => {
@@ -392,11 +392,18 @@ export function CollectionDetail(
           }}
           onSizeChange={() => setControlWidth(controls?.width ?? 0)}
         >
-          {props.managedAction("add-membership", "Add Skills…")}
-          {props.managedAction("add-reference", "Add Reference…")}
-          <Show when={controlWidth() >= 54}>
-            {props.managedAction("add-link", "Link…")}
-            {props.managedAction("import-collection", "Import…")}
+          <Show
+            when={selectedTab() === "entries"}
+            fallback={
+              <>
+                {props.managedAction("add-reference", "Reference…")}
+                {props.managedAction("add-link", "Link…")}
+                {props.managedAction("import-collection", "Import…")}
+              </>
+            }
+          >
+            {props.managedAction("add-membership", "Add Skills…")}
+            {props.managedAction("edit-collection-content", "Edit info…")}
           </Show>
         </box>
         <Show when={selectedOrigins().length > 0}>
@@ -503,6 +510,7 @@ export function CollectionDetail(
         </Show>
       </Show>
       <RelationshipInspector
+        editContent={() => props.managedAction("edit-collection-content", "Edit info…")}
         collection={collection}
         contextIssue={props.issue}
         memberOrigins={memberOrigins}

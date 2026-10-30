@@ -113,7 +113,7 @@ test.each([
 ])("Agent access explains its purpose, types and expansion at %ix%i", async (width, height) => {
   await mount(width, height);
   const frame = setup!.captureCharFrame();
-  expect(frame).toContain("Shared with your agent");
+  expect(frame).toContain("Prepared in the Agent catalog");
   expect(frame).toContain("S Skill");
   expect(frame).toContain(height > 18 ? "C Collection" : "C Col");
   expect(frame).toContain("Enter expand");

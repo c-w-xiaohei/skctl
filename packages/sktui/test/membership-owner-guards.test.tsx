@@ -70,7 +70,7 @@ for (const fault of [
     });
     const requests: unknown[] = [];
     let writes = 0;
-    core.removeMember = async () => {
+    core.editMembers = async () => {
       writes++;
       throw new Error("Guard must not write");
     };
@@ -127,7 +127,7 @@ for (const fault of [
       } else await enterLive(setup, "membership.remove");
       await setup.flush();
       expect(requests).toHaveLength(fault.startsWith("receipt-") ? 1 : 0);
-      expect(setup.renderer.root.findDescendantById("collection-review-confirm")).toBeUndefined();
+      expect(!!setup.renderer.root.findDescendantById("collection-review-confirm")).toBe(false);
       expect(writes).toBe(0);
     } catch (error) {
       console.error(setup.captureCharFrame());

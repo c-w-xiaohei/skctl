@@ -103,10 +103,8 @@ export function deriveAgentAccessTree(
   if (!projection) return unavailable("Workspace projection is not available");
   if (projection.effective.status !== "complete")
     return unavailable("Agent access is unavailable until the workspace projection is complete");
-  if (!projection.effective.managed)
-    return unavailable("Managed OpenCode Agent access is unavailable for this workspace");
   if (projection.effective.agent.status !== "available")
-    return unavailable("Managed OpenCode Agent access is unavailable for this workspace");
+    return unavailable("Agent catalog is unavailable for this workspace");
 
   const views = new Map(projection.effective.collectionsView.map((view) => [view.id, view]));
   const skills = new Map(

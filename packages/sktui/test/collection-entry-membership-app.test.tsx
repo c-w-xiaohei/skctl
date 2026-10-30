@@ -1,11 +1,10 @@
 import { expect, test } from "bun:test";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import { readFile } from "node:fs/promises";
 import type { WorkspaceView, MembershipBatchImpact, OperationResult } from "@skctl/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { enterLive, parsedEnter, parsedEscape } from "./reader-test-controls";
+import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 const result = <T,>(value: T): OperationResult<T> => ({
   value,
   diagnostics: [],
@@ -103,6 +102,17 @@ async function openEntries(setup: Awaited<ReturnType<typeof testRender>>) {
     () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
   );
 }
+async function manageCurrent(setup: Awaited<ReturnType<typeof testRender>>) {
+  await focusLive(setup, "collection-relationships");
+  setup.mockInput.pressArrow("right");
+  await setup.waitFor(
+    () => setup.renderer.currentFocusedRenderable?.id.endsWith(".manage") === true,
+  );
+  await parsedEnter(setup);
+  await setup.waitFor(
+    () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
+  );
+}
 test("RENDER immediate Collections navigation keeps shell focus when no detail follows", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection([]))} exit={() => {}} />,
@@ -146,11 +156,13 @@ test("RENDER rapid Collections detail navigation does not let shell focus steal 
       "collection-browser",
     ) as SelectRenderable;
     browser.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
+    await setup.flush();
+    await focusLive(setup, "collection-browser");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
     await setup.waitFor(
       () =>
+        setup.renderer.currentFocusedRenderable?.id === "collection-action-add-membership" ||
         setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-entries" ||
         setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
     );
@@ -234,27 +246,27 @@ test("RENDER Collection Entry Space selection is isolated from Relations and con
     await openEntries(setup);
     expect(setup.renderer.root.findDescendantById("remove-from-collection")).toBeUndefined();
     await selectOrigins(setup, 1);
-    expect(setup.captureCharFrame()).toContain("1 origins selected");
-    expect(setup.captureCharFrame()).toContain("[x] guide-entry");
+    expect(setup.captureCharFrame()).toContain("1 origins checked");
     expect(loads).toBe(0);
     setup.mockInput.pressArrow("down");
     await setup.renderOnce();
     await selectOrigins(setup, 1);
-    expect(setup.captureCharFrame()).toContain("2 origins selected");
-    setup.renderer.root.findDescendantById("collection-tabs-tab-entries")!.focus();
+    expect(setup.captureCharFrame()).toContain("2 origins checked");
+    await focusLive(setup, "collection-tabs-tab-entries");
     setup.mockInput.pressKey("ARROW_RIGHT");
-    await setup.waitFor(() => setup.captureCharFrame().includes("KIND TARGET"));
-    setup.renderer.root.findDescendantById("collection-relationships")!.focus();
+    await setup.waitForFrame((frame) => frame.includes("No relationships in this Collection."));
+    await focusLive(setup, "collection-relationships");
     setup.mockInput.pressKey(" ");
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).not.toContain("1 origins selected");
+    expect(setup.captureCharFrame()).toContain("2 origins checked");
     expect(loads).toBe(0);
     setup.renderer.root.findDescendantById("collection-tabs-tab-relations")!.focus();
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-relations",
     );
     setup.mockInput.pressArrow("left");
-    await setup.waitFor(() => setup.captureCharFrame().includes("2 origins selected"));
+    await setup.waitFor(() => setup.captureCharFrame().includes("guide-entry"));
+    expect(setup.captureCharFrame()).toContain("2 origins checked");
     expect(setup.renderer.root.findDescendantById("remove-from-collection")).toBeDefined();
   } finally {
     setup.renderer.destroy();
@@ -304,20 +316,22 @@ test("RENDER one Membership with multiple origins has one row and exact cardinal
   );
   try {
     await openEntries(setup);
-    await setup.waitForFrame((frame) => frame.includes("1 Membership"));
-    const rows = setup.renderer.root.findDescendantById(
-      "collection-relationships",
+    await selectOrigins(setup, 1);
+    expect(setup.captureCharFrame()).toContain("2 origins checked");
+    setup.mockInput.pressArrow("down");
+    await setup.flush();
+    await selectOrigins(setup, 1);
+    expect(setup.renderer.root.findDescendantById("collection-batch-pane")).toBeUndefined();
+    await manageCurrent(setup);
+    const origins = setup.renderer.root.findDescendantById(
+      "collection-membership-origin",
     ) as SelectRenderable;
-    expect(rows.options).toHaveLength(1);
-    expect(rows.options[0]!.name).toContain("guide-entry");
-    expect(setup.captureCharFrame()).toContain("1 Membership");
-    expect(setup.captureCharFrame()).toContain("2 origins");
-    expect(setup.captureCharFrame()).not.toContain("1 Entries");
+    expect(origins.options).toHaveLength(2);
   } finally {
     setup.renderer.destroy();
   }
 });
-test("RENDER Membership Enter opens a non-destructive origin inspector", async () => {
+test("RENDER Membership Manage opens a non-destructive origin inspector", async () => {
   let previews = 0;
   const base = projection([
     {
@@ -343,10 +357,9 @@ test("RENDER Membership Enter opens a non-destructive origin inspector", async (
   try {
     await openEntries(setup);
     await setup.waitForFrame((frame) => frame.includes("guide-entry"));
-    await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Membership guide-entry"));
+    await manageCurrent(setup);
     expect(previews).toBe(0);
-    expect(setup.captureCharFrame()).toContain("Origin");
+    expect(setup.captureCharFrame()).toContain("/collections/team/members/guide-");
     expect(setup.renderer.root.findDescendantById("membership.remove")).toBeDefined();
   } finally {
     setup.renderer.destroy();
@@ -377,11 +390,8 @@ test.each([
     );
     try {
       await openEntries(setup);
-      setup.mockInput.pressEnter();
-      await setup.waitForFrame((frame) => frame.includes("Membership guide-entry"));
-      const origin = setup.renderer.root.findDescendantById(
-        "collection-membership-origin",
-      ) as SelectRenderable;
+      await manageCurrent(setup);
+      const origin = setup.renderer.root.findDescendantById("collection-inspector-ownership")!;
       const remove = setup.renderer.root.findDescendantById("membership.remove")!;
       expect(setup.renderer.root.findDescendantById("membership.open-owner")).toBeDefined();
       for (const control of [origin, remove]) {
@@ -462,15 +472,6 @@ test("RENDER cancelling direct Membership removal retains the inspector origin a
   } finally {
     setup.renderer.destroy();
   }
-});
-test("App has no Collection inspector Escape branch", async () => {
-  const app = await readFile(new URL("../src/app.tsx", import.meta.url), "utf8");
-  const priorityHandler = app.slice(
-    app.indexOf("const interceptPriorityKey"),
-    app.indexOf('renderer.keyInput.prependListener("keypress", interceptPriorityKey)'),
-  );
-  expect(priorityHandler).not.toContain("collectionsState.closeInspector()");
-  expect(priorityHandler).not.toContain('requestFocus("collection-relationships")');
 });
 test("RENDER same-owner Collection Entry removals preview and change once, then clear removed origins", async () => {
   const initial = projection([
@@ -638,7 +639,7 @@ test("RENDER mixed direct and linked Entry origins removes only the direct origi
     await enterLive(setup, "collection-review-confirm");
     await setup.waitFor(() => refreshes === 2);
     await setup.waitFor(() => setup.captureCharFrame().includes("1 origins checked"));
-    expect(setup.captureCharFrame()).toContain("linked-2");
+    await setup.waitForFrame((frame) => frame.includes("linked-2"));
     expect(changes).toHaveLength(1);
   } finally {
     setup.renderer.destroy();

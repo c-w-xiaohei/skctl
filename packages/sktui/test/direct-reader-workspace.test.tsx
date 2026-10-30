@@ -53,6 +53,7 @@ async function mount(
     () => (
       <App
         core={directSourceCore(projection, {
+          ...hooks,
           loadInstalledSkill: async (
             _environment: import("@skctl/core").CoreOptions,
             request,
@@ -416,11 +417,9 @@ test("Collection dispatch uses only current B or explicitly checked A/C, includi
     },
     installedSkills: addresses.map((address) => ({ ...template, address, name: address.path })),
   };
-  const defaultCore = directSourceCore(projection);
   const previews: unknown[] = [];
   const changes: unknown[] = [];
   await mount(144, 40, projection, {
-    ...defaultCore,
     previewMembershipBatch: async (
       _environment: import("@skctl/core").CoreOptions,
       request,
@@ -465,22 +464,23 @@ test("Collection dispatch uses only current B or explicitly checked A/C, includi
     );
     await enterLive(setup!, "collection-handoff-choice");
     await setup!.waitFor(
-      () => !!setup!.renderer.root.findDescendantById("membership-batch-review"),
+      () => !!setup!.renderer.root.findDescendantById("installed-skill-choice-submit"),
     );
-    await enterLive(setup!, "membership-batch-review");
+    await enterLive(setup!, "installed-skill-choice-submit");
   };
   await openReaderTab(setup!, 2);
   await enterLive(setup!, "reader-details-manage");
   await preview("reader-details-action-skill-add-to-collection");
   await setup!.waitFor(() => previews.length === 1);
   expect(previews[0]).toEqual([addresses[1]]);
-  await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("collection-review-choice"));
-  await enterLive(setup!, "collection-review-confirm");
   await setup!.waitFor(
     () =>
-      changes.length === 1 && !setup!.renderer.root.findDescendantById("collection-review-choice"),
+      changes.length === 1 && !setup!.renderer.root.findDescendantById("installed-skill-choice"),
   );
   expect(changes[0]).toMatchObject({ additions: [{ address: addresses[1] }] });
+  await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("collection-detail-pane"));
+  await enterLive(setup!, "route-back");
+  await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("installed-skill-browser"));
   const browser = setup!.renderer.root.findDescendantById(
     "installed-skill-browser",
   ) as SelectRenderable;

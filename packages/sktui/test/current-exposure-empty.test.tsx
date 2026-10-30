@@ -28,7 +28,20 @@ function noUse(globalOnly = false, count = 3) {
         id,
         declared: [{ ...owner, pointer: `${owner.pointer}/${id}` }],
         repository: { derived: false, producers: [] },
-        members: [],
+        members: [
+          {
+            name: "guide",
+            address: base.installedSkills[0]!.address,
+            paths: [
+              {
+                kind: "direct" as const,
+                collection: id,
+                entryName: "guide",
+                owner: { ...owner, pointer: `${owner.pointer}/${id}/members/guide` },
+              },
+            ],
+          },
+        ],
         references: [],
         links: [],
       })),
@@ -44,13 +57,14 @@ for (const width of [120, 80, 43]) {
       { width, height: 24 },
     );
     try {
-      await setup.waitForFrame((frame) => frame.includes("Choose Collections for OpenCode"));
+      await setup.waitForFrame((frame) => frame.includes("Choose Collections for agents"));
       expect(setup.renderer.root.findDescendantById("agent-node-pane")).toBeUndefined();
       expect(setup.captureCharFrame()).not.toContain("expand/fold");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
       );
       const primary = setup.renderer.currentFocusedRenderable!;
+      await setup.flush();
       await setup.mockMouse.click(primary.screenX + 2, primary.screenY);
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
       await parsedEnter(setup);
@@ -125,6 +139,47 @@ test("global-only workspaces choose Collections at the existing global Config", 
   }
 });
 
+test("empty Collections guide member selection and may remain empty after cancellation", async () => {
+  const base = noUse();
+  const snapshot = {
+    ...base,
+    effective: {
+      ...base.effective,
+      collectionsView: base.effective.collectionsView.map((collection) => ({
+        ...collection,
+        members: [],
+      })),
+    },
+  };
+  let writes = 0;
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(snapshot, {
+          editMembers: async () => {
+            writes++;
+            throw new Error("Cancellation must not write members");
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 80, height: 24 },
+  );
+  try {
+    await setup.waitForFrame((frame) => frame.includes("Add Skills to a Collection"));
+    await parsedEnter(setup);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
+    await enterLive(setup, "collection-action-add-membership");
+    await setup.waitForFrame((frame) => frame.includes("Add Skills to group-0"));
+    await parsedEscape(setup);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
+    expect(writes).toBe(0);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
 test("no Collections opens the existing create form without a navigation-only intermediate page", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(noUse(false, 0))} exit={() => {}} />,
@@ -143,23 +198,14 @@ test("no Collections opens the existing create form without a navigation-only in
   }
 });
 
-test("enabling Agent access requires confirmation, writes once, and returns to the next unmet step", async () => {
+test("Collection choice is reachable without a connected Agent", async () => {
   const base = noUse();
-  let current = { ...base, effective: { ...base.effective, managed: false } },
-    changes = 0;
+  const current = { ...base, effective: { ...base.effective, managed: false } };
   const setup = await testRender(
     () => (
       <App
         core={directSourceCore(current, {
           getWorkspace: async () => ({ value: current, diagnostics: [] }),
-          setManagedOpenCode: async () => {
-            changes++;
-            current = noUse();
-            return {
-              value: { level: "project", file: "/project/skctl.jsonc", changed: true },
-              diagnostics: [],
-            };
-          },
         })}
         exit={() => {}}
       />
@@ -173,27 +219,12 @@ test("enabling Agent access requires confirmation, writes once, and returns to t
     await parsedEnter(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "config-operation-review",
-    );
-    expect(changes).toBe(0);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-use-values"));
     await parsedEscape(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
     );
-    await parsedEnter(setup);
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
-    await parsedEnter(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "config-operation-review",
-    );
-    setup.mockInput.pressTab();
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "config-operation-confirm",
-    );
-    await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Choose Collections for OpenCode"));
-    expect(changes).toBe(1);
+    expect(setup.captureCharFrame()).toContain("Choose Collections for agents");
   } finally {
     setup.renderer.destroy();
   }
@@ -207,9 +238,6 @@ test("Collection choice previews only checked roots and returns to the catalog w
       <App
         core={directSourceCore(current, {
           getWorkspace: async () => ({ value: current, diagnostics: [] }),
-          setManagedOpenCode: async () => {
-            throw new Error("Inherited integration must not be enabled again");
-          },
           setUse: async (_options, request) => {
             written.push(request);
             current = {
@@ -246,7 +274,7 @@ test("Collection choice previews only checked roots and returns to the catalog w
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-use-values",
     );
-    await parsedEnter(setup);
+    await setup.mockInput.typeText(" ");
     await enterLive(setup, "collection-use-review");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-review-confirm"),

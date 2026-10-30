@@ -2,6 +2,7 @@ import {
   InputRenderable,
   ScrollBoxRenderable,
   SelectRenderable,
+  TextareaRenderable,
   type KeyEvent,
   type Renderable,
 } from "@opentui/core";
@@ -201,29 +202,9 @@ export function traverseModalControls(
     return true;
   }
   if (hasModalKeyModifier(event, key === "tab")) return false;
-  const atSelectBoundary =
-    current instanceof SelectRenderable &&
-    (key === "down"
-      ? current.getSelectedIndex() >= current.options.length - 1
-      : current.getSelectedIndex() <= 0);
-  const atScrollBoundary =
-    current instanceof ScrollBoxRenderable &&
-    (key === "down"
-      ? current.scrollTop >= Math.max(0, current.scrollHeight - current.viewport.height)
-      : current.scrollTop <= 0);
-  if (
-    ((key === "down" && (atSelectBoundary || atScrollBoundary)) ||
-      (key === "up" && (atSelectBoundary || atScrollBoundary))) &&
-    registry.focusNext(current, key === "up", allowUnregistered, false)
-  ) {
-    event.preventDefault();
-    event.stopPropagation();
-    return true;
-  }
   if (key === "right" && current instanceof SelectRenderable) {
     event.preventDefault();
     event.stopPropagation();
-    current.selectCurrent();
     return true;
   }
   if (key === "tab") {
@@ -233,12 +214,7 @@ export function traverseModalControls(
     return true;
   }
   if (key !== "up" && key !== "down") return false;
-  if (current instanceof InputRenderable) {
-    if (!registry.focusNext(current, key === "up", allowUnregistered, false)) return false;
-    event.preventDefault();
-    event.stopPropagation();
-    return true;
-  }
+  if (current instanceof InputRenderable || current instanceof TextareaRenderable) return false;
   if (current instanceof SelectRenderable || current instanceof ScrollBoxRenderable) return false;
   if (!registry.focusNext(current, key === "up", allowUnregistered, false)) return false;
   event.preventDefault();
@@ -257,12 +233,8 @@ export function useModalControlTraversal(
   useKeyboard((event) => {
     const key = event.name.toLowerCase().replace(/^arrow[_-]?/, "");
     const current = renderer.currentFocusedRenderable;
-    if (
-      !event.defaultPrevented &&
-      !hasModalKeyModifier(event) &&
-      onEscape &&
-      (key === "escape" || (key === "left" && !(current instanceof InputRenderable)))
-    ) {
+    if (!event.defaultPrevented && registry?.handleKey(event, current)) return;
+    if (!event.defaultPrevented && !hasModalKeyModifier(event) && onEscape && key === "escape") {
       event.preventDefault();
       event.stopPropagation();
       onEscape();

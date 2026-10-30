@@ -116,7 +116,7 @@ function descendants(target: ReturnType<typeof node>): ReturnType<typeof node>[]
   return target.getChildren().flatMap((child) => [child, ...descendants(child)]);
 }
 
-test("RENDER Reader gives identity and views two rows and retains compact body height", async () => {
+test("RENDER Reader keeps identity, Collection action and views visible with a compact reading body", async () => {
   for (const width of [100, 80, 43]) {
     const h = await mountReader(width);
     try {
@@ -126,14 +126,14 @@ test("RENDER Reader gives identity and views two rows and retains compact body h
       const body = node(h.setup, "reader-scrollbox");
       expect(identity.plainText).toBe("guide");
       expect(update.screenY).toBe(identity.screenY);
-      expect(views.screenY).toBe(identity.screenY + 1);
-      expect(body.screenY).toBe(identity.screenY + 2);
-      expect(body.height).toBe(11);
+      expect(node(h.setup, "reader-details-action-skill-add-to-collection").screenY).toBe(
+        identity.screenY + 1,
+      );
+      expect(views.screenY).toBe(identity.screenY + 2);
+      expect(body.screenY).toBe(identity.screenY + 3);
+      expect(body.height).toBe(10);
       expect(update.screenX + update.width).toBeLessThanOrEqual(width);
       expect(views.width).toBeLessThanOrEqual(width);
-      expect(
-        h.setup.renderer.root.findDescendantById("reader-action-skill-add-to-collection"),
-      ).toBeUndefined();
       expect(h.setup.renderer.root.findDescendantById("reader-reload")).toBeUndefined();
     } finally {
       h.setup.renderer.destroy();
@@ -175,7 +175,7 @@ test("RENDER Reader uses actual pane width and keeps hidden controls executable 
     expect(node(h.setup, "reader-reload")).toBeDefined();
     expect(node(h.setup, "reader-details-action-skill-add-to-collection")).toBeDefined();
     expect(h.commands.resolve("reader.raw")).toBeUndefined();
-    expect(h.setup.captureCharFrame()).toContain("team-main/guide");
+    await h.setup.waitForFrame((frame) => frame.includes("team-main/guide"));
   } finally {
     h.setup.renderer.destroy();
   }

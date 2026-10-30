@@ -24,7 +24,6 @@ import {
   installedSkillContext,
   skillCollectionTargets,
   reachableActions,
-  selectedConfigIntegrationOwner,
   selectedSourceContext,
   sourceRouteIntent,
   sourceOperationIntent,
@@ -60,7 +59,6 @@ import {
   RebindSourceOverlay,
   CollectionHandoffOverlay,
   CollectionReviewOverlay,
-  MembershipBatchDraftOverlay,
   MembershipRemovalPlanOverlay,
   InstalledSkillChooserOverlay,
   SourceRegistrationOverlay,
@@ -76,6 +74,8 @@ import { createCommandRegistry, type ExecutableCommand } from "./commands";
 import { PageNavigationProvider, type PageNavigation, type PageReturn } from "./page-navigation";
 import { CommandPalette, paletteCloseCommand, paletteSearchCommand } from "./command-palette";
 import { ConfigPage } from "./config-page";
+import { IntegrationsPage } from "./integrations/page";
+import { createIntegrationsState, type IntegrationsApi } from "./integrations/state";
 import { filterSkills } from "./skills-filter";
 import {
   collectionRemovalPlan,
@@ -86,10 +86,10 @@ import { createFocus } from "./focus";
 import { createLayout } from "./layout";
 import { createProjection } from "./projection";
 import { createWorkspaceState } from "./workspace/state";
-import { createCollectionsState } from "./collections/state";
+import { collectionMemberKey, createCollectionsState } from "./collections/state";
 import { deriveAgentAccessTree } from "./collections/agent-access-tree";
 import { deriveCollectionFilterTree } from "./collections/collection-filter-tree";
-import { configDeclarationOwnerKey, createConfigState } from "./config/state";
+import { createConfigState } from "./config/state";
 import { createOperationState } from "./operation-state";
 import { createReaderOwner } from "./reader/state";
 import { SectionTabs } from "./components/section-tabs";
@@ -117,7 +117,8 @@ import { DataList } from "./ui/data-list";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { selectScrollOffset } from "./select-scroll";
 import { SkillsFilterPopup } from "./skills-filter-popup";
-import { ModalBody, ModalShell } from "./operations/modal";
+import { ModalBody, ModalShell, modalCommand } from "./operations/modal";
+import { CollectionContentOverlay } from "./operations/collection-forms";
 import { createPanelNavigation, isMounted } from "./panel-navigation";
 import {
   createModalControlRegistry,
@@ -218,12 +219,30 @@ type CollectionDraft = Extract<
 >;
 type AppOverlayPayload =
   | {
+      readonly family: "collection-content";
+      readonly collection: string;
+      readonly owner: api.ConfigDeclarationOwner;
+      readonly owners: readonly api.ConfigDeclarationOwner[];
+      readonly description?: string;
+      readonly instructions?: string;
+    }
+  | {
+      readonly family: "acquire-source";
+      readonly target: Extract<AppOverlayPayload, { family: "membership-chooser" }>;
+    }
+  | {
+      readonly family: "installed-result";
+      readonly source: string;
+      readonly addresses: readonly api.SkillAddress[];
+    }
+  | {
       readonly family: "source-removal";
       readonly review?: SourceRemovalReview;
     }
   | {
       readonly family: "source-observation";
       readonly intent: ReturnType<typeof sourceOperationIntent>;
+      readonly target?: Extract<AppOverlayPayload, { family: "membership-chooser" }>;
     }
   | {
       readonly family: "config-observation";
@@ -231,8 +250,10 @@ type AppOverlayPayload =
     }
   | {
       readonly family: "source-selection";
+      readonly query: string;
       readonly review: DiscoveryReview;
       readonly selectedPaths: readonly string[];
+      readonly target?: Extract<AppOverlayPayload, { family: "membership-chooser" }>;
     }
   | {
       readonly family: "installed-preview";
@@ -267,6 +288,7 @@ type AppOverlayPayload =
     }
   | {
       readonly family: "collection-choices";
+      readonly createDraft?: import("./operations/collection-forms").CollectionCreateDraft;
       readonly choices: readonly {
         readonly collection: string;
         readonly level?: "global" | "project" | "local";
@@ -279,6 +301,8 @@ type AppOverlayPayload =
     }
   | {
       readonly family: "collection-create";
+      readonly initialDraft?: import("./operations/collection-forms").CollectionCreateDraft;
+      readonly parent?: Extract<AppOverlayPayload, { family: "collection-choices" }>;
       readonly level?: "global" | "project" | "local";
       readonly file?: string;
       readonly allowedLevels?: readonly ("global" | "project" | "local")[];
@@ -293,22 +317,16 @@ type AppOverlayPayload =
     }
   | {
       readonly family: "membership-chooser";
+      readonly discoveryDrafts?: Readonly<
+        Record<string, { readonly query: string; readonly selectedPaths: readonly string[] }>
+      >;
+      readonly sourceDraft?: import("./operations/source-registration").SourceRegistrationDraft;
       readonly level: "global" | "project" | "local";
       readonly collection: string;
       readonly expectedOwner: import("@skctl/core").ConfigDeclarationOwner;
-    }
-  | {
-      readonly family: "membership-draft";
-      readonly level: "global" | "project" | "local";
-      readonly collection: string;
-      readonly expectedOwner?: import("@skctl/core").ConfigDeclarationOwner;
-      readonly additions: readonly {
-        readonly name: string;
-        readonly address: {
-          readonly source: string;
-          readonly path: string;
-        };
-      }[];
+      readonly query?: string;
+      readonly source?: string;
+      readonly additions?: readonly { readonly name: string; readonly address: api.SkillAddress }[];
     }
   | {
       readonly family: "membership-removal-plan";
@@ -324,10 +342,11 @@ type AppOverlayPayload =
       readonly family: "collection-review";
       readonly review?: CollectionReview;
       readonly removedOriginKeys?: readonly string[];
+      readonly draft?: Extract<AppOverlayPayload, { family: "collection-draft" }>;
     }
   | {
       readonly family: "config-operation";
-      readonly kind: "adopt" | "forget" | "remove" | "managed";
+      readonly kind: "adopt" | "forget" | "remove";
       readonly id?: string;
       readonly observation?: ConfigSourceObservation;
       readonly impact?: ConfigSourceImpact;
@@ -339,17 +358,20 @@ type AppOverlayPayload =
       readonly family: "source-registration";
       readonly kind: "source" | "config-source";
       readonly level?: "global" | "project" | "local";
+      readonly target?: Extract<AppOverlayPayload, { family: "membership-chooser" }>;
     };
 export function App(props: {
   readonly core: TuiCore;
   readonly environment?: api.CoreOptions;
   readonly exit: () => void;
+  readonly integrations?: IntegrationsApi;
 }) {
   const operation = createOperationState();
   const [overlaySession, setOverlaySession] = createSignal(createOverlaySession());
   const overlayKind = () => overlaySession().kind;
   const [transition, setTransition] = createSignal<string | undefined>();
   const environment = props.environment ?? { cwd: process.cwd() };
+  const integrations = createIntegrationsState(props.integrations);
   const readerOwner = createReaderOwner(
     props.core,
     () => {
@@ -523,11 +545,16 @@ export function App(props: {
     if (owner) lastPhysicalOwner = owner;
     panels.observe(current, owner);
     setPhysicalFocusOwner(owner);
-    for (let node = current; node; node = node.parent as Renderable | null)
+    let content = current;
+    for (let node = current; node; node = node.parent as Renderable | null) {
+      // Reader commands can remount when contextual eligibility changes. The
+      // containing Reader owns Back, independently of that command's lifetime.
+      if (node.id === "reader-pane") content = node;
       if (node.id === "route-content") {
-        if (current) setActiveContent(current);
+        if (content) setActiveContent(content);
         break;
       }
+    }
   };
   renderer.on("focused_renderable", syncPhysicalFocus);
   let route: ReturnType<typeof createRoute>;
@@ -811,7 +838,6 @@ export function App(props: {
   const collectionReviewPayload = () => payload("collection-review");
   const collectionCreate = () => payload("collection-create");
   const membershipChooser = () => payload("membership-chooser");
-  const membershipDraft = () => payload("membership-draft");
   const membershipRemovalPlan = () => payload("membership-removal-plan");
   const collectionDraft = () => collectionDraftPayload()?.draft;
   const collectionImportDraft = () => {
@@ -1045,10 +1071,16 @@ export function App(props: {
     predecessor: RouteTarget,
     focus: FocusOwner,
     surface: "browser" | "inspector" = "inspector",
+    preferred?: api.SkillAddress,
   ) => {
-    const first = projection
-      .workspace()
-      ?.installedSkills.find((skill) => skill.address.source === source);
+    const skills = projection.workspace()?.installedSkills ?? [];
+    const first =
+      skills.find(
+        (skill) =>
+          preferred &&
+          sameSkillAddress(skill.address, preferred) &&
+          skill.address.source === source,
+      ) ?? skills.find((skill) => skill.address.source === source);
     route.syncCurrent({
       section: predecessor.section,
       object: source,
@@ -1146,6 +1178,15 @@ export function App(props: {
       return;
     }
     const payload = sessionPayload();
+    if (
+      payload?.family === "acquire-source" ||
+      (payload?.family === "source-registration" &&
+        payload.target &&
+        overlaySession().phase === "review")
+    ) {
+      openSession("form", payload.target!);
+      return;
+    }
     const revision = overlaySession().revision;
     if (payload?.family === "collection-review" && !payload.review) {
       effects.cancel();
@@ -1180,7 +1221,18 @@ export function App(props: {
       return;
     } else if (payload?.family === "source-selection") {
       effects.discardDiscovery(payload.review);
-      closeSession();
+      if (payload.target)
+        openSession("form", {
+          ...payload.target,
+          discoveryDrafts: {
+            ...payload.target.discoveryDrafts,
+            [payload.review.observation.source]: {
+              query: payload.query,
+              selectedPaths: payload.selectedPaths,
+            },
+          },
+        });
+      else closeSession();
       return;
     } else if (payload?.family === "installed-rebind") {
       closeSession();
@@ -1189,6 +1241,72 @@ export function App(props: {
       effects.discardCollectionReview(payload.review);
       closeSession(revision);
     } else closeSession();
+  };
+  const discoverSource = async (
+    source: string,
+    target?: Extract<AppOverlayPayload, { family: "membership-chooser" }>,
+  ) => {
+    operation.clearProblem();
+    const intent = { kind: "source-discovery" as const, source };
+    openSession("selection", { family: "source-observation", intent, target }, "observing");
+    const begun = beginSession(overlaySession().revision, "observing");
+    const review = await effects.discover(intent);
+    if (!sessionMatches(begun, "selection", "source-observation")) return;
+    if (overlaySession().dismissed) {
+      if (review) effects.discardDiscovery(review);
+      closeSession(begun.revision);
+      return;
+    }
+    settleSession(
+      begun.revision,
+      begun.requestEpoch,
+      "review",
+      review
+        ? {
+            family: "source-selection",
+            review,
+            target,
+            query: target?.discoveryDrafts?.[source]?.query ?? "",
+            selectedPaths: (target?.discoveryDrafts?.[source]?.selectedPaths ?? []).filter(
+              (path) =>
+                review.observation.candidates.some((candidate) => candidate.path === path) &&
+                !projection
+                  .workspace()
+                  ?.installedSkills.some(
+                    (skill) => skill.address.source === source && skill.address.path === path,
+                  ),
+            ),
+          }
+        : undefined,
+    );
+  };
+  const chooseMemberships = (
+    collection: string,
+    owner: api.ConfigDeclarationOwner,
+    addresses: readonly api.SkillAddress[],
+  ) => {
+    const workspace = projection.workspace();
+    const members =
+      workspace?.effective.status === "complete"
+        ? (workspace.effective.collectionsView.find((item) => item.id === collection)?.members ??
+          [])
+        : [];
+    openSession("form", {
+      family: "membership-chooser",
+      collection,
+      level: owner.level,
+      expectedOwner: owner,
+      additions: addresses
+        .filter((address) => !members.some((member) => sameSkillAddress(member.address, address)))
+        .map((address) => ({
+          address,
+          name:
+            workspace?.installedSkills.find((skill) => sameSkillAddress(skill.address, address))
+              ?.name ??
+            address.path.split("/").at(-1) ??
+            "skill",
+        })),
+    });
   };
   const observeConfig = async (
     id: string,
@@ -1224,17 +1342,6 @@ export function App(props: {
   const beginConfigObservation = (id: string) => {
     openSession("selection", { family: "config-observation", id }, "observing");
     void observeConfig(id, beginSession(overlaySession().revision, "observing"));
-  };
-  const beginManagedOperation = (level: "global" | "project" | "local") => {
-    const config = projection.workspace()?.configs.find((item) => item.level === level);
-    if (!config || !["valid", "missing"].includes(config.file.status)) return;
-    openSession("confirm", {
-      family: "config-operation",
-      kind: "managed",
-      level,
-      file: config.file.file,
-      enabled: true,
-    });
   };
   const beginCollectionUse = (level: api.ConfigLevel) => {
     const config = projection.workspace()?.configs.find((item) => item.level === level);
@@ -1296,6 +1403,7 @@ export function App(props: {
       "add-source",
       "add-config-source",
       "new-collection",
+      "edit-collection-content",
       "add-membership",
       "remove-membership",
       "import-collection",
@@ -1308,8 +1416,6 @@ export function App(props: {
       "config-observe",
       "config-forget",
       "config-remove",
-      "enable-managed-opencode",
-      "disable-managed-opencode",
     ]);
     const descriptor = actions().find((action) => action.id === id);
     // Stale palette IDs must not start a write flow after the selected Config becomes invalid.
@@ -1326,20 +1432,6 @@ export function App(props: {
           code: "INVALID_ARGUMENT",
           severity: "warning",
           message: descriptor.disabledReason,
-        });
-      return;
-    }
-    if (id === "enable-managed-opencode" || id === "disable-managed-opencode") {
-      if (destination === "workspace") return;
-      if (!currentConfig || !["valid", "missing"].includes(currentConfig.file.status)) return;
-      if (id === "enable-managed-opencode") beginManagedOperation(destination);
-      else
-        openSession("confirm", {
-          family: "config-operation",
-          kind: "managed",
-          level: destination,
-          file: currentConfig.file.file,
-          enabled: false,
         });
       return;
     }
@@ -1378,22 +1470,6 @@ export function App(props: {
         family: "source-registration",
         kind: id === "add-source" ? "source" : "config-source",
         ...(destination === "workspace" ? {} : { level: destination }),
-      });
-      return;
-    }
-    if (id === "open-config-integration") {
-      const destination = configDestination();
-      const owner = selectedConfigIntegrationOwner(
-        workspace,
-        destination,
-        configState.snapshot(destination),
-      );
-      if (!owner || owner.level === destination) return;
-      routeSource({
-        destination: owner.level,
-        section: "integrations",
-        selection: configDeclarationOwnerKey(owner),
-        handoff: { kind: "config-integration", owner },
       });
       return;
     }
@@ -1442,14 +1518,33 @@ export function App(props: {
               (item) => !item.contribution && item.level === route.snapshot().destination,
             );
       if (!collection) return;
+      const owners = collection.declared.filter((item) => !item.contribution);
+      if (route.snapshot().destination === "workspace" && owners.length > 1) {
+        openSession("selection", {
+          family: "collection-choices",
+          addresses: [],
+          choices: owners.map((owner) => ({
+            collection: collection.id,
+            level: owner.level,
+            owner,
+          })),
+        });
+        return;
+      }
       if (!owner && collection.repository.derived) {
         openSession("form", {
           family: "collection-create",
-          allowedLevels: ["global", "project", "local"],
+          ...(destination === "workspace"
+            ? {
+                allowedLevels: workspace.configs
+                  .filter((config) => ["valid", "missing"].includes(config.file.status))
+                  .map((config) => config.level),
+              }
+            : { level: destination }),
           fixedCollection: true,
           afterCreate: {
             collection: collection.id,
-            addresses: workspaceState.selectedSkills(),
+            addresses: [],
           },
         });
         return;
@@ -1477,6 +1572,7 @@ export function App(props: {
         )?.owner;
     };
     if (
+      id === "edit-collection-content" ||
       id === "import-collection" ||
       id === "add-reference" ||
       id === "add-link" ||
@@ -1489,6 +1585,25 @@ export function App(props: {
           ? collectionsState.selected()
           : configState.selection(configDestination(), "collections");
       if (!collection) return;
+      if (id === "edit-collection-content") {
+        const direct =
+          workspace.effective.status === "complete"
+            ? workspace.effective.collectionsView.find((item) => item.id === collection)
+            : undefined;
+        openSession("form", {
+          family: "collection-content",
+          collection,
+          owner,
+          owners: direct?.declared.filter(
+            (candidate) =>
+              !candidate.contribution &&
+              (destination === "workspace" || candidate.level === destination),
+          ) ?? [owner],
+          description: direct?.description,
+          instructions: direct?.instructions,
+        });
+        return;
+      }
       if (id === "remove-collection") {
         openSession("confirm", { family: "collection-review" });
         await previewCollection({
@@ -1539,20 +1654,7 @@ export function App(props: {
     }
     if (id === "add-skills") {
       const intent = sourceOperationIntent(id, route.snapshot().destination, workspace, pageFacts);
-      operation.clearProblem();
-      openSession("selection", { family: "source-observation", intent }, "observing");
-      const begun = beginSession(overlaySession().revision, "observing");
-      const { revision, requestEpoch } = begun;
-      const next = await effects.discover({ kind: "source-discovery", source: intent.source });
-      if (!sessionMatches(begun, "selection", "source-observation")) return;
-      if (next && !overlaySession().dismissed)
-        settleSession(revision, requestEpoch, "review", {
-          family: "source-selection",
-          review: next,
-          selectedPaths: [],
-        });
-      else if (overlaySession().dismissed) closeSession(revision);
-      else settleSession(revision, requestEpoch, "review");
+      await discoverSource(intent.source);
       return;
     }
     if (id === "view-installed-skills") {
@@ -1621,7 +1723,7 @@ export function App(props: {
             )
           : [];
       const addresses = targets.addresses;
-      if (addresses.length === 0 || choices.length === 0) {
+      if (addresses.length === 0) {
         operation.report({
           code: "INVALID_ARGUMENT",
           severity: "warning",
@@ -1707,6 +1809,16 @@ export function App(props: {
       });
       return;
     }
+    if (id === "update-selected-skills") {
+      openUpdates(
+        {
+          kind: "selected",
+          addresses: workspaceState.selectedSkills().map((address) => ({ ...address })),
+        },
+        true,
+      );
+      return;
+    }
     if (id === "skill-check-updates") {
       if (skill) {
         openUpdates({ kind: "skill", address: skill.address });
@@ -1750,7 +1862,6 @@ export function App(props: {
     if (
       (kind !== "form" && kind !== "confirm") ||
       (source?.family !== "collection-draft" &&
-        source?.family !== "membership-draft" &&
         source?.family !== "membership-removal-plan" &&
         source?.family !== "collection-review")
     )
@@ -1763,7 +1874,22 @@ export function App(props: {
       if (source.family === "collection-review") return closeSession(begun.revision);
       return settleSession(begun.revision, begun.requestEpoch, "review");
     }
-    const next: AppOverlayPayload = { family: "collection-review", review, removedOriginKeys };
+    const next: AppOverlayPayload = {
+      family: "collection-review",
+      review,
+      removedOriginKeys,
+      draft:
+        source.family === "collection-draft" &&
+        (intent.kind === "collection-import" ||
+          intent.kind === "reference-add" ||
+          intent.kind === "reference-remove" ||
+          intent.kind === "link-change" ||
+          intent.kind === "collection-use")
+          ? { ...source, draft: intent }
+          : source.family === "collection-review"
+            ? source.draft
+            : undefined,
+    };
     if (source.family === "collection-review")
       settleSession(begun.revision, begun.requestEpoch, "review", next);
     else openSession("confirm", next);
@@ -1950,7 +2076,30 @@ export function App(props: {
       overlaySession().revision === begun.revision &&
       overlaySession().requestEpoch === begun.requestEpoch
     ) {
-      closeSession();
+      if (overlaySession().dismissed) closeSession();
+      else if (surface.target) {
+        const installed = projection.workspace()?.installedSkills ?? [];
+        const additions = [...(surface.target.additions ?? [])];
+        for (const path of surface.selectedPaths) {
+          const address = { source: current.observation.source, path };
+          if (!additions.some((item) => sameSkillAddress(item.address, address)))
+            additions.push({
+              address,
+              name:
+                installed.find((item) => sameSkillAddress(item.address, address))?.name ??
+                path.split("/").at(-1)!,
+            });
+        }
+        openSession("form", { ...surface.target, additions });
+      } else
+        openSession("selection", {
+          family: "installed-result",
+          source: current.observation.source,
+          addresses: surface.selectedPaths.map((path) => ({
+            source: current.observation.source,
+            path,
+          })),
+        });
     } else if (
       overlaySession().revision === begun.revision &&
       overlaySession().requestEpoch === begun.requestEpoch &&
@@ -2028,10 +2177,6 @@ export function App(props: {
         route.snapshot().destination !== "workspace" &&
         configState.configSourceSurface(configDestination()) === "inspector" &&
         localReturn === "config.source.back",
-      configIntegrationSurface:
-        route.snapshot().destination !== "workspace" &&
-        configState.integrationSurface(configDestination()) !== "list" &&
-        (localReturn === "config.catalog.back" || localReturn === "config.integration.back"),
     } as const;
   };
   const routeBack = () => {
@@ -2077,16 +2222,6 @@ export function App(props: {
             configState.backConfigSourceSurface(configDestination());
             requestFocus("browser");
             setTransition("Back to Config Sources");
-          } else if (event.type === "config.integration.back") {
-            const destination = configDestination();
-            configState.backIntegrationSurface(destination);
-            route.syncCurrent({
-              section: "integrations",
-              object: configState.selection(destination, "integrations"),
-            });
-            const surface = configState.integrationSurface(destination);
-            requestFocus(surface === "inspector" ? "inspector" : "browser");
-            setTransition(surface === "inspector" ? "Back to Integration" : "Back to Integrations");
           } else if (event.type === "palette.open") openSession("palette", { family: "palette" });
           else if (event.type === "reader.patch") {
             if (event.value.tab) selectReaderTab(event.value.tab);
@@ -2150,12 +2285,7 @@ export function App(props: {
       modal: () => {
         if (!blockedSurface) return "declined";
         if (modalControls.handleKey(event, focused)) return "consumed";
-        if (
-          (unmodified &&
-            (key.name === "escape" ||
-              (key.name === "left" && !(focused instanceof InputRenderable)))) ||
-          (ctrlOnly && key.char === "c")
-        ) {
+        if ((unmodified && key.name === "escape") || (ctrlOnly && key.char === "c")) {
           closeOverlay();
           return "consumed";
         }
@@ -2345,7 +2475,6 @@ export function App(props: {
           if (
             workspaceState.skillsView() === "current-exposure" &&
             effective?.status === "complete" &&
-            effective.managed &&
             effective.agent.status === "available" &&
             effective.use.length
           )
@@ -2872,24 +3001,74 @@ export function App(props: {
       (transition() === "Previously viewed item is no longer available" ? transition() : undefined);
     return notice ? { label: notice, warning: !!operation.problem() } : undefined;
   });
-  const ActivityStatus = () => (
-    <text
-      id="process-status"
-      height={1}
-      width="100%"
-      fg={processStatus()?.warning ? tokens().colors.warning : tokens().colors.mutedForeground}
-      wrapMode="none"
-    >
-      {layout.width() < compactControlsBelow
-        ? (processStatus()?.compactLabel ?? processStatus()?.label)
-        : processStatus()?.label}
-      {(layout.width() >= compactControlsBelow ||
-        (layout.width() >= 64 && layout.width() < stackedNavigationBelow)) &&
-      processStatus()?.source
-        ? ` · ${processStatus()!.source}`
-        : ""}
-    </text>
-  );
+  const ActivityStatus = () => {
+    const record: CommandRecord = {
+      id: "operation.error-details",
+      keys: ["enter"],
+      verb: "Error…",
+      destination: "Operation error details",
+      scope: "page",
+      enabled: true,
+      danger: false,
+    };
+    const open = () => {
+      const error = operation.problem();
+      if (error)
+        openSession("help", {
+          family: "diagnostic-log",
+          title: "Operation failed",
+          text: `${error.code}: ${error.message}`,
+        });
+    };
+    return (
+      <Show
+        when={operation.problem() && !operation.task()}
+        fallback={
+          <text
+            id="process-status"
+            height={1}
+            width="100%"
+            fg={
+              processStatus()?.warning ? tokens().colors.warning : tokens().colors.mutedForeground
+            }
+            wrapMode="none"
+          >
+            {layout.width() < compactControlsBelow
+              ? (processStatus()?.compactLabel ?? processStatus()?.label)
+              : processStatus()?.label}
+            {(layout.width() >= compactControlsBelow ||
+              (layout.width() >= 64 && layout.width() < stackedNavigationBelow)) &&
+            processStatus()?.source
+              ? ` · ${processStatus()!.source}`
+              : ""}
+          </text>
+        }
+      >
+        <CommandControl
+          id="process-error-details"
+          record={record}
+          keyboard={false}
+          register={(target) => {
+            const unregisterFocus = focusRegistry.register(
+              "command:operation.error-details",
+              target,
+            );
+            const unregisterCommand = registerPageCommand(
+              record,
+              "command:operation.error-details",
+              "process-error-details",
+              open,
+            );
+            return () => {
+              unregisterFocus();
+              unregisterCommand();
+            };
+          }}
+          execute={open}
+        />
+      </Show>
+    );
+  };
   const hintWidth = () => Math.max(1, layout.width() - 2);
   const guidance = createMemo(() => {
     focusVersion();
@@ -4190,6 +4369,14 @@ export function App(props: {
                         }}
                         onDetailsScroll={(scroll) => readerOwner.patch({ detailsScroll: scroll })}
                       />
+                    ) : configState.section(configDestination()) === "integrations" ? (
+                      <IntegrationsPage
+                        state={integrations}
+                        scope={configDestination() === "global" ? "global" : "project"}
+                        directory={environment.project ?? environment.cwd}
+                        registerCommand={registerPageCommand}
+                        focusRegistry={focusRegistry}
+                      />
                     ) : (
                       <ConfigPage
                         config={configState}
@@ -4214,20 +4401,6 @@ export function App(props: {
                             events: [{ type: "config.surface.back" }],
                           })
                         }
-                        onBackIntegrationSurface={() =>
-                          applyNavigation({
-                            kind: "events",
-                            events: [{ type: "config.integration.back" }],
-                          })
-                        }
-                        onIntegrationOwner={(owner) => {
-                          routeSource({
-                            destination: owner.level,
-                            section: "integrations",
-                            selection: configDeclarationOwnerKey(owner),
-                            handoff: { kind: "config-integration", owner },
-                          });
-                        }}
                         onCollectionOwner={(collection, owner) => {
                           const target = owner.contribution?.configSource ?? owner;
                           routeSource({
@@ -4376,8 +4549,14 @@ export function App(props: {
                     onSelect={(destination) => {
                       const action = payload("scope-selection")?.action;
                       if (action && destination !== "workspace") {
-                        if (action === "enable-agent") beginManagedOperation(destination);
-                        else beginCollectionUse(destination);
+                        if (action === "enable-agent") {
+                          closeOverlay();
+                          route.push({
+                            destination: destination === "global" ? "global" : "project",
+                            section: "integrations",
+                            focus: "browser",
+                          });
+                        } else beginCollectionUse(destination);
                       } else {
                         closeOverlay();
                         selectDestination(destination);
@@ -4415,7 +4594,7 @@ export function App(props: {
                   const address = surface.address ?? skill?.address;
                   if (!address) return;
                   if (surface.sourceRemoval)
-                    void previewInstalled(
+                    void previewRepairInstalled(
                       { kind: "rebind", address, owner, ownerPath },
                       surface.sourceRemoval,
                     );
@@ -4429,6 +4608,23 @@ export function App(props: {
                 }}
               />
             )}
+            <Show when={payload("collection-content")}>
+              {(content) => (
+                <CollectionContentOverlay
+                  {...content()}
+                  pending={overlaySession().phase === "executing"}
+                  error={operation.problem()}
+                  onCancel={closeOverlay}
+                  onSave={async (request) => {
+                    const begun = beginSession(overlaySession().revision, "executing");
+                    const complete = await effects.setCollectionContent(request);
+                    if (!sessionMatches(begun, "form", "collection-content")) return;
+                    if (complete) closeSession(begun.revision);
+                    else settleFailedExecution(begun);
+                  }}
+                />
+              )}
+            </Show>
             {installedPreviewPayload()?.failed && (
               <InstalledSkillPreviewFailureOverlay
                 request={installedPreviewPayload()!.request}
@@ -4448,183 +4644,303 @@ export function App(props: {
                   onCancel={closeOverlay}
                 />
               )}
+            <Show when={payload("installed-result")}>
+              {(result) => (
+                <ModalShell>
+                  <ModalBody controls={modalControls}>
+                    <text>{`Installed ${result().addresses.length} Skills from ${result().source}`}</text>
+                    <ModalCommand
+                      id="installed-result-view"
+                      controls={modalControls}
+                      initialFocus
+                      record={modalCommand(
+                        "installed-result.view",
+                        "View installed Skills",
+                        result().source,
+                      )}
+                      execute={() => {
+                        const source = result().source;
+                        const first = result().addresses[0];
+                        closeSession();
+                        openInstalledSkillsFromSource(
+                          source,
+                          { destination: route.snapshot().destination, section: "sources" },
+                          "command:source.skills",
+                          "inspector",
+                          first,
+                        );
+                      }}
+                    />
+                    <ModalCommand
+                      id="installed-result-collection"
+                      controls={modalControls}
+                      record={modalCommand(
+                        "installed-result.collection",
+                        "Add to Collection…",
+                        "Organize these installed Skills",
+                      )}
+                      execute={() => {
+                        const effective = projection.workspace()?.effective;
+                        const choices =
+                          effective?.status === "complete"
+                            ? effective.collectionsView.flatMap((item) =>
+                                item.declared
+                                  .filter((owner) => !owner.contribution)
+                                  .map((owner) => ({
+                                    collection: item.id,
+                                    level: owner.level,
+                                    owner,
+                                  })),
+                              )
+                            : [];
+                        openSession("selection", {
+                          family: "collection-choices",
+                          choices,
+                          addresses: result().addresses,
+                        });
+                      }}
+                    />
+                    <ModalCommand
+                      id="installed-result-done"
+                      controls={modalControls}
+                      record={modalCommand("installed-result.done", "Done", "Return to Source")}
+                      execute={closeOverlay}
+                    />
+                  </ModalBody>
+                </ModalShell>
+              )}
+            </Show>
             {collectionChoices() && (
               <CollectionHandoffOverlay
                 choices={collectionChoices()!}
+                onCreate={() =>
+                  openSession("form", {
+                    family: "collection-create",
+                    parent: payload("collection-choices")!,
+                    initialDraft: payload("collection-choices")!.createDraft,
+                    ...(route.snapshot().destination === "workspace"
+                      ? {
+                          allowedLevels: projection
+                            .workspace()
+                            ?.configs.map((config) => config.level),
+                        }
+                      : { level: configDestination() }),
+                    afterCreate: {
+                      collection: "",
+                      addresses: payload("collection-choices")!.addresses,
+                    },
+                  })
+                }
                 onClose={closeOverlay}
                 onSelect={(choice) => {
                   const addresses = payload("collection-choices")!.addresses;
                   if (!choice.level) {
                     openSession("form", {
                       family: "collection-create",
-                      allowedLevels: ["global", "project", "local"],
+                      parent: payload("collection-choices")!,
+                      initialDraft: payload("collection-choices")!.createDraft,
+                      ...(route.snapshot().destination === "workspace"
+                        ? {
+                            allowedLevels: projection
+                              .workspace()
+                              ?.configs.filter((config) =>
+                                ["valid", "missing"].includes(config.file.status),
+                              )
+                              .map((config) => config.level),
+                          }
+                        : { level: configDestination() }),
                       fixedCollection: true,
                       afterCreate: { collection: choice.collection, addresses },
                     });
                     return;
                   }
-                  openSession("form", {
-                    family: "membership-draft",
-                    level: choice.level,
-                    collection: choice.collection,
-                    ...(choice.owner ? { expectedOwner: choice.owner } : {}),
-                    additions: addresses.map((address) => ({
-                      name: address.path.split("/").at(-1) ?? "skill",
-                      address,
-                    })),
-                  });
+                  if (choice.owner) chooseMemberships(choice.collection, choice.owner, addresses);
                 }}
               />
             )}
-            {(() => {
-              const create = collectionCreate();
-              return (
-                create && (
-                  <CollectionCreateOverlay
-                    {...(create.allowedLevels
-                      ? { allowedLevels: create.allowedLevels }
-                      : { level: create.level! })}
-                    collection={create.fixedCollection ? create.afterCreate!.collection : ""}
-                    configFile={(level) =>
-                      projection.workspace()?.configs.find((config) => config.level === level)?.file
-                        .file
-                    }
-                    fixed={create.fixedCollection}
-                    pending={overlaySession().phase === "executing"}
-                    error={operation.problem()}
-                    onCancel={closeOverlay}
-                    onSubmit={(intent) => {
-                      const begun = beginSession(overlaySession().revision, "executing");
-                      void effects
-                        .createCollection({
-                          kind: "collection-create",
-                          ...intent,
-                        })
-                        .then((complete) => {
-                          if (
-                            complete &&
-                            overlaySession().revision === begun.revision &&
-                            overlaySession().requestEpoch === begun.requestEpoch
-                          ) {
-                            const afterCreate = create.afterCreate;
-                            collectionsState.select(intent.collection);
-                            closeSession(begun.revision);
-                            if (afterCreate) {
-                              const workspace = projection.workspace();
-                              const owner =
-                                workspace?.effective.status === "complete"
-                                  ? workspace.effective.collectionsView
-                                      .find((item) => item.id === afterCreate.collection)
-                                      ?.declared.find(
-                                        (candidate) =>
-                                          !candidate.contribution &&
-                                          candidate.level === intent.level,
-                                      )
-                                  : undefined;
-                              if (!owner) {
-                                operation.report({
-                                  code: "TRANSACTION_CONFLICT",
-                                  severity: "warning",
-                                  message: "Created Collection owner is unavailable after refresh",
-                                });
-                                return;
-                              }
-                              openSession(
-                                "form",
-                                afterCreate.addresses.length
-                                  ? {
-                                      family: "membership-draft",
-                                      level: intent.level,
-                                      collection: afterCreate.collection,
-                                      expectedOwner: owner,
-                                      additions: afterCreate.addresses.map((address) => ({
-                                        name: address.path.split("/").at(-1) ?? "skill",
-                                        address,
-                                      })),
-                                    }
-                                  : {
-                                      family: "membership-chooser",
-                                      level: intent.level,
-                                      collection: afterCreate.collection,
-                                      expectedOwner: owner,
-                                    },
-                              );
+            <Show when={collectionCreate()}>
+              {(create) => (
+                <CollectionCreateOverlay
+                  {...(create().allowedLevels
+                    ? { allowedLevels: create().allowedLevels! }
+                    : { level: create().level! })}
+                  collection={create().fixedCollection ? create().afterCreate!.collection : ""}
+                  initialDraft={create().initialDraft}
+                  onBack={
+                    create().parent
+                      ? (draft) => {
+                          if (overlaySession().phase !== "review") closeOverlay();
+                          else
+                            openSession("selection", { ...create().parent!, createDraft: draft });
+                        }
+                      : undefined
+                  }
+                  configFile={(level) =>
+                    projection.workspace()?.configs.find((config) => config.level === level)?.file
+                      .file
+                  }
+                  fixed={create().fixedCollection}
+                  pending={overlaySession().phase === "executing"}
+                  error={operation.problem()}
+                  onCancel={closeOverlay}
+                  onSubmit={(intent) => {
+                    const afterCreate = create().afterCreate;
+                    const begun = beginSession(overlaySession().revision, "executing");
+                    void effects
+                      .createCollection({
+                        kind: "collection-create",
+                        ...intent,
+                      })
+                      .then((complete) => {
+                        if (
+                          complete &&
+                          overlaySession().revision === begun.revision &&
+                          overlaySession().requestEpoch === begun.requestEpoch
+                        ) {
+                          const continuation = {
+                            collection: intent.collection,
+                            addresses: afterCreate?.addresses ?? [],
+                          };
+                          collectionsState.select(intent.collection);
+                          const dismissed = overlaySession().dismissed;
+                          closeSession(begun.revision);
+                          if (!dismissed) {
+                            const workspace = projection.workspace();
+                            const owner =
+                              workspace?.effective.status === "complete"
+                                ? workspace.effective.collectionsView
+                                    .find((item) => item.id === continuation.collection)
+                                    ?.declared.find(
+                                      (candidate) =>
+                                        !candidate.contribution && candidate.level === intent.level,
+                                    )
+                                : undefined;
+                            if (!owner) {
+                              operation.report({
+                                code: "TRANSACTION_CONFLICT",
+                                severity: "warning",
+                                message: "Created Collection owner is unavailable after refresh",
+                              });
+                              return;
                             }
-                          } else if (
-                            overlaySession().revision === begun.revision &&
-                            overlaySession().requestEpoch === begun.requestEpoch &&
-                            overlaySession().dismissed
-                          )
-                            closeSession(begun.revision);
-                          else settleFailedExecution(begun);
+                            chooseMemberships(
+                              continuation.collection,
+                              owner,
+                              continuation.addresses,
+                            );
+                          }
+                        } else if (
+                          overlaySession().revision === begun.revision &&
+                          overlaySession().requestEpoch === begun.requestEpoch &&
+                          overlaySession().dismissed
+                        )
+                          closeSession(begun.revision);
+                        else settleFailedExecution(begun);
+                      });
+                  }}
+                />
+              )}
+            </Show>
+            <Show when={overlayKind() === "form" && membershipChooser()}>
+              {(_target) => (
+                <InstalledSkillChooserOverlay
+                  initialQuery={membershipChooser()!.query}
+                  initialSource={membershipChooser()!.source}
+                  initialSelected={membershipChooser()!.additions}
+                  onAcquire={(draft) =>
+                    openSession("selection", {
+                      family: "acquire-source",
+                      target: { ...membershipChooser()!, ...draft },
+                    })
+                  }
+                  collection={membershipChooser()!.collection}
+                  owner={membershipChooser()!.expectedOwner}
+                  members={(() => {
+                    const effective = projection.workspace()?.effective;
+                    return effective?.status === "complete"
+                      ? effective.collectionsView.find(
+                          (item) => item.id === membershipChooser()!.collection,
+                        )?.members
+                      : [];
+                  })()}
+                  pending={overlaySession().phase !== "review"}
+                  error={operation.problem()}
+                  skills={(projection.workspace()?.installedSkills ?? []).map((skill) => ({
+                    address: skill.address,
+                    name: skill.name,
+                    description: skill.description,
+                  }))}
+                  onClose={() => {
+                    closeOverlay();
+                  }}
+                  onSelect={async (additions) => {
+                    const target = membershipChooser();
+                    if (!target) return;
+                    const begun = beginSession(overlaySession().revision, "preview");
+                    const review = await effects.previewCollection({
+                      kind: "membership-batch",
+                      level: target.level,
+                      collection: target.collection,
+                      expectedOwner: target.expectedOwner,
+                      additions,
+                      removals: [],
+                    });
+                    if (!sessionMatches(begun, "form", "membership-chooser")) return;
+                    if (overlaySession().dismissed) {
+                      if (review) effects.discardCollectionReview(review);
+                      closeSession(begun.revision);
+                      return;
+                    }
+                    if (!review) {
+                      settleSession(begun.revision, begun.requestEpoch, "review");
+                      return;
+                    }
+                    if (!review.impact.allowed) {
+                      effects.discardCollectionReview(review);
+                      operation.report({
+                        code: "CONFIG_CONFLICT",
+                        severity: "warning",
+                        message:
+                          "These Skills cannot be added to this declaration. Review existing members, names and the selected save location.",
+                      });
+                      settleSession(begun.revision, begun.requestEpoch, "review");
+                      return;
+                    }
+                    const applying = beginSession(begun.revision, "executing");
+                    const complete = await effects.confirmCollection(review);
+                    if (!sessionMatches(applying, "form", "membership-chooser")) return;
+                    if (complete) {
+                      const dismissed = overlaySession().dismissed;
+                      closeSession(applying.revision);
+                      if (!dismissed) {
+                        collectionsState.clearFilters();
+                        collectionsState.select(target.collection);
+                        collectionsState.closeInspector();
+                        collectionsState.selectTab(target.collection, "entries");
+                        if (additions[0])
+                          collectionsState.selectRow(
+                            target.collection,
+                            "entries",
+                            collectionMemberKey(additions[0]),
+                          );
+                        routeSource({
+                          destination: "workspace",
+                          section: "collections",
+                          selection: target.collection,
+                          surface: layout.wide() ? "browser" : "inspector",
+                          focus: "collection-relationships",
                         });
-                    }}
-                  />
-                )
-              );
-            })()}
-            {overlayKind() === "form" && membershipChooser() && (
-              <InstalledSkillChooserOverlay
-                skills={(projection.workspace()?.installedSkills ?? []).map((skill) => ({
-                  address: skill.address,
-                  name: skill.name,
-                  description: skill.description,
-                }))}
-                onClose={() => {
-                  closeOverlay();
-                }}
-                onSelect={(address, name) => {
-                  const target = membershipChooser();
-                  if (!target) return;
-                  openSession("form", {
-                    family: "membership-draft",
-                    level: target.level,
-                    collection: target.collection,
-                    expectedOwner: target.expectedOwner,
-                    additions: [{ name, address }],
-                  });
-                }}
-              />
-            )}
-            {overlayKind() === "form" && (
-              <Show when={membershipDraft()} fallback={null}>
-                {(draft) => (
-                  <MembershipBatchDraftOverlay
-                    level={draft().level}
-                    collection={draft().collection}
-                    additions={draft().additions}
-                    pending={overlaySession().phase === "preview"}
-                    error={operation.problem()}
-                    onCancel={closeOverlay}
-                    onChange={(index, name) => {
-                      const current = membershipDraft();
-                      if (!current) return;
-                      setSessionPayload({
-                        ...current,
-                        additions: current.additions.map((item, currentIndex) =>
-                          currentIndex === index ? { ...item, name } : item,
-                        ),
-                      });
-                    }}
-                    onPreview={() => {
-                      const current = membershipDraft();
-                      if (!current) return;
-                      void previewCollection({
-                        kind: "membership-batch",
-                        level: current.level,
-                        collection: current.collection,
-                        ...(current.expectedOwner ? { expectedOwner: current.expectedOwner } : {}),
-                        additions: current.additions.map((item) => ({
-                          ...item,
-                          name: item.name.trim(),
-                        })),
-                        removals: [],
-                      });
-                    }}
-                  />
-                )}
-              </Show>
-            )}
+                        if (!layout.wide()) workspaceState.openDetail();
+                        requestFocus("collection-relationships");
+                      }
+                    } else {
+                      effects.discardCollectionReview(review);
+                      settleFailedExecution(applying);
+                    }
+                  }}
+                />
+              )}
+            </Show>
             {overlayKind() === "form" && membershipRemovalPlan() && (
               <MembershipRemovalPlanOverlay
                 collection={membershipRemovalPlan()!.plan.collection}
@@ -4659,57 +4975,150 @@ export function App(props: {
                 }}
               />
             )}
-            {sourceRegistration() && (
-              <SourceRegistrationOverlay
-                kind={sourceRegistration()!.kind}
-                level={sourceRegistration()!.level}
-                configFile={(level) =>
-                  projection.workspace()?.configs.find((config) => config.level === level)?.file
-                    .file
-                }
-                pending={overlaySession().phase === "executing"}
-                error={operation.problem()}
-                onCancel={closeOverlay}
-                onSubmit={(value) => {
-                  const registration = sourceRegistration()!;
-                  const begun = beginSession(overlaySession().revision, "executing");
-                  void effects
-                    .registerSource({
-                      kind: registration.kind,
-                      level: value.level,
-                      id: value.id,
-                      binding: value.binding,
-                    })
-                    .then((complete) => {
-                      if (
-                        complete &&
-                        overlaySession().revision === begun.revision &&
-                        overlaySession().requestEpoch === begun.requestEpoch
-                      ) {
-                        const section =
-                          registration.kind === "source" ? "sources" : "config-sources";
-                        batch(() => {
+            <Show when={payload("acquire-source")}>
+              {(acquire) => (
+                <ModalShell>
+                  <ModalBody
+                    controls={modalControls}
+                    header={<text>{`Get Skills for ${acquire().target.collection}`}</text>}
+                    footer={
+                      <box flexDirection="row" gap={1} flexWrap="wrap">
+                        <ModalCommand
+                          id="acquire-source-add"
+                          controls={modalControls}
+                          record={modalCommand(
+                            "acquire-source.add",
+                            "Add Source…",
+                            "Continue in this Collection",
+                          )}
+                          execute={() =>
+                            openSession("form", {
+                              family: "source-registration",
+                              kind: "source",
+                              level: acquire().target.level,
+                              target: acquire().target,
+                            })
+                          }
+                        />
+                        <ModalCommand
+                          id="acquire-source-back"
+                          controls={modalControls}
+                          record={modalCommand(
+                            "acquire-source.back",
+                            "Back",
+                            "Keep selected Skills",
+                          )}
+                          execute={() => openSession("form", acquire().target)}
+                        />
+                        <ModalCommand
+                          id="acquire-source-cancel"
+                          controls={modalControls}
+                          record={modalCommand("acquire-source.cancel", "Cancel", "End this task")}
+                          execute={() => closeSession()}
+                        />
+                      </box>
+                    }
+                  >
+                    <DataList
+                      id="acquire-source-choice"
+                      focused
+                      height={6}
+                      showDescription
+                      options={(projection.workspace()?.effective.sources ?? []).map((source) => ({
+                        name: source.id,
+                        description: source.origin,
+                        value: source.id,
+                      }))}
+                      onSelect={(_index, option) => {
+                        if (!option) return;
+                        void discoverSource(option.value, acquire().target);
+                      }}
+                    />
+                  </ModalBody>
+                </ModalShell>
+              )}
+            </Show>
+            <Show when={sourceRegistration()}>
+              {(_registration) => (
+                <SourceRegistrationOverlay
+                  initialDraft={sourceRegistration()!.target?.sourceDraft}
+                  onBack={
+                    sourceRegistration()!.target
+                      ? (draft) => {
+                          if (overlaySession().phase !== "review") closeOverlay();
+                          else
+                            openSession("form", {
+                              ...sourceRegistration()!.target!,
+                              sourceDraft: draft,
+                            });
+                        }
+                      : undefined
+                  }
+                  kind={sourceRegistration()!.kind}
+                  level={sourceRegistration()!.level}
+                  configFile={(level) =>
+                    projection.workspace()?.configs.find((config) => config.level === level)?.file
+                      .file
+                  }
+                  pending={overlaySession().phase === "executing"}
+                  error={operation.problem()}
+                  onCancel={() => {
+                    if (overlaySession().phase !== "review") closeOverlay();
+                    else closeSession();
+                  }}
+                  onSubmit={(value, discover) => {
+                    const registration = sourceRegistration()!;
+                    const begun = beginSession(overlaySession().revision, "executing");
+                    void effects
+                      .registerSource({
+                        kind: registration.kind,
+                        level: value.level,
+                        id: value.id,
+                        binding: value.binding,
+                      })
+                      .then(async (complete) => {
+                        if (
+                          complete &&
+                          overlaySession().revision === begun.revision &&
+                          overlaySession().requestEpoch === begun.requestEpoch
+                        ) {
+                          if (overlaySession().dismissed) {
+                            closeSession(begun.revision);
+                            return;
+                          }
+                          const section =
+                            registration.kind === "source" ? "sources" : "config-sources";
+                          if (!registration.target)
+                            batch(() => {
+                              closeSession(begun.revision);
+                              routeSource({
+                                destination: value.level,
+                                section,
+                                selection:
+                                  registration.kind === "source"
+                                    ? value.id
+                                    : `/configSources/${value.id}`,
+                              });
+                            });
+                          if (
+                            discover &&
+                            registration.kind === "source" &&
+                            !overlaySession().dismissed
+                          ) {
+                            await discoverSource(value.id, registration.target);
+                          } else if (registration.target) openSession("form", registration.target);
+                        } else if (
+                          overlaySession().revision === begun.revision &&
+                          overlaySession().requestEpoch === begun.requestEpoch &&
+                          overlaySession().dismissed
+                        )
                           closeSession(begun.revision);
-                          routeSource({
-                            destination: value.level,
-                            section,
-                            selection:
-                              registration.kind === "source"
-                                ? value.id
-                                : `/configSources/${value.id}`,
-                          });
-                        });
-                      } else if (
-                        overlaySession().revision === begun.revision &&
-                        overlaySession().requestEpoch === begun.requestEpoch &&
-                        overlaySession().dismissed
-                      )
-                        closeSession(begun.revision);
-                      else settleFailedExecution(begun);
-                    });
-                }}
-              />
-            )}
+                        else settleFailedExecution(begun);
+                      });
+                  }}
+                />
+              )}
+            </Show>
             <Show when={collectionImportDraft()}>
               {(draft) => (
                 <CollectionImportOverlay
@@ -4791,6 +5200,21 @@ export function App(props: {
             </Show>
             {overlayKind() === "confirm" && collectionReview() && (
               <CollectionReviewOverlay
+                onBack={
+                  collectionReviewPayload()?.draft
+                    ? () => {
+                        const current = collectionReviewPayload();
+                        if (!current?.draft || !current.review) return;
+                        if (overlaySession().phase !== "review") {
+                          closeOverlay();
+                          return;
+                        }
+                        effects.discardCollectionReview(current.review);
+                        operation.clearProblem();
+                        openSession("form", current.draft);
+                      }
+                    : undefined
+                }
                 review={collectionReview()!}
                 pending={overlaySession().phase === "executing"}
                 error={operation.problem()}
@@ -4805,18 +5229,9 @@ export function App(props: {
                   <ModalShell>
                     <ModalBody controls={modalControls}>
                       <text>
-                        {operation.kind === "managed"
-                          ? `${operation.enabled ? "Enable" : "Disable"} Managed OpenCode`
-                          : `${operation.kind[0]!.toUpperCase()}${operation.kind.slice(1)} Config Source`}
+                        {`${operation.kind[0]!.toUpperCase()}${operation.kind.slice(1)} Config Source`}
                       </text>
-                      <text>
-                        {operation.kind === "managed"
-                          ? `Target: ${operation.file} /agents/opencode`
-                          : `Config Source: ${operation.id}`}
-                      </text>
-                      {operation.kind === "managed" && (
-                        <text>{`Config level: ${operation.level}. This does not install Skills or select Collections.`}</text>
-                      )}
+                      <text>{`Config Source: ${operation.id}`}</text>
                       {operation.kind === "adopt" && (
                         <text>{`Exact revision: ${operation.observation?.exactRevision}`}</text>
                       )}
@@ -4893,10 +5308,7 @@ export function App(props: {
                                     disabledReason: "Wait for the current operation to settle",
                                   }
                                 : {}),
-                              danger:
-                                operation.kind === "forget" ||
-                                operation.kind === "remove" ||
-                                (operation.kind === "managed" && !operation.enabled),
+                              danger: operation.kind === "forget" || operation.kind === "remove",
                             }}
                             execute={() => {
                               const begun = beginSession(overlaySession().revision, "executing");
@@ -4909,12 +5321,7 @@ export function App(props: {
                                     )
                                   : operation.kind === "forget"
                                     ? effects.forgetConfig(operation.id!)
-                                    : operation.kind === "remove"
-                                      ? effects.removeConfig(operation.id!)
-                                      : effects.setManagedOpenCode(
-                                          operation.level!,
-                                          operation.enabled!,
-                                        );
+                                    : effects.removeConfig(operation.id!);
                               void execute.then((complete) => {
                                 if (
                                   complete &&
@@ -5055,6 +5462,8 @@ export function App(props: {
             <Show when={sourceSelectionPayload()} fallback={null}>
               {(selection) => (
                 <SourceSelectionOverlay
+                  collection={selection().target?.collection}
+                  onBack={selection().target ? closeOverlay : undefined}
                   review={selection().review}
                   installed={
                     new Set(
@@ -5066,6 +5475,10 @@ export function App(props: {
                     )
                   }
                   selected={selection().selectedPaths}
+                  query={selection().query}
+                  onQuery={(query) =>
+                    replaceSession(overlaySession().revision, { ...selection(), query })
+                  }
                   pending={overlaySession().phase === "executing"}
                   error={operation.problem()}
                   onToggle={(path) => {
@@ -5080,7 +5493,14 @@ export function App(props: {
                   onSubmit={() => {
                     void applySourceSelection();
                   }}
-                  onCancel={closeOverlay}
+                  onCancel={() => {
+                    if (overlaySession().phase !== "review") {
+                      closeOverlay();
+                      return;
+                    }
+                    effects.discardDiscovery(selection().review);
+                    closeSession();
+                  }}
                 />
               )}
             </Show>
@@ -5109,40 +5529,17 @@ export function App(props: {
             {overlayKind() === "selection" && sourceObservationPayload() && (
               <SourceObservationOverlay
                 title="Discovering Skills"
+                onBack={
+                  sourceObservationPayload()!.target && overlaySession().phase === "review"
+                    ? () => openSession("form", sourceObservationPayload()!.target!)
+                    : undefined
+                }
                 source={sourceObservationPayload()!.intent.source}
                 cancelling={overlaySession().phase === "cancelling"}
                 error={operation.problem()}
                 onRetry={() => {
-                  const intent = sourceObservationPayload()!.intent;
-                  operation.clearProblem();
-                  const revision = overlaySession().revision;
-                  setOverlaySession((current) =>
-                    reduceOverlaySession(current, {
-                      type: "retry",
-                      revision,
-                      phase: "observing",
-                    }),
-                  );
-                  const attempt = overlaySession();
-                  void effects.discover(intent).then((next) => {
-                    if (
-                      next &&
-                      sessionMatches(attempt, "selection", "source-observation") &&
-                      !overlaySession().dismissed
-                    )
-                      settleSession(attempt.revision, attempt.requestEpoch, "review", {
-                        family: "source-selection",
-                        review: next,
-                        selectedPaths: [],
-                      });
-                    else if (
-                      sessionMatches(attempt, "selection", "source-observation") &&
-                      overlaySession().dismissed
-                    )
-                      closeSession(attempt.revision);
-                    else if (sessionMatches(attempt, "selection", "source-observation"))
-                      settleSession(attempt.revision, attempt.requestEpoch, "review");
-                  });
+                  const current = sourceObservationPayload()!;
+                  void discoverSource(current.intent.source, current.target);
                 }}
                 onClose={closeOverlay}
               />

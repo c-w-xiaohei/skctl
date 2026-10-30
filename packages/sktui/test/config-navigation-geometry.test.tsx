@@ -8,6 +8,7 @@ import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
+import { validSections } from "../src/types";
 
 for (const level of ["global", "project", "local"] as const) {
   test.each([132, 139, 140, 144, 150, 100, 80, 79, 43])(
@@ -37,7 +38,7 @@ for (const level of ["global", "project", "local"] as const) {
         await parsedEnter(setup);
         await setup.flush();
         const viewport = setup.renderer.root.findDescendantById("section-nav")!;
-        for (const page of ["sources", "config-sources", "collections", "integrations"]) {
+        for (const page of validSections(level)) {
           const tab = setup.renderer.root.findDescendantById(`shell-section-${level}-tab-${page}`)!;
           expect(tab).toBeDefined();
           expect(tab.screenY).toBe(0);
@@ -45,9 +46,19 @@ for (const level of ["global", "project", "local"] as const) {
           expect(tab.screenX + tab.width).toBeLessThanOrEqual(viewport.screenX + viewport.width);
         }
         expect(geometry()).toEqual(before);
-        if (width >= 132) expect(setup.captureCharFrame().split("\n")[0]).toContain("Integrations");
-        else expect(setup.captureCharFrame().split("\n")[0]).toContain("Agents");
-        await enterLive(setup, `shell-section-${level}-tab-integrations`);
+        if (level !== "local") {
+          expect(setup.captureCharFrame().split("\n")[0]).toContain(
+            width >= 132 ? "Integrations" : "Agents",
+          );
+        } else {
+          expect(
+            !!setup.renderer.root.findDescendantById("shell-section-local-tab-integrations"),
+          ).toBe(false);
+        }
+        await enterLive(
+          setup,
+          `shell-section-${level}-tab-${level === "local" ? "collections" : "integrations"}`,
+        );
         await setup.flush();
         expect(geometry()).toEqual(before);
         if (process.env.PAGE_INTERACTION_CAPTURE_DIR) {

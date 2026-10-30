@@ -21,7 +21,7 @@ test("resource Back invalidates a deferred body completion while retaining Reade
   const resource = owner.read(alpha, "notes.md");
   owner.abandonResource();
   reads[0]!.resolve({ kind: "text", path: "notes.md", format: "markdown", text: "late body" });
-  expect(await resource).toMatchObject({ value: { text: "late body" } });
+  expect(await resource).toMatchObject({ kind: "text", text: "late body" });
   expect(reads[0]!.signal?.aborted).toBe(false);
   expect(owner.current()).toMatchObject({
     tab: "resources",

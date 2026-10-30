@@ -3,18 +3,15 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-test("PROJ-016 reports managed catalog unavailable for absent, empty, or incomplete Use", async () => {
+test("empty Use is an available empty catalog; incomplete Use remains unavailable", async () => {
   const root = await mkdtemp(join(tmpdir(), "skctl-catalog-"));
   const state = join(root, "state");
   try {
     process.env.SKCTL_STATE_DIR = state;
-    await writeFile(
-      join(root, "skctl.jsonc"),
-      JSON.stringify({ agents: { opencode: "managed" }, use: [] }),
-    );
+    await writeFile(join(root, "skctl.jsonc"), JSON.stringify({ use: [] }));
     const core = { cwd: root };
     await expect(api.browseCatalog(core, {})).resolves.toMatchObject({
-      value: { status: "unavailable", reason: expect.any(String) },
+      value: { status: "available", items: [] },
     });
     await writeFile(
       join(root, "skctl.jsonc"),

@@ -184,7 +184,6 @@ export interface NavFacts {
   readonly collectionBrowserOpen?: boolean;
   readonly workspaceShell?: boolean;
   readonly configSourceSurface?: boolean;
-  readonly configIntegrationSurface?: boolean;
 }
 
 export type NavEffect = "exit" | "cancel-operation" | "close-surface";
@@ -215,8 +214,7 @@ export type NavEvent =
   | { readonly type: "collections.filter.close" }
   | { readonly type: "collections.inspector.back" }
   | { readonly type: "workspace.collections.close" }
-  | { readonly type: "config.surface.back" }
-  | { readonly type: "config.integration.back" };
+  | { readonly type: "config.surface.back" };
 
 const events = (...list: readonly NavEvent[]): NavDecision => ({ kind: "events", events: list });
 
@@ -264,7 +262,6 @@ export const resolveEscape = (facts: NavFacts): NavDecision => {
           { type: "focus.request", focus: "collections-filter-search" },
         )
       : events({ type: "collections.filter.close" }, { type: "focus.request", focus: "browser" });
-  if (facts.configIntegrationSurface) return events({ type: "config.integration.back" });
   if (facts.configSourceSurface) return events({ type: "config.surface.back" });
   if (facts.collectionInspectorOpen) return events({ type: "collections.inspector.back" });
   if (

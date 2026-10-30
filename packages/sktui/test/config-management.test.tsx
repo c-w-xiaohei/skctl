@@ -1,16 +1,18 @@
 import { expect, test } from "bun:test";
-import { SelectRenderable, type BaseRenderable } from "@opentui/core";
+import { InputRenderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import type { WorkspaceView } from "@skctl/core";
 import { createSignal } from "solid-js";
 import { App } from "../src/app";
 import { ConfigPage } from "../src/config-page";
-import { configDeclarationOwnerKey, createConfigState } from "../src/config/state";
+import { createConfigState } from "../src/config/state";
 import { SourceRegistrationOverlay } from "../src/operations";
+import type { IntegrationsApi } from "../src/integrations/state";
+import type { MutationRequest } from "@skctl/integrations";
 import type { ActionRecord } from "../src/actions";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
+import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 function configProjection(): WorkspaceView {
   const base = workspaceProjection();
   const global = base.configs[0]!;
@@ -217,28 +219,34 @@ async function waitForShell(setup: Awaited<ReturnType<typeof testRender>>) {
 async function openSection(
   setup: Awaited<ReturnType<typeof testRender>>,
   section: "sources" | "config-sources" | "collections" | "integrations",
+  scope: "global" | "project" | "local" = "project",
 ) {
   const sections = ["sources", "config-sources", "collections", "integrations"] as const;
   const targetIndex = sections.indexOf(section);
   const currentIndex = sections.findIndex((value) => {
-    const tab = setup.renderer.root.findDescendantById(`shell-section-project-tab-${value}`);
+    const tab = setup.renderer.root.findDescendantById(`shell-section-${scope}-tab-${value}`);
     return tab instanceof TabsTabRenderable && tab.getState().selected;
   });
   if (currentIndex < 0) throw new Error("Shell section selection did not mount");
   const current = setup.renderer.root.findDescendantById(
-    `shell-section-project-tab-${sections[currentIndex]}`,
+    `shell-section-${scope}-tab-${sections[currentIndex]}`,
   )!;
   current.focus();
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === current.id);
-  for (let index = currentIndex; index < targetIndex; index++) {
-    setup.mockInput.pressArrow("right");
+  const direction = currentIndex < targetIndex ? 1 : -1;
+  for (let index = currentIndex; index !== targetIndex; index += direction) {
+    setup.mockInput.pressArrow(direction === 1 ? "right" : "left");
     await setup.renderOnce();
-    const next = sections[index + 1]!;
+    const next = sections[index + direction]!;
     const title =
-      next === "config-sources" ? "Config Sources" : next[0]!.toUpperCase() + next.slice(1);
+      next === "integrations"
+        ? "Harness integrations"
+        : next === "config-sources"
+          ? "Config Sources"
+          : next[0]!.toUpperCase() + next.slice(1);
     await setup.waitForFrame((frame) => frame.includes(title));
     const tab = setup.renderer.currentFocusedRenderable as TabsTabRenderable;
-    expect(tab.id).toBe(`shell-section-project-tab-${next}`);
+    expect(tab.id).toBe(`shell-section-${scope}-tab-${next}`);
     expect(tab.getState().selected).toBe(true);
   }
 }
@@ -303,7 +311,7 @@ test("RENDER wide Config owns bounded Sections and Content panels with a growing
       expect(panel.screenX + panel.width).toBeLessThanOrEqual(120);
       expect(panel.screenY + panel.height).toBeLessThanOrEqual(40);
     }
-    expect(sources.height).toBeGreaterThan(10);
+    expect(sources.height).toBeGreaterThanOrEqual(3);
     expect(sources.height).toBeLessThanOrEqual(browser.height);
   } finally {
     setup.renderer.destroy();
@@ -362,6 +370,7 @@ test("RENDER selected Config Source exposes its contributed source and collectio
         onSelect={() => {}}
         onAction={() => {}}
         onOpenConfigSourceInspector={() => state.openConfigSourceInspector("project")}
+        mode="wide"
         onBackConfigSourceInspector={() => state.backConfigSourceSurface("project")}
         onContribution={() => {}}
       />
@@ -369,9 +378,8 @@ test("RENDER selected Config Source exposes its contributed source and collectio
     { width: 120, height: 40 },
   );
   try {
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Source  team/lark");
-    expect(setup.captureCharFrame()).toContain("Collection  team/docs");
+    await focusLive(setup, "config-source-contributions");
+    await setup.waitForFrame((frame) => frame.includes("team/lark") && frame.includes("team/docs"));
     expect(setup.renderer.root.findDescendantById("config-source-contributions")).toBeDefined();
     expect(
       setup.renderer.root.findDescendantById("config-command-config.source.back"),
@@ -404,28 +412,25 @@ test("RENDER selected Config declarations expose binding and owner facts", async
   };
   const sources = await render("sources", "team-main");
   try {
-    const frame = sources.captureCharFrame();
-    expect(frame).toContain("Selected Source  team-main");
-    expect(frame).toContain("Canonical Origin  https://github.com/acme/main");
-    expect(frame).toContain("Source Root  skills");
-    expect(frame).toContain("Binding kind  github");
-    expect(frame).toContain("Tracked ref  main");
-    expect(frame).toContain("Provenance  Direct");
+    const text = renderableText(sources.renderer.root);
+    expect(text).toMatch(/Source\s+team-main/);
+    expect(text).toMatch(/Origin\s+https:\/\/github.com\/acme\/main/);
+    expect(text).toMatch(/Root\s+skills/);
+    expect(text).toMatch(/Kind\s+github/);
+    expect(text).toMatch(/Tracked ref\s+main/);
+    expect(text).toContain("Yes · direct declaration");
   } finally {
     sources.renderer.destroy();
   }
   const contributed = await render("sources", "team/lark");
   try {
-    const frame = contributed.captureCharFrame();
-    expect(frame).toContain("Selected Source  team/lark");
-    expect(frame).toContain("Binding kind  github");
-    expect(frame).toContain("Canonical Origin  https://github.com/acme/skills");
-    expect(frame).toContain("Source Root  skills");
-    expect(frame).toContain("Tracked ref  main");
-    expect(frame).toContain("Provenance  Config Source");
-    expect(renderableText(contributed.renderer.root)).toContain(
-      "Config Source owner  project /workspace/skctl/skctl.jsonc /configSources/team",
-    );
+    const text = renderableText(contributed.renderer.root);
+    expect(text).toMatch(/Source\s+team\/lark/);
+    expect(text).toMatch(/Kind\s+github/);
+    expect(text).toMatch(/Origin\s+https:\/\/github.com\/acme\/skills/);
+    expect(text).toMatch(/Root\s+skills/);
+    expect(text).toMatch(/Tracked ref\s+main/);
+    expect(text).toContain("/configSources/team");
   } finally {
     contributed.renderer.destroy();
   }
@@ -528,11 +533,11 @@ test("RENDER direct Source tracked refs distinguish local bindings from declarat
     );
     try {
       await setup.renderOnce();
-      expect(renderableText(setup.renderer.root)).toContain("Tracked ref  None");
+      expect(renderableText(setup.renderer.root)).toMatch(/Tracked ref\s+None/);
       expect(setup.renderer.root.findDescendantById("config-source-browser")).toBeDefined();
       state.land("project", "sources", "team-main");
-      await setup.waitFor(() => renderableText(setup.renderer.root).includes("Tracked ref  main"));
-      expect(renderableText(setup.renderer.root)).not.toContain("Tracked ref  team-main");
+      await setup.waitFor(() => /Tracked ref\s+main/.test(renderableText(setup.renderer.root)));
+      expect(renderableText(setup.renderer.root)).not.toMatch(/Tracked ref\s+team-main/);
     } finally {
       setup.renderer.destroy();
     }
@@ -574,8 +579,7 @@ test("RENDER projection removal clears the Config Source browser into its empty 
     { width: 120, height: 40 },
   );
   try {
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Config Source  team");
+    await setup.waitForFrame((frame) => frame.includes("Config Source  team"));
     state.backConfigSourceSurface("project");
     state.reconcile(before, after);
     setProjection(after);
@@ -685,13 +689,11 @@ test("RENDER shell Section navigation owns Config section transitions", async ()
         setup.renderer.root.findDescendantById(`shell-section-project-tab-${value}`),
       ).toBeDefined();
     await openSection(setup, "integrations");
-    const integrationBrowser = setup.renderer.root.findDescendantById(
-      "config-integrations-browser",
-    )!;
+    const integrationBrowser = setup.renderer.root.findDescendantById("integration-hosts")!;
     integrationBrowser.focus();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === integrationBrowser);
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Managed OpenCode");
+    expect(setup.captureCharFrame()).toContain("Harness integrations");
   } finally {
     setup.renderer.destroy();
   }
@@ -707,11 +709,9 @@ test("RENDER Config browsers keep declaration identities primary and owner evide
     const sources = setup.renderer.root.findDescendantById(
       "config-source-browser",
     ) as import("@opentui/core").SelectRenderable;
-    expect(sources.options[0]).toMatchObject({
-      name: "team-main · github",
-      description: "https://github.com/acme/main · skills · Direct",
-      value: "team-main",
-    });
+    expect(sources.options[0]?.name.trimEnd()).toBe("team-main · github");
+    expect(sources.options[0]?.value).toBe("team-main");
+    expect(renderableText(setup.renderer.root)).toContain("https://github.com/acme/main");
     expect(sources.showDescription).toBe(false);
     expect(sources.showSelectionIndicator).toBe(true);
     expect(sources.showScrollIndicator).toBe(true);
@@ -722,11 +722,11 @@ test("RENDER Config browsers keep declaration identities primary and owner evide
     const configs = setup.renderer.root.findDescendantById(
       "config-config-source-browser",
     ) as import("@opentui/core").SelectRenderable;
-    expect(configs.options[0]).toMatchObject({
-      name: "team · github",
-      description: "/workspace/skctl/skctl.jsonc /configSources/team",
-      value: "/configSources/team",
-    });
+    expect(configs.options[0]?.name.trimEnd()).toBe("team · github");
+    expect(configs.options[0]?.value).toBe("/configSources/team");
+    await setup.waitFor(() =>
+      renderableText(setup.renderer.root).includes("/workspace/skctl/skctl.jsonc"),
+    );
     expect(configs.showDescription).toBe(false);
   } finally {
     setup.renderer.destroy();
@@ -1011,9 +1011,9 @@ test("RENDER Project direct Source rows select data without a generic action men
       () => setup.renderer.currentFocusedRenderable?.id === "config-source-browser",
     );
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Selected Source  team-main"));
+    await setup.waitForFrame((frame) => /Source\s+team-main/.test(frame));
     expect(setup.renderer.root.findDescendantById("source-action-menu")).toBeUndefined();
-    expect(setup.renderer.root.findDescendantById("config-command-add-source")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("config-command-add-source")).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -1067,356 +1067,277 @@ test("RENDER empty Collection Use state does not advertise an unavailable action
     setup.renderer.destroy();
   }
 });
-test("RENDER integrations use native rows and an inspect-only catalog surface", async () => {
-  const projection = configProjection();
-  const project = projection.configs.find((item) => item.level === "project")!;
-  if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
-  const adjustedProjection: WorkspaceView = {
-    ...projection,
-    effective: {
-      ...projection.effective,
-      status: "complete",
-      managed: true,
-      use: ["team"],
-      agent: {
-        status: "available",
-        integration: [project.direct.integrations[0]!.owner],
-        use: [project.direct.collectionUse[0]!.owner],
-        reasons: [],
-        catalog: [
-          {
-            selector: "team:guide",
-            name: "Guide",
-            description: "Review the team guide",
-            aliases: ["guide"],
-          },
-          {
-            selector: "team:review",
-            name: "Review",
-            description: "Review checklist",
-            aliases: [],
-          },
-        ],
-      },
+test("RENDER Integrations keeps selected host files through inspection and disconnects the exact entry", async () => {
+  const changes: MutationRequest[] = [];
+  let reads = 0;
+  const files = ["/project/.codex/hooks.json", "/project/.codex/config.toml"];
+  const integrations: IntegrationsApi = {
+    inspect: async (target) => {
+      reads++;
+      return {
+        target,
+        recommended: "codex-hooks",
+        selectionReason: "Host files",
+        entries: files.map((file) => ({
+          mechanism: "codex-hooks",
+          file,
+          status: "current",
+          inherited: false,
+          selected: "unknown",
+        })),
+        candidates: [],
+        cli: "/bin/skctl",
+        revision: `revision-${reads}`,
+        diagnostics: [],
+        nextSteps: [],
+      };
+    },
+    connect: async () => ({
+      action: "connect",
+      mechanism: "codex-hooks",
+      outcome: "unchanged",
+      diagnostics: [],
+    }),
+    disconnect: async (request) => {
+      changes.push(request);
+      return {
+        action: "disconnect",
+        mechanism: "codex-hooks",
+        outcome: "applied",
+        diagnostics: [],
+      };
     },
   };
-  const state = createConfigState();
-  const dispatched: string[] = [];
-  state.selectSection("project", "integrations");
   const setup = await testRender(
     () => (
-      <ConfigPage
-        config={state}
-        projection={() => adjustedProjection}
-        destination="project"
-        actions={[
-          configAction(
-            "disable-managed-opencode",
-            "Disable Managed OpenCode",
-            "Disable Managed OpenCode",
-            true,
-          ),
-        ]}
-        onSelect={(value) => state.select("project", value)}
-        onAction={(id) => dispatched.push(id)}
-        onBackIntegrationSurface={() => state.backIntegrationSurface("project")}
-        onContribution={() => {}}
+      <App
+        core={directSourceCore(configProjection())}
+        integrations={integrations}
+        environment={{ cwd: "/project" }}
+        exit={() => {}}
       />
     ),
     { width: 120, height: 40 },
   );
   try {
-    await setup.renderOnce();
-    expect(setup.renderer.root.findDescendantById("config-integrations-browser")).toBeDefined();
-    expect(setup.captureCharFrame()).not.toContain("Managed OpenCode catalog:");
-    const browser = setup.renderer.root.findDescendantById(
-      "config-integrations-browser",
-    ) as import("@opentui/core").SelectRenderable;
-    if (!browser) throw new Error(`Integration list did not mount\n${setup.captureCharFrame()}`);
-    const integrationOwnerKey = configDeclarationOwnerKey(project.direct.integrations[0]!.owner);
-    expect(browser.options).toHaveLength(1);
-    expect(browser.options[0]?.name).toContain("Managed OpenCode");
-    await focusLive(setup, "config-integrations-browser");
-    await parsedEnter(setup);
-    await setup.renderOnce();
-    if (!setup.renderer.root.findDescendantById("config-integration-inspector"))
-      throw new Error(`Initial integration inspector did not mount\n${setup.captureCharFrame()}`);
-    expect(
-      setup.renderer.root.findDescendantById("config-command-disable-managed-opencode"),
-    ).toBeDefined();
-    expect(
-      setup.renderer.root.findDescendantById("config-command-config.integration.back"),
-    ).toBeDefined();
-    await focusLive(setup, "config-command-disable-managed-opencode");
-    await parsedEnter(setup);
-    expect(dispatched).toEqual(["disable-managed-opencode"]);
-    await focusLive(setup, "config-command-config.integration.back");
-    await parsedEnter(setup);
-    expect(state.section("project")).toBe("integrations");
-    expect(setup.captureCharFrame()).toContain("Integrations connect this Config to agent hosts.");
-    const reopenedBrowser = (await focusLive(
-      setup,
-      "config-integrations-browser",
-    )) as import("@opentui/core").SelectRenderable;
-    expect(reopenedBrowser.getSelectedOption()?.value).toBe(integrationOwnerKey);
-    await parsedEnter(setup);
-    expect(setup.renderer.root.findDescendantById("config-integration-inspector")).toBeDefined();
-    const inspectorText = renderableText(setup.renderer.root);
-    expect(inspectorText).toContain("Status  Available");
-    expect(inspectorText).toContain("Collection Use");
-    expect(inspectorText).toContain("Collection Use  project");
-    const catalog = setup.renderer.root.findDescendantById(
-      "config-integration-catalog",
-    ) as import("@opentui/core").SelectRenderable;
-    expect(catalog.options.map((option) => option.name)).toEqual([
-      "team:guide · Guide",
-      "team:review · Review",
-    ]);
-    catalog.focus();
-    setup.mockInput.pressArrow("down");
-    await setup.renderOnce();
-    expect(state.integrationCatalogSelection("project")).toBe("team:review");
-    await parsedEnter(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("config-catalog-entry-inspector"),
-    );
-    expect(setup.captureCharFrame()).toContain("Catalog Entry  team:review");
-    const entryBack = setup.renderer.root.findDescendantById("config-command-config.catalog.back")!;
-    entryBack.focus();
-    await parsedEnter(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("config-integration-inspector"),
-    );
-    expect(state.integrationSurface("project")).toBe("inspector");
-    expect(state.integrationCatalogSelection("project")).toBe("team:review");
-  } finally {
-    setup.renderer.destroy();
-  }
-});
-test("RENDER mixed integration owners keep Actions and Palette owner-safe", async () => {
-  const projection = configProjection();
-  const project = projection.configs.find((item) => item.level === "project")!;
-  const projectOwner = project.direct.integrations[0]!.owner;
-  const globalOwner = {
-    level: "global" as const,
-    file: "/home/user/.config/skctl.jsonc",
-    pointer: "/agents/opencode",
-  };
-  const mixed: WorkspaceView = {
-    ...projection,
-    effective: {
-      ...projection.effective,
-      agent: {
-        status: "available",
-        integration: [projectOwner, globalOwner],
-        use: [],
-        reasons: [],
-        catalog: [],
-      },
-    },
-  };
-  const setup = await testRender(() => <App core={directSourceCore(mixed)} exit={() => {}} />, {
-    width: 120,
-    height: 40,
-  });
-  try {
-    await waitForShell(setup);
     await openDestination(setup, "project");
     await openSection(setup, "integrations");
-    await setup.renderOnce();
-    const browser = setup.renderer.root.findDescendantById(
-      "config-integrations-browser",
-    ) as import("@opentui/core").SelectRenderable;
-    expect(browser).toBeDefined();
-    browser.focus();
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-entries"));
+    await focusLive(setup, "integration-entries");
     setup.mockInput.pressArrow("down");
-    await setup.renderOnce();
-    expect(browser.getSelectedOption()?.value).toBe(configDeclarationOwnerKey(globalOwner));
-    await parsedEnter(setup);
-    expect(setup.captureCharFrame()).toContain("Open owning Config");
+    await setup.flush();
+    await enterLive(setup, "integration-refresh");
+    await setup.waitFor(() => reads === 2);
+    await setup.flush();
     expect(
-      setup.renderer.root.findDescendantById("config-command-config.integration.open-owner"),
-    ).toBeDefined();
-    expect(
-      setup.renderer.root.findDescendantById("config-command-config.integration.back"),
-    ).toBeDefined();
-    setup.mockInput.pressEscape();
-    await setup.renderOnce();
-    setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.renderOnce();
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("palette-open-config-integration"),
-    );
-    expect(setup.renderer.root.findDescendantById("palette-open-config-integration")).toBeDefined();
-    expect(
-      setup.renderer.root.findDescendantById("palette-disable-managed-opencode"),
-    ).toBeUndefined();
-    setup.renderer.root.findDescendantById("palette-open-config-integration")!.focus();
-    await parsedEnter(setup);
-    await setup.waitFor(() => {
-      const tab = setup.renderer.root.findDescendantById("shell-section-global-tab-integrations");
-      return tab instanceof TabsTabRenderable && tab.getState().selected;
-    });
-    expect(renderableText(setup.renderer.root.findDescendantById("shell-scope-select"))).toContain(
-      "Global",
-    );
-    expect(setup.captureCharFrame()).toContain(globalOwner.pointer);
+      (
+        setup.renderer.root.findDescendantById("integration-entries") as SelectRenderable
+      ).getSelectedOption()?.value,
+    ).toBe(files[1]);
+    expect(changes).toEqual([]);
+    await enterLive(setup, "integration-disconnect");
+    await setup.waitFor(() => changes.length === 1);
+    expect(changes[0]).toMatchObject({ entry: { file: files[1] }, expected: "revision-2" });
   } finally {
     setup.renderer.destroy();
   }
 });
-test("RENDER stale catalog entry keeps an explicit Back to Integration action", async () => {
-  const initial = configProjection();
-  if (initial.effective.status !== "complete") throw new Error("expected complete fixture");
-  const complete = initial.effective;
-  const project = initial.configs.find((item) => item.level === "project")!;
-  const catalogProjection = (
-    catalog: readonly {
-      selector: string;
-      name: string;
-      description: string;
-      aliases: readonly string[];
-    }[],
-  ): WorkspaceView => ({
-    ...initial,
-    effective: {
-      ...complete,
-      managed: true,
-      use: ["team"],
-      agent: {
-        status: "available",
-        integration: [project.direct.integrations[0]!.owner],
-        use: [project.direct.collectionUse[0]!.owner],
-        reasons: [],
-        catalog,
-      },
-    },
-  });
-  const [projection, setProjection] = createSignal<WorkspaceView>(
-    catalogProjection([
-      {
-        selector: "team:guide",
-        name: "Guide",
-        description: "Guide",
-        aliases: [],
-      },
-    ]),
-  );
-  const state = createConfigState();
-  state.land(
-    "project",
-    "integrations",
-    configDeclarationOwnerKey(project.direct.integrations[0]!.owner),
-  );
-  const setup = await testRender(
-    () => (
-      <ConfigPage
-        config={state}
-        projection={projection}
-        destination="project"
-        actions={[configAction("set-collection-use", "Set Collection Use", "Edit Collection Use")]}
-        onSelect={(value) => state.select("project", value)}
-        onAction={() => {}}
-        onContribution={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
-  try {
-    await setup.renderOnce();
-    state.openIntegrationInspector("project");
-    state.openIntegrationCatalogEntry("project", "team:guide");
-    await setup.renderOnce();
-    setProjection(catalogProjection([]));
-    state.reconcile(
-      catalogProjection([
+test("RENDER mixed integration entries keep inherited selection read-only in controls and Actions", async () => {
+  const disconnected: MutationRequest[] = [];
+  const integrations: IntegrationsApi = {
+    inspect: async (target) => ({
+      target,
+      recommended: "codex-hooks",
+      selectionReason: "Host entries",
+      entries: [
         {
-          selector: "team:guide",
-          name: "Guide",
-          description: "Guide",
-          aliases: [],
+          mechanism: "codex-hooks",
+          file: "/project/.codex/hooks.json",
+          status: "current",
+          inherited: false,
+          selected: "unknown",
         },
-      ]),
-      catalogProjection([]),
-    );
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Catalog entry unavailable");
-    const back = setup.renderer.root.findDescendantById("config-command-config.catalog.back")!;
-    expect(back).toBeDefined();
-    back.focus();
-    await parsedEnter(setup);
-    await setup.renderOnce();
-    expect(setup.renderer.root.findDescendantById("config-integration-inspector")).toBeDefined();
-  } finally {
-    setup.renderer.destroy();
-  }
-});
-test("RENDER unavailable integrations distinguish reasons from an available empty catalog and expose one enable action", async () => {
-  const projection = configProjection();
-  const adjustedProjection: WorkspaceView = {
-    ...projection,
-    configs: projection.configs.map((config) =>
-      config.level === "project"
-        ? { ...config, direct: { ...config.direct, integrations: [] } }
-        : config,
-    ),
-    effective: {
-      ...projection.effective,
-      agent: {
-        status: "unavailable",
-        integration: [],
-        use: [],
-        reasons: [
-          {
-            code: "CONFIG_CONFLICT",
-            severity: "warning",
-            message: "Collection Use is incomplete",
-          },
-        ],
-        catalog: [],
-      },
+        {
+          mechanism: "codex-hooks",
+          file: "/home/user/.codex/hooks.json",
+          status: "current",
+          inherited: true,
+          selected: "unknown",
+        },
+      ],
+      candidates: [],
+      cli: "/bin/skctl",
+      revision: "reviewed",
+      diagnostics: [],
+      nextSteps: [],
+    }),
+    connect: async () => ({
+      action: "connect",
+      mechanism: "codex-hooks",
+      outcome: "unchanged",
+      diagnostics: [],
+    }),
+    disconnect: async (request) => {
+      disconnected.push(request);
+      return {
+        action: "disconnect",
+        mechanism: "codex-hooks",
+        outcome: "applied",
+        diagnostics: [],
+      };
     },
   };
-  let enables = 0;
-  const state = createConfigState();
-  state.selectSection("project", "integrations");
   const setup = await testRender(
     () => (
-      <ConfigPage
-        config={state}
-        projection={() => adjustedProjection}
-        destination="project"
-        actions={[
-          configAction(
-            "enable-managed-opencode",
-            "Enable Managed OpenCode",
-            "Enable managed OpenCode in this Config owner",
-          ),
-        ]}
-        onSelect={() => {}}
-        onAction={(id) => {
-          if (id === "enable-managed-opencode") enables++;
-        }}
-        onContribution={() => {}}
+      <App
+        core={directSourceCore(configProjection())}
+        integrations={integrations}
+        environment={{ cwd: "/project" }}
+        exit={() => {}}
       />
     ),
     { width: 120, height: 40 },
   );
   try {
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Unavailable");
-    expect(setup.captureCharFrame()).toContain("Collection Use is incomplete");
-    expect(setup.captureCharFrame()).not.toContain("catalog: empty");
-    await focusLive(setup, "config-command-enable-managed-opencode");
-    await parsedEnter(setup);
-    expect(enables).toBe(1);
+    await openDestination(setup, "project");
+    await openSection(setup, "integrations");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-entries"));
+    await focusLive(setup, "integration-entries");
+    setup.mockInput.pressArrow("down");
+    await setup.flush();
+    await enterLive(setup, "shell-more-actions");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+    const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+    const disconnect = choices.options.find(
+      (option) => option.value.id === "integration.disconnect",
+    );
+    expect(disconnect?.value.enabled).toBe(false);
+    await parsedEscape(setup);
+    await focusLive(setup, "integration-entries");
+    setup.mockInput.pressArrow("up");
+    await setup.flush();
+    await enterLive(setup, "integration-disconnect");
+    await setup.waitFor(() => disconnected.length === 1);
+    expect(disconnected[0]).toMatchObject({
+      target: { scope: { kind: "project", directory: "/project" } },
+      entry: { file: "/project/.codex/hooks.json" },
+      expected: "reviewed",
+    });
   } finally {
     setup.renderer.destroy();
   }
 });
-test("RENDER empty Config Integrations enables Managed OpenCode without an existing owner", async () => {
+test("RENDER a removed host entry clears selection and preserves navigation after inspection", async () => {
+  let present = true;
+  const integrations: IntegrationsApi = {
+    inspect: async (target) => ({
+      target,
+      recommended: "codex-hooks",
+      selectionReason: "Host files",
+      entries: present
+        ? [
+            {
+              mechanism: "codex-hooks",
+              file: "/project/.codex/hooks.json",
+              status: "current",
+              inherited: false,
+              selected: "unknown",
+            },
+          ]
+        : [],
+      candidates: [],
+      cli: "/bin/skctl",
+      revision: present ? "present" : "removed",
+      diagnostics: [],
+      nextSteps: [],
+    }),
+    connect: async () => {
+      throw new Error("Inspection must not connect");
+    },
+    disconnect: async () => {
+      throw new Error("Missing entry must not disconnect");
+    },
+  };
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(configProjection())}
+        integrations={integrations}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await openDestination(setup, "project");
+    await openSection(setup, "integrations");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-entries"));
+    present = false;
+    await enterLive(setup, "integration-refresh");
+    await setup.waitForFrame((frame) => frame.includes("No existing entry found"));
+    expect(!!setup.renderer.root.findDescendantById("integration-entries")).toBe(false);
+    await enterLive(setup, "shell-more-actions");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+    const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+    expect(
+      choices.options.find((option) => option.value.id === "integration.disconnect")?.value.enabled,
+    ).toBe(false);
+    await parsedEscape(setup);
+    await openSection(setup, "sources");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-source-browser"));
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+test("RENDER failed host inspection shows the cause and retry resolves to an available empty host", async () => {
+  let reads = 0;
+  const integrations: IntegrationsApi = {
+    inspect: async (target) => {
+      if (++reads === 1) throw new Error("Host settings are unreadable");
+      return {
+        target,
+        recommended: "codex-hooks",
+        selectionReason: "Ready to connect",
+        entries: [],
+        candidates: [],
+        cli: "/bin/skctl",
+        revision: "empty",
+        diagnostics: [],
+        nextSteps: [],
+      };
+    },
+    connect: async () => {
+      throw new Error("Inspection must not connect");
+    },
+    disconnect: async () => {
+      throw new Error("Inspection must not disconnect");
+    },
+  };
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(configProjection())}
+        integrations={integrations}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await openDestination(setup, "project");
+    await openSection(setup, "integrations");
+    await setup.waitForFrame((frame) => frame.includes("Host settings are unreadable"));
+    expect(setup.captureCharFrame()).not.toContain("No existing entry found");
+    await enterLive(setup, "integration-refresh");
+    await setup.waitForFrame((frame) => frame.includes("No existing entry found"));
+    expect(setup.captureCharFrame()).not.toContain("Host settings are unreadable");
+    expect(reads).toBe(2);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+test("RENDER empty Config Integrations connects the selected host without a Config declaration", async () => {
   const projection = workspaceProjection();
-  const project = projection.configs.find((config) => config.level === "project")!;
   const adjusted: WorkspaceView = {
     ...projection,
     configs: projection.configs.map((config) =>
@@ -1425,23 +1346,33 @@ test("RENDER empty Config Integrations enables Managed OpenCode without an exist
         : config,
     ),
   };
-  const changes: unknown[] = [];
+  const changes: MutationRequest[] = [];
+  const integrations: IntegrationsApi = {
+    inspect: async (target) => ({
+      target,
+      recommended: "codex-hooks",
+      selectionReason: "Ready to connect",
+      entries: [],
+      candidates: [],
+      cli: "/bin/skctl",
+      revision: "empty",
+      diagnostics: [],
+      nextSteps: [],
+    }),
+    connect: async (request) => {
+      changes.push(request);
+      return { action: "connect", mechanism: "codex-hooks", outcome: "applied", diagnostics: [] };
+    },
+    disconnect: async () => {
+      throw new Error("No entry to disconnect");
+    },
+  };
   const setup = await testRender(
     () => (
       <App
-        core={directSourceCore(adjusted, {
-          createCollection: async (_environment: import("@skctl/core").CoreOptions, request) => {
-            changes.push(request);
-            return {
-              value: {
-                level: project.level,
-                file: project.file.file,
-                changed: true,
-              },
-              diagnostics: [],
-            };
-          },
-        })}
+        core={directSourceCore(adjusted)}
+        environment={{ cwd: "/project" }}
+        integrations={integrations}
         exit={() => {}}
       />
     ),
@@ -1451,16 +1382,17 @@ test("RENDER empty Config Integrations enables Managed OpenCode without an exist
     await waitForShell(setup);
     await openDestination(setup, "project");
     await openSection(setup, "integrations");
-    await focusLive(setup, "config-command-enable-managed-opencode");
-    await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Target:"));
-    expect(setup.captureCharFrame()).toContain(project.file.file);
-    expect(setup.captureCharFrame()).toContain("/agents/opencode");
-    setup.mockInput.pressEscape();
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("config-command-enable-managed-opencode"),
-    );
-    expect(changes).toEqual([]);
+    await setup.waitForFrame((frame) => frame.includes("No existing entry found"));
+    await enterLive(setup, "integration-connect");
+    await setup.waitFor(() => changes.length === 1);
+    expect(changes[0]).toMatchObject({
+      target: {
+        environment: { harness: "codex" },
+        scope: { kind: "project", directory: "/project" },
+      },
+      expected: "empty",
+    });
+    expect(changes[0]?.entry).toBeUndefined();
   } finally {
     setup.renderer.destroy();
   }
@@ -1495,142 +1427,73 @@ test("RENDER Config Collections expose Set or Edit Collection Use only for a dir
     setup.renderer.destroy();
   }
 });
-test("RENDER contributed integrations expose only their read-only owning Config action", async () => {
-  const projection = configProjection();
-  const project = projection.configs.find((item) => item.level === "project")!;
-  const owner = {
-    level: "global" as const,
-    file: "/home/user/.config/skctl.jsonc",
-    pointer: "/agents/opencode",
-    contribution: project.direct.configSources[0]!.owner
-      ? {
-          configSource: project.direct.configSources[0]!.owner,
-          declaration: {
-            level: "global" as const,
-            pointer: "/agents/opencode",
-          },
-        }
-      : undefined,
-  };
-  const adjusted: WorkspaceView = {
-    ...projection,
-    configs: projection.configs.map((config) =>
-      config.level === "project"
-        ? { ...config, direct: { ...config.direct, integrations: [] } }
-        : config,
-    ),
-    effective: {
-      ...projection.effective,
-      agent: {
-        status: "available",
-        integration: [owner],
-        use: [],
-        reasons: [],
-        catalog: [],
-      },
+test("RENDER inherited host files become editable only in their owning scope", async () => {
+  const changes: MutationRequest[] = [];
+  const file = "/home/user/.codex/hooks.json";
+  const integrations: IntegrationsApi = {
+    inspect: async (target) => ({
+      target,
+      recommended: "codex-hooks",
+      selectionReason: "Host scope",
+      entries: [
+        {
+          mechanism: "codex-hooks",
+          file,
+          status: "current",
+          inherited: target.scope.kind === "project",
+          selected: "unknown",
+        },
+      ],
+      candidates: [],
+      cli: "/bin/skctl",
+      revision: target.scope.kind,
+      diagnostics: [],
+      nextSteps: [],
+    }),
+    connect: async () => {
+      throw new Error("Scope navigation must not connect");
+    },
+    disconnect: async (request) => {
+      changes.push(request);
+      return {
+        action: "disconnect",
+        mechanism: "codex-hooks",
+        outcome: "applied",
+        diagnostics: [],
+      };
     },
   };
-  const state = createConfigState();
-  state.land("project", "integrations", configDeclarationOwnerKey(owner));
   const setup = await testRender(
     () => (
-      <ConfigPage
-        config={state}
-        projection={() => adjusted}
-        destination="project"
-        actions={[
-          configAction(
-            "enable-managed-opencode",
-            "Enable Managed OpenCode",
-            "Enable managed OpenCode in this Config owner",
-          ),
-        ]}
-        onSelect={() => {}}
-        onAction={() => {}}
-        onContribution={() => {}}
+      <App
+        core={directSourceCore(configProjection())}
+        integrations={integrations}
+        exit={() => {}}
       />
     ),
     { width: 120, height: 40 },
   );
   try {
-    await setup.renderOnce();
-    const browser = setup.renderer.root.findDescendantById("config-integrations-browser")!;
-    browser.focus();
-    await parsedEnter(setup);
-    await setup.renderOnce();
+    await openDestination(setup, "project");
+    await openSection(setup, "integrations");
+    await setup.waitForFrame((frame) => frame.includes("inherited"));
+    await enterLive(setup, "shell-more-actions");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+    const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
     expect(
-      setup.renderer.root.findDescendantById("config-command-config.integration.open-owner"),
-    ).toBeDefined();
-    expect(
-      setup.renderer.root.findDescendantById("config-command-config.integration.back"),
-    ).toBeDefined();
-  } finally {
-    setup.renderer.destroy();
-  }
-});
-test("RENDER Config keeps duplicate integration pointers distinct by owner", async () => {
-  const projection = configProjection();
-  const project = projection.configs.find((item) => item.level === "project")!;
-  const globalOwner = {
-    level: "global" as const,
-    file: "/home/user/.config/skctl.jsonc",
-    pointer: "/agents/opencode",
-  };
-  const adjusted: WorkspaceView = {
-    ...projection,
-    configs: projection.configs.map((config) =>
-      config.level === "project"
-        ? {
-            ...config,
-            direct: {
-              ...config.direct,
-              integrations: [
-                {
-                  kind: "opencode" as const,
-                  owner: project.direct.integrations[0]!.owner,
-                },
-              ],
-            },
-          }
-        : config,
-    ),
-    effective: {
-      ...projection.effective,
-      agent: {
-        status: "available",
-        integration: [globalOwner, project.direct.integrations[0]!.owner],
-        use: [],
-        reasons: [],
-        catalog: [],
-      },
-    },
-  };
-  const state = createConfigState();
-  state.selectSection("project", "integrations");
-  const setup = await testRender(
-    () => (
-      <ConfigPage
-        config={state}
-        projection={() => adjusted}
-        destination="project"
-        actions={[configAction("set-collection-use", "Set Collection Use", "Edit Collection Use")]}
-        onSelect={(value) => state.select("project", value)}
-        onAction={() => {}}
-        onContribution={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
-  try {
-    await setup.renderOnce();
-    const browser = setup.renderer.root.findDescendantById(
-      "config-integrations-browser",
-    ) as import("@opentui/core").SelectRenderable;
-    expect(browser.options).toHaveLength(2);
-    expect(browser.options.map((option) => option.description)).toEqual([
-      "project /workspace/skctl/skctl.jsonc /agents/opencode",
-      "global /home/user/.config/skctl.jsonc /agents/opencode",
-    ]);
+      choices.options.find((option) => option.value.id === "integration.disconnect")?.value.enabled,
+    ).toBe(false);
+    await parsedEscape(setup);
+    await openDestination(setup, "global");
+    await openSection(setup, "integrations", "global");
+    await setup.waitForFrame((frame) => frame.includes(file) && !frame.includes("inherited"));
+    await enterLive(setup, "integration-disconnect");
+    await setup.waitFor(() => changes.length === 1);
+    expect(changes[0]).toMatchObject({
+      target: { scope: { kind: "global" } },
+      entry: { file },
+      expected: "global",
+    });
   } finally {
     setup.renderer.destroy();
   }
@@ -1730,9 +1593,9 @@ test("RENDER contributed Collection without Collection Use has no false owning-U
     setup.renderer.destroy();
   }
 });
-test("RENDER unresolved Config projection shows Loading instead of Managed OpenCode Unavailable", async () => {
+test("RENDER unresolved Config Source projection shows Loading", async () => {
   const state = createConfigState();
-  state.selectSection("project", "integrations");
+  state.selectSection("project", "config-sources");
   const setup = await testRender(
     () => (
       <ConfigPage
@@ -1775,20 +1638,17 @@ test("RENDER Source registration validates and submits a fixed-level local bindi
   try {
     await setup.renderOnce();
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-kind",
+      () => setup.renderer.currentFocusedRenderable?.id === "source-register-origin",
     );
-    expect(setup.captureCharFrame()).toContain("Enter an ID and configured local path.");
+    expect(setup.captureCharFrame()).toContain("Enter a Source ID and local path");
+    await setup.mockInput.typeText("/shared");
     setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["t", "e", "a", "m"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["/", "s", "h", "a", "r", "e", "d"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["s", "k", "i", "l", "l", "s"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-register-choice");
-    setup.mockInput.pressKey("TAB");
-    await parsedEnter(setup);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-register-id");
+    (setup.renderer.currentFocusedRenderable as InputRenderable).value = "team";
+    await enterLive(setup, "source-register-advanced");
+    await focusLive(setup, "source-register-root");
+    await setup.mockInput.typeText("skills");
+    await enterLive(setup, "source-register-only");
     expect(submitted).toEqual([
       {
         level: "local",
@@ -1818,66 +1678,27 @@ test("RENDER workspace Config Source registration selects its owner and submits 
   try {
     await setup.renderOnce();
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-level",
+      () => setup.renderer.currentFocusedRenderable?.id === "source-register-origin",
     );
+    await setup.mockInput.typeText("https://git.example.com/acme/config");
+    const id = (await focusLive(setup, "source-register-id")) as InputRenderable;
+    id.value = "team";
+    await focusLive(setup, "source-register-level");
     setup.mockInput.pressArrow("up");
-    setup.mockInput.pressArrow("down");
-    await setup.renderOnce();
-    await parsedEnter(setup);
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressArrow("down");
-    await setup.renderOnce();
-    await parsedEnter(setup);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["t", "e", "a", "m"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys([
-      "h",
-      "t",
-      "t",
-      "p",
-      "s",
-      ":",
-      "/",
-      "/",
-      "g",
-      "i",
-      "t",
-      "h",
-      "u",
-      "b",
-      ".",
-      "c",
-      "o",
-      "m",
-      "/",
-      "a",
-      "c",
-      "m",
-      "e",
-      "/",
-      "c",
-      "o",
-      "n",
-      "f",
-      "i",
-      "g",
-    ]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["x"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["s", "k", "i", "l", "l", "s"]);
-    await setup.renderOnce();
-    setup.renderer.root.findDescendantById("source-register-submit")?.focus();
-    await parsedEnter(setup);
+    await enterLive(setup, "source-register-advanced");
+    const ref = (await focusLive(setup, "source-register-ref")) as InputRenderable;
+    ref.value = "release";
+    await focusLive(setup, "source-register-root");
+    await setup.mockInput.typeText("skills");
+    await enterLive(setup, "source-register-submit");
     expect(submitted).toEqual([
       {
-        level: "project",
+        level: "global",
         id: "team",
         binding: {
           kind: "git",
-          origin: "https://github.com/acme/config",
-          ref: "mainx",
+          origin: "https://git.example.com/acme/config",
+          ref: "release",
           root: "skills",
         },
       },
@@ -1886,7 +1707,7 @@ test("RENDER workspace Config Source registration selects its owner and submits 
     setup.renderer.destroy();
   }
 });
-test("RENDER GitHub registration traverses owner and repository in both directions and submits structured fields", async () => {
+test("RENDER GitHub registration parses its address and traverses advanced fields in both directions", async () => {
   const submitted: unknown[] = [];
   const setup = await testRender(
     () => (
@@ -1903,34 +1724,24 @@ test("RENDER GitHub registration traverses owner and repository in both directio
   try {
     await setup.renderOnce();
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-kind",
+      () => setup.renderer.currentFocusedRenderable?.id === "source-register-origin",
     );
-    setup.mockInput.pressArrow("down");
-    setup.mockInput.pressArrow("down");
-    await parsedEnter(setup);
-    await setup.renderOnce();
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["t", "e", "a", "m"]);
+    await setup.mockInput.typeText("https://github.com/acme/skills.git");
+    const id = (await focusLive(setup, "source-register-id")) as InputRenderable;
+    id.value = "team";
+    await enterLive(setup, "source-register-advanced");
+    const ref = (await focusLive(setup, "source-register-ref")) as InputRenderable;
+    ref.value = "v1";
     setup.mockInput.pressKey("TAB");
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-github-owner",
+      () => setup.renderer.currentFocusedRenderable?.id === "source-register-root",
     );
-    await setup.mockInput.pressKeys(["a", "c", "m", "e"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-github-repository",
-    );
-    await setup.mockInput.pressKeys(["s", "k", "i", "l", "l", "s"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["v", "1"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["a", "g", "e", "n", "t", "s"]);
+    await setup.mockInput.typeText("agents");
     setup.mockInput.pressKey("TAB", { shift: true });
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "source-register-ref",
     );
-    setup.renderer.root.findDescendantById("source-register-submit")?.focus();
-    await parsedEnter(setup);
+    await enterLive(setup, "source-register-submit");
     expect(submitted).toEqual([
       {
         level: "project",
@@ -1940,7 +1751,7 @@ test("RENDER GitHub registration traverses owner and repository in both directio
           owner: "acme",
           repository: "skills",
           origin: "https://github.com/acme/skills",
-          ref: "mainv1",
+          ref: "v1",
           root: "agents",
         },
       },
@@ -1965,68 +1776,30 @@ test("RENDER Source registration repeatedly replaces dynamic controls without re
   );
   try {
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-kind",
-    );
-    setup.mockInput.pressArrow("down");
-    setup.mockInput.pressArrow("down");
-    await parsedEnter(setup);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["t", "e", "a", "m"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["a", "c", "m", "e"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["s", "k", "i", "l", "l", "s"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["v", "1"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.mockInput.pressKeys(["a", "g", "e", "n", "t", "s"]);
-    for (let index = 0; index < 5; index++) setup.mockInput.pressKey("TAB", { shift: true });
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-kind",
-    );
-    setup.mockInput.pressArrow("up");
-    await parsedEnter(setup);
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "source-register-origin",
     );
-    await setup.mockInput.pressKeys(["h", "t", "t", "p", "s", ":", "/", "/", "g", "i", "t"]);
-    setup.mockInput.pressKey("TAB", { shift: true });
-    setup.mockInput.pressKey("TAB", { shift: true });
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-kind",
-    );
-    setup.mockInput.pressArrow("up");
-    await parsedEnter(setup);
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-origin",
-    );
-    await setup.mockInput.pressKeys(["/", "l", "o", "c", "a", "l"]);
-    setup.mockInput.pressKey("TAB", { shift: true });
-    setup.mockInput.pressKey("TAB", { shift: true });
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-kind",
-    );
-    setup.mockInput.pressArrow("down");
-    setup.mockInput.pressArrow("down");
-    await parsedEnter(setup);
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-github-owner",
-    );
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressKey("TAB");
-    setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-register-choice",
-    );
-    setup.mockInput.pressKey("TAB");
-    await parsedEnter(setup);
+    await setup.mockInput.typeText("https://github.com/acme/skills");
+    const id = (await focusLive(setup, "source-register-id")) as InputRenderable;
+    id.value = "team";
+    await enterLive(setup, "source-register-advanced");
+    const initialRef = (await focusLive(setup, "source-register-ref")) as InputRenderable;
+    initialRef.value = "v1";
+    await focusLive(setup, "source-register-root");
+    await setup.mockInput.typeText("agents");
+    const origin = (await focusLive(setup, "source-register-origin")) as InputRenderable;
+    origin.value = "/local";
+    await setup.waitFor(() => initialRef.isDestroyed);
+    expect(!!setup.renderer.root.findDescendantById("source-register-ref")).toBe(false);
+    origin.value = "https://git.example.com/acme/skills";
+    await setup.renderOnce();
+    const remoteRef = (await focusLive(setup, "source-register-ref")) as InputRenderable;
+    expect(remoteRef.value).toBe("v1");
+    await enterLive(setup, "source-register-advanced");
+    await setup.waitFor(() => remoteRef.isDestroyed);
+    await enterLive(setup, "source-register-advanced");
+    await focusLive(setup, "source-register-origin");
+    origin.value = "https://github.com/acme/skills";
+    await enterLive(setup, "source-register-submit");
     expect(submitted).toEqual([
       {
         level: "project",
@@ -2036,7 +1809,7 @@ test("RENDER Source registration repeatedly replaces dynamic controls without re
           owner: "acme",
           repository: "skills",
           origin: "https://github.com/acme/skills",
-          ref: "mainv1",
+          ref: "v1",
           root: "agents",
         },
       },

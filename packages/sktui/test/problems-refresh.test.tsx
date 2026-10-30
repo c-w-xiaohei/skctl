@@ -145,11 +145,11 @@ for (const refreshed of ["reorder", "fallback", "empty"] as const) {
     }
   });
 }
-test("RENDER Problems routes integration diagnostics to Config Integrations", async () => {
+test("RENDER Problems routes Source declaration diagnostics to the owning Config Source", async () => {
   const owner = {
     level: "project" as const,
     file: "/workspace/skctl/skctl.jsonc",
-    pointer: "/integrations/opencode",
+    pointer: "/sources/team-main",
   };
   const base = readerProjection();
   const current: WorkspaceView = {
@@ -158,21 +158,10 @@ test("RENDER Problems routes integration diagnostics to Config Integrations", as
       {
         code: "CONFIG_INVALID",
         severity: "warning",
-        message: "integration is unavailable",
+        message: "Source is unavailable",
         subject: { kind: "config", owner },
       },
     ],
-    configs: base.configs.map((config) =>
-      config.level === "project"
-        ? {
-            ...config,
-            direct: {
-              ...config.direct,
-              integrations: [{ kind: "opencode" as const, owner }],
-            },
-          }
-        : config,
-    ),
   };
   const setup = await testRender(
     () => (
@@ -188,25 +177,18 @@ test("RENDER Problems routes integration diagnostics to Config Integrations", as
   try {
     await openProblems(setup);
     await setup.waitForFrame(
-      (frame) =>
-        frame.includes("warning: integrations") && frame.includes("integration is unavailable"),
+      (frame) => frame.includes("warning: sources") && frame.includes("Source is unavailable"),
     );
     const problem = (live(setup, "problems-browser") as SelectRenderable).getSelectedOption()!;
-    expect(problem.name.trimEnd()).toBe("warning: integrations");
-    expect(problem.description.trimEnd()).toBe("integration is unavailable");
+    expect(problem.name.trimEnd()).toBe("warning: sources team-main");
+    expect(problem.description.trimEnd()).toBe("Source is unavailable");
     await enterLive(setup, "problems-browser");
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("config-integrations-browser"),
-    );
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-source-browser"));
     expect(
-      (live(setup, "shell-section-project-tab-integrations") as TabsTabRenderable).getState()
-        .selected,
+      (live(setup, "shell-section-project-tab-sources") as TabsTabRenderable).getState().selected,
     ).toBe(true);
-    const integration = (
-      live(setup, "config-integrations-browser") as SelectRenderable
-    ).getSelectedOption()!;
-    expect(integration.name.trimEnd()).toBe("Managed OpenCode · Direct");
-    expect(integration.description.trimEnd()).toBe(`${owner.level} ${owner.file} ${owner.pointer}`);
+    const source = (live(setup, "config-source-browser") as SelectRenderable).getSelectedOption()!;
+    expect(source.value).toBe("team-main");
   } finally {
     setup.renderer.destroy();
   }

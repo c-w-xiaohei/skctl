@@ -4,7 +4,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { parsedEnter, parsedEscape } from "./reader-test-controls";
+import { openAllInstalledSkills, parsedEnter, parsedEscape } from "./reader-test-controls";
 
 test("filter edits a category and its values in one visible popup", async () => {
   const setup = await testRender(
@@ -12,6 +12,7 @@ test("filter edits a category and its values in one visible popup", async () => 
     { width: 100, height: 30 },
   );
   try {
+    await openAllInstalledSkills(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("open-skills-filter"));
     const trigger = setup.renderer.root.findDescendantById("open-skills-filter")!;
     await setup.mockMouse.click(trigger.screenX + 1, trigger.screenY);
@@ -26,9 +27,9 @@ test("filter edits a category and its values in one visible popup", async () => 
     ) as SelectRenderable;
     expect(category).toBeDefined();
     expect(values).toBeDefined();
-    expect(setup.renderer.currentFocusedRenderable).toBe(category);
+    expect(setup.renderer.currentFocusedRenderable === category).toBe(true);
     expect(category.getSelectedOption()?.value).toBe("Collection");
-    expect(setup.captureCharFrame()).toContain("matching Skills");
+    expect(setup.captureCharFrame()).toContain("2 results");
 
     const sourceIndex = category.options.findIndex((option) => option.value === "Source");
     const direction = sourceIndex >= category.getSelectedIndex() ? "down" : "up";
@@ -38,8 +39,8 @@ test("filter edits a category and its values in one visible popup", async () => 
       await setup.waitFor(() => category.getSelectedIndex() === index);
     }
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Source values"));
-    expect(setup.renderer.root.findDescendantById("skills-filter-values")).toBe(values);
+    await setup.waitForFrame((frame) => frame.includes("Search Sources"));
+    expect(setup.renderer.root.findDescendantById("skills-filter-values") === values).toBe(true);
     expect(
       (setup.renderer.root.findDescendantById("skills-filter-search") as InputRenderable)
         .placeholder,
@@ -54,7 +55,7 @@ test("filter edits a category and its values in one visible popup", async () => 
     await setup.mockMouse.click(target.screenX + 1, target.screenY + sourceRow);
     await setup.renderOnce();
     expect(setup.renderer.root.findDescendantById("skills-filter-overlay")).toBeDefined();
-    expect(setup.captureCharFrame()).toContain("2 matching Skills");
+    expect(setup.captureCharFrame()).toContain("2 results");
 
     await parsedEscape(setup);
     await setup.waitFor(() => !setup.renderer.root.findDescendantById("skills-filter-overlay"));

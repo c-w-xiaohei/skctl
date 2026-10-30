@@ -32,6 +32,8 @@ export function ModalShell(props: {
 
 /** Keep the actual form/review content within the terminal's native scroll viewport. */
 export function ModalBody(props: {
+  readonly header?: JSX.Element;
+  readonly footer?: JSX.Element;
   readonly children: JSX.Element;
   readonly controls?: ReturnType<typeof createModalControlRegistry>;
 }) {
@@ -77,7 +79,7 @@ export function ModalBody(props: {
     renderer.off("frame", revealAfterLayout);
   });
   return (
-    <scrollbox
+    <box
       border
       borderStyle="rounded"
       borderColor={tokens().colors.border}
@@ -86,16 +88,32 @@ export function ModalBody(props: {
       padding={1}
       height={Math.max(1, terminal().height - 2)}
       minHeight={0}
-      scrollX={false}
-      ref={(target: ScrollBoxRenderable) => {
-        body = target;
-        if (props.controls) register(target);
-      }}
-      onSizeChange={scheduleReveal}
-      contentOptions={{ flexDirection: "column", flexShrink: 0 }}
+      flexDirection="column"
     >
-      {props.children}
-    </scrollbox>
+      {props.header && (
+        <box flexDirection="column" flexShrink={0}>
+          {props.header}
+        </box>
+      )}
+      <scrollbox
+        flexGrow={1}
+        minHeight={0}
+        scrollX={false}
+        ref={(target: ScrollBoxRenderable) => {
+          body = target;
+          if (props.controls) register(target);
+        }}
+        onSizeChange={scheduleReveal}
+        contentOptions={{ flexDirection: "column", flexShrink: 0 }}
+      >
+        {props.children}
+      </scrollbox>
+      {props.footer && (
+        <box flexDirection="column" flexShrink={0}>
+          {props.footer}
+        </box>
+      )}
+    </box>
   );
 }
 

@@ -1,15 +1,10 @@
 import { expect, test } from "bun:test";
 import type { WorkspaceView } from "@skctl/core";
-import { configDeclarationOwnerKey, createConfigState } from "../src/config/state";
+import { createConfigState } from "../src/config/state";
 import type { ConfigSection } from "../src/types";
 import { workspaceProjection } from "./direct-source.fixture";
 
-const sections: readonly ConfigSection[] = [
-  "sources",
-  "config-sources",
-  "collections",
-  "integrations",
-];
+const sections: readonly ConfigSection[] = ["sources", "config-sources", "collections"];
 const destinations = ["global", "project", "local"] as const;
 
 function projection(section: ConfigSection, values: readonly string[]): WorkspaceView {
@@ -50,13 +45,7 @@ function projection(section: ConfigSection, values: readonly string[]): Workspac
               }))
             : [],
         collectionUse: [],
-        integrations:
-          section === "integrations"
-            ? values.map((pointer) => ({
-                kind: "opencode" as const,
-                owner: { level, file: `/${level}.jsonc`, pointer },
-              }))
-            : [],
+        integrations: [],
       },
       contributed: { sources: [], collections: [] },
     })),
@@ -75,71 +64,25 @@ test("ConfigState reconciles every visible Config selection by level and section
       const state = createConfigState();
       state.land(destination, section, values[0]);
       state.reconcile(projection(section, values), projection(section, [values[0]!, values[2]!]));
-      expect(state.selection(destination, section)).toBe(
-        section === "integrations"
-          ? configDeclarationOwnerKey({
-              level: destination,
-              file: `/${destination}.jsonc`,
-              pointer: values[0]!,
-            })
-          : values[0],
-      );
+      expect(state.selection(destination, section)).toBe(values[0]);
 
-      state.select(
-        destination,
-        section === "integrations"
-          ? configDeclarationOwnerKey({
-              level: destination,
-              file: `/${destination}.jsonc`,
-              pointer: values[1]!,
-            })
-          : values[1],
-      );
+      state.select(destination, values[1]);
       state.reconcile(projection(section, values), projection(section, [values[0]!, values[2]!]));
-      expect(state.selection(destination, section)).toBe(
-        section === "integrations"
-          ? configDeclarationOwnerKey({
-              level: destination,
-              file: `/${destination}.jsonc`,
-              pointer: values[2]!,
-            })
-          : values[2],
-      );
+      expect(state.selection(destination, section)).toBe(values[2]);
 
-      state.select(
-        destination,
-        section === "integrations"
-          ? configDeclarationOwnerKey({
-              level: destination,
-              file: `/${destination}.jsonc`,
-              pointer: values[2]!,
-            })
-          : values[2],
-      );
+      state.select(destination, values[2]);
       state.reconcile(projection(section, values), projection(section, []));
       expect(state.selection(destination, section)).toBeUndefined();
     }
   }
 });
 
-test("ConfigState keeps the selected integration inspector surface separate from row selection", () => {
+test("ConfigState preserves Config Source selection when leaving its inspector", () => {
   const state = createConfigState();
-  const owner = { level: "project", file: "/project.jsonc", pointer: "/agents/opencode" };
-  state.land("project", "integrations", configDeclarationOwnerKey(owner));
-
-  expect(state.integrationSurface("project")).toBe("list");
-  state.openIntegrationInspector("project");
-  expect(state.integrationSurface("project")).toBe("inspector");
-  expect(state.selection("project", "integrations")).toBe(configDeclarationOwnerKey(owner));
-
-  state.selectIntegrationCatalogEntry("project", "team:guide");
-  expect(state.integrationSurface("project")).toBe("inspector");
-  expect(state.integrationCatalogSelection("project")).toBe("team:guide");
-  state.openIntegrationCatalogEntry("project", "team:guide");
-  expect(state.integrationSurface("project")).toBe("catalog-entry");
-  expect(state.integrationCatalogSelection("project")).toBe("team:guide");
-
-  state.closeIntegrationSurface("project");
-  expect(state.integrationSurface("project")).toBe("list");
-  expect(state.integrationCatalogSelection("project")).toBeUndefined();
+  state.land("project", "config-sources", "/configSources/team");
+  state.openConfigSourceInspector("project");
+  expect(state.configSourceSurface("project")).toBe("inspector");
+  state.backConfigSourceSurface("project");
+  expect(state.configSourceSurface("project")).toBe("list");
+  expect(state.selection("project", "config-sources")).toBe("/configSources/team");
 });

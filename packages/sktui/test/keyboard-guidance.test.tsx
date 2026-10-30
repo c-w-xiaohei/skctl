@@ -57,9 +57,13 @@ test("Skill controls expose their actual Enter action and Tab moves without exec
     expect(setup.captureCharFrame()).toContain("Enter Raw");
     expect(setup.captureCharFrame()).toContain("Tab panels");
     setup.mockInput.pressTab();
+    await setup.flush();
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-skills",
     );
+    setup.mockInput.pressTab();
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("route-back");
     setup.mockInput.pressTab();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "shell-scope-select");
     await setup.waitForFrame((frame) => frame.includes("Enter Change Scope"));
@@ -67,6 +71,8 @@ test("Skill controls expose their actual Enter action and Tab moves without exec
     expect(setup.renderer.root.findDescendantById("reader-tabs-tab-skill")).toBeDefined();
     expect(mounted.loads()).toBe(loadsAfterOpen);
     expect(mounted.updates()).toBe(0);
+    setup.mockInput.pressTab({ shift: true });
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "route-back");
     setup.mockInput.pressTab({ shift: true });
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-skills",

@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import type { WorkspaceView, MembershipBatchImpact, OperationResult } from "@skctl/core";
+import {
+  SkctlError,
+  type WorkspaceView,
+  type MembershipBatchImpact,
+  type OperationResult,
+} from "@skctl/core";
 import { App } from "../src/app";
 import { CollectionsPage } from "../src/collections-page";
 import { createCollectionsState } from "../src/collections/state";
@@ -90,12 +95,250 @@ function membershipProjection(): WorkspaceView {
     ],
   };
 }
-async function choosePaletteCommand(setup: Awaited<ReturnType<typeof testRender>>, id: string) {
-  await setup.waitFor(
-    () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
+test("Collection discovery retry and Back preserve the target and checked draft", async () => {
+  let attempts = 0;
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(membershipProjection(), {
+          discoverSkills: async (_environment, { source }) => {
+            if (++attempts <= 2)
+              throw new SkctlError("SOURCE_NOT_FOUND", "Temporarily unavailable");
+            return result({
+              source,
+              kind: "local",
+              candidates:
+                attempts < 5 ? [{ name: "new", path: "new", description: "New Skill" }] : [],
+            });
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
   );
-  await enterLive(setup, `palette-${id}`);
-}
+  try {
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
+    await enterLive(setup, "shell-section-tab-collections");
+    await enterLive(setup, "collection-action-add-membership");
+    await enterLive(setup, "installed-skill-choice");
+    await enterLive(setup, "installed-skill-acquire");
+    await enterLive(setup, "acquire-source-choice");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-observation-retry"));
+    await enterLive(setup, "source-observation-back");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-name-0"));
+    expect(
+      (setup.renderer.root.findDescendantById("installed-skill-name-0") as InputRenderable).value,
+    ).toBe("guide");
+    await enterLive(setup, "installed-skill-acquire");
+    await enterLive(setup, "acquire-source-choice");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-observation-retry"));
+    await enterLive(setup, "source-observation-retry");
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("source-operation-selection"),
+    );
+    await focusLive(setup, "source-operation-selection");
+    await setup.mockInput.typeText(" ");
+    await focusLive(setup, "source-operation-search");
+    await setup.mockInput.typeText("new");
+    await enterLive(setup, "source-operation-back");
+    await setup.waitForFrame((frame) => frame.includes("Add Skills to team"));
+    expect(
+      (setup.renderer.root.findDescendantById("installed-skill-name-0") as InputRenderable).value,
+    ).toBe("guide");
+    await enterLive(setup, "installed-skill-acquire");
+    await enterLive(setup, "acquire-source-choice");
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("source-operation-selection"),
+    );
+    expect(
+      (setup.renderer.root.findDescendantById("source-operation-search") as InputRenderable).value,
+    ).toBe("new");
+    await setup.waitForFrame((frame) => frame.includes("1 selected"));
+    expect(attempts).toBe(4);
+    await enterLive(setup, "source-operation-back");
+    await enterLive(setup, "installed-skill-acquire");
+    await enterLive(setup, "acquire-source-choice");
+    await setup.waitForFrame(
+      (frame) => frame.includes("0 selected") && frame.includes("No matching Skills"),
+    );
+    expect(attempts).toBe(5);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test.each([false, true])(
+  "Collection discovery Cancel ends the task after %s pending cleanup",
+  async (pending) => {
+    const discovery =
+      deferred<OperationResult<{ source: string; kind: "local"; candidates: [] }>>();
+    let started = false;
+    let aborted = false;
+    const setup = await testRender(
+      () => (
+        <App
+          core={directSourceCore(membershipProjection(), {
+            discoverSkills: async (_environment, _request, options) => {
+              started = true;
+              options?.signal?.addEventListener("abort", () => {
+                aborted = true;
+              });
+              if (!pending) throw new SkctlError("SOURCE_NOT_FOUND", "Unavailable");
+              return discovery.promise;
+            },
+          })}
+          exit={() => {}}
+        />
+      ),
+      { width: 100, height: 24 },
+    );
+    try {
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("shell-section-tab-collections"),
+      );
+      await enterLive(setup, "shell-section-tab-collections");
+      await enterLive(setup, "collection-action-add-membership");
+      await enterLive(setup, "installed-skill-acquire");
+      await enterLive(setup, "acquire-source-choice");
+      await setup.waitFor(() => started);
+      if (!pending)
+        await setup.waitFor(
+          () => !!setup.renderer.root.findDescendantById("source-observation-retry"),
+        );
+      await enterLive(setup, "source-observation-progress");
+      if (pending) {
+        expect(aborted).toBe(true);
+        expect(!!setup.renderer.root.findDescendantById("source-observation-overlay")).toBe(true);
+        discovery.resolve(result({ source: "team-main", kind: "local", candidates: [] }));
+      }
+      await setup.waitFor(
+        () => !setup.renderer.root.findDescendantById("source-observation-overlay"),
+      );
+      expect(!!setup.renderer.root.findDescendantById("installed-skill-choice")).toBe(false);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
+test("Collection addition keeps its draft and explains a blocked Core preview", async () => {
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(membershipProjection(), {
+          previewMembershipBatch: async (_environment, request) =>
+            result({
+              kind: "membership-batch",
+              collection: request.collection,
+              decision: { kind: "direct", owner: collectionOwner },
+              additions: request.additions,
+              removals: [],
+              affected: [],
+              blockers: [{ reason: "incomplete" }],
+              effectful: false,
+              allowed: false,
+            }),
+          editMembers: async () => {
+            throw new Error("Blocked preview must not execute");
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
+    await enterLive(setup, "shell-section-tab-collections");
+    await enterLive(setup, "collection-action-add-membership");
+    await enterLive(setup, "installed-skill-choice");
+    await enterLive(setup, "installed-skill-choice-submit");
+    await setup.waitForFrame((frame) => frame.includes("CONFIG_CONFLICT"));
+    expect(
+      (setup.renderer.root.findDescendantById("installed-skill-name-0") as InputRenderable).value,
+    ).toBe("guide");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("Source acquisition exposes a visible task Cancel at 43x13", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(membershipProjection())} exit={() => {}} />,
+    { width: 43, height: 13 },
+  );
+  try {
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("shell-section-tab-collections"),
+    );
+    await enterLive(setup, "shell-section-tab-collections");
+    await enterLive(setup, "collection-browser");
+    await enterLive(setup, "collection-action-add-membership");
+    await enterLive(setup, "installed-skill-acquire");
+    await setup.waitForFrame((frame) => frame.includes("Cancel"));
+    for (const id of ["acquire-source-add", "acquire-source-back", "acquire-source-cancel"]) {
+      const control = setup.renderer.root.findDescendantById(id)!;
+      expect(control.screenY + control.height).toBeLessThanOrEqual(13);
+    }
+    await enterLive(setup, "acquire-source-cancel");
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("acquire-source-choice"));
+    expect(!!setup.renderer.root.findDescendantById("installed-skill-choice")).toBe(false);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("Collection acquisition inherits its owner; Back preserves selection and Cancel ends the task", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(membershipProjection())} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
+  try {
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
+    await enterLive(setup, "shell-section-tab-collections");
+    await enterLive(setup, "collection-action-add-membership");
+    await enterLive(setup, "installed-skill-choice");
+    await enterLive(setup, "installed-skill-acquire");
+    await enterLive(setup, "acquire-source-add");
+    expect(setup.renderer.root.findDescendantById("source-register-level")).toBeUndefined();
+    expect(setup.captureCharFrame()).toContain("project");
+    await focusLive(setup, "source-register-origin");
+    await setup.mockInput.typeText("https://github.com/acme/skills");
+    await focusLive(setup, "source-register-id");
+    (setup.renderer.currentFocusedRenderable as InputRenderable).value = "custom";
+    await enterLive(setup, "source-register-advanced");
+    await focusLive(setup, "source-register-ref");
+    (setup.renderer.currentFocusedRenderable as InputRenderable).value = "release";
+    await enterLive(setup, "source-register-back");
+    expect(
+      (setup.renderer.root.findDescendantById("installed-skill-name-0") as InputRenderable).value,
+    ).toBe("guide");
+    await enterLive(setup, "installed-skill-acquire");
+    await enterLive(setup, "acquire-source-add");
+    expect(
+      (setup.renderer.root.findDescendantById("source-register-origin") as InputRenderable).value,
+    ).toBe("https://github.com/acme/skills");
+    expect(
+      (setup.renderer.root.findDescendantById("source-register-id") as InputRenderable).value,
+    ).toBe("custom");
+    expect(
+      (setup.renderer.root.findDescendantById("source-register-ref") as InputRenderable).value,
+    ).toBe("release");
+    await focusLive(setup, "source-register-origin");
+    (setup.renderer.currentFocusedRenderable as InputRenderable).value =
+      "https://github.com/acme/other";
+    await setup.flush();
+    expect(
+      (setup.renderer.root.findDescendantById("source-register-id") as InputRenderable).value,
+    ).toBe("custom");
+    await enterLive(setup, "source-register-choice");
+    expect(setup.renderer.root.findDescendantById("installed-skill-choice")).toBeUndefined();
+    expect(setup.renderer.root.findDescendantById("source-register-origin")).toBeUndefined();
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
 test("Space batch Add preserves slash-containing Source IDs and publishes selected Skills once", async () => {
   const previews: unknown[] = [];
   const changes: unknown[] = [];
@@ -194,30 +437,33 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
     await setup.renderOnce();
     expect(setup.captureCharFrame()).toContain("2 selected");
     expect(loads).toBe(beforeSecondSpace);
-    setup.mockInput.pressKey("P", { ctrl: true });
-    await choosePaletteCommand(setup, "skill-add-to-collection");
+    await enterLive(setup, "workspace-batch-add-to-collection");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-handoff-choice",
     );
     await enterLive(setup, "collection-handoff-choice");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-name-0",
-    );
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-name-0"));
     expect(setup.captureCharFrame()).toContain("guide");
     expect(setup.captureCharFrame()).toContain("review");
     const nameInput = setup.renderer.root.findDescendantById(
-      "membership-batch-name-0",
+      "installed-skill-name-0",
     ) as InputRenderable;
+    nameInput.focus();
     for (const character of "-entry") {
       await setup.mockInput.typeText(character);
-      expect(setup.renderer.root.findDescendantById("membership-batch-name-0")).toBe(nameInput);
+      expect(setup.renderer.root.findDescendantById("installed-skill-name-0")).toBe(nameInput);
     }
-    await enterLive(setup, "membership-batch-review");
+    await enterLive(setup, "installed-skill-choice-submit");
     await setup.waitFor(() => previews.length === 1);
     expect(previews).toEqual([
       {
         level: "project",
         collection: "team",
+        expectedOwner: {
+          level: "project",
+          file: "/workspace/skctl/skctl.jsonc",
+          pointer: "/collections/team",
+        },
         additions: [
           {
             name: "guide-entry",
@@ -228,16 +474,16 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
         removals: [],
       },
     ]);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-review-choice",
-    );
-    await enterLive(setup, "collection-review-confirm");
-    await parsedEnter(setup);
     await setup.waitFor(() => changes.length === 1);
     expect(changes).toEqual([
       {
         level: "project",
         collection: "team",
+        expectedOwner: {
+          level: "project",
+          file: "/workspace/skctl/skctl.jsonc",
+          pointer: "/collections/team",
+        },
         additions: [
           {
             name: "guide-entry",
@@ -252,7 +498,7 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
     await setup.waitFor(() => refreshes === 2);
     expect(previews).toHaveLength(1);
     expect(changes).toHaveLength(1);
-    expect(setup.captureCharFrame()).not.toContain("2 selected");
+    expect(setup.captureCharFrame()).toContain("2 selected");
   } finally {
     setup.renderer.destroy();
   }
@@ -322,12 +568,10 @@ test("repository-derived Add Membership creates its fixed ID then opens an owned
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === section);
     setup.mockInput.pressArrow("right");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
-    setup.mockInput.pressKey("p", { ctrl: true });
-    await choosePaletteCommand(setup, "add-membership");
+    await enterLive(setup, "collection-action-add-membership");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-create-level",
     );
-    setup.mockInput.pressArrow("down");
     await parsedEnter(setup);
     await enterLive(setup, "collection-create-submit");
     await setup.renderOnce();
@@ -335,11 +579,9 @@ test("repository-derived Add Membership creates its fixed ID then opens an owned
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-choice",
     );
     await enterLive(setup, "installed-skill-choice");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "membership-batch-name-0",
-    );
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-name-0"));
     expect(changes).toEqual([{ level: "project", collection: "team" }]);
-    await setup.waitForFrame((frame) => frame.includes("Add to team"));
+    await setup.waitForFrame((frame) => frame.includes("Add Skills to team"));
   } finally {
     setup.renderer.destroy();
   }
@@ -406,24 +648,28 @@ test("Workspace Collection create selects a level, blocks duplicate submit, and 
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === section);
     setup.mockInput.pressArrow("right");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
-    await focusLive(setup, "collection-browser");
-    setup.mockInput.pressKey("P", { ctrl: true });
-    await choosePaletteCommand(setup, "new-collection");
+    await enterLive(setup, "collection-action-new-collection");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-create-level",
     );
+    setup.mockInput.pressArrow("up");
     await parsedEnter(setup);
     setup.mockInput.pressKey("TAB");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-create-id",
     );
     await setup.mockInput.typeText("team");
+    await focusLive(setup, "collection-create-description");
+    await setup.mockInput.typeText("Team workflows");
     await enterLive(setup, "collection-create-submit");
     await parsedEnter(setup);
-    expect(changes).toEqual([{ level: "global", collection: "team" }]);
+    expect(changes).toEqual([
+      { level: "global", collection: "team", description: "Team workflows" },
+    ]);
     expect(changes).toHaveLength(1);
     writing.resolve(result({ level: "global", file: "skctl.jsonc", changed: true }));
-    await setup.waitForFrame((frame) => frame.includes("team"));
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-choice"));
+    await setup.waitForFrame((frame) => frame.includes("Add Skills to team"));
     expect(refreshes).toBe(2);
   } finally {
     setup.renderer.destroy();

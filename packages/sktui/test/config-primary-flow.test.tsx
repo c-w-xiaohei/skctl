@@ -192,34 +192,64 @@ for (const width of [120, 80, 60]) {
   });
 }
 
-test("RENDER reachable integration inspector saves row movement and entry Back restores that inspector", async () => {
+test("RENDER integrations opens host selection and preserves selected host entries through inspection", async () => {
   const setup = await testRender(
-    () => <App core={directSourceCore(projection())} exit={() => {}} />,
+    () => (
+      <App
+        core={directSourceCore(projection())}
+        integrations={{
+          inspect: async (target) => ({
+            target,
+            recommended: "codex-hooks",
+            selectionReason: "Host files",
+            cli: "/bin/skctl",
+            revision: "1",
+            candidates: [],
+            diagnostics: [],
+            nextSteps: [],
+            entries: ["/project/.codex/hooks.json", "/project/.codex/config.toml"].map((file) => ({
+              file,
+              mechanism: "codex-hooks",
+              status: "current",
+              inherited: false,
+              selected: "unknown",
+            })),
+          }),
+          connect: async () => {
+            throw new Error("Inspection must not connect");
+          },
+          disconnect: async () => {
+            throw new Error("Inspection must not disconnect");
+          },
+        }}
+        exit={() => {}}
+      />
+    ),
     { width: 120, height: 40 },
   );
   try {
     await openProject(setup);
     await openSection(setup, 3);
-    await expectFocus(setup, "config-integrations-browser", "integrations section Enter");
-    await press(setup, "ENTER");
-    await expectFocus(setup, "config-integration-catalog", "integration list Enter");
+    await expectFocus(setup, "integration-hosts", "integrations section Enter");
+    await press(setup, "TAB");
+    await expectFocus(setup, "integration-connect", "host Tab");
+    await press(setup, "TAB");
+    await expectFocus(setup, "integration-entries", "actions Tab");
     await press(setup, "ARROW_DOWN");
-    const catalog = setup.renderer.currentFocusedRenderable as SelectRenderable;
     expect(
-      catalog.options[catalog.getSelectedIndex()]?.value,
-      "catalog Down selects second row",
-    ).toBe("team/beta");
+      (setup.renderer.currentFocusedRenderable as SelectRenderable).getSelectedOption()?.value,
+    ).toBe("/project/.codex/config.toml");
+    setup.mockInput.pressTab({ shift: true });
+    await setup.flush();
+    await press(setup, "ARROW_RIGHT");
+    await press(setup, "ARROW_RIGHT");
+    await expectFocus(setup, "integration-refresh", "Inspect action");
     await press(setup, "ENTER");
-    await expectFocus(setup, "config-catalog-entry-inspector", "catalog entry Enter");
-    await press(setup, "ESCAPE");
-    await expectFocus(setup, "config-integration-catalog", "catalog entry Escape");
-    const restored = setup.renderer.currentFocusedRenderable as SelectRenderable;
+    await press(setup, "TAB");
+    await expectFocus(setup, "integration-entries", "return to entries");
     expect(
-      restored.options[restored.getSelectedIndex()]?.value,
-      "entry Back restores second row",
-    ).toBe("team/beta");
-    await press(setup, "ESCAPE");
-    await expectFocus(setup, "config-integrations-browser", "integration inspector Escape");
+      (setup.renderer.currentFocusedRenderable as SelectRenderable).getSelectedOption()?.value,
+    ).toBe("/project/.codex/config.toml");
   } finally {
     setup.renderer.destroy();
   }
@@ -248,16 +278,12 @@ test("RENDER Config Source inspector exposes one update entrance and a Right pat
   }
 });
 
-test("Config state unit: catalog selection belongs to inspector and entry Back has no catalog level", () => {
+test("Config Source selection survives switching to host integrations and back", () => {
   const state = createConfigState();
+  state.land("project", "config-sources", "/configSources/team");
+  state.openConfigSourceInspector("project");
   state.selectSection("project", "integrations");
-  state.openIntegrationInspector("project");
-  state.selectIntegrationCatalogEntry("project", "team/beta");
-  expect(state.integrationCatalogSelection("project")).toBe("team/beta");
-  state.openIntegrationCatalogEntry("project", "team/beta");
-  state.backIntegrationSurface("project");
-  expect(state.integrationSurface("project")).toBe("inspector");
-  expect(state.integrationCatalogSelection("project")).toBe("team/beta");
-  state.backIntegrationSurface("project");
-  expect(state.integrationSurface("project")).toBe("list");
+  expect(state.configSourceSurface("project")).toBe("list");
+  state.selectSection("project", "config-sources");
+  expect(state.selection("project")).toBe("/configSources/team");
 });

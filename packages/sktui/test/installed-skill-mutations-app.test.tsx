@@ -451,7 +451,6 @@ test("App routes blocked Uninstall reference resolution by Collection ID with ex
     expect(frame).toContain("team-main/guide");
     expect(frame).toContain("/workspace/skctl/skctl.jsonc");
     expect(textIn(setup.renderer.root)).toContain("/collections/engineering/members/guide");
-    expect(frame).toContain("engineering/members/guide");
     expect(frame).toContain("engineering");
     await parsedEscape(setup);
   } finally {

@@ -53,6 +53,23 @@ const observation = (source: string, changed: string[] = []) => ({
   exactRevision: "a".repeat(40),
 });
 
+test("MODEL checked scope stays exact across unrelated installs and rejects disappeared selections", () => {
+  const snapshot = projection();
+  const first = snapshot.installedSkills[0]!;
+  const second = { ...first, address: { source: "team-main", path: "other" } };
+  const scope = buildUpdateScope(
+    { ...snapshot, installedSkills: [first, second] },
+    { kind: "selected", addresses: [first.address] },
+  );
+  expect(scope.addresses).toEqual([first.address]);
+  expect(
+    buildUpdateScope({ ...snapshot, installedSkills: [first, second] }, scope.entry).addresses,
+  ).toEqual([first.address]);
+  expect(
+    updateSubmission(scope, [first.address], { ...snapshot, installedSkills: [second] }),
+  ).toHaveProperty("reason");
+});
+
 test("MODEL collection scope follows references, dedupes members, and intersects installed skills", () => {
   const snapshot = projection();
   const complete = snapshot.effective;

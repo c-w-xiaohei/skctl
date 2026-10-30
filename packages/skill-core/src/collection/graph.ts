@@ -208,8 +208,6 @@ export function resolveCollectionUse(
   resolved: ResolvedCollections,
   use: readonly string[],
 ): CollectionUse {
-  if (!use.length)
-    return { complete: false, members: new Map(), reason: "Collection Use is absent" };
   const members = new Map<string, ReadonlyMap<string, SkillAddress>>();
   for (const id of use) {
     const collection = resolved.members.get(id);

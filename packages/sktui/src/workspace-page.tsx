@@ -266,7 +266,10 @@ export function WorkspacePage(props: WorkspacePageProps) {
         "command:add-source",
         "command:source-filter.clear",
         ...(workspace.selectedSkills().length
-          ? ["command:skill-add-selected-to-collection" as const]
+          ? [
+              "command:skill-add-selected-to-collection" as const,
+              "command:update-selected-skills" as const,
+            ]
           : []),
         "skills-views",
       ] satisfies FocusOwner[]
@@ -431,8 +434,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
             label: "Review recovery options",
             run: () => props.onSetup("configuration"),
           };
-        case "enable-agent":
-          return { label: "Set up Agent catalog…", run: () => props.onSetup("enable-agent") };
         case "choose-collections":
           return {
             label: "Choose Collections…",
@@ -442,6 +443,15 @@ export function WorkspacePage(props: WorkspacePageProps) {
           return {
             label: "Create a Collection…",
             run: () => props.onDetailsAction("new-collection"),
+          };
+        case "organize-collection":
+          return {
+            label: "Open Collection…",
+            run: () => {
+              const current = status();
+              if (current?.action === "organize-collection")
+                props.onCollectionDetail(current.collection);
+            },
           };
         case "problems":
           return {
@@ -511,39 +521,43 @@ export function WorkspacePage(props: WorkspacePageProps) {
       <text fg={tokens().colors.mutedForeground} flexShrink={0}>
         Find
       </text>
-      <Input
-        id={id}
-        ref={(target: InputRenderable) => {
-          bind(owner, target);
-          localMode(target, (key) => {
-            if (owner === "skills-query" && key.name === "down")
+      <box id={`${id}-pane`} flexDirection="row" height={1} flexGrow={1} flexBasis={0} minWidth={0}>
+        <Input
+          id={id}
+          ref={(target: InputRenderable) => {
+            bind(owner, target);
+            localMode(target, (key) => {
+              if (owner === "skills-query" && key.name === "down")
+                return focus(`command:${filterRecordId}`) ? "consumed" : "declined";
+              if (key.name !== "enter") return "declined";
+              if (owner === "skills-query") return focus("browser") ? "consumed" : "declined";
               return focus(`command:${filterRecordId}`) ? "consumed" : "declined";
-            if (key.name !== "enter") return "declined";
-            if (owner === "skills-query") return focus("browser") ? "consumed" : "declined";
-            return focus(`command:${filterRecordId}`) ? "consumed" : "declined";
-          });
-        }}
-        value={value()}
-        placeholder={placeholder}
-        onInput={change}
-        flexGrow={1}
-        flexBasis={0}
-        width={0}
-        minWidth={0}
-        backgroundColor={tokens().colors.surface}
-        focusedBackgroundColor={tokens().colors.surface}
-        textColor={tokens().colors.foreground}
-        focusedTextColor={tokens().colors.foreground}
-        placeholderColor={tokens().colors.mutedForeground}
-      />
-      {action(
-        filterId,
-        owner === "skills-query"
-          ? `Filter${Object.values(workspace.filters()).filter(Boolean).length + (workspace.sourceFilter() ? 1 : 0) ? ` (${Object.values(workspace.filters()).filter(Boolean).length + (workspace.sourceFilter() ? 1 : 0)})` : ""}`
-          : "Filter",
-        filterRecordId,
-        props.onOpenFilter,
-      )}
+            });
+          }}
+          value={value()}
+          placeholder={placeholder}
+          onInput={change}
+          flexGrow={1}
+          flexBasis={0}
+          width={0}
+          minWidth={0}
+          backgroundColor={tokens().colors.surface}
+          focusedBackgroundColor={tokens().colors.surface}
+          textColor={tokens().colors.foreground}
+          focusedTextColor={tokens().colors.foreground}
+          placeholderColor={tokens().colors.mutedForeground}
+        />
+      </box>
+      <box id={`${filterId}-pane`} flexShrink={0}>
+        {action(
+          filterId,
+          owner === "skills-query"
+            ? `Filter${Object.values(workspace.filters()).filter(Boolean).length + (workspace.sourceFilter() ? 1 : 0) ? ` (${Object.values(workspace.filters()).filter(Boolean).length + (workspace.sourceFilter() ? 1 : 0)})` : ""}`
+            : "Filter",
+          filterRecordId,
+          props.onOpenFilter,
+        )}
+      </box>
     </box>
   );
   const SkillList = () => {
@@ -774,6 +788,24 @@ export function WorkspacePage(props: WorkspacePageProps) {
             )
           }
         </Show>
+        <Show when={props.actions.find((record) => record.id === "skill-add-to-collection")} keyed>
+          {(record) =>
+            command("workspace-current-add-to-collection", record, () =>
+              props.onDetailsAction(record.id),
+            )
+          }
+        </Show>
+        <Show
+          when={
+            workspace.selectedSkills().length > 0 &&
+            props.actions.find((record) => record.id === "update-selected-skills")
+          }
+          keyed
+        >
+          {(record) =>
+            command("workspace-batch-update-skills", record, () => props.onDetailsAction(record.id))
+          }
+        </Show>
       </Pane>
     );
   };
@@ -996,7 +1028,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
                 .slice(0, -1)
                 .map((segment) => segment.reference?.name ?? segment.collection)
                 .join(" / ")}`
-            : "Shared with your agent";
+            : "Prepared in the Agent catalog";
     };
     const Preview = () => (
       <Show
@@ -1094,8 +1126,16 @@ export function WorkspacePage(props: WorkspacePageProps) {
           minHeight={0}
         >
           <Pane id="agent-access-pane" borderTitle="Agent access">
+            <box flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}>
+              {action("agent-access-collections", "Collections…", "agent.catalog.collections", () =>
+                props.onSetup("choose-collections"),
+              )}
+              {action("agent-access-connect", "Connect…", "agent.catalog.connect", () =>
+                props.onSetup("enable-agent"),
+              )}
+            </box>
             <text height={1} flexShrink={0} wrapMode="none" fg={tokens().colors.mutedForeground}>
-              Shared with your agent
+              Prepared in the Agent catalog
             </text>
             <text height={1} flexShrink={0} wrapMode="none" fg={tokens().colors.mutedForeground}>
               {terminal().height > 18 ? "C Collection · S Skill" : "C Col · S Skill"}
@@ -1420,19 +1460,17 @@ export function WorkspacePage(props: WorkspacePageProps) {
                         minHeight={1}
                         flexShrink={0}
                       >
-                        <Show
-                          when={installedCount() > 0}
-                          fallback={managedAction("add-skills", "Find and install…")}
-                        >
+                        {managedAction("add-skills", "Find and install…")}
+                        <Show when={installedCount() > 0}>
                           {managedAction("check-updates", "Check updates")}
-                          {action(
-                            "source-command-skills",
-                            "All Skills",
-                            "source.skills",
-                            () => follow("skills"),
-                            source().id,
-                          )}
                         </Show>
+                        {action(
+                          "source-command-skills",
+                          "All Skills",
+                          "source.skills",
+                          () => follow("skills"),
+                          source().id,
+                        )}
                         {action(
                           "source-details-toggle",
                           detailsOpen() ? "Skills" : "Details",
@@ -1456,8 +1494,16 @@ export function WorkspacePage(props: WorkspacePageProps) {
                                   const surface = `source:${source().id}:details`;
                                   let offset = untrack(() => workspace.scroll(surface));
                                   let restored = false;
+                                  let measuredHeight = -1;
                                   const frame = () => {
                                     if (!restored) {
+                                      // Metadata wraps after its columns are measured. Restoring
+                                      // sooner clamps the saved offset to the provisional height.
+                                      if (measuredHeight !== target.scrollHeight) {
+                                        measuredHeight = target.scrollHeight;
+                                        renderer.requestRender();
+                                        return;
+                                      }
                                       target.scrollTop = offset;
                                       restored = true;
                                     }
@@ -1512,7 +1558,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
                                 flexShrink={0}
                               >
                                 <Show when={installedCount() > 0}>
-                                  {managedAction("add-skills", "Find and install Skills…")}
                                   {(() => {
                                     return command(
                                       "source-update-all",
@@ -1711,7 +1756,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
               <Match when={workspace.skillsView() === "problems"}>
                 <Problems />
               </Match>
-              <Match when={status()}>
+              <Match when={status() && !workspace.sourceFilter()}>
                 <SkillsSetup />
               </Match>
               <Match

@@ -128,10 +128,8 @@ test("short palette scrolls one native list and invokes exactly the selected aut
       throw new Error("Palette must mount its native Select");
     setup.mockInput.pressArrow("up");
     await setup.renderOnce();
-    // Up at the list boundary returns to its filter; Down enters results again.
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-query");
-    setup.mockInput.pressArrow("down");
-    await setup.renderOnce();
+    // Arrow keys stay within the list; Tab changes regions.
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-choices");
     expect(choices.getSelectedOption()?.value).toBe(commands[0]);
     setup.mockInput.pressArrow("down");
     setup.mockInput.pressEnter();
@@ -144,9 +142,7 @@ test("short palette scrolls one native list and invokes exactly the selected aut
     expect(choices.getSelectedOption()?.value).toBe(commands.at(-1));
     setup.mockInput.pressArrow("down");
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-close");
-    setup.mockInput.pressArrow("up");
-    await setup.renderOnce();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-choices");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("palette-choices");
     expect(activated).toEqual([]);
     for (const modifiers of [
@@ -164,7 +160,7 @@ test("short palette scrolls one native list and invokes exactly the selected aut
     await setup.renderOnce();
     expect(activated).toEqual([commands.at(-1)!]);
     expect(choices.height).toBeLessThan(commands.length);
-    setup.mockInput.pressArrow("left");
+    setup.mockInput.pressKey("ESCAPE");
     await setup.renderOnce();
     expect(closed).toBe(1);
   } finally {

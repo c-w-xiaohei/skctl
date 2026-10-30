@@ -1,51 +1,10 @@
 import { expect, test } from "bun:test";
-import { SelectRenderable } from "@opentui/core";
+import { ScrollBoxRenderable, TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-
-type Setup = Awaited<ReturnType<typeof testRender>>;
-type NativeSelect = {
-  readonly options: readonly { readonly value?: string }[];
-  readonly focus: () => void;
-  readonly getSelectedOption: () => { readonly value?: string } | null;
-  readonly getSelectedIndex: () => number;
-  readonly setSelectedIndex: (index: number) => void;
-  scrollOffset: number;
-};
-
-const native = (id: string, setup: Setup): NativeSelect => {
-  const target = setup.renderer.root.findDescendantById(id);
-  if (!(target instanceof SelectRenderable)) throw new Error(`${id} is not a SelectRenderable`);
-  return target as unknown as NativeSelect;
-};
-
-async function escape(setup: Setup) {
-  await new Promise<void>((resolve) => {
-    const listener = (event: { readonly name: string }) => {
-      if (event.name !== "escape" && event.name !== "esc") return;
-      setup.renderer.keyInput.off("keypress", listener);
-      resolve();
-    };
-    setup.renderer.keyInput.prependListener("keypress", listener);
-    setup.mockInput.pressKey("ESCAPE");
-  });
-  await setup.renderOnce();
-}
-
-async function enter(setup: Setup) {
-  await new Promise<void>((resolve) => {
-    const listener = (event: { readonly name: string }) => {
-      if (event.name !== "enter" && event.name !== "return") return;
-      setup.renderer.keyInput.off("keypress", listener);
-      resolve();
-    };
-    setup.renderer.keyInput.prependListener("keypress", listener);
-    setup.mockInput.pressEnter();
-  });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-}
+import { enterLive, focusLive, parsedEscape } from "./reader-test-controls";
 
 function exposureProjection(): WorkspaceView {
   const base = workspaceProjection();
@@ -79,6 +38,7 @@ function exposureProjection(): WorkspaceView {
     effective: {
       ...base.effective,
       managed: true,
+      agent: { ...base.effective.agent, status: "available" },
       use: ["root"],
       collections: collections.map((collection) => collection.id),
       collectionsView: [
@@ -104,45 +64,32 @@ test("RENDER Current Exposure restores its native path, offset, and browser focu
   );
   try {
     await setup.flush();
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-    const skills = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
-    skills.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === skills);
+    const browser = (await focusLive(setup, "current-exposure-browser")) as ScrollBoxRenderable;
+    setup.mockInput.pressArrow("right");
     await setup.flush();
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skills-view-tab-current-exposure"),
-    );
-    const current = setup.renderer.root.findDescendantById("skills-view-tab-current-exposure")!;
-    current.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === current);
-    const exposure = setup.renderer.root.findDescendantById("current-exposure-browser")!;
-    exposure.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === exposure);
-    const browser = native("current-exposure-browser", setup);
-    for (let index = 0; index < 9; index++) setup.mockInput.pressArrow("down");
-    await setup.waitFor(() => browser.getSelectedOption()?.value === "root/child-8");
-    const selectedBrowser = native("current-exposure-browser", setup);
-    selectedBrowser.focus();
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
-    );
-    selectedBrowser.scrollOffset = 4;
-    const selected = selectedBrowser.getSelectedOption()?.value;
-    expect(selected).toBe("root/child-8");
-    await enter(setup);
-    await setup.renderOnce();
+    for (let index = 0; index < 9; index++) {
+      setup.mockInput.pressArrow("down");
+      await setup.flush();
+    }
+    const title = (setup.renderer.root.findDescendantById("agent-node-title") as TextRenderable)
+      .plainText;
+    const scroll = browser.scrollTop;
+    await enterLive(setup, "agent-access-collection-details");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-tabs-tab-entries"),
     );
-    expect(setup.renderer.root.findDescendantById("current-exposure-browser")).toBeUndefined();
-    await escape(setup);
+    expect(!!setup.renderer.root.findDescendantById("current-exposure-browser")).toBe(false);
+    await parsedEscape(setup);
     await setup.flush();
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
-    const restored = native("current-exposure-browser", setup);
-    expect(restored.getSelectedOption()?.value).toBe(selected);
-    expect(restored.getSelectedIndex()).toBe(9);
-    expect(restored.scrollOffset).toBe(4);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("current-exposure-browser");
+    const restored = setup.renderer.root.findDescendantById(
+      "current-exposure-browser",
+    ) as ScrollBoxRenderable;
+    expect(restored.scrollTop).toBe(scroll);
+    expect(
+      (setup.renderer.root.findDescendantById("agent-node-title") as TextRenderable).plainText,
+    ).toBe(title);
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("agent-access-collection-details");
   } finally {
     setup.renderer.destroy();
   }

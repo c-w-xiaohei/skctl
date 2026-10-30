@@ -7,6 +7,7 @@
     "@opentui/core": "0.5.14",
     "@opentui/solid": "0.5.14",
     "@skctl/core": "workspace:*",
+    "@skctl/integrations": "workspace:*",
     "@tuiparts/core": "0.0.6",
     "@tuiparts/solid": "0.0.6",
     "diff": "9.0.0",

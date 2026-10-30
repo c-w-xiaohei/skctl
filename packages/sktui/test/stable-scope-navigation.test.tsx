@@ -4,100 +4,58 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
-import { parsedEnter, parsedEscape, selectedReaderTab } from "./reader-test-controls";
-async function navigateToAgentAccess(setup: Awaited<ReturnType<typeof testRender>>) {
-  await focusViewStrip(setup);
-  setup.mockInput.pressKey("ARROW_RIGHT");
-  await setup.waitFor(
-    () =>
-      setup.renderer.currentFocusedRenderable?.id === "skills-view-tab-current-exposure" &&
-      !!setup.renderer.root.findDescendantById("agent-access-pane"),
-  );
-  await setup.renderOnce();
+import {
+  focusLive,
+  openAllInstalledSkills,
+  openReaderTab,
+  parsedEnter,
+  selectedReaderTab,
+  waitForReaderBody,
+} from "./reader-test-controls";
+
+for (const tab of [0, 2] as const) {
+  test(`switching from Reader tab ${tab} to Agent access and back retains cached content and view`, async () => {
+    let loads = 0;
+    const setup = await testRender(
+      () => (
+        <App
+          core={directSourceCore(readerProjection(), {
+            loadInstalledSkill: async () => {
+              loads++;
+              return readerContent;
+            },
+          })}
+          exit={() => {}}
+        />
+      ),
+      { width: 120, height: 40 },
+    );
+    try {
+      await openAllInstalledSkills(setup);
+      await parsedEnter(setup);
+      await waitForReaderBody(setup, "needle in prose");
+      await openReaderTab(setup, tab);
+      await focusLive(setup, "skills-view-tab-all-installed-skills");
+      setup.mockInput.pressArrow("left");
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "skills-view-tab-current-exposure",
+      );
+      await setup.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
+      expect(!!setup.renderer.root.findDescendantById("reader-views")).toBe(false);
+      await focusLive(setup, "skills-view-tab-current-exposure");
+      setup.mockInput.pressArrow("right");
+      await setup.waitForFrame((frame) => frame.includes("SKILL.md"));
+      expect(selectedReaderTab(setup)).toBe(tab);
+      expect(loads).toBe(1);
+      await focusLive(setup, "skills-view-tab-all-installed-skills");
+      await parsedEnter(setup);
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+      );
+      expect(!!setup.renderer.root.findDescendantById("reader-views")).toBe(true);
+      expect(loads).toBe(1);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
 }
-async function focusViewStrip(setup: Awaited<ReturnType<typeof testRender>>) {
-  for (
-    let step = 0;
-    step < 6 &&
-    setup.renderer.currentFocusedRenderable?.id !== "skills-view-tab-all-installed-skills";
-    step++
-  ) {
-    setup.mockInput.pressTab();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await setup.renderOnce();
-  }
-  expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-view-tab-all-installed-skills");
-}
-test("RENDER changing Skills scope from detail shows Agent access and Back restores the detail", async () => {
-  const setup = await testRender(
-    () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
-    { width: 120, height: 40 },
-  );
-  try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
-    await parsedEnter(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-    );
-    await navigateToAgentAccess(setup);
-    expect(setup.renderer.root.findDescendantById("agent-access-pane")).toBeDefined();
-    expect(setup.renderer.root.findDescendantById("skill-inspector-open-reader")).toBeUndefined();
-    expect(setup.captureCharFrame()).toContain("Agent access");
-    expect(setup.captureCharFrame().split("\n")[2]).not.toContain("/ Details");
-    await parsedEscape(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("skill-inspector-open-reader"),
-    );
-    expect(setup.captureCharFrame()).toContain("Skill details");
-  } finally {
-    setup.renderer.destroy();
-  }
-});
-test("RENDER changing Skills scope from Reader returns to its browser and Back restores cached Reader", async () => {
-  let readerLoads = 0;
-  const setup = await testRender(
-    () => (
-      <App
-        core={directSourceCore(readerProjection(), {
-          loadInstalledSkill: async () => {
-            readerLoads++;
-            return readerContent;
-          },
-        })}
-        exit={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
-  try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
-    await parsedEnter(setup);
-    await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("const needle = true"));
-    expect(selectedReaderTab(setup)).toBe(0);
-    await navigateToAgentAccess(setup);
-    expect(setup.renderer.root.findDescendantById("agent-access-pane")).toBeDefined();
-    expect(setup.renderer.root.findDescendantById("reader-views")).toBeUndefined();
-    expect(setup.renderer.root.findDescendantById("reader-details")).toBeUndefined();
-    expect(setup.captureCharFrame()).toContain("Agent access");
-    expect(setup.captureCharFrame()).not.toContain("Reader · guide");
-    await parsedEscape(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
-    expect(selectedReaderTab(setup)).toBe(0);
-    expect(readerLoads).toBe(1);
-    await focusViewStrip(setup);
-    await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-    expect(setup.renderer.root.findDescendantById("reader-views")).toBeUndefined();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
-    await parsedEscape(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
-    expect(readerLoads).toBe(1);
-  } finally {
-    setup.renderer.destroy();
-  }
-});

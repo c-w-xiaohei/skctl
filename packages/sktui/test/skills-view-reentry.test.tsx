@@ -101,6 +101,8 @@ function projection(): WorkspaceView {
     effective: {
       ...base.effective,
       collections: ["team"],
+      use: ["team"],
+      agent: { ...base.effective.agent, status: "available" },
       collectionsView: [
         {
           id: "team",
@@ -452,14 +454,10 @@ async function assertViewContent(
     expect(visible(setup.renderer.root.findDescendantById("reader-details"))).toBe(false);
     await focusLive(setup, "problems-browser");
   } else {
-    expect(visible(live(setup, "skills-setup-pane"))).toBe(true);
-    expect(setup.captureCharFrame()).toContain("Organize Skills into a Collection");
+    expect(visible(live(setup, "current-exposure-browser"))).toBe(true);
+    expect(setup.captureCharFrame()).toContain("team");
     expect(visible(setup.renderer.root.findDescendantById("reader-details"))).toBe(false);
-    const problems = live(setup, "skills-setup-primary");
-    expect(visible(problems)).toBe(true);
-    // This fixture has no selected Agent node. Use its actual visible recovery
-    // control, without activating it or inventing a preview focus target.
-    await focusLive(setup, "skills-setup-primary");
+    await focusLive(setup, "current-exposure-browser");
   }
   await setup.flush();
   // A local Skills view change cannot manufacture a route predecessor or root Back.
@@ -551,7 +549,7 @@ test("FI2 explicit Problems Reader route still restores its Reader after a Skill
     await routeCommand(setup, true);
     await pointerView(setup, "current-exposure");
     await setup.waitFor(() => selectedView(setup) === "current-exposure");
-    expect(visible(live(setup, "skills-setup-pane"))).toBe(true);
+    expect(visible(live(setup, "current-exposure-browser"))).toBe(true);
     await routeCommand(setup, true);
     const back = live(setup, "route-back");
     await setup.mockMouse.click(back.screenX + 1, back.screenY);

@@ -281,7 +281,7 @@ test.each([
     try {
       setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
       await setup.waitFor(
-        () => checks === 1 && !!setup!.renderer.root.findDescendantById("agent-access-pane"),
+        () => checks === 1 && !!setup!.renderer.root.findDescendantById("skills-setup-pane"),
       );
       const status = setup.renderer.root.findDescendantById("process-status") as TextRenderable;
       await setup.waitFor(() => status.plainText.includes("Checking"));

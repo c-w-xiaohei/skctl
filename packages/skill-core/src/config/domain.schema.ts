@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { configDeclarationOwnerSchema as owner, configLevelSchema } from "./schema";
+import { configDeclarationOwnerSchema as owner } from "./schema";
 import { skillAddressSchema, sourceBindingSchema } from "../source/schema";
 import { sourceBindingViewSchema } from "../source/domain.schema";
 import { impactBlockerSchema } from "../collection/domain.schema";
@@ -66,8 +66,4 @@ export const adoptConfigRequestSchema = v.object({
   id: v.string(),
   exactRevision: v.string(),
   observation: v.optional(configSourceObservationSchema),
-});
-export const managedOpenCodeRequestSchema = v.object({
-  level: configLevelSchema,
-  managed: v.boolean(),
 });

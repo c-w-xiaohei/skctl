@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
-import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
+import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection, readerResources } from "./installed-reader.fixture";
 import {
   enterLive,
@@ -10,6 +10,7 @@ import {
   openAllInstalledSkills,
   openReaderTab,
   parsedEscape,
+  parsedEnter,
 } from "./reader-test-controls";
 test("search owns printable keys and Ctrl+C without quitting or changing route", async () => {
   let exits = 0;
@@ -30,7 +31,9 @@ test("search owns printable keys and Ctrl+C without quitting or changing route",
     );
     await parsedEscape(setup);
     expect(!!setup.renderer.root.findDescendantById("source-register-id")).toBe(false);
-    expect(setup.captureCharFrame()).toContain("Workspace / Skills");
+    expect(!!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills")).toBe(
+      true,
+    );
   } finally {
     setup.renderer.destroy();
   }
@@ -45,22 +48,21 @@ test("palette owns arrows, Tab, q and Escape without delivering them to the page
     const browser = await openAllInstalledSkills(setup);
     const selected = browser.getSelectedOption()?.value;
     setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.workspace",
-    );
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
     setup.mockInput.pressArrow("down");
     setup.mockInput.pressKey("q");
     setup.mockInput.pressKey("TAB");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "palette-navigate.global",
-    );
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id.startsWith("palette-")).toBe(true);
     expect(exits).toBe(0);
     expect(browser.getSelectedOption()?.value).toBe(selected);
     await parsedEscape(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
-    expect(setup.captureCharFrame()).toContain("Workspace / Skills");
+    expect(!!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills")).toBe(
+      true,
+    );
   } finally {
     setup.renderer.destroy();
   }
@@ -88,7 +90,8 @@ test("Escape leaves resource content before returning from Reader", async () => 
     { width: 80, height: 24 },
   );
   try {
-    await openReaderFromInspector(setup);
+    await openAllInstalledSkills(setup);
+    await parsedEnter(setup);
     await openReaderTab(setup, 1);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
     const browser = (await focusLive(setup, "resource-browser")) as SelectRenderable;
@@ -101,7 +104,7 @@ test("Escape leaves resource content before returning from Reader", async () => 
     expect(!!setup.renderer.root.findDescendantById("resource-content")).toBe(false);
     await parsedEscape(setup);
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skill-inspector-open-reader",
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
   } finally {
     setup.renderer.destroy();

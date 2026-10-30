@@ -1,0 +1,15 @@
+{
+  "name": "@skctl/integrations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "jsonc-parser": "3.3.1",
+    "marked": "17.0.1",
+    "toml-eslint-parser": "1.0.3",
+    "valibot": "1.5.0"
+  }
+}

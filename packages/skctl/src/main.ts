@@ -5,6 +5,8 @@ import { registerHumanCommands } from "./human";
 import { agentCommand } from "./agent";
 import type { CommandContext } from "./command-context";
 import { launchInstalledTui } from "./tui-launcher";
+import { IntegrationError } from "@skctl/integrations";
+import { integrationCommand } from "./human/integration";
 type Output = {
   write(chunk: string): unknown;
 };
@@ -52,6 +54,9 @@ export async function runMain(argv: readonly string[], options: MainOptions = {}
     }),
   };
   registerHumanCommands(command, context);
+  integrationCommand(command, context, (status) => {
+    code = status;
+  });
   const agent = agentCommand(command, context, (status) => {
     code = status;
   });
@@ -80,7 +85,7 @@ export async function runMain(argv: readonly string[], options: MainOptions = {}
     if (error instanceof CommanderError) return error.exitCode === 0 ? 0 : failureCode;
     let message = error instanceof Error ? error.message : "Internal error";
     if (human)
-      message = `${error instanceof SkctlError ? error.code : "INVALID_ARGUMENT"}: ${message}`;
+      message = `${error instanceof SkctlError || error instanceof IntegrationError ? error.code : "INVALID_ARGUMENT"}: ${message}`;
     else if (active === agent && !(error instanceof SkctlError)) message = "Internal error";
     stderr.write(`${message}\n`);
     return failureCode;

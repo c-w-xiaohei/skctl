@@ -62,9 +62,8 @@ test("shared native buttons retain disabled and focus state beside metadata", as
     { width: 60, height: 10 },
   );
   await setup.renderOnce();
-  const frame = setup.captureCharFrame();
-  expect(frame).toContain("Project");
-  expect(frame).toContain("/workspace/config.jsonc");
+  await setup.waitForFrame((frame) => frame.includes("Project"));
+  expect(setup.captureCharFrame()).toContain("/workspace/config.jsonc");
   for (const id of ["open", "focus", "unavailable", "remove"])
     expect(setup.renderer.root.findDescendantById(id)).toBeInstanceOf(ButtonRenderable);
   const focused = setup.renderer.root.findDescendantById("focus") as ButtonRenderable;

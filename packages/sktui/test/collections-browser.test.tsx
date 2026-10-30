@@ -40,26 +40,8 @@ import {
   readerSecondContent,
 } from "./installed-reader.fixture";
 async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(
-    () =>
-      !!setup.renderer.root.findDescendantById("shell-section-navigation") ||
-      !!setup.renderer.root.findDescendantById("shell-section-tab-skills"),
-  );
-  const navigator = setup.renderer.root.findDescendantById("shell-section-navigation");
-  if (navigator) {
-    navigator.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === navigator);
-    setup.mockInput.pressArrow("down");
-    await setup.waitFor(
-      () => (navigator as SelectRenderable).getSelectedOption()?.value === "collections",
-    );
-    await parsedEnter(setup);
-  } else {
-    const section = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
-    section.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === section);
-    setup.mockInput.pressArrow("right");
-  }
+  await setup.flush();
+  await enterLive(setup, "shell-section-tab-collections");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
   setup.renderer.root.findDescendantById("collection-browser")!.focus();
   await setup.renderOnce();
@@ -1565,12 +1547,12 @@ test("RENDER Collection producer Open Source navigates to its owning Source", as
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
     expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeDefined();
-    const producer = setup.renderer.root.findDescendantById(
-      "collection-relationships",
-    ) as SelectRenderable;
-    expect(producer).toBeDefined();
-    producer.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === producer);
+    await focusLive(setup, "collection-relationships");
+    setup.mockInput.pressArrow("right");
+    await setup.flush();
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id.includes(":action-") === true,
+    );
     await parsedEnter(setup);
     await setup.renderOnce();
     await setup.waitForFrame((frame) => frame.includes("A distinct Installed Skill"));
@@ -1580,7 +1562,6 @@ test("RENDER Collection producer Open Source navigates to its owning Source", as
     expect(openSkill?.id).toBe("membership.open-skill");
     expect(setup.captureCharFrame()).toContain("Open Skill");
     expect(loads).toEqual([]);
-    await enterLive(setup, "collection-membership-actions");
     const openSource = setup.renderer.root.findDescendantById("membership.open-source");
     expect(openSource?.id).toBe("membership.open-source");
     await enterLive(setup, "membership.open-source");

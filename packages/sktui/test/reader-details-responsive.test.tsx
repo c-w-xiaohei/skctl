@@ -73,7 +73,7 @@ test("Details arrows traverse live controls both ways and Escape from each physi
     expect(
       (live(setup, "reader-details-action-skill-add-to-collection") as ButtonRenderable).getState()
         .disabled,
-    ).toBe(true);
+    ).toBe(false);
     for (const id of [...controls.slice(0, -1).reverse(), "reader-details"])
       await arrowFocus(setup, "ARROW_UP", id);
     await arrowFocus(setup, "ARROW_RIGHT", controls[0]!);
@@ -137,10 +137,14 @@ test("Details skips absent and disabled controls and metadata Enter/Space really
       await arrowFocus(setup, index === 0 ? "ARROW_RIGHT" : "ARROW_DOWN", id);
       if (id === "reader-details-manage") await parsedEnter(setup);
     }
-    for (const action of ["skill-add-to-collection", "skill-open-source"])
-      expect(
-        (live(setup, `reader-details-action-${action}`) as ButtonRenderable).getState().disabled,
-      ).toBe(true);
+    expect(
+      (live(setup, "reader-details-action-skill-open-source") as ButtonRenderable).getState()
+        .disabled,
+    ).toBe(true);
+    expect(
+      (live(setup, "reader-details-action-skill-add-to-collection") as ButtonRenderable).getState()
+        .disabled,
+    ).toBe(false);
     for (const id of [...controls.slice(0, -1).reverse(), "reader-details"])
       await arrowFocus(setup, "ARROW_UP", id);
     await arrowFocus(setup, "ARROW_RIGHT", "reader-details-metadata");

@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { InputRenderable, SelectRenderable, TextBufferRenderable } from "@opentui/core";
+import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { Diagnostic, WorkspaceView } from "@skctl/core";
 import { skillAddressKey } from "@skctl/core";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
+import { focusLive, openAllInstalledSkills, parsedEscape } from "./reader-test-controls";
 
 function filterProjection(agentStatus: "available" | "unavailable" = "available"): WorkspaceView {
   const base = readerProjection();
@@ -119,23 +120,6 @@ function filterProjection(agentStatus: "available" | "unavailable" = "available"
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
-function textIn(renderable: { getChildren(): readonly unknown[] }): string {
-  return (
-    renderable.getChildren() as {
-      getChildren?: () => readonly unknown[];
-      plainText?: string;
-    }[]
-  )
-    .flatMap((child) =>
-      child instanceof TextBufferRenderable
-        ? [child.plainText]
-        : child.getChildren
-          ? [textIn(child as { getChildren(): readonly unknown[] })]
-          : [],
-    )
-    .join("\n");
-}
-
 async function key(setup: Setup, name: string, shift = false) {
   if (name === "ENTER") setup.mockInput.pressEnter();
   else if (name === "ARROW_DOWN") setup.mockInput.pressArrow("down");
@@ -163,21 +147,7 @@ async function pressEscape(setup: Setup) {
 }
 
 async function focusAllInstalledSkills(setup: Setup) {
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills"),
-  );
-  const current = setup.renderer.root.findDescendantById("skills-view-tab-current-exposure")!;
-  current.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === current);
-  setup.mockInput.pressKey("ARROW_RIGHT");
-  await setup.renderOnce();
-  await setup.waitFor(() => {
-    const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
-    return browser instanceof SelectRenderable && browser.options.length > 0;
-  });
-  const browser = setup.renderer.root.findDescendantById("installed-skill-browser")!;
-  browser.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
+  await openAllInstalledSkills(setup);
 }
 
 async function openFilter(setup: Setup) {
@@ -217,19 +187,11 @@ async function clickFilterOption(
 
 async function chooseByKeyboard(setup: Setup, dimension: string, value: string) {
   await openFilter(setup);
-  await type(setup, dimension);
-  expect(
-    (setup.renderer.root.findDescendantById("skills-filter-search") as InputRenderable).value,
-  ).toBe(dimension.toLocaleLowerCase());
-  expect(
-    (
-      setup.renderer.root.findDescendantById("skills-filter-dimensions") as SelectRenderable
-    ).options.map((option) => option.value),
-  ).toEqual([dimension]);
+  const dimensions = (await focusLive(setup, "skills-filter-dimensions")) as SelectRenderable;
+  const index = dimensions.options.findIndex((option) => option.value === dimension);
+  expect(index).toBeGreaterThanOrEqual(0);
+  for (let i = 0; i < index; i++) await key(setup, "ARROW_DOWN");
   await key(setup, "TAB");
-  expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-filter-dimensions");
-  await key(setup, "ENTER");
-  expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-filter-search");
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-filter-search");
   await type(setup, value);
   expect(
@@ -239,7 +201,8 @@ async function chooseByKeyboard(setup: Setup, dimension: string, value: string) 
   expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-filter-values");
   await key(setup, "ARROW_DOWN");
   await key(setup, "ENTER");
-  await setup.waitFor(() => !setup.renderer.root.findDescendantById("skills-filter-overlay"));
+  expect(!!setup.renderer.root.findDescendantById("skills-filter-overlay")).toBe(true);
+  await parsedEscape(setup);
 }
 
 test("RENDER Skills filter keyboard flow searches native stages and applies Collection", async () => {
@@ -249,43 +212,24 @@ test("RENDER Skills filter keyboard flow searches native stages and applies Coll
   );
   try {
     await setup.renderOnce();
-    await openFilter(setup);
-    await type(setup, "Collection");
-    expect(
-      (setup.renderer.root.findDescendantById("skills-filter-search") as InputRenderable).value,
-    ).toBe("collection");
-    await key(setup, "TAB");
-    await key(setup, "ENTER");
-    await type(setup, "documentation");
-    expect(
-      (setup.renderer.root.findDescendantById("skills-filter-search") as InputRenderable).value,
-    ).toBe("documentation");
-    await key(setup, "TAB");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-filter-values");
-    await key(setup, "ARROW_DOWN");
-    await key(setup, "ENTER");
-    await setup.waitFor(() => !setup.renderer.root.findDescendantById("skills-filter-overlay"));
+    await chooseByKeyboard(setup, "Collection", "documentation");
     await setup.waitForFrame(
-      (frame) =>
-        frame.includes("Installed Skills 1/3") && frame.includes("Collection: documentation"),
+      (frame) => frame.includes("Skills · 1 / 3") && frame.includes("Collection: documentation"),
     );
     expect(
       (
         setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable
       ).options.map((option) => option.value),
     ).toEqual([skillAddressKey({ source: "team-main-extra", path: "reference" })]);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("open-skills-filter");
   } finally {
     setup.renderer.destroy();
   }
 });
 
-test.each([
-  [120, "Enter select · Tab next control · Esc filter"],
-  [43, "Enter select · Tab next control · Esc filter"],
-] as const)(
-  "RENDER Skills filter Escape projects its selected stage at width %i",
-  async (width, selectedStageHelp) => {
+test.each([120, 43])(
+  "RENDER Skills filter Escape returns from search to values, then closes at width %i",
+  async (width) => {
     const setup = await testRender(
       () => <App core={directSourceCore(filterProjection())} exit={() => {}} />,
       { width, height: 40 },
@@ -293,35 +237,26 @@ test.each([
     try {
       await setup.renderOnce();
       await openFilter(setup);
-      await type(setup, "Collection");
-      await key(setup, "TAB");
-      await key(setup, "ENTER");
+      await type(setup, "documentation");
 
       const search = () =>
         setup.renderer.root.findDescendantById("skills-filter-search") as InputRenderable;
-      expect(textIn(setup.renderer.root)).toContain(selectedStageHelp);
-      expect(setup.renderer.currentFocusedRenderable).toBe(search());
-      expect(search().value).toBe("");
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe(search().id);
+      expect(search().value).toBe("documentation");
       expect(setup.renderer.root.findDescendantById("skills-filter-values")).toBeDefined();
 
       await pressEscape(setup);
 
       await setup.waitFor(
-        () => setup.renderer.root.findDescendantById("skills-filter-values") === undefined,
-      );
-      expect(textIn(setup.renderer.root)).toContain(
-        width === 120
-          ? "Enter select · Tab next control · Esc close"
-          : "Enter select · Tab next control · Esc close",
+        () => setup.renderer.currentFocusedRenderable?.id === "skills-filter-values",
       );
       expect(setup.renderer.root.findDescendantById("skills-filter-overlay")).toBeDefined();
       expect(setup.renderer.root.findDescendantById("skills-filter-dimensions")).toBeDefined();
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-filter-search");
-      expect(search().value).toBe("");
+      expect(search().value).toBe("documentation");
 
       await pressEscape(setup);
 
-      expect(setup.renderer.root.findDescendantById("skills-filter-overlay")).toBeUndefined();
+      expect(!!setup.renderer.root.findDescendantById("skills-filter-overlay")).toBe(false);
     } finally {
       setup.renderer.destroy();
     }
@@ -339,9 +274,9 @@ test("RENDER Skills filter mouse selects the exact mounted Collection value", as
     await clickFilterOption(setup, "skills-filter-dimensions", "Collection");
     expect(setup.renderer.root.findDescendantById("skills-filter-values")).toBeDefined();
     await clickFilterOption(setup, "skills-filter-values", "documentation");
+    await parsedEscape(setup);
     await setup.waitForFrame(
-      (frame) =>
-        frame.includes("Installed Skills 1/3") && frame.includes("Collection: documentation"),
+      (frame) => frame.includes("Skills · 1 / 3") && frame.includes("Collection: documentation"),
     );
     expect(
       (
@@ -363,11 +298,11 @@ test("RENDER Skills filter mouse does not infer a Collection value from row posi
     await openFilter(setup);
     await clickFilterOption(setup, "skills-filter-dimensions", "Collection");
     await clickFilterOption(setup, "skills-filter-values", "engineering");
+    await parsedEscape(setup);
     await setup.waitForFrame(
-      (frame) =>
-        frame.includes("Installed Skills 2/3") && frame.includes("Collection: engineering"),
+      (frame) => frame.includes("Skills · 2 / 3") && frame.includes("Collection: engineering"),
     );
-    expect(setup.renderer.root.findDescendantById("skills-filter-values")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("skills-filter-values")).toBe(false);
   } finally {
     setup.renderer.destroy();
   }
@@ -390,7 +325,9 @@ test("RENDER Skills filter physically distinguishes every semantic dimension", a
       await setup.renderOnce();
       await chooseByKeyboard(setup, dimension, value);
       await setup.waitForFrame(
-        (frame) => frame.includes(`Installed Skills ${count}`) && frame.includes(`${dimension}: `),
+        (frame) =>
+          frame.includes(`Skills · ${count.replace("/", " / ")}`) &&
+          frame.includes(`${dimension}: `),
       );
       expect(
         (

@@ -5,7 +5,7 @@ import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
 import { ConfigPage } from "../src/config-page";
-import { createConfigState, configDeclarationOwnerKey } from "../src/config/state";
+import { createConfigState } from "../src/config/state";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { directOwner, directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { readerContent, readerProjection, readerResources } from "./installed-reader.fixture";
@@ -129,16 +129,7 @@ async function openProjectIntegrations(setup: Setup) {
       () => setup.renderer.currentFocusedRenderable?.id === `shell-section-project-tab-${section}`,
     );
   }
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("config-integrations-browser"),
-  );
-  await focusLive(setup, "config-integrations-browser");
-  await parsedEnter(setup);
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-integration-catalog"));
-  await parsedEnter(setup);
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("config-catalog-entry-inspector"),
-  );
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-hosts"));
 }
 async function openProjectConfigSource(setup: Setup) {
   await chooseProject(setup);
@@ -217,19 +208,46 @@ test("RENDER Reader resource uses shared Back without a route predecessor and pr
     setup.renderer.destroy();
   }
 });
-test("RENDER Config catalog entry returns through the shared header one layer at a time", async () => {
+test("RENDER Integrations keeps host entries reachable across resize and returns to Config Sources", async () => {
   const setup = await testRender(
-    () => <App core={directSourceCore(configProjection())} exit={() => {}} />,
+    () => (
+      <App
+        core={directSourceCore(configProjection())}
+        integrations={{
+          inspect: async (target) => ({
+            target,
+            recommended: "codex-hooks",
+            selectionReason: "Host entries",
+            cli: "/bin/skctl",
+            revision: "1",
+            candidates: [],
+            diagnostics: [],
+            nextSteps: [],
+            entries: [
+              {
+                mechanism: "codex-hooks",
+                file: "/project/.codex/hooks.json",
+                inherited: false,
+                status: "current",
+                selected: "unknown",
+              },
+            ],
+          }),
+          connect: async () => {
+            throw new Error("Navigation must not connect");
+          },
+          disconnect: async () => {
+            throw new Error("Navigation must not disconnect");
+          },
+        }}
+        exit={() => {}}
+      />
+    ),
     { width: 80, height: 30 },
   );
   try {
     await openProjectIntegrations(setup);
-    expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("route-back");
-    expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(true);
-    expect(!!setup.renderer.root.findDescendantById("config-command-config.catalog.back")).toBe(
-      false,
-    );
-    await expectSharedReturn(setup, "Back to Integration");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-entries"));
     for (const [width, height] of [
       [144, 40],
       [100, 24],
@@ -238,45 +256,20 @@ test("RENDER Config catalog entry returns through the shared header one layer at
     ] as const) {
       setup.resize(width, height);
       await setup.flush();
-      const content = setup.renderer.root.findDescendantById(
-        "config-catalog-entry-inspector",
-      ) as ScrollBoxRenderable;
-      const back = setup.renderer.root.findDescendantById("route-back")!;
-      let top = content.viewport.screenY;
-      let bottom = top + content.viewport.height;
-      // Config's outer work scroll clips its nested inspector. Check the usable
-      // intersection, not the deliberately scrollable child's un-clipped extent.
-      for (let ancestor = content.parent; ancestor; ancestor = ancestor.parent)
-        if (ancestor instanceof ScrollBoxRenderable) {
-          top = Math.max(top, ancestor.viewport.screenY);
-          bottom = Math.min(bottom, ancestor.viewport.screenY + ancestor.viewport.height);
-        }
-      expect(bottom - top).toBeGreaterThan(0);
-      expect(bottom).toBeLessThanOrEqual(height - 1);
-      expect(back.screenX + back.width).toBeLessThanOrEqual(width);
-      expect(back.screenY + back.height).toBeLessThanOrEqual(top);
+      await focusLive(setup, "integration-entries");
+      const entries = setup.renderer.root.findDescendantById(
+        "integration-entries",
+      ) as SelectRenderable;
+      expect(entries.getSelectedOption()?.value).toBe("/project/.codex/hooks.json");
+      expect(entries.width).toBeGreaterThan(0);
+      expect(entries.screenX + entries.width).toBeLessThanOrEqual(width);
     }
     setup.resize(80, 30);
     await setup.flush();
-    const back = setup.renderer.root.findDescendantById("route-back")!;
-    await setup.mockMouse.click(back.screenX + 1, back.screenY);
+    await enterLive(setup, "shell-section-project-tab-config-sources");
     await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("config-integration-catalog"),
+      () => !!setup.renderer.root.findDescendantById("config-config-source-browser"),
     );
-    expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(true);
-    await expectSharedReturn(setup, "Back to Integrations");
-    const catalog = setup.renderer.root.findDescendantById(
-      "config-integration-catalog",
-    ) as SelectRenderable;
-    expect(catalog.getSelectedOption()?.value).toBe("team/alpha");
-    expect(!!setup.renderer.root.findDescendantById("config-command-config.integration.back")).toBe(
-      false,
-    );
-    await enterLive(setup, "route-back");
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("config-integrations-browser"),
-    );
-    expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
   } finally {
     setup.renderer.destroy();
   }
@@ -373,10 +366,8 @@ test("RENDER compact Collection tree keeps its path readable while shared Back r
 test("RENDER standalone Config keeps explicit nested Back controls without a page-navigation provider", async () => {
   const projection = configProjection();
   const config = createConfigState();
-  const integration = projection.configs.find((item) => item.level === "project")!.direct
-    .integrations[0]!;
-  config.land("project", "integrations", configDeclarationOwnerKey(integration.owner));
-  config.openIntegrationCatalogEntry("project", "missing-entry");
+  config.land("project", "config-sources", "/configSources/shared");
+  config.openConfigSourceInspector("project");
   const setup = await testRender(
     () => (
       <ConfigPage
@@ -392,13 +383,6 @@ test("RENDER standalone Config keeps explicit nested Back controls without a pag
     { width: 80, height: 30 },
   );
   try {
-    await setup.renderOnce();
-    await enterLive(setup, "config-command-config.catalog.back");
-    expect(config.integrationSurface("project")).toBe("inspector");
-    await enterLive(setup, "config-command-config.integration.back");
-    expect(config.integrationSurface("project")).toBe("list");
-    config.land("project", "config-sources", "/configSources/shared");
-    config.openConfigSourceInspector("project");
     await setup.renderOnce();
     await enterLive(setup, "config-command-config.source.back");
     expect(config.configSourceSurface("project")).toBe("list");

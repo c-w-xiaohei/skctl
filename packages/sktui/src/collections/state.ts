@@ -142,11 +142,7 @@ const collectionFacts = (projection: WorkspaceView, collection: string) => {
 };
 
 export const exposureHierarchy = (projection: WorkspaceView): readonly ExposureRow[] => {
-  if (
-    projection.effective.status !== "complete" ||
-    !projection.effective.managed ||
-    projection.effective.use.length === 0
-  )
+  if (projection.effective.status !== "complete" || projection.effective.use.length === 0)
     return [];
   const collections = new Map(projection.effective.collectionsView.map((item) => [item.id, item]));
   const rows: ExposureRow[] = [];

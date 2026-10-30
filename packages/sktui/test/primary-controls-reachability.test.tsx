@@ -36,6 +36,24 @@ async function expectFocus(setup: Setup, id: string, checkpoint: string) {
   }
 }
 
+async function tabTo(setup: Setup, id: string) {
+  const visited: string[] = [];
+  for (let step = 0; step < 24 && setup.renderer.currentFocusedRenderable?.id !== id; step++) {
+    setup.mockInput.pressTab();
+    await setup.flush();
+    visited.push(setup.renderer.currentFocusedRenderable?.id ?? "none");
+  }
+  await expectFocus(setup, id, `Tab reaches panel through ${visited.join(", ")}`);
+}
+
+async function openInventory(setup: Setup) {
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary");
+  await tabTo(setup, "skills-view-tab-current-exposure");
+  await press(setup, "right");
+  await press(setup, "enter");
+  await expectFocus(setup, "installed-skill-browser", "All Skills opens inventory");
+}
+
 function projection(): WorkspaceView {
   const base = readerProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
@@ -59,19 +77,16 @@ function projection(): WorkspaceView {
 }
 
 for (const width of [140, 80, 60]) {
-  test(`cold startup query / Filter / scope are reachable without Tab at ${width} columns`, async () => {
+  test(`query / Filter / views are keyboard reachable from cold startup at ${width} columns`, async () => {
     const setup = await testRender(
       () => <App core={directSourceCore(projection())} exit={() => {}} />,
       { width, height: 32 },
     );
     try {
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
-      );
-      await setup.renderOnce();
-      await expectFocus(setup, "installed-skill-browser", "cold startup");
+      await openInventory(setup);
       await press(setup, "up");
-      await expectFocus(setup, "skills-query", "Browser Up enters query");
+      await expectFocus(setup, "installed-skill-browser", "Up stays in inventory");
+      await tabTo(setup, "skills-query");
       setup.mockInput.pressKey("g");
       await setup.waitFor(
         () =>
@@ -83,28 +98,13 @@ for (const width of [140, 80, 60]) {
       expect(
         (setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value,
       ).toBe("g");
-      await press(setup, "up");
-      await expectFocus(setup, "skills-query", "return to committed query");
+      await tabTo(setup, "skills-query");
+      await tabTo(setup, "open-skills-filter");
       await press(setup, "enter");
-      await expectFocus(
-        setup,
-        "open-skills-filter",
-        "query Enter reaches Filter control, not overlay",
-      );
-      await press(setup, "enter");
-      await expectFocus(setup, "skills-filter-search", "Filter Enter opens its editor");
+      await expectFocus(setup, "skills-filter-dimensions", "Filter Enter opens dimensions");
       await press(setup, "escape");
       await expectFocus(setup, "open-skills-filter", "Filter Escape restores initiating control");
-      for (
-        let step = 0;
-        step < 6 && !setup.renderer.currentFocusedRenderable?.id.startsWith("skills-view-tab-");
-        step++
-      ) {
-        await press(setup, "down");
-      }
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe(
-        "skills-view-tab-all-installed-skills",
-      );
+      await tabTo(setup, "skills-view-tab-all-installed-skills");
       await press(setup, "enter");
       await expectFocus(setup, "installed-skill-browser", "scope Enter returns Browser");
     } finally {
@@ -118,18 +118,9 @@ for (const width of [140, 80, 60]) {
       { width, height: 32 },
     );
     try {
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
-      );
-      await setup.renderOnce();
-      await expectFocus(setup, "installed-skill-browser", "cold startup");
-      await press(setup, "left");
-      await expectFocus(
-        setup,
-        width >= 100 ? "shell-section-navigation" : "shell-section-tab-skills",
-        "Browser Back enters page selector",
-      );
-      await press(setup, width >= 100 ? "down" : "right");
+      await openInventory(setup);
+      await tabTo(setup, "shell-section-tab-skills");
+      await press(setup, "right");
       await press(setup, "enter");
       await expectFocus(
         setup,
@@ -137,24 +128,19 @@ for (const width of [140, 80, 60]) {
         "page selector Down / Enter enters Collections",
       );
       await press(setup, "enter");
-      await expectFocus(setup, "collection-relationships", "Collection Enter enters rows");
-      await press(setup, "up");
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-entries",
-      );
-      await press(setup, "enter");
+      await tabTo(setup, "collection-relationships");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
       );
-      await press(setup, "enter");
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "collection-membership-origin",
-      );
       await press(setup, "right");
       await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "collection.inspector-back",
+        () => setup.renderer.currentFocusedRenderable?.id.endsWith(".manage") === true,
       );
       await press(setup, "enter");
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
+      );
+      await press(setup, "escape");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
       );

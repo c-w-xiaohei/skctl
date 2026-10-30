@@ -27,6 +27,7 @@ export class AdapterProcessError extends Error {
 }
 
 export interface ProcessClientOptions {
+  readonly signal?: AbortSignal;
   readonly path?: string;
   readonly env?: Record<string, string | undefined>;
   readonly exists?: (path: string) => boolean | Promise<boolean>;
@@ -146,6 +147,7 @@ async function execute(
     stderrLimit: number;
     terminationGraceMs: number;
     cleanupTimeoutMs: number;
+    signal?: AbortSignal;
   },
 ): Promise<{ stdout: Uint8Array; stderr: Uint8Array; status: number | null }> {
   let child: ChildProcess;
@@ -178,8 +180,18 @@ async function execute(
     stdout = readBounded(child.stdout, options.stdoutLimit, terminate, controller.signal);
     stderr = readBounded(child.stderr, options.stderrLimit, terminate, controller.signal);
     const completed = Promise.all([stdout, stderr, exit]);
+    const aborted = new Promise<never>((_, reject) => {
+      const abort = () => {
+        terminate();
+        reject(new AdapterProcessError("CANCELLED"));
+      };
+      if (options.signal?.aborted) abort();
+      else
+        options.signal?.addEventListener("abort", abort, { once: true, signal: controller.signal });
+    });
     const result = await Promise.race([
       completed,
+      aborted,
       new Promise<never>(
         (_, reject) =>
           (timer = setTimeout(() => reject(new AdapterProcessError("TIMEOUT")), options.timeoutMs)),
@@ -200,6 +212,7 @@ async function execute(
     if (joined === undefined) throw new AdapterProcessError("CLEANUP_FAILED");
     throw error;
   } finally {
+    controller.abort();
     if (timer !== undefined) clearTimeout(timer);
   }
 }
@@ -226,6 +239,7 @@ export function createProcessClient(options: ProcessClientOptions = {}) {
   const skctl = resolveFromPath("skctl", path, options.exists, platform, pathExt);
   return {
     async browse(cwd: string): Promise<string> {
+      if (options.signal?.aborted) throw new AdapterProcessError("CANCELLED");
       const executable = await skctl;
       if (!executable) throw new AdapterProcessError("SKCTL_NOT_FOUND");
       const result = await execute(runner, [executable, "agent", "browse"], {
@@ -241,6 +255,7 @@ export function createProcessClient(options: ProcessClientOptions = {}) {
         stderrLimit,
         terminationGraceMs,
         cleanupTimeoutMs,
+        signal: options.signal,
       });
       if (result.status !== 0)
         throw new AdapterProcessError("CATALOG_ERROR", result.status, text(result.stderr));

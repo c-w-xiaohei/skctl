@@ -28,7 +28,7 @@ export {
   runSkill,
 } from "./content/operations";
 export { browseCatalog, searchSkills } from "./catalog/query";
-export { registerSource, registerConfigSource, setManagedOpenCode } from "./config/register";
+export { registerSource, registerConfigSource } from "./config/register";
 export { gc } from "./storage/gc";
 export * from "./shared";
 export * from "./config/types";

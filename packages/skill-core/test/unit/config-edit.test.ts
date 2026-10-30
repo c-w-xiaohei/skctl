@@ -18,6 +18,51 @@ import { getWorkspace } from "../../src/workspace/query";
 import { readWorkspaceUnlocked } from "../../src/workspace/capture";
 import { validateConfigBytes } from "../../src/config/document";
 const test = bunTest.serial;
+test("Collection creation publishes its description with the declaration", async () => {
+  const { root, cleanup } = await configResources("skctl-create-description-");
+  const file = join(root, "config.jsonc");
+  try {
+    const core = { cwd: root, userConfigPath: file };
+    await api.createCollection(core, {
+      level: "global",
+      collection: "team",
+      description: "Team workflows",
+    });
+    expect(JSON.parse(await readFile(file, "utf8")).collections).toEqual({
+      team: { description: "Team workflows" },
+    });
+    const before = await readFile(file, "utf8");
+    await expect(
+      api.createCollection(core, {
+        level: "global",
+        collection: "team",
+        description: "Replacement",
+      }),
+    ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
+    expect(await readFile(file, "utf8")).toBe(before);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("invalid creation content leaves the configuration untouched", async () => {
+  const { root, cleanup } = await configResources("skctl-create-invalid-description-");
+  const file = join(root, "config.jsonc");
+  try {
+    await writeFile(file, '{ "collections": { "existing": {} } }');
+    const before = await readFile(file, "utf8");
+    await expect(async () =>
+      api.createCollection(
+        { cwd: root, userConfigPath: file },
+        { level: "global", collection: "team", description: "" },
+      ),
+    ).toThrow(expect.objectContaining({ code: "INVALID_ARGUMENT" }));
+    expect(await readFile(file, "utf8")).toBe(before);
+  } finally {
+    await cleanup();
+  }
+});
+
 test("reviewed global Source removal works outside a project", async () => {
   const { root, cleanup } = await configResources("skctl-global-source-owner-");
   const file = join(root, "config.jsonc");
@@ -1254,7 +1299,7 @@ test("MGMT-017 adds and removes a named direct Reference with zero member exposu
     await cleanup();
   }
 });
-test("MGMT-027 enables and disables managed OpenCode only at the selected Config level", async () => {
+test("legacy managed declarations remain readable but do not gate the catalog", async () => {
   const { root, cleanup } = await configResources("skctl-managed-levels-");
   const global = join(root, "global", "config.jsonc");
   try {
@@ -1270,16 +1315,20 @@ test("MGMT-027 enables and disables managed OpenCode only at the selected Config
       ["project", join(root, "skctl.jsonc")],
       ["local", join(root, "skctl.local.jsonc")],
     ] as const) {
-      await api.setManagedOpenCode(core, { level, managed: true });
+      await writeFile(file, JSON.stringify({ agents: { opencode: "managed" } }));
       expect(JSON.parse(await readFile(file, "utf8")).agents).toEqual({ opencode: "managed" });
       const projection = (await api.getWorkspace(core)).value;
       expect(
         projection.configs.find((config) => config.level === level)!.direct.integrations,
       ).toHaveLength(1);
       expect(projection.effective.agent.status).toBe("available");
+      expect(projection.diagnostics).toContainEqual(
+        expect.objectContaining({ code: "LEGACY_MANAGED_IGNORED" }),
+      );
       expect(JSON.stringify(projection.effective.agent)).not.toMatch(/native|hybrid/u);
-      await api.setManagedOpenCode(core, { level, managed: false });
+      await writeFile(file, "{}\n");
       expect(JSON.parse(await readFile(file, "utf8")).agents).toBeUndefined();
+      expect((await api.getWorkspace(core)).value.effective.agent.status).toBe("available");
     }
   } finally {
     await cleanup();

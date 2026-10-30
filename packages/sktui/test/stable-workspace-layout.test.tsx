@@ -1,9 +1,15 @@
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
+import { SelectRenderable } from "@opentui/core";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { parsedEnter, parsedEscape } from "./reader-test-controls";
+import {
+  openAllInstalledSkills,
+  parsedEnter,
+  parsedEscape,
+  waitForReaderBody,
+} from "./reader-test-controls";
 
 test.each([120, 80, 60])(
   "Skills page keeps its header and content origin when opening details at %i columns",
@@ -18,32 +24,30 @@ test.each([120, 80, 60])(
       return [target.screenX, target.screenY, target.width, target.height];
     };
     try {
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-      );
+      await openAllInstalledSkills(setup);
       await setup.renderOnce();
       const scope = geometry("skills-local-views");
       const list = geometry("skills-list-pane");
       const listNode = setup.renderer.root.findDescendantById("installed-skill-browser");
-      const title = geometry("route-title");
+      const title = geometry("section-nav");
       await parsedEnter(setup);
       expect(geometry("skills-local-views")).toEqual(scope);
-      expect(geometry("route-title")).toEqual(title);
-      const detail = geometry("skill-inspector");
+      expect(geometry("section-nav")).toEqual(title);
+      const detail = geometry("skill-reader-pane");
       expect(detail[1]).toBe(list[1]);
       if (width >= 100) {
         expect(geometry("skills-list-pane")).toEqual(list);
-        expect(setup.renderer.root.findDescendantById("installed-skill-browser")).toBe(listNode);
+        expect(setup.renderer.root.findDescendantById("installed-skill-browser") === listNode).toBe(
+          true,
+        );
       }
-      await parsedEnter(setup);
-      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
+      await waitForReaderBody(setup, "guide");
       expect(geometry("skills-local-views")).toEqual(scope);
-      expect(geometry("route-title")).toEqual(title);
-      await parsedEscape(setup);
+      expect(geometry("section-nav")).toEqual(title);
       await parsedEscape(setup);
       expect(geometry("skills-list-pane")).toEqual(list);
       expect(geometry("skills-local-views")).toEqual(scope);
-      expect(geometry("route-title")).toEqual(title);
+      expect(geometry("section-nav")).toEqual(title);
     } finally {
       setup.renderer.destroy();
     }
@@ -65,16 +69,21 @@ test("long descriptions do not move the Skill action region", async () => {
     height: 40,
   });
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
+    await openAllInstalledSkills(setup);
     await setup.renderOnce();
-    const actions = setup.renderer.root.findDescendantById("skill-inspector-actions")!;
+    const actions = setup.renderer.root.findDescendantById("reader-action-skill-check-updates")!;
     const before = [actions.screenY, actions.height];
     setup.mockInput.pressArrow("down");
-    await setup.waitForFrame((frame) => frame.includes("A long description"));
+    await setup.waitFor(
+      () =>
+        (
+          setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable
+        ).getSelectedOption()?.value === JSON.stringify(["team-main", "reference"]),
+    );
     await setup.renderOnce();
-    const selectedActions = setup.renderer.root.findDescendantById("skill-inspector-actions")!;
+    const selectedActions = setup.renderer.root.findDescendantById(
+      "reader-action-skill-check-updates",
+    )!;
     expect([selectedActions.screenY, selectedActions.height]).toEqual(before);
   } finally {
     setup.renderer.destroy();
@@ -87,17 +96,16 @@ test("short nonwide terminals keep the same chrome budget across browser and det
     { width: 80, height: 16 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
+    await openAllInstalledSkills(setup);
     await setup.renderOnce();
     const list = setup.renderer.root.findDescendantById("skills-list-pane")!;
     const origin = [list.screenY, list.height];
-    expect(setup.renderer.root.findDescendantById("skills-local-views")).toBeUndefined();
+    const tabs = setup.renderer.root.findDescendantById("skills-local-views")!;
+    const tabsGeometry = [tabs.screenY, tabs.height];
     await parsedEnter(setup);
-    const detail = setup.renderer.root.findDescendantById("skill-inspector")!;
+    const detail = setup.renderer.root.findDescendantById("skill-reader-pane")!;
     expect([detail.screenY, detail.height]).toEqual(origin);
-    expect(setup.renderer.root.findDescendantById("skills-local-views")).toBeUndefined();
+    expect([tabs.screenY, tabs.height]).toEqual(tabsGeometry);
     await parsedEscape(setup);
     const returned = setup.renderer.root.findDescendantById("skills-list-pane")!;
     expect([returned.screenY, returned.height]).toEqual(origin);
@@ -112,15 +120,12 @@ test("resizing detail preserves the surface and returns to the same Skill", asyn
     { width: 120, height: 30 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
+    await openAllInstalledSkills(setup);
     await parsedEnter(setup);
     for (const width of [80, 60, 120]) {
       setup.resize(width, 30);
-      await setup.waitForFrame((frame) => frame.includes("Back to Skills"));
-      await setup.renderOnce();
-      expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeDefined();
+      await setup.flush();
+      expect(!!setup.renderer.root.findDescendantById("skill-reader-pane")).toBe(true);
       expect(setup.renderer.root.findDescendantById("skills-local-views")).toBeDefined();
       expect(setup.captureCharFrame()).toContain("guide");
     }

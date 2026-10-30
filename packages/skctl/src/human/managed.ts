@@ -1,26 +1,25 @@
 import type { Command } from "commander";
 import type { CommandContext } from "../command-context";
-import { formatChange, scope, scopeOptions } from "./shared";
-export function managedCommand(parent: Command, { api, environment, stdout }: CommandContext) {
+import { scopeOptions } from "./shared";
+import { IntegrationError } from "@skctl/integrations";
+export function managedCommand(parent: Command, _context: CommandContext) {
   const managed = parent
     .command("managed")
-    .description("Enable or disable the managed OpenCode catalog projection.");
+    .description("Retired: use integration connect/disconnect to manage host entries.");
   scopeOptions(managed.command("set"))
     .description("Enable the managed OpenCode catalog at one configuration level.")
-    .action(async (flags, action) => {
-      const { value } = await api.setManagedOpenCode(environment(action), {
-        level: scope(flags)!,
-        managed: true,
-      });
-      stdout.write(formatChange(value, "Enabled managed OpenCode"));
+    .action(() => {
+      throw new IntegrationError(
+        "MANAGED_COMMAND_RETIRED",
+        "Use integration connect <codex|opencode> --scope <global|project>. Use controls catalog disclosure.",
+      );
     });
   scopeOptions(managed.command("unset"))
     .description("Disable the managed OpenCode catalog at one configuration level.")
-    .action(async (flags, action) => {
-      const { value } = await api.setManagedOpenCode(environment(action), {
-        level: scope(flags)!,
-        managed: false,
-      });
-      stdout.write(formatChange(value, "Disabled managed OpenCode"));
+    .action(() => {
+      throw new IntegrationError(
+        "MANAGED_COMMAND_RETIRED",
+        "Use integration disconnect <codex|opencode> --scope <global|project>. Removing the legacy field no longer disables catalog access.",
+      );
     });
 }
