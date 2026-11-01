@@ -8,7 +8,7 @@ import { createFocusRegistry } from "../src/focus";
 import { DataList } from "../src/ui/data-list";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
+import { enterLive, parsedEscape } from "./reader-test-controls";
 test("DataList keeps the selected label column fixed when physical focus changes", async () => {
   const setup = await testRender(
     () => (
@@ -175,14 +175,13 @@ test("wide Collections retain the browser beside root details without a Back fra
     const browser = setup.renderer.root.findDescendantById("collection-browser")!;
     await enterLive(setup, "collection-browser");
     expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeDefined();
-    await focusLive(setup, "collection-relationships");
-    setup.mockInput.pressArrow("right");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id.includes(":action-") === true,
-    );
-    await parsedEnter(setup);
+    expect(setup.renderer.root.findDescendantById("route-back")).toBeUndefined();
+    const ownership = setup.renderer.root.findDescendantById("collection-current-details")!;
+    expect(ownership).toBeDefined();
+    await setup.mockMouse.click(ownership.screenX + 1, ownership.screenY);
+    await setup.flush();
     expect(setup.renderer.root.findDescendantById("collection-browser")).toBeDefined();
-    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(false);
+    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(true);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
     );

@@ -27,15 +27,19 @@ export function Pane(props: PaneProps) {
   renderer.on("focused_renderable", updateFocus);
   onMount(() => updateFocus(renderer.currentFocusedRenderable));
   onCleanup(() => renderer.off("focused_renderable", updateFocus));
+  // An empty side list stays borderless when OpenTUI updates borderColor;
+  // its boolean false is otherwise re-enabled by initializeBorder().
   return (
     <box
       id={props.id}
       width={props.width ?? "100%"}
+      maxWidth="100%"
       flexDirection="column"
       flexGrow={1}
       minHeight={0}
       minWidth={0}
-      border={props.border ?? true}
+      overflow="hidden"
+      border={props.border === false ? [] : true}
       title={props.borderTitle}
       bottomTitle={props.borderBottomTitle}
       borderColor={

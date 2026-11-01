@@ -215,7 +215,9 @@ test("App Updates keeps Source results above actions after Stop removes the acti
       throw new Error(
         "Current Updates page, scroll region, table, or diagnostic action is not mounted",
       );
-    expect(setup.renderer.currentFocusedRenderable, diagnostic(setup, stage)).toBe(browser);
+    expect(setup.renderer.currentFocusedRenderable === browser, diagnostic(setup, stage)).toBe(
+      true,
+    );
     expect(details.focusable, diagnostic(setup, stage)).toBe(true);
     expect(root.findDescendantById("updates-stop"), diagnostic(setup, stage)).toBeUndefined();
     expect(details.screenY + details.height, diagnostic(setup, stage)).toBeLessThanOrEqual(

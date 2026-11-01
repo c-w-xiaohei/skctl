@@ -257,7 +257,7 @@ test("RENDER 120 rows scroll by native viewport, keep the header fixed, and mous
     await setup.mockMouse.scroll(body.viewport.screenX + 3, body.viewport.screenY + 2, "up");
     await frames(setup);
     expect(current()).toBe("119");
-    expect(setup.renderer.currentFocusedRenderable).toBe(root);
+    expect(setup.renderer.currentFocusedRenderable === root).toBe(true);
     expect(body.scrollTop).toBeLessThan(111);
     const visible = body.content
       .getChildren()

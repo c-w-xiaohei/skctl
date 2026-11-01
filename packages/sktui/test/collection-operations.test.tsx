@@ -130,11 +130,17 @@ test("Membership removal plan is cancel-first and exposes every exclusion", asyn
   const setup = await testRender(
     () => (
       <MembershipRemovalPlanOverlay
-        collection="team"
-        lines={["Remove: guide main/guide", "Repository acme/team: change its producer"]}
-        executableCount={1}
+        plan={{
+          collection: "team",
+          rows: [],
+          removals: [],
+          ownerGroups: [],
+          explanations: ["Repository acme/team: change its producer"],
+          executable: false,
+        }}
         pending={false}
-        onContinue={() => continued++}
+        onConfirm={() => continued++}
+        onSelect={() => {}}
         onCancel={() => {}}
       />
     ),
@@ -149,7 +155,7 @@ test("Membership removal plan is cancel-first and exposes every exclusion", asyn
     expect(continued).toBe(0);
     setup.mockInput.pressKey("TAB");
     setup.mockInput.pressEnter();
-    expect(continued).toBe(1);
+    expect(continued).toBe(0);
   } finally {
     setup.renderer.destroy();
   }

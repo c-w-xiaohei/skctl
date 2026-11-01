@@ -65,7 +65,8 @@ test("narrow detail does not tab to its hidden Browser pane", async () => {
     const visited = [];
     for (let index = 0; index < 8; index++) visited.push(await pressTab(setup));
     expect(visited).not.toContain("installed-skill-browser");
-    expect(visited).toContain("shell-section-tab-skills");
+    expect(visited).toContain("route-back");
+    expect(visited).toContain("shell-more-actions");
   } finally {
     setup.renderer.destroy();
   }

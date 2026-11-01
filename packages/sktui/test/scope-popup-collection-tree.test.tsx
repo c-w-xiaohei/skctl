@@ -6,6 +6,7 @@ import { testRender } from "@opentui/solid";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
@@ -67,6 +68,7 @@ test.each([
   const mounted = await mount(width, height);
   const { setup } = mounted;
   try {
+    await openMainPage(setup, "settings");
     await enterLive(setup, "shell-scope-select");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("scope-choices"));
     await setup.flush();
@@ -87,7 +89,7 @@ test.each([
     setup.mockInput.pressArrow("down");
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === trigger.id);
-    expect(setup.captureCharFrame()).toContain("Workspace");
+    expect(setup.captureCharFrame()).toContain("Global");
   } finally {
     await mounted.dispose();
   }
@@ -111,7 +113,7 @@ test.each([
     });
     const id = (key: string) => `collection-browser-row-${encodeURIComponent(key)}`;
     try {
-      await enterLive(setup, "shell-section-tab-collections");
+      await openMainPage(setup, "collections");
       expect(setup.renderer.root.findDescendantById("collection-browser")).toBeInstanceOf(
         ScrollBoxRenderable,
       );
@@ -186,6 +188,7 @@ test("an open Scope popup follows resize without changing its candidate and outs
   const mounted = await mount(144, 40);
   const { setup } = mounted;
   try {
+    await openMainPage(setup, "settings");
     await enterLive(setup, "shell-scope-select");
     const choices = setup.renderer.root.findDescendantById("scope-choices") as SelectRenderable;
     setup.mockInput.pressArrow("down");
@@ -222,7 +225,7 @@ test("search reveals matching nested Collections with their Reference ancestor c
     ],
   });
   try {
-    await enterLive(setup, "shell-section-tab-collections");
+    await openMainPage(setup, "collections");
     await focusLive(setup, "collections-query");
     await setup.mockInput.typeText("docs");
     await setup.flush();
@@ -238,21 +241,21 @@ test("search reveals matching nested Collections with their Reference ancestor c
     await mounted.dispose();
   }
 });
-test("Scope popup deactivates the underlying Collection tree and closing does not reclaim tree focus", async () => {
+test("Actions deactivates the underlying Collection tree and closing restores its trigger", async () => {
   const mounted = await mount(100, 24);
   const { setup } = mounted;
   try {
-    await enterLive(setup, "shell-section-tab-collections");
+    await openMainPage(setup, "collections");
     const tree = (await focusLive(setup, "collection-browser")) as ScrollBoxRenderable;
     expect(tree.focusable).toBe(true);
-    await enterLive(setup, "shell-scope-select");
+    await enterLive(setup, "shell-more-actions");
     await setup.flush();
     expect(tree.focusable).toBe(false);
     await parsedEscape(setup);
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "shell-scope-select");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "shell-more-actions");
     await setup.flush();
     expect(tree.focusable).toBe(true);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-scope-select");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-more-actions");
   } finally {
     await mounted.dispose();
   }
@@ -269,8 +272,20 @@ test("Tab reaches bulk tree controls and their arrows stay within that region", 
         );
       });
   try {
-    await enterLive(setup, "shell-section-tab-collections");
+    await openMainPage(setup, "collections");
+    await setup.waitFor(() =>
+      mounted.reads.some((address) => address.source === "team-main" && address.path === "guide"),
+    );
+    for (
+      let step = 0;
+      step < 24 && setup.renderer.currentFocusedRenderable?.id !== "collection-browser";
+      step++
+    ) {
+      setup.mockInput.pressTab();
+      await setup.flush();
+    }
     await waitFocus("collection-browser", "initial entry");
+    const reads = [...mounted.reads];
     for (
       let step = 0;
       step < 24 &&
@@ -297,7 +312,7 @@ test("Tab reaches bulk tree controls and their arrows stay within that region", 
       await setup.flush();
     }
     await waitFocus("collection-browser", "return from bulk controls");
-    expect(mounted.reads).toEqual([]);
+    expect(mounted.reads).toEqual(reads);
   } finally {
     await mounted.dispose();
   }
@@ -329,7 +344,11 @@ test.each([
     const mounted = await mount(width, height, projection);
     const { setup } = mounted;
     try {
-      await enterLive(setup, "shell-section-tab-collections");
+      await openMainPage(setup, "collections");
+      await setup.waitFor(() =>
+        mounted.reads.some((address) => address.source === "team-main" && address.path === "guide"),
+      );
+      const reads = [...mounted.reads];
       await enterLive(setup, "collections-expand-all");
       await focusLive(setup, "collection-browser");
       setup.mockInput.pressArrow("right");
@@ -345,7 +364,7 @@ test.each([
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-browser",
       );
-      expect(mounted.reads).toEqual([]);
+      expect(mounted.reads).toEqual(reads);
     } finally {
       await mounted.dispose();
     }
@@ -371,21 +390,30 @@ test("cycle termination is explained and Enter can still enter the actual availa
   };
   const cycle = deriveCollectionFilterTree(projection, "all").rows.find((row) => row.cycle)!;
   expect(cycle).toBeDefined();
+  expect(cycle.collection).toBe("docs");
   const mounted = await mount(80, 24, projection);
   const { setup } = mounted;
   try {
-    await enterLive(setup, "shell-section-tab-collections");
+    await openMainPage(setup, "collections");
+    await setup.waitFor(() =>
+      mounted.reads.some((address) => address.source === "team-main" && address.path === "guide"),
+    );
+    const reads = [...mounted.reads];
     await enterLive(setup, "collections-expand-all");
     await focusLive(setup, "collection-browser");
     setup.mockInput.pressArrow("right");
     await setup.flush();
+    setup.mockInput.pressArrow("right");
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("Reference cycle returns") && frame.includes(`Target: ${cycle.collection}`),
+    );
     await parsedEnter(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
     );
-    await enterLive(setup, "collection-about");
-    expect(setup.captureCharFrame()).toContain("Reference cycle returns");
-    expect(mounted.reads).toEqual([]);
+    expect(setup.captureCharFrame()).toContain(`─${cycle.collection}─`);
+    expect(mounted.reads).toEqual(reads);
   } finally {
     await mounted.dispose();
   }
@@ -413,7 +441,11 @@ test("issue Escape returns locally before an existing Reference route predecesso
   const mounted = await mount(100, 24, projection);
   const { setup } = mounted;
   try {
-    await enterLive(setup, "shell-section-tab-collections");
+    await openMainPage(setup, "collections");
+    await setup.waitFor(() =>
+      mounted.reads.some((address) => address.source === "team-main" && address.path === "guide"),
+    );
+    const reads = [...mounted.reads];
     await enterLive(setup, "collection-browser");
     setup.mockInput.pressArrow("down");
     await setup.flush();
@@ -435,7 +467,7 @@ test("issue Escape returns locally before an existing Reference route predecesso
     await parsedEscape(setup);
     await setup.waitForFrame((frame) => frame.includes("─team─"));
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-relationships");
-    expect(mounted.reads).toEqual([]);
+    expect(mounted.reads).toEqual(reads);
   } finally {
     await mounted.dispose();
   }

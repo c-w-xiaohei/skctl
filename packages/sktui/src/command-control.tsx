@@ -12,6 +12,7 @@ export function CommandControl(props: {
   readonly record: CommandRecord;
   /** Bounded inline caption; command discovery retains the full verb and target. */
   readonly label?: string;
+  readonly shortcutHint?: string;
   readonly register?: (target: Renderable) => void | (() => void);
   readonly execute: () => void;
   readonly keyboard?: boolean;
@@ -100,6 +101,7 @@ export function CommandControl(props: {
       <Button
         id={props.id}
         label={props.label ?? props.record.verb}
+        shortcutHint={props.shortcutHint}
         intent={props.record.danger ? "danger" : (props.intent ?? "neutral")}
         disabled={!props.record.enabled}
         alignSelf="flex-start"

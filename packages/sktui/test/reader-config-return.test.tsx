@@ -4,6 +4,7 @@ import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { ConfigPage } from "../src/config-page";
 import { createConfigState } from "../src/config/state";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
@@ -91,16 +92,8 @@ function configProjection(): WorkspaceView {
   };
 }
 async function chooseProject(setup: Setup) {
-  // The shell exists before the initial projection and its deferred focus landing.
-  // This fixture starts with unmanaged Agent access; its recovery control proves
-  // the real projection has reached the work area before we move into chrome.
-  await setup.waitFor(() => {
-    const pane = setup.renderer.root.findDescendantById("skills-setup-pane");
-    const recovery = pane?.findDescendantById("skills-setup-primary");
-    const scope = setup.renderer.root.findDescendantById("shell-scope-select");
-    return !!pane && !!recovery && !!scope && scope.width > 0 && scope.height > 0;
-  });
-  await setup.flush();
+  await openMainPage(setup, "settings");
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-scope-select"));
   await enterLive(setup, "shell-scope-select");
   await setup.waitFor(() => {
     const choices = setup.renderer.root.findDescendantById("scope-choices");
@@ -117,28 +110,18 @@ async function chooseProject(setup: Setup) {
   choices.setSelectedIndex(project);
   await parsedEnter(setup);
   await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("shell-section-project-tab-sources"),
+    () => !!setup.renderer.root.findDescendantById("settings-section-tab-sources"),
   );
 }
 async function openProjectIntegrations(setup: Setup) {
-  await chooseProject(setup);
-  await focusLive(setup, "shell-section-project-tab-sources");
-  for (const section of ["config-sources", "collections", "integrations"]) {
-    setup.mockInput.pressArrow("right");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === `shell-section-project-tab-${section}`,
-    );
-  }
+  await openMainPage(setup, "agent");
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("agent-view-tab-project"));
+  await enterLive(setup, "agent-view-tab-project");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-hosts"));
 }
 async function openProjectConfigSource(setup: Setup) {
   await chooseProject(setup);
-  await focusLive(setup, "shell-section-project-tab-sources");
-  setup.mockInput.pressArrow("right");
-  await setup.waitFor(
-    () =>
-      setup.renderer.currentFocusedRenderable?.id === "shell-section-project-tab-config-sources",
-  );
+  await enterLive(setup, "settings-section-tab-config-sources");
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("config-config-source-browser"),
   );
@@ -266,7 +249,8 @@ test("RENDER Integrations keeps host entries reachable across resize and returns
     }
     setup.resize(80, 30);
     await setup.flush();
-    await enterLive(setup, "shell-section-project-tab-config-sources");
+    await chooseProject(setup);
+    await enterLive(setup, "settings-section-tab-config-sources");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("config-config-source-browser"),
     );
@@ -407,7 +391,6 @@ test("RENDER Reader management groups stay inside the actual pane and keep dange
     await openAllInstalledSkills(setup);
     await parsedEnter(setup);
     await openReaderTab(setup, 2);
-    await enterLive(setup, "reader-details-manage");
     for (const [width, height] of [
       [144, 40],
       [100, 24],
@@ -416,7 +399,7 @@ test("RENDER Reader management groups stay inside the actual pane and keep dange
     ] as const) {
       setup.resize(width, height);
       await setup.flush();
-      const normal = setup.renderer.root.findDescendantById("reader-manage-actions")!;
+      const normal = setup.renderer.root.findDescendantById("reader-settings-actions")!;
       const danger = setup.renderer.root.findDescendantById("reader-danger-actions")!;
       expect(danger.screenY).toBeGreaterThanOrEqual(normal.screenY + normal.height);
       for (const id of ["reader-reload", "reader-details-action-skill-uninstall"]) {

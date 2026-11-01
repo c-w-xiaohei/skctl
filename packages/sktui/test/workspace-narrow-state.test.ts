@@ -5,7 +5,7 @@ import { readerProjection } from "./installed-reader.fixture";
 
 test("workspace narrow Source flow distinguishes Skills, Sources, and inspector", () => {
   const workspace = createWorkspaceState();
-  expect(workspace.skillsView()).toBe("current-exposure");
+  expect(workspace.skillsView()).toBe("all-installed-skills");
   expect(workspace.section()).toBe("skills");
   workspace.selectSection("sources");
   expect(workspace.section()).toBe("sources");
@@ -165,34 +165,35 @@ test("workspace reconciliation retains a valid expanded descendant hidden by its
 test("workspace page selection does not replace its Skills view", () => {
   const workspace = createWorkspaceState();
   workspace.selectSection("sources");
-  expect(workspace.skillsView()).toBe("current-exposure");
+  expect(workspace.skillsView()).toBe("all-installed-skills");
   expect(workspace.section()).toBe("sources");
 });
 
 test("ordinary workspace page changes retain their independent Skills view", () => {
   const workspace = createWorkspaceState();
   workspace.selectSection("skills");
-  expect(workspace.skillsView()).toBe("current-exposure");
+  expect(workspace.skillsView()).toBe("all-installed-skills");
   expect(workspace.section()).toBe("skills");
 
   workspace.selectSection("collections");
-  expect(workspace.skillsView()).toBe("current-exposure");
+  expect(workspace.skillsView()).toBe("all-installed-skills");
   expect(workspace.section()).toBe("collections");
 
   workspace.selectSection("sources");
-  expect(workspace.skillsView()).toBe("current-exposure");
+  expect(workspace.skillsView()).toBe("all-installed-skills");
   expect(workspace.section()).toBe("sources");
 
   workspace.selectSection("skills");
-  expect(workspace.skillsView()).toBe("current-exposure");
+  expect(workspace.skillsView()).toBe("all-installed-skills");
   expect(workspace.section()).toBe("skills");
 });
 
-test("explicit Current Exposure selection remains an intentional handoff", () => {
+test("Agent catalog is a page without replacing the Skills view", () => {
   const workspace = createWorkspaceState();
-  workspace.selectSkillsView("current-exposure");
-  expect(workspace.skillsView()).toBe("current-exposure");
-  expect(workspace.section()).toBe("skills");
+  workspace.selectSkillsView("unassigned");
+  workspace.selectSection("agent");
+  expect(workspace.skillsView()).toBe("unassigned");
+  expect(workspace.section()).toBe("agent");
 });
 
 test("workspace page landing retains the selected Skills view", () => {
@@ -278,6 +279,46 @@ test("workspace multi-selection retains slash-containing Source IDs structurally
   const address = { source: "team/main", path: "review" };
   workspace.toggleSkill(address);
   expect(workspace.selectedSkills()).toEqual([address]);
+});
+
+test("inventory cursor survives intervening sections and reconciles while Agent is active", () => {
+  const state = createWorkspaceState();
+  const before = readerProjection();
+  const [a, b] = before.installedSkills.map((skill) => skill.address);
+  state.selectSkill(a);
+  state.selectSection("agent");
+  state.selectSkill(b);
+  state.selectSection("sources");
+  state.selectSection("skills");
+  expect(state.selectedSkill()).toEqual(a);
+  state.selectSection("agent");
+  state.selectSkill(undefined);
+  const after = { ...before, installedSkills: before.installedSkills.slice(1) };
+  state.reconcile(before, after);
+  expect(state.selectedSkill()).toBeUndefined();
+  state.selectSection("sources");
+  state.selectSection("skills");
+  expect(state.selectedSkill()).toEqual(b);
+  state.land("skills", a);
+  expect(state.selectedSkill()).toEqual(a);
+  state.selectSection("sources");
+  state.selectSection("skills");
+  expect(state.selectedSkill()).toEqual(a);
+});
+
+test("explicit Agent Reader landing updates inventory even when its address is already selected", () => {
+  const state = createWorkspaceState();
+  const [a, b] = readerProjection().installedSkills.map((skill) => skill.address);
+  state.selectSkill(a);
+  state.toggleSkill(a!);
+  state.selectSection("agent");
+  state.selectSkill(b);
+  state.showInstalledSkillsFromSource(b!.source);
+  state.selectSkill(b);
+  state.selectSection("sources");
+  state.selectSection("skills");
+  expect(state.selectedSkill()).toEqual(b);
+  expect(state.selectedSkills()).toEqual([a]);
 });
 
 test("workspace Problems selection reconciles by prior visible position", () => {

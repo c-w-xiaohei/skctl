@@ -3,6 +3,7 @@ import { InputRenderable, SelectRenderable, ScrollBoxRenderable } from "@opentui
 import { enterLive, focusLive } from "./reader-test-controls";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { CollectionsPage } from "../src/collections-page";
 import { createCollectionsState } from "../src/collections/state";
 import { createFocusRegistry } from "../src/focus";
@@ -33,12 +34,7 @@ async function openCollections(
   setup: Awaited<ReturnType<typeof testRender>>,
   focusBrowser = false,
 ) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-  const section = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
-  section.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === section);
-  await setup.renderOnce();
-  setup.mockInput.pressArrow("right");
+  await openMainPage(setup, "collections");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
   await setup.flush();
   if (focusBrowser) {
@@ -117,7 +113,7 @@ function renderCollectionDetail(
   );
 }
 
-test("RENDER Collection Inspector replaces the Work Area with exactly Entries and Relations", async () => {
+test("RENDER Collection workspace exposes Members, Description and Settings", async () => {
   const collections = createCollectionsState();
   collections.select("engineering");
   const setup = await testRender(
@@ -146,9 +142,9 @@ test("RENDER Collection Inspector replaces the Work Area with exactly Entries an
   );
   try {
     await setup.flush();
-    expect(setup.renderer.root.findDescendantById("collection-tabs-tab-entries")).toBeDefined();
-    expect(setup.renderer.root.findDescendantById("collection-tabs-tab-relations")).toBeDefined();
-    expect(setup.renderer.root.findDescendantById("collection-tabs-tab-members")).toBeUndefined();
+    expect(setup.renderer.root.findDescendantById("collection-tabs-tab-members")).toBeDefined();
+    expect(setup.renderer.root.findDescendantById("collection-tabs-tab-description")).toBeDefined();
+    expect(setup.renderer.root.findDescendantById("collection-tabs-tab-settings")).toBeDefined();
     await setup.waitForFrame((frame) => frame.includes("guide"));
     expect(setup.captureCharFrame()).toContain("Contents");
   } finally {
@@ -156,32 +152,41 @@ test("RENDER Collection Inspector replaces the Work Area with exactly Entries an
   }
 });
 
-test("STATE Collection local view retains Entries or Relations independently per Collection", () => {
+test("STATE Collection local view retains Settings or Members independently per Collection", () => {
   const collections = createCollectionsState();
-  collections.selectTab("engineering", "relations");
-  collections.selectTab("docs", "entries");
-  expect(collections.tab("engineering")).toBe("relations");
-  expect(collections.tab("docs")).toBe("entries");
+  collections.selectTab("engineering", "settings");
+  collections.selectTab("docs", "members");
+  expect(collections.tab("engineering")).toBe("settings");
+  expect(collections.tab("docs")).toBe("members");
 });
 
 test("STATE Collection snapshot restores independent row, tab, scroll, and origin state across A-B-A", () => {
   const collections = createCollectionsState();
   collections.select("a");
-  collections.selectTab("a", "relations");
-  collections.selectRow("a", "relations", "collection-link:2");
-  collections.setScroll("collection:a:relations", 7);
+  collections.selectTab("a", "settings");
+  collections.selectRow("a", "members", "guide:0");
+  collections.setScroll("collection:a:settings", 7);
   collections.toggleOrigin("a", "origin-a");
+  collections.openRelation("a", "collection-link:2");
+  const saved = collections.snapshot();
+  collections.closeInspector();
   collections.select("b");
-  collections.selectTab("b", "entries");
-  collections.selectRow("b", "entries", "guide:0");
-  collections.setScroll("collection:b:entries", 3);
+  collections.selectTab("b", "members");
+  collections.selectRow("b", "members", "guide:0");
+  collections.setScroll("collection:b:members", 3);
   collections.select("a");
-  expect(collections.tab("a")).toBe("relations");
-  expect(collections.selectedRow("a", "relations")).toBe("collection-link:2");
-  expect(collections.scroll("collection:a:relations")).toBe(7);
+  expect(collections.tab("a")).toBe("settings");
+  expect(collections.selectedRow("a", "members")).toBe("guide:0");
+  expect(collections.scroll("collection:a:settings")).toBe(7);
   expect(collections.selectedOrigins("a")).toEqual(["origin-a"]);
-  expect(collections.selectedRow("b", "entries")).toBe("guide:0");
-  expect(collections.scroll("collection:b:entries")).toBe(3);
+  expect(collections.selectedRow("b", "members")).toBe("guide:0");
+  expect(collections.scroll("collection:b:members")).toBe(3);
+  collections.restore(saved);
+  expect(collections.inspector()).toEqual({
+    kind: "relation",
+    collection: "a",
+    relation: "collection-link:2",
+  });
 });
 
 test("DECLARATION Collection tables expose exact columns", () => {
@@ -225,7 +230,7 @@ test("RENDER wide Collections mount the work-area controls in the expected layou
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
     await setup.flush();
     const rows = setup.renderer.root.findDescendantById("collection-relationships")!;
-    const tabs = setup.renderer.root.findDescendantById("collection-tabs-tab-entries")!;
+    const tabs = setup.renderer.root.findDescendantById("collection-tabs-tab-members")!;
     expect(rows).toBeDefined();
     expect(tabs).toBeDefined();
     expect(rows.screenY).toBeGreaterThan(tabs.screenY);
@@ -493,7 +498,7 @@ test("RENDER Collections captures the mounted browser scroll and restores it aft
     expect(scroll).toBeGreaterThan(0);
     await enterLive(setup, "collection-browser");
     await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("collection-tabs-tab-entries"),
+      () => !!setup.renderer.root.findDescendantById("collection-tabs-tab-members"),
     );
 
     await parsedEscape(setup);
@@ -523,7 +528,7 @@ test.each([120, 80, 79])(
       await enterLive(setup, "collection-browser");
       await setup.renderOnce();
       await setup.waitFor(
-        () => setup.renderer.root.findDescendantById("collection-tabs-tab-entries") !== undefined,
+        () => setup.renderer.root.findDescendantById("collection-tabs-tab-members") !== undefined,
       );
       const relationships = setup.renderer.root.findDescendantById("collection-relationships")!;
       relationships.focus();
@@ -537,7 +542,7 @@ test.each([120, 80, 79])(
   },
 );
 
-test("RENDER Collection Relations Enter is inspectable without opening a mutation draft", async () => {
+test("RENDER Settings Reference Inspect opens exact relation without a mutation draft", async () => {
   const projection = collectionProjection();
   if (projection.effective.status !== "complete") throw new Error("expected complete fixture");
   const owner = projection.effective.collectionsView[0]!.declared[0]!;
@@ -554,26 +559,33 @@ test("RENDER Collection Relations Enter is inspectable without opening a mutatio
       ],
     },
   };
-  const collections = createCollectionsState();
-  collections.select("engineering");
-  collections.selectTab("engineering", "relations");
-  const reference = collectionRelationRows("engineering", relationProjection).find(
-    (row) => row.kind === "collection-reference",
-  )!;
-  collections.openRelation("engineering", collectionRelationKey(reference));
-  const setup = await renderCollectionDetail(collections, () => relationProjection, 80, 24);
+  const setup = await testRender(
+    () => <App core={directSourceCore(relationProjection)} exit={() => {}} />,
+    { width: 120, height: 40 },
+  );
   try {
+    await openCollections(setup);
+    await enterLive(setup, "collection-browser");
+    const table = setup.renderer.root.findDescendantById("collection-relationships")!;
+    table.focus();
+    setup.mockInput.pressArrow("down");
+    await setup.flush();
+    const id = "collection-current-details";
+    const control = setup.renderer.root.findDescendantById(id)!;
+    expect(control).toBeDefined();
+    await setup.mockMouse.click(control.screenX + 1, control.screenY);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
     );
     expect(setup.renderer.root.findDescendantById("collection-relation-inspector")).toBeDefined();
+    expect(setup.captureCharFrame()).toContain("Docs");
     expect(setup.renderer.root.findDescendantById("collection-review-choice")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
   }
 });
 
-test("RENDER Membership inspector names the object and exposes origin plus metadata", async () => {
+test("RENDER Membership origin panel retains the member table and exposes exact metadata", async () => {
   const collections = createCollectionsState();
   collections.select("engineering");
   collections.openMembership("engineering", "guide:0");
@@ -582,13 +594,16 @@ test("RENDER Membership inspector names the object and exposes origin plus metad
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
     );
-    expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(true);
+    expect(
+      setup.renderer.root.findDescendantById("collection-inspector-surface")!.height,
+    ).toBeLessThanOrEqual(14);
     expect(!!setup.renderer.root.findDescendantById("collection-membership-origin")).toBe(false);
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
     expect(frame).toContain("guide");
-    expect(frame).toContain("In engineering");
-    for (const field of ["Target", "Owner"]) expect(frame).toContain(field);
+    expect(frame).toContain("Collection: engineering");
+    for (const field of ["Target", "Configuration"]) expect(frame).toContain(field);
     expect(setup.renderer.root.findDescendantById("collection-membership-actions")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
@@ -613,7 +628,7 @@ test("RENDER Relation inspector renders metadata commands and dispatches the foc
   };
   const collections = createCollectionsState();
   collections.select("engineering");
-  collections.selectTab("engineering", "relations");
+  collections.selectTab("engineering", "settings");
   collections.openRelation(
     "engineering",
     collectionRelationKey(
@@ -651,19 +666,19 @@ test("RENDER Relation inspector renders metadata commands and dispatches the foc
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
     );
-    const remove = setup.renderer.root.findDescendantById("relationship.remove-reference")!;
+    const remove = setup.renderer.root.findDescendantById("relationship.open-owner")!;
     remove.focus();
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("relationship.remove-reference");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("relationship.open-owner");
     expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("collection-relation-inspector")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("relationship.open-owner")).toBeDefined();
     expect(remove).toBeDefined();
     const frame = setup.captureCharFrame();
     expect(frame).toContain("docs");
-    expect(frame).toContain("Relation in engineering");
+    expect(frame).toContain("Collection: engineering");
     expect(frame).toContain("Open owning Config");
-    expect(frame).toContain("Remove Reference");
+    expect(frame).not.toContain("Remove Reference");
     expect(setup.renderer.root.findDescendantById("collection-relation-actions")).toBeUndefined();
     expect(frame).not.toContain("Relationship inspector");
     expect(frame).not.toContain("Back to Relations");
@@ -671,8 +686,9 @@ test("RENDER Relation inspector renders metadata commands and dispatches the foc
     await setup.waitFor(() => intents.length === 1);
     expect(intents).toEqual([
       {
-        kind: "collection-reference",
+        kind: "collection-open-config",
         collection: "engineering",
+        relationship: "reference",
         name: "docs",
         target: "docs",
         description: "Docs",
@@ -724,10 +740,10 @@ test("RENDER contributed Membership and Reference retain Config Source provenanc
   collections.openMembership("engineering", "guide:0");
   const setup = await renderCollectionDetail(collections, () => projection, 120, 40);
   try {
-    await setup.waitForFrame((frame) => frame.includes("In engineering"));
+    await setup.waitForFrame((frame) => frame.includes("Collection: engineering"));
     expect(setup.captureCharFrame()).toContain("global /global.jsonc /configSources/team");
     expect(setup.captureCharFrame()).toContain("project /project.jsonc /collections/engineering");
-    collections.selectTab("engineering", "relations");
+    collections.selectTab("engineering", "settings");
     collections.openRelation(
       "engineering",
       collectionRelationKey(
@@ -736,7 +752,7 @@ test("RENDER contributed Membership and Reference retain Config Source provenanc
         )!,
       ),
     );
-    await setup.waitForFrame((frame) => frame.includes("Relation in engineering"));
+    await setup.waitForFrame((frame) => frame.includes("Collection: engineering"));
     expect(setup.captureCharFrame()).toContain("global /global.jsonc /configSources/team");
     expect(setup.captureCharFrame()).toContain("project /project.jsonc /collections/engineering");
   } finally {
@@ -795,12 +811,7 @@ test("RENDER Collection browser opens its exact memberships and their ownership 
     expect(
       body.getChildren().filter((row) => row.id.startsWith("collection-relationships-row-")),
     ).toHaveLength(1);
-    await focusLive(setup, "collection-relationships");
-    setup.mockInput.pressArrow("right");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id.includes(":action-") === true,
-    );
-    setup.mockInput.pressEnter();
+    await enterLive(setup, "collection-current-details");
     await setup.waitForFrame(
       (frame) => frame.includes("/project.jsonc") && frame.includes("/collections/engineering"),
     );
@@ -870,7 +881,7 @@ test("RENDER Collection Relations keep Collection Use, Reference, and Link owner
   };
   const collections = createCollectionsState();
   collections.select("engineering");
-  collections.selectTab("engineering", "relations");
+  collections.selectTab("engineering", "settings");
   const setup = await testRender(
     () => (
       <CollectionsPage
@@ -896,12 +907,14 @@ test("RENDER Collection Relations keep Collection Use, Reference, and Link owner
     { width: 120, height: 40 },
   );
   try {
-    await setup.waitForFrame((frame) => frame.includes("docs") && frame.includes("shared"));
+    await setup.waitForFrame(
+      (frame) => frame.includes("Included Collections") && frame.includes("shared"),
+    );
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("Reference");
-    expect(frame).toContain("Link");
-    expect(frame).not.toContain("/project.jsonc");
-    expect(frame).not.toContain("/collections/");
+    expect(frame).not.toContain("Reference docs");
+    expect(frame).toContain("Stop including");
+    expect(frame).toContain("/project.jsonc");
+    expect(frame).toContain("/collections/engineering");
   } finally {
     setup.renderer.destroy();
   }
@@ -981,11 +994,14 @@ test("RENDER Collection rows omit full address and relation owner facts from pri
     await setup.waitForFrame((frame) => frame.includes("guide") && frame.includes("team-main"));
     expect(setup.captureCharFrame()).not.toContain(longPath);
     expect(setup.captureCharFrame()).not.toContain("/project.jsonc");
-    collections.selectTab("engineering", "relations");
-    await setup.waitForFrame((frame) => frame.includes("Reference") && frame.includes("docs"));
+    collections.selectTab("engineering", "settings");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-settings"));
+    await setup.waitForFrame(
+      (frame) => frame.includes("Configuration locations") && frame.includes("/project.jsonc"),
+    );
     expect(setup.captureCharFrame()).not.toContain("engineering -> docs");
-    expect(setup.captureCharFrame()).not.toContain("/project.jsonc");
-    expect(setup.captureCharFrame()).not.toContain("/collections/");
+    expect(setup.captureCharFrame()).toContain("/project.jsonc");
+    expect(setup.captureCharFrame()).toContain("/collections/engineering");
   } finally {
     setup.renderer.destroy();
   }
@@ -1085,7 +1101,7 @@ test("RENDER Collection Work Area keeps context, tabs, and rows on separate line
     const rows = setup.renderer.root.findDescendantById(
       "collection-relationships",
     ) as SelectRenderable;
-    const tabs = setup.renderer.root.findDescendantById("collection-tabs-tab-entries")!;
+    const tabs = setup.renderer.root.findDescendantById("collection-tabs-tab-members")!;
     expect(tabs.screenY).toBeGreaterThan(0);
     expect(rows.screenY).toBeGreaterThan(tabs.screenY);
     expect(rows.width).toBeGreaterThan(40);
@@ -1267,11 +1283,11 @@ test("STATE Collection browser selection resets its first local row when the Col
   collections.select("a");
   collections.select("b");
   expect(collections.selected()).toBe("b");
-  expect(collections.tab("b")).toBe("entries");
+  expect(collections.tab("b")).toBe("members");
 });
 
 test.each([120, 80, 43])(
-  "RENDER Entries and Relations labels remain bounded at width %i",
+  "RENDER Collection view controls remain bounded at width %i",
   async (width) => {
     const collections = createCollectionsState();
     collections.select("engineering");
@@ -1284,7 +1300,11 @@ test.each([120, 80, 43])(
     try {
       await setup.renderOnce();
       expect(setup.captureCharFrame()).toContain("Contents");
-      expect(setup.captureCharFrame()).toContain("Relations");
+      for (const view of ["members", "description", "settings"]) {
+        const tab = setup.renderer.root.findDescendantById(`collection-tabs-tab-${view}`)!;
+        expect(tab).toBeDefined();
+        expect(tab.height).toBe(1);
+      }
     } finally {
       setup.renderer.destroy();
     }
@@ -1371,11 +1391,11 @@ test("RENDER Collection filter controls preserve one-line query filtering and cl
 test("STATE Collections preserve selection, local tab, and filter state across responsive widths", () => {
   const collections = createCollectionsState();
   collections.select("a");
-  collections.selectTab("a", "relations");
+  collections.selectTab("a", "settings");
   collections.setQuery("a");
   for (const _width of [120, 80, 79, 43, 120]) collections.select("a");
   expect(collections.selected()).toBe("a");
-  expect(collections.tab("a")).toBe("relations");
+  expect(collections.tab("a")).toBe("settings");
   expect(collections.query()).toBe("a");
 });
 

@@ -103,13 +103,13 @@ test("optional Form slots reserve no rows and do not remount body controls", asy
   expect(action.screenY + action.height).toBe(form.screenY + form.height);
   expect(find("input")).toBe(originalInput);
   expect(input.value).toBe("x");
-  expect(setup.renderer.currentFocusedRenderable).toBe(input);
+  expect(setup.renderer.currentFocusedRenderable === input).toBe(true);
   const originalAction = action;
   action.focus();
   setup.resize(80, 24);
   await setup.renderOnce();
   expect(find("action")).toBe(originalAction);
-  expect(setup.renderer.currentFocusedRenderable).toBe(originalAction);
+  expect(setup.renderer.currentFocusedRenderable === originalAction).toBe(true);
   expectWithin(action, form);
 
   input.focus();
@@ -119,7 +119,7 @@ test("optional Form slots reserve no rows and do not remount body controls", asy
   expect(input.screenY).toBe(form.screenY);
   expect(find("input")).toBe(originalInput);
   expect(input.value).toBe("x");
-  expect(setup.renderer.currentFocusedRenderable).toBe(input);
+  expect(setup.renderer.currentFocusedRenderable === input).toBe(true);
 });
 
 test("Field messages preserve real controls, editor state and focus across all required sizes", async () => {
@@ -229,7 +229,7 @@ test("Field messages preserve real controls, editor state and focus across all r
       expect(find("button")).toBe(originals[2]);
       expect(mounts).toBe(1);
       expect(input.value).toBe("t");
-      expect(setup.renderer.currentFocusedRenderable).toBe(focused);
+      expect(setup.renderer.currentFocusedRenderable === focused).toBe(true);
       expect(list.getSelectedOption()?.value).toBe("team");
       for (const target of originals) expectWithin(target, find("field"));
       const messages = texts(find("field")).filter(
@@ -387,7 +387,7 @@ test("long labels and messages wrap above or beside controls without compact-lay
     expect(helpText().screenX).toBe(input.screenX);
     expect(helpText().screenY).toBeGreaterThanOrEqual(input.screenY + input.height);
     expect(find("input")).toBe(originalInput);
-    expect(setup.renderer.currentFocusedRenderable).toBe(originalInput);
+    expect(setup.renderer.currentFocusedRenderable === originalInput).toBe(true);
     for (const target of [labelText(), input, helpText()]) expectWithin(target, find("form"));
   }
 
@@ -395,6 +395,6 @@ test("long labels and messages wrap above or beside controls without compact-lay
   setup.resize(43, 13);
   await setup.renderOnce();
   expect(find("input")).toBe(originalInput);
-  expect(setup.renderer.currentFocusedRenderable).toBe(originalInput);
+  expect(setup.renderer.currentFocusedRenderable === originalInput).toBe(true);
   for (const target of [labelText(), input, helpText()]) expectWithin(target, find("form"));
 });

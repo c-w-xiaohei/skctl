@@ -7,12 +7,11 @@ import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { focusLive, openAllInstalledSkills } from "./reader-test-controls";
 const skillsViews = [
-  ["current-exposure", "skills-setup-pane"],
   ["all-installed-skills", "installed-skill-browser"],
   ["unassigned", "installed-skill-browser"],
   ["problems", "problems-browser"],
 ] as const;
-test("RENDER mounted Skills local tabs navigate Current Exposure through Problems without legacy workspace nodes", async () => {
+test("RENDER mounted Skills local tabs navigate Installed through Problems without legacy workspace nodes", async () => {
   const projection = {
     ...readerProjection(),
     installedSkills: readerProjection().installedSkills.map((skill, index) => ({
@@ -39,15 +38,13 @@ test("RENDER mounted Skills local tabs navigate Current Exposure through Problem
   );
   try {
     await setup.flush();
-    let tab = await focusLive(setup, "skills-view-tab-current-exposure");
+    let tab = await focusLive(setup, "skills-view-tab-all-installed-skills");
     for (const [index, [, body]] of skillsViews.entries()) {
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById(body));
       expect(tab).toBeInstanceOf(TabsTabRenderable);
       expect((tab as TabsTabRenderable).getState().selected).toBe(true);
-      if (index === 0) {
-        expect(setup.captureCharFrame()).toContain("Organize Skills into a Collection");
-        expect(setup.renderer.root.findDescendantById("skills-setup-primary")).toBeDefined();
-      }
+      if (index === 0)
+        expect(setup.renderer.root.findDescendantById("install-skills")).toBeDefined();
       expect(setup.renderer.root.findDescendantById("workspace-scope")).toBeUndefined();
       expect(setup.renderer.root.findDescendantById("work-area")).toBeUndefined();
       expect(setup.captureCharFrame()).not.toContain("Workspace Scope");
@@ -69,15 +66,13 @@ test("RENDER mounted Skills local tabs navigate Current Exposure through Problem
     setup.renderer.destroy();
   }
 });
-test("RENDER Section Right leaves Current Exposure and mounts the Collections browser once", async () => {
+test("RENDER Section Right leaves Installed Skills and mounts the Collections browser once", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
     { width: 120, height: 40 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
-    );
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
     await focusLive(setup, "shell-section-tab-skills");
     setup.mockInput.pressArrow("right");
     await setup.waitFor(

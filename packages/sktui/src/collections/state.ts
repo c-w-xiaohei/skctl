@@ -73,7 +73,6 @@ export interface CollectionsSnapshot {
   };
   readonly scrolls: Readonly<Record<string, number>>;
   readonly inspector?:
-    | { readonly kind: "collection"; readonly collection: string }
     | {
         readonly kind: "membership";
         readonly collection: string;
@@ -248,7 +247,7 @@ export function createCollectionsState() {
     },
     query: () => snapshot().query,
     filters: () => snapshot().filters,
-    tab: (collection: string): CollectionTab => snapshot().tabs[collection] ?? "entries",
+    tab: (collection: string): CollectionTab => snapshot().tabs[collection] ?? "members",
     selectedRow: (collection: string, tab: CollectionTab) =>
       snapshot().selectedRows[`${collection}:${tab}`],
     selectedOrigins: (collection: string) => snapshot().selectedOrigins[collection] ?? [],
@@ -303,9 +302,6 @@ export function createCollectionsState() {
         filter: { open: false, search: "" },
       }));
     },
-    openCollectionInfo(collection: string) {
-      update((current) => ({ ...current, inspector: { kind: "collection", collection } }));
-    },
     openMembership(collection: string, member: string) {
       update((current) => ({
         ...current,
@@ -331,6 +327,12 @@ export function createCollectionsState() {
     selectTab(collection: string, tab: CollectionTab) {
       update((current) => ({
         ...current,
+        inspector:
+          current.inspector?.kind === "membership" &&
+          current.inspector.collection === collection &&
+          tab !== (current.tabs[collection] ?? "members")
+            ? undefined
+            : current.inspector,
         tabs: { ...current.tabs, [collection]: tab },
       }));
     },
@@ -338,6 +340,13 @@ export function createCollectionsState() {
       const key = `${collection}:${tab}`;
       update((current) => ({
         ...current,
+        inspector:
+          current.inspector?.kind === "membership" &&
+          current.inspector.collection === collection &&
+          current.selectedRows[key] !== undefined &&
+          value !== current.selectedRows[key]
+            ? undefined
+            : current.inspector,
         selectedRows: value
           ? { ...current.selectedRows, [key]: value }
           : Object.fromEntries(

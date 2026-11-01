@@ -65,8 +65,8 @@ test("Skill controls expose their actual Enter action and Tab moves without exec
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("route-back");
     setup.mockInput.pressTab();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "shell-scope-select");
-    await setup.waitForFrame((frame) => frame.includes("Enter Change Scope"));
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "shell-more-actions");
+    await setup.waitForFrame((frame) => frame.includes("Actions"));
     expect(setup.renderer.root.findDescendantById("scope-choices")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("reader-tabs-tab-skill")).toBeDefined();
     expect(mounted.loads()).toBe(loadsAfterOpen);
@@ -88,7 +88,7 @@ test("Skill controls expose their actual Enter action and Tab moves without exec
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
     await openReaderTab(setup, 2);
     await focusLive(setup, "reader-action-skill-check-updates");
-    await setup.waitForFrame((frame) => frame.includes("Enter Update"));
+    await setup.waitForFrame((frame) => frame.includes("Check updates"));
     expect(mounted.updates()).toBe(0);
   } finally {
     await mounted.dispose();
@@ -100,8 +100,8 @@ test("narrow Reader retains specific Enter guidance and native tab selection", a
   try {
     const loadsAfterOpen = mounted.loads();
     await focusLive(setup, "reader-action-skill-check-updates");
-    await setup.waitForFrame((frame) => frame.includes("Enter Update"));
-    expect(setup.renderer.root.findDescendantById("command-status")!.height).toBe(1);
+    await setup.waitForFrame((frame) => frame.includes("Check updates"));
+    expect(setup.renderer.root.findDescendantById("command-status")?.height).toBe(1);
     expect(setup.captureCharFrame()).not.toContain("Enter details");
     expect(mounted.loads()).toBe(loadsAfterOpen);
     expect(mounted.updates()).toBe(0);

@@ -161,16 +161,21 @@ test("RENDER Reader uses actual pane width and keeps hidden controls executable 
     h.setWidth(20);
     await h.setup.renderOnce();
     await h.setup.renderOnce();
-    expect(
-      h.setup.renderer.root.findDescendantById("reader-action-skill-check-updates"),
-    ).toBeUndefined();
-    expect(h.commands.execute("skill-check-updates")).toBe(true);
+    expect(!!h.setup.renderer.root.findDescendantById("reader-action-skill-check-updates")).toBe(
+      false,
+    );
+    h.patch({ tab: "details" });
+    await h.setup.renderOnce();
+    const check = node(h.setup, "reader-details-action-skill-check-updates");
+    expect(check.width).toBeGreaterThan(0);
+    expect(check.screenX + check.width).toBeLessThanOrEqual(20);
+    expect(h.setup.captureCharFrame()).toContain("Check updates");
+    await h.setup.mockMouse.click(check.screenX + 1, check.screenY);
     expect(h.calls.at(-1)).toEqual({
       id: "skill-check-updates",
       address: skillAddressKey(readerContent.address),
     });
     h.setWidth(43);
-    h.patch({ tab: "details", detailsManagementOpen: true });
     await h.setup.renderOnce();
     expect(node(h.setup, "reader-reload")).toBeDefined();
     expect(node(h.setup, "reader-details-action-skill-add-to-collection")).toBeDefined();
@@ -187,7 +192,11 @@ test("RENDER reading tools stay beside views, with a separate body rhythm only w
     const views = node(h.setup, "reader-views");
     const find = node(h.setup, "reader-find-open");
     const body = node(h.setup, "reader-scrollbox");
-    expect(find.screenX - (views.screenX + views.width)).toBeLessThanOrEqual(3);
+    expect(find.screenX - (views.screenX + views.width)).toBeGreaterThanOrEqual(3);
+    const raw = node(h.setup, "reader-raw");
+    expect(raw.screenX + raw.width).toBe(
+      node(h.setup, "reader-pane").screenX + node(h.setup, "reader-pane").width,
+    );
     expect(find.screenY).toBe(views.screenY);
     expect(body.screenY).toBe(views.screenY + 2);
     const markdown = descendants(body).find((child) => child instanceof MarkdownRenderable);

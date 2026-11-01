@@ -42,7 +42,7 @@ async function chooseReaderTab(setup: Setup, stepsRight: number) {
   await openReaderTab(setup, index);
   const selected = readerTab(setup, index);
   expect(selectedReaderTab(setup)).toBe(index);
-  expect(setup.renderer.currentFocusedRenderable).toBe(selected);
+  expect(setup.renderer.currentFocusedRenderable === selected).toBe(true);
   setup.mockInput.pressKey("TAB");
   await setup.renderOnce();
 }

@@ -12,6 +12,7 @@ import { testRender } from "@opentui/solid";
 import { ButtonRenderable } from "@tuiparts/core/button";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { collectionFilterPathKey } from "../src/collections/collection-filter-tree";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
@@ -154,8 +155,7 @@ function tableRows(setup: Setup, id: string) {
     : [];
 }
 async function openUpdates(setup: Setup) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-updates"));
-  await enterLive(setup, "shell-section-tab-updates");
+  await openMainPage(setup, "updates");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
 }
 async function settledSources(
@@ -241,7 +241,9 @@ test.each([12, 2])(
     const mounted = await renderApp(core, { width: 80, height: 16 });
     const { setup } = mounted;
     try {
+      await setup.waitFor(() => reads.length === 1);
       await openUpdates(setup);
+      const startupReads = [...reads];
       const sources = projection.effective.sources.map((source) => source.id);
       await settledSources(setup, completed, sources);
       expect([...checks].sort()).toEqual([...sources].sort());
@@ -378,7 +380,7 @@ test.each([12, 2])(
         }
       }
       expect(checks).toHaveLength(count);
-      expect(reads).toEqual([]);
+      expect(reads).toEqual(startupReads);
     } finally {
       await mounted.dispose();
     }
@@ -389,7 +391,9 @@ test("Source row activation and semantic Back restore the exact overview row wit
   const mounted = await renderApp(fixture.core);
   const { setup } = mounted;
   try {
+    await setup.waitFor(() => fixture.reads.length === 1);
     await openUpdates(setup);
+    const startupReads = [...fixture.reads];
     await settledSources(setup, fixture.completed, ["team-main", "source-02"]);
     expect(text(setup, "updates-browser-row-team-main:cell-updates")).toBe("3");
     await focusLive(setup, "updates-browser");
@@ -405,7 +409,7 @@ test("Source row activation and semantic Back restore the exact overview row wit
     expect((row.getChildren()[0]!.getChildren()[0] as TextRenderable).plainText).toBe("› ");
     expect(fixture.checks).toEqual(["team-main", "source-02"]);
     expect(fixture.updates).toEqual([]);
-    expect(fixture.reads).toEqual([]);
+    expect(fixture.reads).toEqual(startupReads);
   } finally {
     await mounted.dispose();
   }
@@ -415,7 +419,9 @@ test("Committed Source query and hidden checked targets survive draft cancellati
   const mounted = await renderApp(fixture.core);
   const { setup } = mounted;
   try {
+    await setup.waitFor(() => fixture.reads.length === 1);
     await openUpdates(setup);
+    const startupReads = [...fixture.reads];
     await settledSources(setup, fixture.completed, ["team-main", "source-02"]);
     await enterLive(setup, "updates-browser");
     await setup.waitFor(() => tableRows(setup, "source-updates-browser").length === 3);
@@ -484,7 +490,7 @@ test("Committed Source query and hidden checked targets survive draft cancellati
       },
     ]);
     expect(fixture.checks).toEqual(["team-main", "source-02"]);
-    expect(fixture.reads).toEqual([]);
+    expect(fixture.reads).toEqual(startupReads);
   } finally {
     await mounted.dispose();
   }
@@ -510,7 +516,9 @@ test("An empty Source draft submits all legal targets; Stop before mutation keep
   const mounted = await renderApp(fixture.core);
   const { setup } = mounted;
   try {
+    await setup.waitFor(() => fixture.reads.length === 1);
     await openUpdates(setup);
+    const startupReads = [...fixture.reads];
     await settledSources(setup, fixture.completed, ["team-main", "source-02"]);
     await enterLive(setup, "updates-browser");
     await setup.waitFor(() => tableRows(setup, "source-updates-browser").length === 3);
@@ -557,7 +565,7 @@ test("An empty Source draft submits all legal targets; Stop before mutation keep
     ]);
     // Stop preceded mutation, so the reviewed observation remains reusable.
     expect(fixture.checks).toEqual(["team-main", "source-02"]);
-    expect(fixture.reads).toEqual([]);
+    expect(fixture.reads).toEqual(startupReads);
   } finally {
     await mounted.dispose();
   }
@@ -574,8 +582,11 @@ test.each(["current-exposure", "problems"] as const)(
           fixture.completed.length === 2 &&
           !!setup.renderer.root.findDescendantById("skills-view-tab-problems"),
       );
+      await setup.waitFor(() => fixture.reads.length === 1);
+      const startupReads = [...fixture.reads];
       if (initialView === "problems") await enterLive(setup, "skills-view-tab-problems");
-      await enterLive(setup, "shell-section-tab-collections");
+      else await openMainPage(setup, "agent");
+      await openMainPage(setup, "collections");
       const tree = await focusLive(setup, "collection-browser");
       expect(tree).toBeInstanceOf(ScrollBoxRenderable);
       const collectionKey = collectionFilterPathKey({ segments: [{ collection: "release" }] });
@@ -724,7 +735,7 @@ test.each(["current-exposure", "problems"] as const)(
         "team-main",
         "team-main",
       ]);
-      expect(fixture.reads).toEqual([]);
+      expect(fixture.reads).toEqual(startupReads);
     } finally {
       await mounted.dispose();
     }

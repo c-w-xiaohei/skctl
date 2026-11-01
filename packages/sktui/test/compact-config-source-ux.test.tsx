@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { SelectRenderable, type BaseRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
 
@@ -13,6 +14,7 @@ function countById(root: BaseRenderable, id: string): number {
 
 async function openConfig(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.flush();
+  await openMainPage(setup, "settings");
   await enterLive(setup, "shell-scope-select");
   const choices = (await focusLive(setup, "scope-choices")) as SelectRenderable;
   choices.setSelectedIndex(choices.options.findIndex((option) => option.value === "global"));
@@ -21,10 +23,12 @@ async function openConfig(setup: Awaited<ReturnType<typeof testRender>>) {
 }
 
 async function openConfigSources(setup: Awaited<ReturnType<typeof testRender>>) {
-  await focusLive(setup, "shell-section-global-tab-sources");
-  await setup.mockInput.pressArrow("right");
+  const tab = setup.renderer.root.findDescendantById("settings-section-tab-config-sources")!;
+  await setup.mockMouse.click(tab.screenX + 1, tab.screenY);
   await setup.waitFor(
-    () => setup.renderer.currentFocusedRenderable?.id === "shell-section-global-tab-config-sources",
+    () =>
+      !!setup.renderer.root.findDescendantById("config-config-source-browser") ||
+      setup.captureCharFrame().includes("No Config Sources yet"),
   );
 }
 

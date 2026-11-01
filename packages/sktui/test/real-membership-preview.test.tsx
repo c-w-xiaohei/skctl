@@ -1,26 +1,13 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
-import { type BaseRenderable } from "@opentui/core";
-import { ButtonRenderable } from "@tuiparts/core/button";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as api from "@skctl/core";
 import { App } from "../src/app";
 import { testEffects } from "./direct-source.fixture";
 import { enterLive, focusLive } from "./reader-test-controls";
-function findManage(root: BaseRenderable): ButtonRenderable | undefined {
-  for (const child of root.getChildren()) {
-    if (
-      child instanceof ButtonRenderable &&
-      child.id.includes("guide") &&
-      child.id.includes(".manage")
-    )
-      return child;
-    const nested = findManage(child);
-    if (nested) return nested;
-  }
-}
+import { openMainPage } from "./main-page-controls";
 for (const entry of ["single", "checked", "stale-address"] as const) {
   test(`real Core ${entry} Membership preview resolves member origin to declaration owner without writes`, async () => {
     await mkdir("/tmp/opencode", { recursive: true });
@@ -156,10 +143,7 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
       );
       await workspaceDone;
       await setup.flush();
-      await setup.waitFor(
-        () => !!setup!.renderer.root.findDescendantById("shell-section-tab-collections"),
-      );
-      await enterLive(setup, "shell-section-tab-collections");
+      await openMainPage(setup, "collections");
       await setup.waitFor(() => setup!.captureCharFrame().includes("C team"));
       await enterLive(setup, "collection-browser");
       await setup.waitFor(
@@ -167,9 +151,6 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
       );
       await setup.flush();
       if (entry !== "checked") {
-        const manage = findManage(setup.renderer.root);
-        expect(manage).toBeDefined();
-        await enterLive(setup, manage!.id);
         if (entry === "stale-address") {
           // An isolated competing edit after display, not a TUI write.
           await core.removeMember(environment, {
@@ -186,18 +167,17 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
           });
           config = await readFile(join(root, "skctl.jsonc"));
         }
-        await enterLive(setup, "membership.remove");
+        await enterLive(setup, "collection-current-membership.remove");
       } else {
         await focusLive(setup, "collection-relationships");
         await setup.mockInput.typeText(" ");
         await setup.flush();
         await enterLive(setup, "remove-from-collection");
-        await enterLive(setup, "membership-removal-plan-continue");
       }
       await previewDone;
       await setup.flush();
       await setup.waitFor(
-        () => !!setup!.renderer.root.findDescendantById("collection-review-choice"),
+        () => !!setup!.renderer.root.findDescendantById("membership-removal-plan"),
       );
       await setup.flush();
       expect(requests).toHaveLength(1);
@@ -214,21 +194,24 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
         expect(setup.captureCharFrame()).toContain("Operation is blocked");
       } else
         expect(setup.renderer.root.findDescendantById("collection-review-confirm")).toBeDefined();
-      expect(setup.captureCharFrame()).toContain("Remove: guide local-team/guide");
+      expect(setup.captureCharFrame()).toContain("Remove: guide");
+      expect(setup.captureCharFrame()).toContain("local-team/guide");
       expect(setup.captureCharFrame()).toContain("/collections/team");
-      await enterLive(setup, "collection-review-choice");
+      await enterLive(setup, "membership-removal-plan");
       await setup.flush();
       expect(setup.renderer.root.findDescendantById("collection-review-confirm")).toBeUndefined();
       if (entry !== "checked") {
-        expect(setup.renderer.currentFocusedRenderable?.id).toBe("membership.remove");
-        expect(
-          setup.renderer.root.findDescendantById("collection-membership-inspector"),
-        ).toBeDefined();
+        expect(setup.renderer.currentFocusedRenderable?.id).toBe(
+          "collection-current-membership.remove",
+        );
+        expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(
+          false,
+        );
       } else {
         expect(
           setup.renderer.root.findDescendantById("collection-relationships-row-guide%3A0"),
         ).toBeDefined();
-        expect(setup.captureCharFrame()).toContain("1 origins checked");
+        expect(setup.captureCharFrame()).toContain("1 items checked");
       }
       expect(writes).toBe(0);
       expect((await readFile(join(root, "skctl.jsonc"))).equals(config)).toBe(true);

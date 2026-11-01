@@ -61,7 +61,9 @@ test("Local checks use live metadata; rebind, uninstall and removal independentl
       paths: ["guide"],
       expectedBaseline: checked.baseline,
     });
-    await api.rebindSkill(value.options, { source: "first", path: "guide", owner: "next" });
+    const rebind = { source: "first", path: "guide", owner: "next" };
+    const reviewedImpact = (await api.previewRebind(value.options, rebind)).value;
+    await api.rebindSkill(value.options, { ...rebind, reviewedImpact });
     expect((await api.getWorkspace(value.options)).value.installedSkills[0]!.address.source).toBe(
       "next",
     );

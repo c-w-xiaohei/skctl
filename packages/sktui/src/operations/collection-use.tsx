@@ -74,7 +74,7 @@ export function CollectionUseOverlay(props: {
     <ModalShell>
       <ModalBody controls={controls}>
         <text>Set Collection Use</text>
-        <text>{`Config level: ${props.level} · ${collections().length} selected`}</text>
+        <text>{`Configuration: ${props.level}\n${collections().length} entries selected`}</text>
         {props.file && <text wrapMode="word">{`Target: ${props.file}`}</text>}
         <DataList
           id="collection-use-values"

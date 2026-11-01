@@ -4,6 +4,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection, sourceFilteredReaderProjection } from "./installed-reader.fixture";
+import { openMainPage } from "./main-page-controls";
 import {
   enterReaderDetailsRelationship,
   focusLive,
@@ -109,18 +110,15 @@ test("Reader Details keeps its action surface reachable and discloses the full a
     setup.renderer.destroy();
   }
 });
-test("compact Skills defaults to Agent access without mounting an installed browser until All Skills is chosen", async () => {
+test("compact Skills defaults to installed inventory and Agent catalog remains separately reachable", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
     { width: 80, height: 16 },
   );
   try {
-    await setup.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
-    expect(setup.renderer.root.findDescendantById("installed-skill-browser")).toBeUndefined();
     await openAllInstalledSkills(setup);
     expect(setup.renderer.root.findDescendantById("installed-skill-browser")).toBeDefined();
-    await focusLive(setup, "skills-view-tab-current-exposure");
-    await parsedEnter(setup);
+    await openMainPage(setup, "agent");
     await setup.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
   } finally {
     setup.renderer.destroy();
@@ -134,11 +132,11 @@ test("Source details disclose management actions and provenance only on request"
   try {
     await openSourceDetails(setup);
     const initial = setup.captureCharFrame();
-    expect(initial).toContain("All Skills");
+    expect(initial).toContain("Installed");
     expect(initial).toContain("Check updates");
     expect(initial).not.toContain("Tracked ref");
     expect(initial).not.toContain("Remove Source declaration");
-    await focusLive(setup, "source-details-toggle");
+    await focusLive(setup, "source-view-tab-settings");
     await parsedEnter(setup);
     await setup.waitForFrame((frame) => frame.includes("Tracked ref"));
     await focusLive(setup, "workspace-action-remove-source");
@@ -154,7 +152,7 @@ test("Source action/detail disclosures return to the originating Skill relations
   );
   try {
     await openSourceDetails(setup);
-    for (const id of ["source-details-toggle", "source-details-toggle"]) {
+    for (const id of ["source-view-tab-settings", "source-view-tab-installed"]) {
       await focusLive(setup, id);
       await parsedEnter(setup);
     }
@@ -175,7 +173,14 @@ test("Source installed-Skills handoff keeps its source filter and Back returns t
   );
   try {
     await openSourceDetails(setup);
-    await focusLive(setup, "source-command-skills");
+    await focusLive(setup, "shell-more-actions");
+    await parsedEnter(setup);
+    const choices = (await focusLive(setup, "palette-choices")) as SelectRenderable;
+    const index = choices.options.findIndex(
+      (option) => option.value.id === "view-installed-skills",
+    );
+    expect(index).toBeGreaterThanOrEqual(0);
+    choices.setSelectedIndex(index);
     await parsedEnter(setup);
     const browser = (await focusLive(setup, "installed-skill-browser")) as SelectRenderable;
     const expected = projection.installedSkills
@@ -185,7 +190,7 @@ test("Source installed-Skills handoff keeps its source filter and Back returns t
     await parsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-pane"));
     expect(setup.captureCharFrame()).toContain("team-main");
-    expect(setup.renderer.root.findDescendantById("source-command-skills")).toBeDefined();
+    expect(setup.renderer.root.findDescendantById("source-view-tab-installed")).toBeDefined();
   } finally {
     setup.renderer.destroy();
   }

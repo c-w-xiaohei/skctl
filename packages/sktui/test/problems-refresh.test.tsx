@@ -106,6 +106,10 @@ for (const refreshed of ["reorder", "fallback", "empty"] as const) {
       await waitForReaderBody(setup, "needle in prose");
       expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
       await enterLive(setup, "reader-action-skill-check-updates");
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-update-all"));
+      expect(updates).toEqual([]);
+      expect(receipt).toBe(projections.initial);
+      await enterLive(setup, "updates-update-all");
       await setup.waitFor(() => receipt === projections.next);
       await setup.waitForFrame((frame) => frame.includes("Updated 1 Skill"));
       expect(updates).toEqual([
@@ -185,7 +189,7 @@ test("RENDER Problems routes Source declaration diagnostics to the owning Config
     await enterLive(setup, "problems-browser");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-source-browser"));
     expect(
-      (live(setup, "shell-section-project-tab-sources") as TabsTabRenderable).getState().selected,
+      (live(setup, "settings-section-tab-sources") as TabsTabRenderable).getState().selected,
     ).toBe(true);
     const source = (live(setup, "config-source-browser") as SelectRenderable).getSelectedOption()!;
     expect(source.value).toBe("team-main");

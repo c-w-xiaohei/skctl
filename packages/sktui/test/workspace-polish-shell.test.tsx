@@ -22,17 +22,18 @@ async function mount(width = 144, height = 40) {
   await setup.renderOnce();
 }
 
-test("page navigation is in the top bar and startup enters Agent access", async () => {
+test("page navigation is in the top bar and startup enters installed Skills", async () => {
   await mount();
   const top = setup!.renderer.root.findDescendantById("global-bar")!;
   const pages = top.findDescendantById("shell-section");
   expect(pages).toBeDefined();
-  await setup!.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
-  expect(!!setup!.renderer.root.findDescendantById("installed-skill-browser")).toBe(false);
+  await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("installed-skill-browser"));
 });
 
 test("scope choices navigate only on activation and cancellation restores the trigger", async () => {
   await mount();
+  await focusLive(setup!, "shell-section-tab-settings");
+  await parsedEnter(setup!);
   await focusLive(setup!, "shell-scope-select");
   await parsedEnter(setup!);
   await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("scope-choices"));
@@ -40,18 +41,20 @@ test("scope choices navigate only on activation and cancellation restores the tr
   expect(choices.getSelectedIndex()).toBe(0);
   setup!.mockInput.pressArrow("down");
   await setup!.renderOnce();
-  expect(setup!.renderer.root.findDescendantById("shell-section-tab-updates")).toBeDefined();
+  expect(setup!.captureCharFrame()).toContain("Scope: Global");
   await parsedEscape(setup!);
   await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "shell-scope-select");
   await parsedEnter(setup!);
   await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("scope-choices"));
   const reopened = setup!.renderer.root.findDescendantById("scope-choices") as SelectRenderable;
-  reopened.setSelectedIndex(2);
+  expect(reopened.getSelectedOption()?.value).toBe("global");
+  setup!.mockInput.pressArrow("down");
+  await setup!.waitFor(() => reopened.getSelectedOption()?.value === "project");
   await parsedEnter(setup!);
   await setup!.waitFor(
-    () => !!setup!.renderer.root.findDescendantById("shell-section-project-tab-integrations"),
+    () => !!setup!.renderer.root.findDescendantById("settings-section-tab-sources"),
   );
-  expect(setup!.renderer.root.findDescendantById("shell-section-tab-updates")).toBeUndefined();
+  expect(setup!.captureCharFrame()).toContain("Scope: Project");
   expect(setup!.renderer.root.findDescendantById("shell-scope-select")).toBeInstanceOf(Renderable);
   await focusLive(setup!, "shell-scope-select");
   await setup!.waitForFrame(
@@ -61,6 +64,8 @@ test("scope choices navigate only on activation and cancellation restores the tr
 
 test("top-bar scope and Actions remain inside the terminal at all supported widths", async () => {
   await mount();
+  await focusLive(setup!, "shell-section-tab-settings");
+  await parsedEnter(setup!);
   const scope = setup!.renderer.root.findDescendantById("shell-scope-select")!;
   const actions = setup!.renderer.root.findDescendantById("shell-more-actions")!;
   for (const width of [144, 120, 100, 80, 43]) {
@@ -75,21 +80,23 @@ test("top-bar scope and Actions remain inside the terminal at all supported widt
 
 test("a page-tab pointer entry after choosing Scope cannot reactivate the Scope trigger", async () => {
   await mount(120, 40);
+  await focusLive(setup!, "shell-section-tab-settings");
+  await parsedEnter(setup!);
   await focusLive(setup!, "shell-scope-select");
   await parsedEnter(setup!);
   await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("scope-choices"));
   const choices = setup!.renderer.root.findDescendantById("scope-choices") as SelectRenderable;
   await setup!.flush();
-  await setup!.mockMouse.click(choices.screenX + 5, choices.screenY + 2);
+  await setup!.mockMouse.click(choices.screenX + 5, choices.screenY + 1);
   await parsedEnter(setup!);
   await setup!.waitFor(
-    () => !!setup!.renderer.root.findDescendantById("shell-section-project-tab-sources"),
+    () => !!setup!.renderer.root.findDescendantById("settings-section-tab-sources"),
   );
-  expect(
-    setup!.renderer.root.findDescendantById("shell-section-project-tab-sources"),
-  ).toBeInstanceOf(TabsTabRenderable);
+  expect(setup!.renderer.root.findDescendantById("settings-section-tab-sources")).toBeInstanceOf(
+    TabsTabRenderable,
+  );
   const collections = setup!.renderer.root.findDescendantById(
-    "shell-section-project-tab-collections",
+    "settings-section-tab-collections",
   ) as TabsTabRenderable;
   expect(collections.getState().available).toBe(true);
   await setup!.mockMouse.click(collections.screenX + 2, collections.screenY);
@@ -98,7 +105,7 @@ test("a page-tab pointer entry after choosing Scope cannot reactivate the Scope 
   expect(setup!.renderer.currentFocusedRenderable?.id).not.toBe("shell-scope-select");
   await parsedEnter(setup!);
   await setup!.waitFor(() => {
-    const tab = setup!.renderer.root.findDescendantById("shell-section-project-tab-collections");
+    const tab = setup!.renderer.root.findDescendantById("settings-section-tab-collections");
     return tab instanceof TabsTabRenderable && tab.getState().selected;
   });
   expect(setup!.renderer.root.findDescendantById("scope-choices")).toBeUndefined();

@@ -9,6 +9,7 @@ import { testRender } from "@opentui/solid";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { exposureTreePathKey } from "../src/collections/agent-access-tree";
 import { directOwner, directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
@@ -90,6 +91,10 @@ async function mount(width: number, height: number) {
     ),
     { width, height },
   );
+  await openMainPage(setup, "agent");
+  await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("current-exposure-browser"));
+  const tree = setup.renderer.root.findDescendantById("current-exposure-browser")!;
+  await setup.mockMouse.click(tree.screenX + 1, tree.screenY);
   await setup.waitFor(
     () => setup!.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
   );
@@ -116,7 +121,7 @@ test.each([
   expect(frame).toContain("Prepared in the Agent catalog");
   expect(frame).toContain("S Skill");
   expect(frame).toContain(height > 18 ? "C Collection" : "C Col");
-  expect(frame).toContain("Enter expand");
+  expect(frame).toContain(height > 18 ? "Enter or ▸/▾ to expand/fold" : "Enter collapse");
   expect(frame).not.toContain("▦");
   expect(frame).not.toContain("≡");
   const marker = setup!.renderer.root.findDescendantById(
@@ -126,6 +131,8 @@ test.each([
   const disclosure = setup!.renderer.root.findDescendantById(`${rowId(rootKey)}-disclosure`)!;
   expect(disclosure.width).toBe(3);
   await capture(`guided-tree-${width}x${height}`);
+  await setup!.mockMouse.click(disclosure.screenX + 2, disclosure.screenY);
+  await setup!.flush();
   await setup!.mockMouse.click(disclosure.screenX + 2, disclosure.screenY);
   await setup!.flush();
   const skillKey = JSON.stringify([rootKey, "skill", "guide", "team-main", "guide"]);
@@ -151,7 +158,6 @@ test.each([
   "Collection reference separates identity, origin and bounded description at %ix%i",
   async (width, height) => {
     await mount(width, height);
-    await parsedEnter(setup!);
     setup!.mockInput.pressArrow("down");
     await setup!.waitFor(
       () =>

@@ -530,7 +530,7 @@ export function ConfigPage(props: {
       return "Config Sources are reusable Configs adopted at this level; they contribute read-only Sources and Collections.";
     if (section() === "collections")
       return "Collections group Skills for reuse; select a Collection to manage its Use.";
-    return "Integrations connect this Config to agent hosts.";
+    return "Configuration declarations at this level.";
   };
   const selectedDetails = createMemo<
     | {
@@ -628,7 +628,7 @@ export function ConfigPage(props: {
         ? "Sources"
         : section() === "collections"
           ? "Collections"
-          : "Integrations";
+          : "Config";
   const surface = (
     <box id="config-page-pane" ref={setPageRoot} flexDirection="row" flexGrow={1} minHeight={0}>
       <Pane

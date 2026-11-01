@@ -14,11 +14,14 @@ test("RENDER App mounts only the destination surface without an orphan Config fa
   try {
     await setup.renderOnce();
     await setup.flush();
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-scope-select"));
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("shell-section-tab-settings"),
+    );
     expect(setup.renderer.root.findDescendantById("config-work-area")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("config-source-browser")).toBeUndefined();
     expect(setup.captureCharFrame()).not.toContain("Read-only Config");
 
+    await enterLive(setup, "shell-section-tab-settings");
     await enterLive(setup, "shell-scope-select");
     const choices = await focusLive(setup, "scope-choices");
     expect(choices).toBeInstanceOf(SelectRenderable);

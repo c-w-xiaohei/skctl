@@ -162,6 +162,11 @@ test("Installed Skill Rebind passes the explicit replacement root through previe
             owner: "replacement",
             ownerPath: "alternate/guide",
             proof: "proven",
+            scope: "captured-workspace",
+            limitation: "External projects are not inspected",
+            baseline: "fixture-baseline",
+            directMemberships: [],
+            blockers: [],
             allowed: true,
           },
           diagnostics: [],
@@ -187,7 +192,13 @@ test("Installed Skill Rebind passes the explicit replacement root through previe
     ],
     [
       "rebind",
-      { source: "team-main", path: "guide", owner: "replacement", ownerPath: "alternate/guide" },
+      {
+        source: "team-main",
+        path: "guide",
+        owner: "replacement",
+        ownerPath: "alternate/guide",
+        reviewedImpact: review!.impact,
+      },
     ],
   ]);
 });

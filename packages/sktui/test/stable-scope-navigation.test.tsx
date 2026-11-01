@@ -35,24 +35,21 @@ for (const tab of [0, 2] as const) {
       await parsedEnter(setup);
       await waitForReaderBody(setup, "needle in prose");
       await openReaderTab(setup, tab);
-      await focusLive(setup, "skills-view-tab-all-installed-skills");
-      setup.mockInput.pressArrow("left");
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "skills-view-tab-current-exposure",
-      );
+      await focusLive(setup, "shell-section-tab-agent");
+      await parsedEnter(setup);
       await setup.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
       expect(!!setup.renderer.root.findDescendantById("reader-views")).toBe(false);
-      await focusLive(setup, "skills-view-tab-current-exposure");
-      setup.mockInput.pressArrow("right");
-      await setup.waitForFrame((frame) => frame.includes("SKILL.md"));
-      expect(selectedReaderTab(setup)).toBe(tab);
-      expect(loads).toBe(1);
-      await focusLive(setup, "skills-view-tab-all-installed-skills");
+      await focusLive(setup, "shell-section-tab-skills");
       await parsedEnter(setup);
       await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+        () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
       );
+      expect(selectedReaderTab(setup)).toBe(tab);
+      expect(loads).toBe(1);
+      await focusLive(setup, "installed-skill-browser");
+      await parsedEnter(setup);
       expect(!!setup.renderer.root.findDescendantById("reader-views")).toBe(true);
+      expect(selectedReaderTab(setup)).toBe(tab);
       expect(loads).toBe(1);
     } finally {
       setup.renderer.destroy();

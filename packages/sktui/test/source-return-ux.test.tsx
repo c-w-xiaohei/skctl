@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { selectScrollOffset } from "../src/select-scroll";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
@@ -42,14 +43,7 @@ test("RENDER empty Source details return restores the selected Source and list v
     { width: 80, height: 16 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-    await focusLive(setup, "shell-section-tab-skills");
-    for (const section of ["collections", "sources"]) {
-      setup.mockInput.pressArrow("right");
-      await setup.renderOnce();
-      await setup.renderOnce();
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe(`shell-section-tab-${section}`);
-    }
+    await openMainPage(setup, "sources");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
     const browser = (await focusLive(setup, "source-browser")) as SelectRenderable;
     for (let index = 1; index < 18; index++) {
@@ -60,9 +54,9 @@ test("RENDER empty Source details return restores the selected Source and list v
     const savedOffset = selectScrollOffset(browser);
     expect(savedOffset).toBeGreaterThan(0);
     await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-toggle"));
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-view-tab-settings"));
     expect(setup.renderer.root.findDescendantById("source-updates-browser")).toBeUndefined();
-    await focusLive(setup, "source-details-toggle");
+    await focusLive(setup, "source-view-tab-settings");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
     await setup.waitForFrame((frame) => frame.includes("source-17"));
@@ -77,7 +71,7 @@ test("RENDER empty Source details return restores the selected Source and list v
     expect(returned).not.toBe(browser);
     expect(returned.getSelectedOption()?.value).toBe("source-17");
     expect(selectScrollOffset(returned)).toBe(savedOffset);
-    expect(setup.renderer.currentFocusedRenderable).toBe(returned);
+    expect(setup.renderer.currentFocusedRenderable === returned).toBe(true);
     expect(acquisitions).toEqual([]);
     expect(mutations).toEqual([]);
   } finally {

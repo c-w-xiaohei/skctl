@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   InputRenderable,
+  BoxRenderable,
   MarkdownRenderable,
   ScrollBoxRenderable,
   SelectRenderable,
@@ -8,6 +9,8 @@ import {
 } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
+import { skillAddressKey } from "../src/types";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import {
   readerAddress,
@@ -293,16 +296,21 @@ test("Reader state survives a Scope round-trip and repeated responsive changes",
   const { setup, loads } = await mount();
   try {
     await rawMatch(setup);
-    for (const destination of ["global", "workspace"]) {
+    await openMainPage(setup, "settings");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-scope-select"));
+    for (const destination of ["global", "project", "global"]) {
       await enterLive(setup, "shell-scope-select");
       const choices = (await focusLive(setup, "scope-choices")) as SelectRenderable;
-      choices.setSelectedIndex(choices.options.findIndex((option) => option.value === destination));
+      const index = choices.options.findIndex((option) => option.value === destination);
+      expect(index).toBeGreaterThanOrEqual(0);
+      choices.setSelectedIndex(index);
       await parsedEnter(setup);
-      await setup.flush();
+      await setup.waitForFrame((frame) => frame.toLowerCase().includes(destination));
     }
     await openAllInstalledSkills(setup);
     await parsedEnter(setup);
     await enterLive(setup, "reader-find-open");
+    expect(!!setup.renderer.root.findDescendantById("reader-line-15")).toBe(true);
     for (const width of [120, 79, 43, 80, 120]) {
       setup.resize(width, 40);
       await setup.flush();
@@ -315,6 +323,13 @@ test("Reader state survives a Scope round-trip and repeated responsive changes",
       ).toBe("guide");
     }
     expect(loads).toEqual(["guide"]);
+  } catch (error) {
+    console.error("Reader scope round-trip", {
+      focus: setup.renderer.currentFocusedRenderable?.id,
+      frame: setup.captureCharFrame(),
+      loads,
+    });
+    throw error;
   } finally {
     setup.renderer.destroy();
   }
@@ -334,25 +349,55 @@ test("Reader Details Escape restores the current inventory row", async () => {
   }
 });
 
-test("Source-filtered inventory returns from Reader with the exact selection and Source filter", async () => {
+test("Source workspace returns from Reader to the exact installed Skill and Source", async () => {
   const setup = await testRender(
-    () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
+    () => (
+      <App
+        core={directSourceCore(readerProjection(), {
+          loadInstalledSkill: async (_environment, { address }) =>
+            address.path === readerSecondAddress.path ? readerSecondContent : readerContent,
+        })}
+        exit={() => {}}
+      />
+    ),
     { width: 79, height: 24 },
   );
   try {
     await setup.flush();
-    await enterLive(setup, "shell-section-tab-sources");
+    await openMainPage(setup, "sources");
     await enterLive(setup, "source-browser");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-    await enterInstalledAddress(setup, readerSecondAddress);
+    const rowId = `source-installed-skills-row-${encodeURIComponent(skillAddressKey(readerSecondAddress))}`;
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById(rowId));
+    const row = setup.renderer.root.findDescendantById(rowId)!;
+    await setup.waitFor(() => row.width > 0 && row.height > 0 && row.screenY > 0);
+    await setup.flush();
+    await setup.mockMouse.click(row.screenX + 1, row.screenY);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "source-installed-skills",
+    );
+    await setup.waitFor(() => (row as BoxRenderable).backgroundColor.a > 0);
+    expect((row.getChildren()[0]!.getChildren()[0] as TextRenderable).plainText).toBe("› ");
+    await parsedEnter(setup);
     await waitForReaderBody(setup, "reference");
-    await inventory(setup);
+    await parsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "source-installed-skills",
+    );
+    const restoredRow = setup.renderer.root.findDescendantById(rowId) as BoxRenderable;
+    expect(restoredRow).toBeInstanceOf(BoxRenderable);
+    expect(restoredRow.backgroundColor.a).toBeGreaterThan(0);
+    expect((restoredRow.getChildren()[0]!.getChildren()[0] as TextRenderable).plainText).toBe("› ");
     expect(
-      (setup.renderer.currentFocusedRenderable as SelectRenderable).getSelectedOption()?.value,
-    ).toBe(JSON.stringify([readerSecondAddress.source, readerSecondAddress.path]));
-    expect(!!setup.renderer.root.findDescendantById("clear-source-filter")).toBe(true);
+      (setup.renderer.root.findDescendantById("source-details-pane") as BoxRenderable).title,
+    ).toBe(readerSecondAddress.source);
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
+  } catch (error) {
+    console.error("Source Reader return", {
+      focus: setup.renderer.currentFocusedRenderable?.id,
+      frame: setup.captureCharFrame(),
+    });
+    throw error;
   } finally {
     setup.renderer.destroy();
   }
@@ -367,9 +412,12 @@ test.each([120, 80])(
     );
     try {
       await setup.flush();
-      await enterLive(setup, "shell-section-tab-sources");
+      await openMainPage(setup, "sources");
       await enterLive(setup, "source-browser");
-      await enterLive(setup, "source-details-toggle");
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("source-view-tab-settings"),
+      );
+      await enterLive(setup, "source-view-tab-settings");
       await setup.waitForFrame((frame) => frame.includes("https://github.com/acme/main"));
       await parsedEscape(setup);
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");

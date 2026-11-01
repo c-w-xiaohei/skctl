@@ -195,7 +195,7 @@ test("action focus follows row navigation and resize removes unavailable control
     expect([...records.keys()]).toEqual(["two.read", "two.manage", "two.remove"]);
     setup.resize(43, 10);
     await setup.flush();
-    expect(setup.renderer.currentFocusedRenderable).toBe(root);
+    expect(setup.renderer.currentFocusedRenderable === root).toBe(true);
     setup.mockInput.pressArrow("right");
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe(actionId("two", "manage"));

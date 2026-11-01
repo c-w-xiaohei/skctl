@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkspaceView, UpdatePreview } from "@skctl/core";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 const revision = "d".repeat(40);
@@ -103,8 +104,7 @@ async function mount(
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-updates"));
-  await enterLive(setup, "shell-section-tab-updates");
+  await openMainPage(setup, "updates");
   await setup.waitForFrame((frame) => frame.includes("Updates available"));
   await enterLive(setup, "updates-browser");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-updates-browser"));

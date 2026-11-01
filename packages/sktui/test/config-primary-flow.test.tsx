@@ -108,9 +108,24 @@ async function openProject(setup: Setup) {
       cause: error,
     });
   }
+  const mainControl =
+    setup.renderer.width < 100 ? "shell-pages-select" : "shell-section-tab-skills";
   for (
     let step = 0;
-    step < 5 && setup.renderer.currentFocusedRenderable?.id !== "shell-scope-select";
+    step < 12 && setup.renderer.currentFocusedRenderable?.id !== mainControl;
+    step++
+  )
+    await press(setup, "TAB");
+  await expectFocus(setup, mainControl, "openProject page navigation");
+  if (setup.renderer.width < 100) {
+    await press(setup, "ENTER");
+    await expectFocus(setup, "shell-pages-choices", "openProject Pages chooser");
+    for (let step = 0; step < 5; step++) await press(setup, "ARROW_DOWN");
+    await press(setup, "ENTER");
+  } else for (let step = 0; step < 5; step++) await press(setup, "ARROW_RIGHT");
+  for (
+    let step = 0;
+    step < 12 && setup.renderer.currentFocusedRenderable?.id !== "shell-scope-select";
     step++
   ) {
     await press(setup, "TAB");
@@ -119,34 +134,44 @@ async function openProject(setup: Setup) {
   await press(setup, "ENTER");
   await expectFocus(setup, "scope-choices", "openProject Scope popup");
   const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
-  expect(choices.getSelectedOption()?.value).toBe("workspace");
-  for (const destination of ["global", "project"]) {
+  expect(choices.getSelectedOption()?.value).toBe("global");
+  for (const destination of ["project"]) {
     await press(setup, "ARROW_DOWN");
     await expectFocus(setup, "scope-choices", `openProject draft ${destination}`);
     expect(choices.getSelectedOption()?.value).toBe(destination);
   }
   await press(setup, "ENTER");
   await expectFocus(setup, "shell-scope-select", "openProject committed Project scope");
-  await press(setup, "ARROW_DOWN");
-  await expectFocus(
-    setup,
-    "shell-section-project-tab-sources",
-    "openProject after Down to Sections",
-  );
+  for (
+    let step = 0;
+    step < 12 && setup.renderer.currentFocusedRenderable?.id !== "settings-section-tab-sources";
+    step++
+  )
+    await press(setup, "TAB");
+  await expectFocus(setup, "settings-section-tab-sources", "openProject after Down to Sections");
   await press(setup, "ENTER");
   await expectFocus(setup, "config-source-browser", "openProject after Enter on Sources");
   expect(setup.renderer.currentFocusedRenderable!.height).toBeGreaterThan(0);
 }
 
 async function openSection(setup: Setup, index: number) {
-  await press(setup, "ARROW_LEFT");
-  await expectFocus(setup, "shell-section-project-tab-sources", `openSection(${index}) after Left`);
-  const sections = ["sources", "config-sources", "collections", "integrations"];
+  for (
+    let step = 0;
+    step < 12 && setup.renderer.currentFocusedRenderable?.id !== "settings-section-tab-sources";
+    step++
+  )
+    await press(setup, "TAB");
+  await expectFocus(
+    setup,
+    "settings-section-tab-sources",
+    `openSection(${index}) subsection navigation`,
+  );
+  const sections = ["sources", "config-sources", "collections"];
   for (let step = 0; step < index; step++) {
     await press(setup, "ARROW_RIGHT");
     await expectFocus(
       setup,
-      `shell-section-project-tab-${sections[step + 1]}`,
+      `settings-section-tab-${sections[step + 1]}`,
       `openSection(${index}) after Right ${step + 1}`,
     );
   }
@@ -229,7 +254,27 @@ test("RENDER integrations opens host selection and preserves selected host entri
   );
   try {
     await openProject(setup);
-    await openSection(setup, 3);
+    for (
+      let step = 0;
+      step < 12 && setup.renderer.currentFocusedRenderable?.id !== "shell-pages-select";
+      step++
+    )
+      await press(setup, "TAB");
+    await expectFocus(setup, "shell-pages-select", "Agent page navigation");
+    await press(setup, "ENTER");
+    await expectFocus(setup, "shell-pages-choices", "Agent page chooser");
+    await press(setup, "ARROW_UP");
+    await press(setup, "ENTER");
+    for (
+      let step = 0;
+      step < 12 && setup.renderer.currentFocusedRenderable?.id !== "agent-view-tab-catalog";
+      step++
+    )
+      await press(setup, "TAB");
+    await expectFocus(setup, "agent-view-tab-catalog", "Agent view navigation");
+    await press(setup, "ARROW_RIGHT");
+    await press(setup, "ARROW_RIGHT");
+    await press(setup, "ENTER");
     await expectFocus(setup, "integration-hosts", "integrations section Enter");
     await press(setup, "TAB");
     await expectFocus(setup, "integration-connect", "host Tab");

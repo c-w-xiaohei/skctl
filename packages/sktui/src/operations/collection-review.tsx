@@ -13,40 +13,56 @@ export function CollectionReviewOverlay(props: {
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
   readonly onBack?: () => void;
+  readonly onPreviewAgain?: () => void;
 }) {
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, () => (props.onBack ?? props.onCancel)());
-  const impact = props.review.impact;
-  const destructive =
+  const destructive = () =>
     props.review.kind === "membership-removal" ||
     props.review.kind === "collection-removal" ||
     (props.review.kind === "membership-batch" && props.review.impact.removals.length > 0) ||
     props.review.kind === "reference-remove" ||
     (props.review.kind === "link-change" && !props.review.impact.linked);
-  const verb =
-    impact.kind === "membership-batch"
-      ? impact.additions.length
-        ? "Add to Collection"
-        : "Remove from Collection"
-      : impact.kind === "membership-removal"
-        ? "Remove Membership"
-        : impact.kind === "reference"
-          ? props.review.kind === "reference-remove"
-            ? "Remove Reference"
-            : "Add Reference"
-          : impact.kind === "link-change"
-            ? impact.linked
-              ? "Add Link"
-              : "Remove Link"
-            : impact.kind === "collection-removal"
-              ? "Remove Collection"
-              : impact.kind === "add-to-collection"
-                ? "Add Membership"
-                : impact.kind === "collection-import"
-                  ? "Import Collection"
-                  : "Set Collection Use";
+  const verb = () => {
+    const impact = props.review.impact;
+    return impact.kind === "collection-rename"
+      ? "Rename Collection"
+      : impact.kind === "membership-batch"
+        ? impact.additions.length
+          ? "Add to Collection"
+          : "Remove from Collection"
+        : impact.kind === "membership-removal"
+          ? "Remove from Collection"
+          : impact.kind === "reference"
+            ? props.review.kind === "reference-remove"
+              ? "Remove Collection entry"
+              : "Add Collection entry"
+            : impact.kind === "link-change"
+              ? impact.linked
+                ? "Include Collection"
+                : "Stop including Collection"
+              : impact.kind === "collection-removal"
+                ? "Remove Collection"
+                : impact.kind === "add-to-collection"
+                  ? "Add Membership"
+                  : impact.kind === "collection-import"
+                    ? "Copy Skills from Collection"
+                    : "Set Collection Use";
+  };
   const lines = () => {
+    const impact = props.review.impact;
     switch (impact.kind) {
+      case "collection-rename":
+        return [
+          `Scope: ${impact.scope}`,
+          `Limitation: ${impact.limitation}`,
+          ...impact.declarations.map((owner) => `Declaration: ${ownerLine(owner)}`),
+          ...impact.references.map((item) => `${item.kind}: ${ownerLine(item.owner)}`),
+          ...impact.addresses.map((item) => `Address: ${item.before} -> ${item.after}`),
+          ...impact.blockers.map(
+            (item) => `Blocker: ${item.reason}${item.owner ? ` (${ownerLine(item.owner)})` : ""}`,
+          ),
+        ];
       case "membership-batch":
         return [
           `Collection: ${impact.collection}`,
@@ -124,7 +140,14 @@ export function CollectionReviewOverlay(props: {
     <ModalShell>
       <ModalBody
         controls={controls}
-        header={<text>{verb}</text>}
+        header={
+          <>
+            <text>{verb()}</text>
+            {props.review.kind === "collection-rename" && (
+              <text>{`Collection: ${props.review.intent.collection} -> ${props.review.intent.target}`}</text>
+            )}
+          </>
+        }
         footer={
           <box flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}>
             <ModalCommand
@@ -132,8 +155,10 @@ export function CollectionReviewOverlay(props: {
               controls={controls}
               record={modalCommand(
                 "collection-review.cancel",
-                "Cancel",
-                "Keep current configuration",
+                props.pending ? "Stop" : "Cancel",
+                props.pending
+                  ? "Request stop; operation may already have been applied"
+                  : "Keep current configuration",
               )}
               initialFocus
               execute={props.onCancel}
@@ -151,31 +176,52 @@ export function CollectionReviewOverlay(props: {
                 execute={props.onBack}
               />
             )}
-            {impact.allowed && (
-              <ModalCommand
-                id="collection-review-confirm"
-                intent="primary"
-                controls={controls}
-                record={modalCommand(
-                  "collection-review.confirm",
-                  props.pending ? `${verb}...` : props.error ? `Retry ${verb}` : verb,
-                  `Apply reviewed ${verb.toLowerCase()}`,
-                  !props.pending,
-                  destructive,
-                  props.pending ? "Wait for the current operation to settle" : undefined,
-                )}
-                execute={props.onConfirm}
-              />
-            )}
+            {props.review.impact.kind === "collection-rename" &&
+              props.error?.code === "CONFIG_CONFLICT" &&
+              props.onPreviewAgain && (
+                <ModalCommand
+                  id="collection-review-preview-again"
+                  controls={controls}
+                  record={modalCommand(
+                    "collection-review.preview-again",
+                    "Preview again",
+                    "Review current impact",
+                    !props.pending,
+                  )}
+                  execute={props.onPreviewAgain}
+                />
+              )}
+            {!props.pending &&
+              props.review.impact.allowed &&
+              !(props.review.impact.kind === "collection-rename" && props.error) && (
+                <ModalCommand
+                  id="collection-review-confirm"
+                  intent="primary"
+                  controls={controls}
+                  record={modalCommand(
+                    "collection-review.confirm",
+                    props.pending ? `${verb()}...` : props.error ? `Retry ${verb()}` : verb(),
+                    `Apply reviewed ${verb().toLowerCase()}`,
+                    !props.pending,
+                    destructive(),
+                    props.pending ? "Wait for the current operation to settle" : undefined,
+                  )}
+                  execute={props.onConfirm}
+                />
+              )}
           </box>
         }
       >
         {lines().map((line) => (
           <text>{line}</text>
         ))}
-        {!impact.allowed && <text>Operation is blocked by current dependencies.</text>}
+        {!props.review.impact.allowed && <text>Operation is blocked by current dependencies.</text>}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <text>Cancel is selected by default</text>
+        <text>
+          {props.pending
+            ? "Stop is a request; the operation may already have been applied."
+            : "Cancel is selected by default"}
+        </text>
       </ModalBody>
     </ModalShell>
   );

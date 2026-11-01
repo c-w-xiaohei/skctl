@@ -3,7 +3,7 @@ import { Show, untrack, type JSXElement } from "solid-js";
 import type { LayoutMode } from "../types";
 import { useTheme } from "./use-theme";
 
-const routeBackWidth = 6;
+const routeBackWidth = 11;
 export const stackedNavigationBelow = 80;
 export const compactControlsBelow = 100;
 
@@ -19,6 +19,7 @@ export interface RouteShellSlots {
 export interface RouteShellProps {
   readonly mode: LayoutMode;
   readonly columns: number;
+  readonly compactObject?: boolean;
   readonly slots: RouteShellSlots;
 }
 
@@ -45,30 +46,37 @@ export function RouteShell(props: RouteShellProps) {
         id="route-shell"
         width="100%"
         height="100%"
+        minWidth={0}
+        overflow="hidden"
         flexDirection="column"
         backgroundColor={tokens().colors.background}
       >
         <box
           id="global-bar"
-          height={stacked() ? 3 : 2}
+          height={props.compactObject ? 1 : stacked() ? 3 : 2}
           flexDirection="column"
           flexShrink={0}
           paddingX={1}
-          border={["bottom"]}
+          border={props.compactObject ? [] : ["bottom"]}
           borderColor={tokens().colors.border}
         >
-          <box flexDirection={stacked() ? "column" : "row"} height={stacked() ? 2 : 1}>
-            <box
-              id="section-nav"
-              flexGrow={stacked() ? 0 : 1}
-              flexBasis={stacked() ? undefined : 0}
-              flexShrink={1}
-              minWidth={0}
-              height={1}
-              width={stacked() ? "100%" : "auto"}
-            >
-              <Slot value={props.slots.pageNavigation} />
-            </box>
+          <box
+            flexDirection={stacked() && !props.compactObject ? "column" : "row"}
+            height={stacked() && !props.compactObject ? 2 : 1}
+          >
+            <Show when={!props.compactObject}>
+              <box
+                id="section-nav"
+                flexGrow={stacked() ? 0 : 1}
+                flexBasis={stacked() ? undefined : 0}
+                flexShrink={1}
+                minWidth={0}
+                height={1}
+                width={stacked() ? "100%" : "auto"}
+              >
+                <Slot value={props.slots.pageNavigation} />
+              </box>
+            </Show>
             <box
               id="shell-controls"
               flexDirection="row"
@@ -111,7 +119,15 @@ export function RouteShell(props: RouteShellProps) {
             </box>
           </box>
         </box>
-        <box id="route-content" flexGrow={1} minHeight={0} minWidth={0} paddingX={1}>
+        <box
+          id="route-content"
+          width="100%"
+          flexGrow={1}
+          minHeight={0}
+          minWidth={0}
+          overflow="hidden"
+          paddingX={1}
+        >
           <Slot value={props.slots.content} />
         </box>
         <box

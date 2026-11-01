@@ -127,12 +127,13 @@ test.each([
     setup!.mockInput.pressArrow("down");
     await setup!.waitFor(() => !setup!.renderer.root.findDescendantById("installed-skill-browser"));
     expect(setup!.renderer.root.findDescendantById("installed-skill-browser")).toBeUndefined();
-    expect(setup!.renderer.currentFocusedRenderable).toBe(tree);
+    expect(setup!.renderer.currentFocusedRenderable === tree).toBe(true);
     await parsedEscape(setup!);
     await setup!.waitForFrame((frame) => frame.includes("No matching Skills"));
     if (height === 13) {
       const notice = setup!.renderer.root.findDescendantById("skills-empty-state")!;
       const pane = setup!.renderer.root.findDescendantById("skills-list-pane")!;
+      expect(notice.screenY).toBeGreaterThan(pane.screenY);
       expect(notice.screenY + notice.height).toBeLessThanOrEqual(pane.screenY + pane.height - 1);
     }
     await focusLive(setup!, "open-collection-browser");
@@ -161,10 +162,10 @@ test.each([
     await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable === browser);
     setup!.resize(144, 40);
     await setup!.renderOnce();
-    expect(setup!.renderer.root.findDescendantById("collection-filter-tree")).toBe(tree);
+    expect(setup!.renderer.root.findDescendantById("collection-filter-tree") === tree).toBe(true);
     expect(setup!.renderer.root.findDescendantById(disclosureId)).toBeDefined();
-    expect(setup!.renderer.root.findDescendantById(selectedId("child"))).toBe(child);
-    expect(setup!.renderer.currentFocusedRenderable).toBe(browser);
+    expect(setup!.renderer.root.findDescendantById(selectedId("child")) === child).toBe(true);
+    expect(setup!.renderer.currentFocusedRenderable === browser).toBe(true);
   },
 );
 
@@ -186,7 +187,7 @@ test.each(["root", "disclosure", "scrollbar"])(
     await setup!.renderOnce();
     const saved = tree.scrollTop;
     target.focus();
-    expect(setup!.renderer.currentFocusedRenderable).toBe(target);
+    expect(setup!.renderer.currentFocusedRenderable === target).toBe(true);
     for (const [width, height] of [
       [100, 24],
       [80, 24],
@@ -202,8 +203,8 @@ test.each(["root", "disclosure", "scrollbar"])(
     const browser = setup!.renderer.currentFocusedRenderable;
     setup!.resize(144, 40);
     await setup!.renderOnce();
-    expect(setup!.renderer.root.findDescendantById("collection-filter-tree")).toBe(tree);
+    expect(setup!.renderer.root.findDescendantById("collection-filter-tree") === tree).toBe(true);
     expect(tree.scrollTop).toBe(saved);
-    expect(setup!.renderer.currentFocusedRenderable).toBe(browser);
+    expect(setup!.renderer.currentFocusedRenderable === browser).toBe(true);
   },
 );

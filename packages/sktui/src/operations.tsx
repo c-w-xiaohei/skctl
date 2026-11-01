@@ -12,6 +12,7 @@ export {
 } from "./operations/choices";
 export {
   CollectionCreateOverlay,
+  CollectionRenameOverlay,
   CollectionImportOverlay,
   ReferenceOverlay,
   LinkChangeOverlay,

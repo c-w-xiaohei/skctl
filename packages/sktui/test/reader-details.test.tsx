@@ -9,6 +9,7 @@ import {
 } from "@opentui/core";
 import { App } from "../src/app";
 import { exposureTreePathKey } from "../src/collections/agent-access-tree";
+import { collectionRelationRows } from "../src/collections/relationship-model";
 import { directOwner, directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import {
   enterInstalledAddress,
@@ -16,7 +17,7 @@ import {
   expectSharedReturn,
   live,
   openAllInstalledSkills,
-  openReaderManagement,
+  openReaderSettings,
   openReaderTab,
   focusLive,
   parsedEnter,
@@ -206,7 +207,7 @@ test("Details renders provenance and routes Collection Use to its owning Config 
         frame.includes("docs:guide") &&
         /Primary[^\n]*\n[^\n]*selector/.test(frame),
     );
-    await openReaderManagement(setup);
+    await openReaderSettings(setup);
     expect(live(setup, "reader-details-action-skill-add-to-collection").focusable).toBe(true);
     expect(live(setup, "reader-details-relationship-source").focusable).toBe(true);
     await enterLive(setup, "reader-details-relationship-selectors");
@@ -221,27 +222,26 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     expect(exposureName).toBeInstanceOf(TextRenderable);
     expect((exposureName as TextRenderable).plainText.trim()).toBe("engineering");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("current-exposure-browser");
-    expect(setup.renderer.root.findDescendantById("collection-tabs-tab-entries")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("collection-tabs-tab-members")).toBe(false);
     await enterLive(setup, "agent-access-collection-details");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
     await setup.waitForFrame(
-      (frame) => frame.includes("engineering") && frame.includes("Relations"),
+      (frame) => frame.includes("engineering") && frame.includes("Contents"),
     );
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
     );
-    await focusLive(setup, "collection-tabs-tab-entries");
-    setup.mockInput.pressArrow("right");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-relations",
+    await enterLive(setup, "collection-tabs-tab-settings");
+    const relation = collectionRelationRows("engineering", projection).find(
+      (row) =>
+        row.kind === "collection-use" &&
+        row.owner?.file === useOwner.file &&
+        row.owner.pointer === useOwner.pointer,
     );
-    await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Collection Use"));
-    await enterLive(setup, "collection-relationships");
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
-    );
-    await enterLive(setup, "relationship.open-owner");
+    expect(relation).toBeDefined();
+    const relationId = "collection-location-open-global";
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById(relationId));
+    await enterLive(setup, relationId);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("config-collection-browser"),
     );
@@ -263,23 +263,13 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     // Config returns to the owning relation inspector before its local Relations Back.
     await expectSharedReturn(setup, "Back to Collections");
     await enterLive(setup, "route-back");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "relationship.open-owner",
-    );
-    expect(nativeText(live(setup, "collection-relation-inspector"))).toContain(
-      `Owner  global ${useOwner.file} ${useOwner.pointer}`,
-    );
-    await expectSharedReturn(setup, "Back to Relations");
-    await enterLive(setup, "route-back");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
-    );
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === relationId);
     expect(setup.renderer.root.findDescendantById("collection-relation-inspector")).toBeUndefined();
     await setup.waitForFrame(
-      (frame) => frame.includes("engineering") && frame.includes("Collection Use"),
+      (frame) => frame.includes("engineering") && frame.includes("Configuration locations"),
     );
     // The cross-section detail has one route predecessor: the same Agent Access path/action.
-    await expectSharedReturn(setup, "Back to Skills");
+    await expectSharedReturn(setup, "Back to Agent");
     await enterLive(setup, "route-back");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "agent-access-collection-details",
@@ -297,8 +287,14 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     );
     expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeDefined();
     await setup.waitForFrame(
-      (frame) => frame.includes("engineering") && frame.includes("Relations"),
+      (frame) => frame.includes("engineering") && frame.includes("Settings"),
     );
+  } catch (error) {
+    console.error("Collection Use handoff", {
+      focus: setup.renderer.currentFocusedRenderable?.id,
+      frame: setup.captureCharFrame(),
+    });
+    throw error;
   } finally {
     setup.renderer.destroy();
   }

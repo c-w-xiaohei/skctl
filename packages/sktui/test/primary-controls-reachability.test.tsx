@@ -47,10 +47,8 @@ async function tabTo(setup: Setup, id: string) {
 }
 
 async function openInventory(setup: Setup) {
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary");
-  await tabTo(setup, "skills-view-tab-current-exposure");
-  await press(setup, "right");
-  await press(setup, "enter");
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
+  await tabTo(setup, "installed-skill-browser");
   await expectFocus(setup, "installed-skill-browser", "All Skills opens inventory");
 }
 
@@ -119,27 +117,34 @@ for (const width of [140, 80, 60]) {
     );
     try {
       await openInventory(setup);
-      await tabTo(setup, "shell-section-tab-skills");
-      await press(setup, "right");
-      await press(setup, "enter");
-      await expectFocus(
-        setup,
-        "collection-browser",
-        "page selector Down / Enter enters Collections",
-      );
+      if (width < 100) {
+        await tabTo(setup, "shell-pages-select");
+        await press(setup, "enter");
+        await expectFocus(setup, "shell-pages-choices", "Pages opens chooser");
+        await press(setup, "down");
+        await press(setup, "enter");
+      } else {
+        await tabTo(setup, "shell-section-tab-skills");
+        await press(setup, "right");
+      }
+      await tabTo(setup, "collection-browser");
       await press(setup, "enter");
       await tabTo(setup, "collection-relationships");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
       );
+      await tabTo(setup, "collection-current-membership.open-skill");
       await press(setup, "right");
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id.endsWith(".manage") === true,
+      await expectFocus(
+        setup,
+        "collection-current-details",
+        "Right reaches current member Ownership",
       );
       await press(setup, "enter");
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
       );
+      expect(setup.captureCharFrame()).toContain("team-main/guide");
       await press(setup, "escape");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",

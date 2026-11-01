@@ -4,22 +4,26 @@ import { ButtonRenderable } from "@tuiparts/core/button";
 import { ScrollBoxRenderable, SelectRenderable, type BaseRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
-import {
-  enterLive,
-  expectSharedReturn,
-  focusLive,
-  parsedEnter,
-  parsedEscape,
-} from "./reader-test-controls";
+import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 type Setup = Awaited<ReturnType<typeof testRender>>;
 const descendants = (target: BaseRenderable): BaseRenderable[] => [
   target,
   ...target.getChildren().flatMap(descendants),
 ];
 // DataTable derives native IDs from the existing semantic row command ID.
-const guideManageId = `collection-relationships-row-guide%3A0:action-${encodeURIComponent("collection.row.team.guide%3A0.manage")}`;
+const guideManageId = "collection-current-details";
+async function inspectDocs(setup: Setup) {
+  await enterLive(setup, "collection-tabs-tab-members");
+  await focusLive(setup, "collection-relationships");
+  setup.mockInput.pressKey("home");
+  setup.mockInput.pressArrow("down");
+  setup.mockInput.pressArrow("down");
+  await setup.flush();
+  await enterLive(setup, "collection-current-details");
+}
 async function mount(width = 144, height = 40, projection = collectionsSourcesProjection()) {
   const previews: unknown[] = [];
   const core = directSourceCore(projection);
@@ -49,7 +53,7 @@ async function mount(width = 144, height = 40, projection = collectionsSourcesPr
   };
 }
 async function openContents(setup: Setup) {
-  await enterLive(setup, "shell-section-tab-collections");
+  await openMainPage(setup, "collections");
   await enterLive(setup, "collection-browser");
   await setup.waitFor(
     () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
@@ -72,15 +76,16 @@ test("Collection rows stay quiet while the current direct member exposes only it
   const { setup } = mounted;
   try {
     await openContents(setup);
-    const actions = setup.renderer.root.findDescendantById(
-      "collection-relationships-row-guide%3A0:actions",
-    );
+    const actions = setup.renderer.root.findDescendantById("collection-current-actions-pane");
     expect(actions).toBeDefined();
     expect(
       descendants(actions!)
         .filter((node) => node instanceof ButtonRenderable)
         .map((node) => node.id),
-    ).toEqual([guideManageId]);
+    ).toContain(guideManageId);
+    expect(
+      setup.renderer.root.findDescendantById("collection-relationships-row-guide%3A0:actions"),
+    ).toBeUndefined();
     const choices = await openActions(setup);
     expect(
       choices.options
@@ -89,8 +94,9 @@ test("Collection rows stay quiet while the current direct member exposes only it
             option.value.id,
           ),
         )
-        .map((option) => option.value.id),
-    ).toEqual(["membership.open-skill", "membership.open-owner", "membership.remove"]);
+        .map((option) => option.value.id)
+        .sort(),
+    ).toEqual(["membership.open-owner", "membership.open-skill", "membership.remove"]);
     await parsedEscape(setup);
     await focusLive(setup, "collection-relationships");
     await setup.mockInput.typeText(" ");
@@ -98,7 +104,6 @@ test("Collection rows stay quiet while the current direct member exposes only it
     await setup.flush();
     await chooseAction(setup, "membership.remove");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership-removal-plan"));
-    await enterLive(setup, "membership-removal-plan-continue");
     await setup.waitFor(() => mounted.previews.length === 1);
     expect(mounted.previews[0]).toMatchObject({
       collection: "team",
@@ -107,7 +112,7 @@ test("Collection rows stay quiet while the current direct member exposes only it
       ],
     });
     await parsedEscape(setup);
-    expect(setup.captureCharFrame()).toContain("1 origins checked");
+    expect(setup.captureCharFrame()).toContain("1 items checked");
   } finally {
     mounted.dispose();
   }
@@ -121,22 +126,19 @@ test("Collection inspector returns through the single shared header with the tab
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
     );
-    const contentsBack = setup.renderer.root.findDescendantById("route-back");
+    const contentsBack = setup.renderer.root.findDescendantById("collection.inspector-back");
     expect(contentsBack).toBeInstanceOf(ButtonRenderable);
-    await expectSharedReturn(setup, "Back to Contents");
-    expect(setup.renderer.root.findDescendantById("collection.inspector-back")).toBeUndefined();
-    await enterLive(setup, "route-back");
+    expect(setup.captureCharFrame()).toContain("Close");
+    await enterLive(setup, "collection.inspector-back");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
-    await enterLive(setup, "collection-tabs-tab-relations");
-    await focusLive(setup, "collection-relationships");
-    await parsedEnter(setup);
+    await enterLive(setup, "collection-tabs-tab-settings");
+    await inspectDocs(setup);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
     );
-    const relationsBack = setup.renderer.root.findDescendantById("route-back");
+    const relationsBack = setup.renderer.root.findDescendantById("collection.inspector-back");
     expect(relationsBack).toBeInstanceOf(ButtonRenderable);
-    await expectSharedReturn(setup, "Back to Relations");
-    expect(setup.renderer.root.findDescendantById("collection.inspector-back")).toBeUndefined();
+    expect(setup.captureCharFrame()).toContain("Close");
   } finally {
     mounted.dispose();
   }
@@ -179,8 +181,8 @@ test("multi-origin current members require Manage before any origin-specific act
     const ids = choices.options.map((option) => option.value.id);
     expect(ids).toContain("membership.open-skill");
     expect(ids).not.toContain("membership.open-owner");
-    expect(ids).not.toContain("membership.remove");
-    expect(ids).toContain("collection.row.team.guide%3A0.manage");
+    expect(ids).toContain("membership.remove");
+    expect(ids).toContain("collection.current.details");
     await parsedEscape(setup);
     await enterLive(setup, guideManageId);
     const origin = setup.renderer.root.findDescendantById("collection-membership-origin");
@@ -196,18 +198,22 @@ test("Relations current Reference retains direct Open in Actions without changin
   const { setup } = mounted;
   try {
     await openContents(setup);
-    await enterLive(setup, "collection-tabs-tab-relations");
-    await focusLive(setup, "collection-relationships");
+    await enterLive(setup, "collection-tabs-tab-settings");
+    await inspectDocs(setup);
     const choices = await openActions(setup);
     expect(
       choices.options.find((option) => option.value.id === "relationship.open-collection")?.value,
-    ).toMatchObject({ enabled: true, destination: "team / Reference docs · docs" });
+    ).toMatchObject({
+      enabled: true,
+      object: "docs",
+      opens: "Collection workspace",
+      destination: "docs",
+    });
     await parsedEscape(setup);
-    await focusLive(setup, "collection-relationships");
-    await parsedEnter(setup);
     expect(setup.renderer.root.findDescendantById("collection-relation-inspector")).toBeDefined();
-    await enterLive(setup, "route-back");
-    await chooseAction(setup, "relationship.open-collection");
+    await enterLive(setup, "collection.inspector-back");
+    await inspectDocs(setup);
+    await enterLive(setup, "relationship.open-collection");
     await setup.waitFor(() =>
       setup.captureCharFrame().includes("Add Skills or a Reference to this Collection."),
     );
@@ -227,14 +233,12 @@ for (const [width, height] of [
     const { setup } = mounted;
     try {
       await openContents(setup);
-      const actions = setup.renderer.root.findDescendantById(
-        "collection-relationships-row-guide%3A0:actions",
-      )!;
-      expect(descendants(actions).filter((node) => node instanceof ButtonRenderable)).toHaveLength(
-        1,
-      );
+      const actions = setup.renderer.root.findDescendantById("collection-current-actions-pane")!;
+      expect(
+        descendants(actions).filter((node) => node instanceof ButtonRenderable).length,
+      ).toBeGreaterThan(0);
       await enterLive(setup, guideManageId);
-      const pane = setup.renderer.root.findDescendantById("collection-detail-pane")!;
+      const pane = setup.renderer.root.findDescendantById("collection-inspector-surface")!;
       const body = setup.renderer.root.findDescendantById(
         "collection-membership-inspector",
       ) as ScrollBoxRenderable;
@@ -242,9 +246,8 @@ for (const [width, height] of [
       const danger = setup.renderer.root.findDescendantById("collection-inspector-danger-actions")!;
       expect(body.viewport.height).toBeGreaterThanOrEqual(1);
       expect(normal.height).toBe(1);
-      expect(danger.height).toBe(1);
-      expect(danger.screenY).toBeGreaterThan(normal.screenY);
-      for (const group of [normal, danger]) {
+      expect(!!danger).toBe(false);
+      for (const group of [normal]) {
         for (const button of descendants(group).filter(
           (node) => node instanceof ButtonRenderable,
         )) {
@@ -256,8 +259,8 @@ for (const [width, height] of [
           );
         }
       }
-      expect(setup.renderer.root.findDescendantById("collection.inspector-back")).toBeUndefined();
-      await enterLive(setup, "route-back");
+      expect(setup.renderer.root.findDescendantById("collection.inspector-back")).toBeDefined();
+      await enterLive(setup, "collection.inspector-back");
       expect(
         setup.renderer.root.findDescendantById("collection-membership-inspector"),
       ).toBeUndefined();

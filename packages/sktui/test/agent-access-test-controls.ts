@@ -7,10 +7,14 @@ import {
 } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { live } from "./reader-test-controls";
+import { openMainPage } from "./main-page-controls";
 
 export type Setup = Awaited<ReturnType<typeof testRender>>;
 
 export async function openAgentAccess(setup: Setup) {
+  if (!setup.renderer.root.findDescendantById("current-exposure-browser")) {
+    await openMainPage(setup, "agent");
+  }
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
   await setup.flush();
   const tree = live(setup, "current-exposure-browser");

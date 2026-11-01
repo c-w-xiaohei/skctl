@@ -4,6 +4,7 @@ import { InputRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { exposureTreePathKey } from "../src/collections/agent-access-tree";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection, readerSecondAddress } from "./installed-reader.fixture";
@@ -17,8 +18,7 @@ import {
   waitForReaderBody,
 } from "./reader-test-controls";
 async function openSources(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-sources"));
-  await enterLive(setup, "shell-section-tab-sources");
+  await openMainPage(setup, "sources");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
 }
 test("Source updates replace the browser and Back restores its exact selected Source after resize", async () => {
@@ -27,7 +27,6 @@ test("Source updates replace the browser and Back restores its exact selected So
     { width: 120, height: 40 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-setup-primary"));
     await openSources(setup);
     const browser = (await focusLive(setup, "source-browser")) as SelectRenderable;
     browser.setSelectedIndex(browser.options.findIndex((option) => option.value === "team-main"));
@@ -125,7 +124,7 @@ test("Agent access opens the exact structural Skill while preserving an All Skil
         "guide",
     );
     expect(all.options).toHaveLength(1);
-    await enterLive(setup, "skills-view-tab-current-exposure");
+    await openMainPage(setup, "agent");
     const rootKey = exposureTreePathKey({ segments: [{ collection: "root" }] });
     const skillKey = JSON.stringify([
       rootKey,
@@ -140,6 +139,7 @@ test("Agent access opens the exact structural Skill while preserving an All Skil
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById(exactName));
     const row = setup.renderer.root.findDescendantById(exactName)!;
     await setup.mockMouse.click(row.screenX, row.screenY);
+    await parsedEnter(setup);
     await waitForReaderBody(setup, "Body reference");
     await openReaderTab(setup, 2);
     await setup.waitForFrame((frame) =>
@@ -147,12 +147,25 @@ test("Agent access opens the exact structural Skill while preserving an All Skil
     );
     expect(setup.captureCharFrame()).not.toContain(`${readerSecondAddress.source}/guide`);
     await enterLive(setup, "reader-action-skill-check-updates");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-page"));
+    await setup
+      .waitFor(() => !!setup.renderer.root.findDescendantById("updates-page"))
+      .catch((cause) => {
+        throw new Error(
+          `Skill check did not open its review; focus=${setup.renderer.currentFocusedRenderable?.id}, checks=${JSON.stringify(checks)}\n${setup.captureCharFrame()}`,
+          { cause },
+        );
+      });
     expect(checks.every((source) => source === readerSecondAddress.source)).toBe(true);
     expect(checks).toContain(readerSecondAddress.source);
     await parsedEscape(setup);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
+    await setup.waitForFrame((frame) =>
+      frame.includes(`${readerSecondAddress.source}/${readerSecondAddress.path}`),
+    );
+    expect(setup.captureCharFrame()).not.toContain(`${readerSecondAddress.source}/guide`);
+    await enterLive(setup, "route-back");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
-    await enterLive(setup, "skills-view-tab-all-installed-skills");
+    await openMainPage(setup, "skills");
     const restored = setup.renderer.root.findDescendantById(
       "installed-skill-browser",
     ) as SelectRenderable;
@@ -222,19 +235,9 @@ for (const originKind of ["direct", "via-link"] as const) {
       { width: 120, height: 40 },
     );
     try {
-      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-setup-primary"));
-      await enterLive(setup, "shell-section-tab-collections");
+      await openMainPage(setup, "collections");
       await enterLive(setup, "collection-browser");
-      await focusLive(setup, "collection-relationships");
-      setup.mockInput.pressArrow("right");
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id.endsWith(".manage") === true,
-      );
-      await parsedEnter(setup);
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
-      );
-      await enterLive(setup, "membership.open-skill");
+      await enterLive(setup, "collection-current-membership.open-skill");
       await waitForReaderBody(setup, "Body reference");
       await openReaderTab(setup, 2);
       await setup.waitForFrame((frame) =>
@@ -243,9 +246,12 @@ for (const originKind of ["direct", "via-link"] as const) {
       expect(setup.captureCharFrame()).not.toContain("team-main/guide");
       await enterLive(setup, "route-back");
       await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
+        () => !!setup.renderer.root.findDescendantById("collection-relationships"),
       );
-      expect(setup.captureCharFrame()).toContain("In team");
+      await setup.waitForFrame(
+        (frame) => frame.includes("Contents") && frame.includes("reference"),
+      );
+      expect(setup.captureCharFrame()).toContain("─team─");
     } finally {
       setup.renderer.destroy();
     }

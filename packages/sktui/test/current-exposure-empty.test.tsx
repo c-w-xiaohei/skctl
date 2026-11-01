@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { enterLive, parsedEnter, parsedEscape } from "./reader-test-controls";
@@ -57,13 +58,11 @@ for (const width of [120, 80, 43]) {
       { width, height: 24 },
     );
     try {
+      await openMainPage(setup, "agent");
       await setup.waitForFrame((frame) => frame.includes("Choose Collections for agents"));
       expect(setup.renderer.root.findDescendantById("agent-node-pane")).toBeUndefined();
       expect(setup.captureCharFrame()).not.toContain("expand/fold");
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
-      );
-      const primary = setup.renderer.currentFocusedRenderable!;
+      const primary = setup.renderer.root.findDescendantById("skills-setup-primary")!;
       await setup.flush();
       await setup.mockMouse.click(primary.screenX + 2, primary.screenY);
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
@@ -100,10 +99,8 @@ test("many Collections reuse the native bounded selection list, not owner-specif
     { width: 80, height: 30 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
-    );
-    await parsedEnter(setup);
+    await openMainPage(setup, "agent");
+    await enterLive(setup, "skills-setup-primary");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-use-values"));
@@ -126,13 +123,11 @@ test("global-only workspaces choose Collections at the existing global Config", 
     { width: 100, height: 24 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
-    );
-    await parsedEnter(setup);
+    await openMainPage(setup, "agent");
+    await enterLive(setup, "skills-setup-primary");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Config level: global"));
+    await setup.waitForFrame((frame) => frame.includes("Configuration: global"));
     expect(setup.renderer.root.findDescendantById("collection-use-values")).toBeDefined();
   } finally {
     setup.renderer.destroy();
@@ -167,9 +162,11 @@ test("empty Collections guide member selection and may remain empty after cancel
     { width: 80, height: 24 },
   );
   try {
+    await openMainPage(setup, "agent");
     await setup.waitForFrame((frame) => frame.includes("Add Skills to a Collection"));
-    await parsedEnter(setup);
+    await enterLive(setup, "skills-setup-primary");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
+    await enterLive(setup, "collection-add");
     await enterLive(setup, "collection-action-add-membership");
     await setup.waitForFrame((frame) => frame.includes("Add Skills to group-0"));
     await parsedEscape(setup);
@@ -186,8 +183,9 @@ test("no Collections opens the existing create form without a navigation-only in
     { width: 100, height: 24 },
   );
   try {
+    await openMainPage(setup, "agent");
     await setup.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
-    await parsedEnter(setup);
+    await enterLive(setup, "skills-setup-primary");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-create-id"));
     await parsedEscape(setup);
     await setup.waitFor(
@@ -213,10 +211,8 @@ test("Collection choice is reachable without a connected Agent", async () => {
     { width: 120, height: 30 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
-    );
-    await parsedEnter(setup);
+    await openMainPage(setup, "agent");
+    await enterLive(setup, "skills-setup-primary");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-use-values"));
@@ -265,10 +261,8 @@ test("Collection choice previews only checked roots and returns to the catalog w
     { width: 100, height: 24 },
   );
   try {
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
-    );
-    await parsedEnter(setup);
+    await openMainPage(setup, "agent");
+    await enterLive(setup, "skills-setup-primary");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
     await parsedEnter(setup);
     await setup.waitFor(

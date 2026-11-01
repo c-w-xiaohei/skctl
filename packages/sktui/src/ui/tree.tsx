@@ -17,6 +17,7 @@ export interface TreeRow {
   readonly name: string;
   readonly expandable: boolean;
   readonly issue?: string;
+  readonly separated?: boolean;
 }
 
 export interface TreeProps {
@@ -39,6 +40,8 @@ export interface TreeProps {
   readonly initialScrollTop?: number;
   readonly onScrollChange?: (offset: number) => void;
   readonly empty?: JSX.Element;
+  /** Homogeneous trees can omit the redundant type column. */
+  readonly showKinds?: boolean;
 }
 
 const sameKeys = (left: readonly string[], right: readonly string[]) =>
@@ -384,6 +387,7 @@ export function Tree(props: TreeProps) {
       <box
         id={rowId(rowProps.rowKey)}
         height={1}
+        marginTop={row()?.separated ? 1 : 0}
         width="100%"
         flexShrink={0}
         flexDirection="row"
@@ -449,14 +453,16 @@ export function Tree(props: TreeProps) {
             }}
           />
         </Show>
-        <text
-          id={`${rowId(rowProps.rowKey)}-kind`}
-          width={2}
-          flexShrink={0}
-          wrapMode="none"
-          fg={selected() && focused() ? foreground() : tokens().colors.mutedForeground}
-          content={row()?.kind === "skill" ? "S " : row()?.kind === "entry" ? "  " : "C "}
-        />
+        <Show when={props.showKinds !== false}>
+          <text
+            id={`${rowId(rowProps.rowKey)}-kind`}
+            width={2}
+            flexShrink={0}
+            wrapMode="none"
+            fg={selected() && focused() ? foreground() : tokens().colors.mutedForeground}
+            content={row()?.kind === "skill" ? "S " : row()?.kind === "entry" ? "  " : "C "}
+          />
+        </Show>
         <text
           id={`${rowId(rowProps.rowKey)}-name`}
           flexGrow={1}
@@ -465,7 +471,13 @@ export function Tree(props: TreeProps) {
           fg={foreground()}
           content={fitColumn(
             row()?.name ?? "",
-            Math.max(1, width() - indentation() - 5 - (row()?.issue ? 2 : 0)),
+            Math.max(
+              1,
+              width() -
+                indentation() -
+                (props.showKinds === false ? 3 : 5) -
+                (row()?.issue ? 2 : 0),
+            ),
           )}
         />
         <Show when={row()?.issue}>

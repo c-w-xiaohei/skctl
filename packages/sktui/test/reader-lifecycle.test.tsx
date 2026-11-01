@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { InputRenderable, TextRenderable } from "@opentui/core";
+import { TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
@@ -12,6 +12,7 @@ import {
 } from "./installed-reader.fixture";
 import {
   focusLive,
+  enterLive,
   openAllInstalledSkills,
   openReaderTab,
   parsedEnter,
@@ -59,11 +60,6 @@ function expectFocused(setup: Setup, id: string) {
     );
   }
 }
-function findInput(setup: Setup) {
-  const input = setup.renderer.root.findDescendantById("reader-find");
-  expect(input).toBeInstanceOf(InputRenderable);
-  return input as InputRenderable;
-}
 test("RENDER Reader tabs own Left/Right, forward Tab enters content, Shift+Tab returns to browser", async () => {
   const setup = await boot();
   try {
@@ -73,12 +69,10 @@ test("RENDER Reader tabs own Left/Right, forward Tab enters content, Shift+Tab r
     expect(setup.renderer.currentFocusedRenderable).toBe(resourcesTab);
     await focusLive(setup, "resource-browser");
     expectFocused(setup, "resource-browser");
-    await openReaderTab(setup, 2);
-    const detailsTab = readerTab(setup, 2);
-    expect(selectedReaderTab(setup)).toBe(2);
-    expect(setup.renderer.currentFocusedRenderable).toBe(detailsTab);
-    await focusLive(setup, "reader-details");
-    expectFocused(setup, "reader-details");
+    await openReaderTab(setup, 0);
+    expect(selectedReaderTab(setup)).toBe(0);
+    await focusLive(setup, "reader-scrollbox");
+    expectFocused(setup, "reader-scrollbox");
     setup.mockInput.pressKey("TAB");
     await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-section-tab-skills");
@@ -86,43 +80,34 @@ test("RENDER Reader tabs own Left/Right, forward Tab enters content, Shift+Tab r
     setup.renderer.destroy();
   }
 });
-test("RENDER Reader find input owns printable, slash, and cursor keys", async () => {
+test("RENDER Reader description expands without replacing instructions", async () => {
   const setup = await boot();
   try {
-    await focusLive(setup, "reader-find");
-    await setup.mockInput.pressKeys(["a", "/"]);
-    setup.mockInput.pressKey("ARROW_LEFT");
-    setup.mockInput.pressKey("ARROW_RIGHT");
-    await setup.renderOnce();
-    expect(findInput(setup).value).toBe("a/");
-    await parsedEnter(setup);
-    await setup.renderOnce();
-    expectFocused(setup, "reader-scrollbox");
+    const body = setup.renderer.root.findDescendantById("reader-scrollbox");
+    expect(setup.renderer.root.findDescendantById("reader-description")).toBeUndefined();
+    await enterLive(setup, "reader-description-toggle");
+    expect(setup.captureCharFrame()).toContain("A rich Installed Skill");
+    expect(setup.renderer.root.findDescendantById("reader-scrollbox")).toBe(body);
+    await enterLive(setup, "reader-description-toggle");
+    expect(setup.renderer.root.findDescendantById("reader-description")).toBeUndefined();
   } finally {
     setup.renderer.destroy();
   }
 });
-test("RENDER Reader find draft commits on focus exit and survives a Skill switch round trip", async () => {
+test("RENDER Reader remembers description disclosure for each Skill", async () => {
   const setup = await boot();
   try {
-    await focusLive(setup, "reader-find");
-    await setup.mockInput.pressKeys(["a", "b", "c"]);
-    await setup.renderOnce();
-    await parsedEscape(setup);
-    expectFocused(setup, "reader-scrollbox");
-    await parsedEscape(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
+    await enterLive(setup, "reader-description-toggle");
     await focusLive(setup, "installed-skill-browser");
     setup.mockInput.pressArrow("down");
     await setup.waitFor(() => readerIdentity(setup) === "reference");
     expect(selectedReaderTab(setup)).toBe(0);
     expect(setup.renderer.root.findDescendantById("reader-scrollbox")).toBeDefined();
-    await setup.waitFor(() => findInput(setup).value === "");
+    expect(setup.renderer.root.findDescendantById("reader-description")).toBeUndefined();
     setup.mockInput.pressArrow("up");
     await setup.waitFor(() => readerIdentity(setup) === "guide");
     expect(selectedReaderTab(setup)).toBe(0);
-    await focusLive(setup, "reader-find");
-    expect(findInput(setup).value).toBe("abc");
+    expect(!!setup.renderer.root.findDescendantById("reader-description")).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -141,11 +126,10 @@ test("RENDER Reader Escape returns to the list without unmounting the Reader", a
     setup.renderer.destroy();
   }
 });
-test("RENDER Reader stays mounted across narrow resize and preserves draft and focus", async () => {
+test("RENDER Reader stays mounted across narrow resize and preserves reading focus", async () => {
   const setup = await boot();
   try {
-    await focusLive(setup, "reader-find");
-    await setup.mockInput.pressKeys(["x", "y"]);
+    await focusLive(setup, "reader-scrollbox");
     await setup.renderOnce();
     const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
     const body = setup.renderer.root.findDescendantById("reader-scrollbox");
@@ -155,16 +139,14 @@ test("RENDER Reader stays mounted across narrow resize and preserves draft and f
       true,
     );
     expect(setup.renderer.root.findDescendantById("reader-scrollbox") === body).toBe(true);
-    expect(setup.captureCharFrame()).not.toContain("Skills · 2 / 2");
+    expect(setup.captureCharFrame()).not.toContain("Skills (2)");
     expect(setup.captureCharFrame()).toContain("guide");
     setup.resize(120, 40);
     await setup.renderOnce();
     await Promise.resolve();
     await setup.renderOnce();
-    const input = (await focusLive(setup, "reader-find")) as InputRenderable;
-    expect(input.value).toBe("xy");
-    expect(setup.renderer.currentFocusedRenderable).toBe(input);
-    expect(input.focused).toBe(true);
+    expect(setup.renderer.currentFocusedRenderable).toBe(body!);
+    expect(body!.focused).toBe(true);
   } finally {
     setup.renderer.destroy();
   }

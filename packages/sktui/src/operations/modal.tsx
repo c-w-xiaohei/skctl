@@ -32,6 +32,8 @@ export function ModalShell(props: {
 
 /** Keep the actual form/review content within the terminal's native scroll viewport. */
 export function ModalBody(props: {
+  readonly maxWidth?: number;
+  readonly maxHeight?: number;
   readonly header?: JSX.Element;
   readonly footer?: JSX.Element;
   readonly children: JSX.Element;
@@ -85,7 +87,14 @@ export function ModalBody(props: {
       borderColor={tokens().colors.border}
       backgroundColor={tokens().colors.background}
       margin={1}
-      padding={1}
+      paddingX={1}
+      paddingY={props.maxHeight ? 0 : 1}
+      maxWidth={props.maxWidth}
+      alignSelf={props.maxWidth ? "center" : undefined}
+      width={
+        props.maxWidth ? Math.max(1, Math.min(props.maxWidth, terminal().width - 2)) : undefined
+      }
+      maxHeight={props.maxHeight}
       height={Math.max(1, terminal().height - 2)}
       minHeight={0}
       flexDirection="column"

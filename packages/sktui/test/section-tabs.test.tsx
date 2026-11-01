@@ -95,7 +95,7 @@ test("focusing an inactive native tab releases the previous roving stop before i
   ) as TabsTabRenderable;
   first.focus();
   sources.focus();
-  expect(setup!.renderer.currentFocusedRenderable).toBe(sources);
+  expect(setup!.renderer.currentFocusedRenderable === sources).toBe(true);
   expect(first.focused).toBe(false);
   setup!.mockInput.pressEnter();
   await setup!.waitFor(() => value() === "sources");
@@ -133,7 +133,7 @@ test("an unavailable native tab cannot blur the live roving stop", async () => {
   first.focus();
   sources.visible = false;
   sources.focus();
-  expect(setup!.renderer.currentFocusedRenderable).toBe(first);
+  expect(setup!.renderer.currentFocusedRenderable === first).toBe(true);
   expect(first.focused).toBe(true);
   expect(sources.focused).toBe(false);
 });
@@ -286,7 +286,7 @@ test("Context Right immediately changes the active token while native Tabs trans
   const global = setup!.renderer.root.findDescendantById("context-tab-global") as TabsTabRenderable;
   expect(context()).toBe("global");
   expect(navigations).toEqual(["global"]);
-  expect(setup!.renderer.currentFocusedRenderable).toBe(global);
+  expect(setup!.renderer.currentFocusedRenderable === global).toBe(true);
   expect(workspace.focused).toBe(false);
   expect(global.focused).toBe(true);
   setup!.mockInput.pressEnter();

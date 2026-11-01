@@ -56,17 +56,15 @@ test("Details arrows traverse live controls both ways and Escape from each physi
     await parsedEnter(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
     const controls = [
-      "reader-details-relationship-source",
-      "reader-details-relationship-config",
-      "reader-details-metadata",
-      "reader-details-manage",
       "reader-reload",
       "reader-details-action-skill-rebind",
       "reader-details-action-skill-uninstall",
+      "reader-details-relationship-source",
+      "reader-details-relationship-config",
+      "reader-details-metadata",
     ];
     for (const [index, id] of controls.entries()) {
       await arrowFocus(setup, index === 0 ? "ARROW_RIGHT" : "ARROW_DOWN", id);
-      if (id === "reader-details-manage") await parsedEnter(setup);
       expectInBounds(live(setup, id), 120, 40);
     }
     await arrowFocus(setup, "ARROW_DOWN", controls.at(-1)!);
@@ -95,9 +93,7 @@ test("Details arrows traverse live controls both ways and Escape from each physi
       expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
       await parsedEnter(setup);
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
-      expect(
-        (live(setup, "reader-details-manage") as AccordionTriggerRenderable).getState().open,
-      ).toBe(true);
+      expect(live(setup, "reader-details-action-skill-uninstall")).toBeDefined();
     }
   } finally {
     setup.renderer.destroy();
@@ -127,15 +123,13 @@ test("Details skips absent and disabled controls and metadata Enter/Space really
         setup.renderer.root.findDescendantById(`reader-details-relationship-${relationship}`),
       ).toBeUndefined();
     const controls = [
-      "reader-details-metadata",
-      "reader-details-manage",
       "reader-reload",
       "reader-details-action-skill-rebind",
       "reader-details-action-skill-uninstall",
+      "reader-details-metadata",
     ];
     for (const [index, id] of controls.entries()) {
       await arrowFocus(setup, index === 0 ? "ARROW_RIGHT" : "ARROW_DOWN", id);
-      if (id === "reader-details-manage") await parsedEnter(setup);
     }
     expect(
       (live(setup, "reader-details-action-skill-open-source") as ButtonRenderable).getState()
@@ -147,7 +141,8 @@ test("Details skips absent and disabled controls and metadata Enter/Space really
     ).toBe(false);
     for (const id of [...controls.slice(0, -1).reverse(), "reader-details"])
       await arrowFocus(setup, "ARROW_UP", id);
-    await arrowFocus(setup, "ARROW_RIGHT", "reader-details-metadata");
+    for (const [index, id] of controls.entries())
+      await arrowFocus(setup, index === 0 ? "ARROW_RIGHT" : "ARROW_DOWN", id);
     const metadata = () => live(setup, "reader-details-metadata") as AccordionTriggerRenderable;
     expect(metadata().getState().open).toBe(false);
     await parsedEnter(setup);
@@ -176,11 +171,11 @@ test("Details skips absent and disabled controls and metadata Enter/Space really
       expectInBounds(live(setup, "reader-details"), width, height);
       expectInBounds(metadata(), width, height);
       expect(setup.captureCharFrame()).toContain("▾ Technical details");
-      for (const id of controls.slice(1)) {
-        await arrowFocus(setup, "ARROW_DOWN", id);
+      for (const id of controls.slice(0, -1).reverse()) {
+        await arrowFocus(setup, "ARROW_UP", id);
         expectInBounds(live(setup, id), width, height);
       }
-      for (const id of controls.slice(0, -1).reverse()) await arrowFocus(setup, "ARROW_UP", id);
+      for (const id of controls.slice(1)) await arrowFocus(setup, "ARROW_DOWN", id);
     }
   } finally {
     setup.renderer.destroy();
@@ -232,7 +227,13 @@ test("Details restores exact native scroll per address through A/B/A/B, view rem
       await setup.flush();
       const details = live(setup, "reader-details") as ScrollBoxRenderable;
       if (index < 2) {
-        await arrowFocus(setup, "ARROW_RIGHT", "reader-description-toggle");
+        for (const id of [
+          "reader-reload",
+          "reader-details-action-skill-rebind",
+          "reader-details-action-skill-uninstall",
+          "reader-description-toggle",
+        ])
+          await arrowFocus(setup, id === "reader-reload" ? "ARROW_RIGHT" : "ARROW_DOWN", id);
         await parsedEnter(setup);
         await enterLive(setup, "reader-tabs-tab-details");
         await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");

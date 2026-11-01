@@ -81,6 +81,47 @@ export const impactBlockerSchema = v.union([
   }),
 ]);
 const blockers = v.pipe(v.array(impactBlockerSchema), v.readonly());
+export const identityWorkspaceSchema = v.object({
+  scope: v.literal("captured-workspace"),
+  limitation: v.string(),
+  baseline: v.string(),
+});
+export const collectionRenameRequestSchema = v.object({
+  collection: v.string(),
+  target: v.string(),
+});
+export const collectionRenameImpactSchema = v.object({
+  ...identityWorkspaceSchema.entries,
+  kind: v.literal("collection-rename"),
+  collection: v.string(),
+  target: v.string(),
+  declarations: v.pipe(v.array(owner), v.readonly()),
+  references: v.pipe(
+    v.array(v.object({ kind: v.picklist(["use", "reference", "link"]), owner })),
+    v.readonly(),
+  ),
+  addresses: v.pipe(v.array(v.object({ before: v.string(), after: v.string() })), v.readonly()),
+  blockers: v.pipe(
+    v.array(
+      v.object({
+        reason: v.picklist([
+          "incomplete",
+          "missing",
+          "collision",
+          "repository-derived",
+          "immutable",
+        ]),
+        owner: v.optional(owner),
+      }),
+    ),
+    v.readonly(),
+  ),
+  allowed: v.boolean(),
+});
+export const reviewedCollectionRenameRequestSchema = v.object({
+  ...collectionRenameRequestSchema.entries,
+  reviewedImpact: collectionRenameImpactSchema,
+});
 export const membershipAffectedSchema = v.object({
   ...resolvedMemberSchema.entries,
   selector: v.string(),

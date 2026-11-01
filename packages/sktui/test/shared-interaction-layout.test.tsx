@@ -72,8 +72,8 @@ test.each([
         id: "config.forget",
         enabled: false,
         danger: true,
-        destination:
-          "project /workspace/team/project/skctl.jsonc /configSources/explicit-owner-target",
+        destination: "",
+        object: "project /workspace/team/project/skctl.jsonc /configSources/explicit-owner-target",
         disabledReason:
           "Wait for the current operation to settle before changing this exact Config Source; no mutation was submitted.",
       },
@@ -120,7 +120,7 @@ test.each([
       setup.mockInput.pressKey("HOME");
       await setup.flush();
       expect(reading.scrollTop).toBe(0);
-      expect(setup.captureCharFrame()).toContain("Target: project");
+      expect(setup.captureCharFrame()).toContain("Object: project");
       await capture(setup, `actions-target-${width}x${height}`);
       await setup.mockMouse.scroll(reading.screenX + 2, reading.screenY, "down");
       await setup.flush();
@@ -130,7 +130,7 @@ test.each([
       const nextHeight = width === 80 ? 13 : 24;
       setup.resize(nextWidth, nextHeight);
       await setup.flush();
-      expect(setup.renderer.currentFocusedRenderable).toBe(reading);
+      expect(setup.renderer.currentFocusedRenderable === reading).toBe(true);
       expect(reading.screenX).toBeGreaterThanOrEqual(0);
       expect(reading.screenY + reading.height).toBeLessThan(nextHeight);
       expect(choices.getSelectedOption()?.value.id).toBe("config.forget");
@@ -142,7 +142,7 @@ test.each([
       setActions([record("Short action")]);
       await setup.flush();
       expect(reading.focusable).toBe(false);
-      expect(setup.renderer.currentFocusedRenderable).toBe(choices);
+      expect(setup.renderer.currentFocusedRenderable === choices).toBe(true);
       setup.mockInput.pressTab();
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-close");
       setup.mockInput.pressEscape();

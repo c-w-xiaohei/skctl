@@ -19,13 +19,12 @@ import {
 } from "../src/operations";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
+import { openMainPage } from "./main-page-controls";
 import {
   enterLive,
   focusLive,
   live,
   openAllInstalledSkills,
-  openReaderManagement,
-  openReaderTab,
   parsedEnter,
   type ReaderSetup,
 } from "./reader-test-controls";
@@ -74,37 +73,47 @@ async function capture(setup: ReaderSetup, name: string) {
     JSON.stringify(setup.captureSpans(), null, 2),
   );
 }
-async function mount(width: number, height = 24, adoptedConfig = false) {
+async function mount(width: number, height = 24, adoptedConfig = false, agentCatalog = false) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/button-separation-");
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const base = collectionsSourcesProjection();
-  const projection: WorkspaceView = adoptedConfig
-    ? {
-        ...base,
-        configs: base.configs.map((config) =>
-          config.level !== "global"
-            ? config
-            : {
-                ...config,
-                direct: {
-                  ...config.direct,
-                  configSources: config.direct.configSources.map((source) => ({
-                    ...source,
-                    binding: {
-                      kind: "github",
-                      origin: "https://github.com/acme/config",
-                      root: ".",
-                      ref: "main",
+  const projection: WorkspaceView =
+    agentCatalog && base.effective.status === "complete"
+      ? {
+          ...base,
+          effective: {
+            ...base.effective,
+            agent: { ...base.effective.agent, status: "available" },
+            use: ["team"],
+          },
+        }
+      : adoptedConfig
+        ? {
+            ...base,
+            configs: base.configs.map((config) =>
+              config.level !== "global"
+                ? config
+                : {
+                    ...config,
+                    direct: {
+                      ...config.direct,
+                      configSources: config.direct.configSources.map((source) => ({
+                        ...source,
+                        binding: {
+                          kind: "github",
+                          origin: "https://github.com/acme/config",
+                          root: ".",
+                          ref: "main",
+                        },
+                        adoption: { status: "adopted", commit: "a".repeat(40) },
+                      })),
                     },
-                    adoption: { status: "adopted", commit: "a".repeat(40) },
-                  })),
-                },
-              },
-        ),
-      }
-    : base;
+                  },
+            ),
+          }
+        : base;
   const setup = await testRender(
     () => (
       <App
@@ -142,7 +151,7 @@ test.each([144, 80, 43])(
     const mounted = await mount(width);
     const { setup } = mounted;
     try {
-      await enterLive(setup, "shell-section-tab-updates");
+      await openMainPage(setup, "updates");
       await enterLive(setup, "updates-browser");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-updates-browser"));
       setup.mockInput.pressKey("p", { ctrl: true });
@@ -171,14 +180,14 @@ test.each([144, 80, 43])(
     try {
       await openAllInstalledSkills(setup);
       await parsedEnter(setup);
-      await openReaderTab(setup, 2);
-      await openReaderManagement(setup);
+      await enterLive(setup, "reader-more");
       await setup.flush();
-      separated(setup, "reader-details-connections", 1);
-      await revealCommands(setup, [
-        ...separated(setup, "reader-manage-actions"),
-        ...separated(setup, "reader-danger-actions", 1),
-      ]);
+      const menu = live(setup, "reader-more-dialog");
+      const source = live(setup, "reader-menu-skill-rebind");
+      const uninstall = live(setup, "reader-menu-skill-uninstall");
+      expect(uninstall.screenY - source.screenY).toBeGreaterThanOrEqual(2);
+      expect(menu.width).toBeLessThanOrEqual(32);
+      expect(setup.captureCharFrame()).toContain("Content");
       await capture(setup, `reader-management-${width}`);
     } finally {
       await mounted.dispose();
@@ -191,12 +200,15 @@ test.each([100, 43])(
     const mounted = await mount(width, 24, true);
     const { setup } = mounted;
     try {
+      await openMainPage(setup, "settings");
       await enterLive(setup, "shell-scope-select");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("scope-choices"));
       const choices = live(setup, "scope-choices") as SelectRenderable;
-      choices.setSelectedIndex(1);
+      const index = choices.options.findIndex((option) => option.value === "global");
+      expect(index).toBeGreaterThanOrEqual(0);
+      choices.setSelectedIndex(index);
       await parsedEnter(setup);
-      await enterLive(setup, "shell-section-global-tab-config-sources");
+      await enterLive(setup, "settings-section-tab-config-sources");
       await enterLive(setup, "config-config-source-browser");
       await setup.flush();
       await revealCommands(setup, separated(setup, "config-source-danger-actions"));
@@ -207,15 +219,18 @@ test.each([100, 43])(
   },
 );
 test("short Agent access recovery separates commands and reveals each focused button", async () => {
-  const mounted = await mount(43, 13);
+  const mounted = await mount(43, 13, false, true);
   const { setup } = mounted;
   try {
-    const buttons = separated(setup, "skills-setup-pane");
+    await openMainPage(setup, "agent");
+    await enterLive(setup, "agent-view-tab-catalog");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("agent-access-pane"));
+    const buttons = separated(setup, "agent-access-pane");
     for (const button of buttons) {
       if (!button.focusable) continue;
       await focusLive(setup, button.id);
       await setup.flush();
-      const pane = live(setup, "skills-setup-pane");
+      const pane = live(setup, "agent-access-pane");
       expect(button.screenY).toBeGreaterThan(pane.screenY);
       expect(button.screenY + button.height).toBeLessThanOrEqual(pane.screenY + pane.height - 1);
     }
@@ -247,7 +262,7 @@ test.each([80, 43])(
       const cancel = live(setup, "installed-skill-preview-failure-cancel");
       const retry = live(setup, "installed-skill-preview-failure-retry");
       expect(retry.screenY - cancel.screenY - cancel.height).toBeGreaterThanOrEqual(1);
-      expect(setup.renderer.currentFocusedRenderable).toBe(cancel);
+      expect(setup.renderer.currentFocusedRenderable === cancel).toBe(true);
       setup.mockInput.pressTab();
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable === retry);
       await parsedEnter(setup);
@@ -263,11 +278,37 @@ test("review-plan button spacing leaves a non-activating gap and keeps Cancel-fi
   const setup = await testRender(
     () => (
       <MembershipRemovalPlanOverlay
-        collection="team"
-        lines={[]}
-        executableCount={2}
+        plan={{
+          collection: "team",
+          rows: [],
+          removals: [],
+          ownerGroups: [],
+          explanations: [],
+          executable: false,
+        }}
+        review={{
+          kind: "collection-use",
+          id: "spacing",
+          intent: { kind: "collection-use", level: "project", collections: [] },
+          impact: {
+            kind: "collection-use",
+            owner: { level: "project", file: "/config.jsonc", pointer: "/use" },
+            oldCollections: [],
+            newCollections: [],
+            newlyExposed: [],
+            removedAtOwner: [],
+            alternateOwners: [],
+            affectedSelectors: [],
+            retained: [],
+            currentComplete: true,
+            blockers: [],
+            proposedComplete: true,
+            allowed: true,
+          },
+        }}
         pending={false}
-        onContinue={() => {
+        onSelect={() => {}}
+        onConfirm={() => {
           continued++;
         }}
         onCancel={() => {}}
@@ -278,10 +319,10 @@ test("review-plan button spacing leaves a non-activating gap and keeps Cancel-fi
   try {
     await setup.flush();
     const cancel = live(setup, "membership-removal-plan");
-    const next = live(setup, "membership-removal-plan-continue");
-    expect(next.screenY - cancel.screenY - cancel.height).toBeGreaterThanOrEqual(1);
-    expect(setup.renderer.currentFocusedRenderable).toBe(cancel);
-    await setup.mockMouse.click(cancel.screenX + 1, cancel.screenY + cancel.height);
+    const next = live(setup, "collection-review-confirm");
+    expect(next.screenX - cancel.screenX - cancel.width).toBeGreaterThanOrEqual(1);
+    expect(setup.renderer.currentFocusedRenderable === cancel).toBe(true);
+    await setup.mockMouse.click(cancel.screenX + cancel.width, cancel.screenY);
     expect(continued).toBe(0);
     await focusLive(setup, cancel.id);
     setup.mockInput.pressArrow("down");

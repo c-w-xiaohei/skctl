@@ -26,7 +26,6 @@ test("linked Membership leads with its exact Skill before link management", () =
   expect(commands.map((item) => item.id)).toEqual([
     "membership.open-skill",
     "membership.open-link",
-    "membership.unlink",
   ]);
   expect(commands[0]?.intent).toEqual({
     kind: "collection-open-skill",
@@ -154,17 +153,17 @@ test("opening a Link is navigation, while unlinking retains the removal intent",
   expect(open).toMatchObject({
     id: "membership.open-link",
     intent: {
-      kind: "collection-open-link",
+      kind: "collection-open-collection",
       collection: "team",
       target: "docs",
-      owner,
     },
   });
-  expect(unlink).toMatchObject({
-    id: "membership.unlink",
-    intent: link.intent,
-    danger: true,
-  });
+  expect(unlink).toBeUndefined();
+  expect(
+    relationshipCommands("team", { kind: "relation", relation: link }).some(
+      (command) => command.danger && command.intent === link.intent,
+    ),
+  ).toBe(true);
 });
 
 test("command matrix retains every command field and legal danger boundary", () => {
@@ -466,8 +465,8 @@ test("command matrix retains every command field and legal danger boundary", () 
         {
           id: "membership.unlink",
           keys: ["enter", "return"],
-          verb: "Unlink Membership",
-          destination: "Review removal",
+          verb: "Remove Link",
+          destination: "team → shared Link",
           scope: "page",
           enabled: true,
           danger: true,
@@ -516,8 +515,8 @@ test("command matrix retains every command field and legal danger boundary", () 
         {
           id: "membership.unlink",
           keys: ["enter", "return"],
-          verb: "Unlink Membership",
-          destination: "Review removal",
+          verb: "Remove Link",
+          destination: "team → shared Link",
           scope: "page",
           enabled: false,
           disabledReason: "Unavailable: contributed config",
@@ -562,8 +561,8 @@ test("command matrix retains every command field and legal danger boundary", () 
         {
           id: "membership.unlink",
           keys: ["enter", "return"],
-          verb: "Unlink Membership",
-          destination: "Review removal",
+          verb: "Remove Link",
+          destination: "Link owner unavailable",
           scope: "page",
           enabled: false,
           disabledReason: "Unavailable: link owner unavailable",
@@ -903,6 +902,118 @@ test("command matrix retains every command field and legal danger boundary", () 
       ],
     },
   ] as const;
-  for (const { name, subject, expected } of rows)
-    expect(relationshipCommands("team", subject), name).toEqual(expected);
+  const directOwner = "project /project.jsonc /collections/team";
+  const contributedOwner = `${directOwner}\nContributed by global /global.jsonc /sources/team`;
+  const unavailableOwner = "Owner unavailable";
+  const member = "team:guide\nteam/guide";
+  const linked = "team → shared Link";
+  const reference = "team / collection-reference → shared";
+  const relationLink = "team / collection-link → shared";
+  const wholeLink = "Stops including this Collection and affects its contributed members.\n";
+  const metadata = (object: string, opens: string, scopeText?: string) => ({
+    object,
+    opens,
+    group: "member" as const,
+    ...(scopeText ? { scopeText } : {}),
+  });
+  const skill = metadata("team/guide", "Installed Skill");
+  const use = "team Collection Use";
+  const matrix: Record<string, readonly ReturnType<typeof metadata>[]> = {
+    "Membership direct": [
+      skill,
+      metadata(directOwner, "Owning Config", directOwner),
+      metadata(member, "Membership removal review", directOwner),
+    ],
+    "Membership contributed": [
+      skill,
+      metadata("global /global.jsonc /sources/team", "Config Source", contributedOwner),
+      metadata(member, "Membership removal review", contributedOwner),
+    ],
+    "Membership ownerless": [
+      skill,
+      metadata(member, "Owning Config", unavailableOwner),
+      metadata(member, "Membership removal review", unavailableOwner),
+    ],
+    "Membership repository-derived": [skill, metadata("team", "Source workspace")],
+    "Membership via Link direct": [
+      skill,
+      metadata(linked, "Owning Link", directOwner),
+      metadata(linked, "Link removal review", wholeLink + directOwner),
+    ],
+    "Membership via Link contributed": [
+      skill,
+      metadata(linked, "Owning Link", contributedOwner),
+      metadata(linked, "Link removal review", wholeLink + contributedOwner),
+    ],
+    "Membership via Link ownerless": [
+      skill,
+      metadata(member, "Owning Link", unavailableOwner),
+      metadata(member, "Link removal review", wholeLink + unavailableOwner),
+    ],
+    "Use direct": [
+      metadata(directOwner, "Owning Config", directOwner),
+      metadata(use, "Collection Use editor", directOwner),
+    ],
+    "Use contributed": [
+      metadata(contributedOwner, "Owning Config", contributedOwner),
+      metadata(use, "Collection Use editor", contributedOwner),
+    ],
+    "Use ownerless": [
+      metadata(use, "Owning Config", unavailableOwner),
+      metadata(use, "Collection Use editor", unavailableOwner),
+    ],
+    "Reference direct": [
+      metadata("shared", "Collection workspace", directOwner),
+      metadata(directOwner, "Owning Config", directOwner),
+      metadata(reference, "Reference removal review", directOwner),
+    ],
+    "Reference contributed": [
+      metadata("shared", "Collection workspace", contributedOwner),
+      metadata(contributedOwner, "Owning Config", contributedOwner),
+      metadata(reference, "Reference removal review", contributedOwner),
+    ],
+    "Reference ownerless": [
+      metadata("shared", "Collection workspace", unavailableOwner),
+      metadata(reference, "Owning Config", unavailableOwner),
+      metadata(reference, "Reference removal review", unavailableOwner),
+    ],
+    "Link direct": [
+      metadata(relationLink, "Owning Link", directOwner),
+      metadata(relationLink, "Link removal review", wholeLink + directOwner),
+    ],
+    "Link contributed": [
+      metadata(relationLink, "Owning Link", contributedOwner),
+      metadata(relationLink, "Link removal review", wholeLink + contributedOwner),
+    ],
+    "Link ownerless": [
+      metadata(relationLink, "Owning Link", unavailableOwner),
+      metadata(relationLink, "Link removal review", wholeLink + unavailableOwner),
+    ],
+  };
+  for (const { name, subject, expected } of rows) {
+    if (subject.kind === "membership" && subject.origin?.kind === "via-link") {
+      const commands = relationshipCommands("team", subject);
+      expect(commands.map((command) => command.id)).toEqual([
+        "membership.open-skill",
+        "membership.open-link",
+      ]);
+      expect(commands.every((command) => !command.danger)).toBe(true);
+      const link = subject.origin.links[0];
+      expect(commands[1]?.enabled).toBe(!!link);
+      expect(commands[1]?.intent).toEqual(
+        link
+          ? {
+              kind: "collection-open-collection",
+              collection: "team",
+              target: link.linkedCollection,
+            }
+          : undefined,
+      );
+      continue;
+    }
+    expect(matrix[name], name).toHaveLength(expected.length);
+    expect(relationshipCommands("team", subject), name).toEqual(
+      expected.map((record, index) => ({ ...record, ...matrix[name]![index] })),
+    );
+  }
 });

@@ -71,7 +71,7 @@ test.each([
   [100, 24],
   [80, 24],
   [43, 13],
-])("Details is structured, bounded and discloses management at %ix%i", async (width, height) => {
+])("Settings is structured, bounded and exposes management at %ix%i", async (width, height) => {
   await mount(width, height);
   await openReaderTab(setup!, 2);
   await setup!.flush();
@@ -87,23 +87,21 @@ test.each([
   expect(prose.height).toBeLessThanOrEqual(3);
   expect(prose.plainText).toBe(description);
   expect(node("reader-description-toggle")).toBeDefined();
-  expect(node("reader-details-manage")).toBeDefined();
-  expect(node("reader-details-action-skill-uninstall")).toBeUndefined();
-  expect(node("reader-details-action-skill-rebind")).toBeUndefined();
-  expect(node("reader-reload")).toBeUndefined();
+  expect(!!setup!.renderer.root.findDescendantById("reader-details-manage")).toBe(false);
+  expect(node("reader-details-action-skill-uninstall")).toBeDefined();
+  expect(node("reader-details-action-skill-rebind")).toBeDefined();
+  expect(node("reader-reload")).toBeDefined();
   await capture(`details-${width}x${height}`);
   await focusLive(setup!, "reader-description-toggle");
   await parsedEnter(setup!);
   await setup!.flush();
   expect((node("reader-description") as TextRenderable).height).toBeGreaterThan(3);
   await parsedEnter(setup!);
-  await focusLive(setup!, "reader-details-manage");
-  await parsedEnter(setup!);
+  await focusLive(setup!, "reader-reload");
   await setup!.flush();
   expect(node("reader-details-action-skill-uninstall")).toBeDefined();
   expect(node("reader-reload")).toBeDefined();
-  setup!.mockInput.pressArrow("down");
-  await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "reader-reload");
+  expect(setup!.renderer.currentFocusedRenderable?.id).toBe("reader-reload");
   await capture(`manage-${width}x${height}`);
 });
 test("pointer selects each Reader view immediately without requiring Enter", async () => {

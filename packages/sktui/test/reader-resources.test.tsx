@@ -137,8 +137,8 @@ test.serial(
       };
       expect(info()).toBe("Directory");
       await chooseResource(setup, "bin/run");
-      await setup.waitFor(() => info() === "Executable · 4 B");
-      expect(info()).toBe("Executable · 4 B");
+      await setup.waitFor(() => info() === "Executable  4 B");
+      expect(info()).toBe("Executable  4 B");
       await chooseResource(setup, "submodule");
       await setup.waitFor(() => info() === "Gitlink");
       expect(info()).toBe("Gitlink");
@@ -412,7 +412,12 @@ test.serial(
       await setup.waitForFrame((frame) => frame.includes("plain.md"));
       expect(setup.captureCharFrame()).not.toContain("not executable");
       expect(setup.captureCharFrame()).not.toContain("deadbeef");
-      for (const path of ["docs", "link", "submodule"]) {
+      await chooseResource(setup, "docs");
+      await parsedEnter(setup);
+      await setup.waitForFrame((frame) => frame.includes("Empty directory"));
+      expect(reads).toEqual([]);
+      await parsedEscape(setup);
+      for (const path of ["link", "submodule"]) {
         await chooseResource(setup, path);
         await parsedEnter(setup);
         await setup.waitForFrame((frame) => frame.includes("Cannot preview unsupported resource"));
@@ -426,7 +431,7 @@ test.serial(
       await openSelectedResource(setup, "plain.md");
       await setup.waitForFrame((frame) => frame.includes("plain text"));
       expect(reads).toEqual(
-        ["docs", "link", "submodule", "plain.md"].map((path) => ({ address: readerAddress, path })),
+        ["link", "submodule", "plain.md"].map((path) => ({ address: readerAddress, path })),
       );
       expect(setup.renderer.root.findDescendantById("resource-line-0")).toBeDefined();
     } finally {
@@ -559,8 +564,10 @@ test.serial(
         return identity instanceof TextRenderable && identity.plainText === "reference";
       });
       await waitForReaderBody(setup, "Reference");
-      await openReaderTab(setup, 2);
-      await setup.waitForFrame((frame) => /Address\s+team-main\/reference/.test(frame));
+      await enterLive(setup, "reader-more");
+      await enterLive(setup, "reader-installation-open");
+      await setup.waitForFrame((frame) => frame.includes("Path: reference"));
+      await parsedEscape(setup);
       await openReaderTab(setup, 1);
       await openSelectedResource(setup, "guide");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-content"));

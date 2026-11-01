@@ -27,7 +27,7 @@ test("RENDER Skills browser owns slash query and updates its local result count"
   try {
     await setup.renderOnce();
     await openAllInstalledSkills(setup);
-    await setup.waitForFrame((frame) => /Skills ·/.test(frame));
+    await setup.waitForFrame((frame) => frame.includes("Skills ("));
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
     const browser = setup.renderer.root.findDescendantById("installed-skill-browser")!;
     expect(browser.options.map((option) => option.value)).toHaveLength(2);
@@ -37,7 +37,7 @@ test("RENDER Skills browser owns slash query and updates its local result count"
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-query");
     await setup.mockInput.pressKey("f");
     await setup.waitFor(() => browser.options.length === 1);
-    await setup.waitForFrame((frame) => /Skills.*1\s*\/\s*2/.test(frame));
+    await setup.waitForFrame((frame) => frame.includes("Skills (1 of 2)"));
     expect(browser.options.map((option) => option.value)).toHaveLength(1);
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "f",
@@ -94,7 +94,7 @@ test("RENDER filtering selected A reconciles Reader and Details Actions to visib
     }
     const browser = setup.renderer.root.findDescendantById("installed-skill-browser")!;
     await setup.waitFor(() => browser.options.length === 1);
-    await setup.waitForFrame((frame) => /Skills.*1\s*\/\s*2/.test(frame));
+    await setup.waitForFrame((frame) => frame.includes("Skills (1 of 2)"));
     expect(browser.options.map((option) => option.value)).toEqual(['["team-main","reference"]']);
     browser.focus();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === browser);
@@ -106,7 +106,7 @@ test("RENDER filtering selected A reconciles Reader and Details Actions to visib
     await openReaderTab(setup, 2);
     const detailsTab = readerTab(setup, 2);
     expect(selectedReaderTab(setup)).toBe(2);
-    expect(setup.renderer.currentFocusedRenderable).toBe(detailsTab);
+    expect(setup.renderer.currentFocusedRenderable === detailsTab).toBe(true);
     expect(setup.captureCharFrame()).toContain("reference");
     await enterLive(setup, "reader-action-skill-check-updates");
     await setup.waitFor(() => checks.length === 1);

@@ -10,6 +10,7 @@ import { KeyCodes } from "@opentui/core/testing";
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEscape } from "./reader-test-controls";
 const revision = "e".repeat(40);
@@ -43,7 +44,12 @@ function text(setup: Setup, id: string) {
   const cell = setup.renderer.root.findDescendantById(id);
   return cell instanceof TextRenderable ? cell.plainText : undefined;
 }
-async function renderApp(core: ReturnType<typeof directSourceCore>, width: number, height: number) {
+async function renderApp(
+  core: ReturnType<typeof directSourceCore>,
+  width: number,
+  height: number,
+  reads: readonly unknown[],
+) {
   await mkdir("/tmp/opencode", { recursive: true });
   const cache = await mkdtemp("/tmp/opencode/update-table-app-");
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
@@ -52,10 +58,8 @@ async function renderApp(core: ReturnType<typeof directSourceCore>, width: numbe
   return {
     async mount() {
       setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
-      await setup.waitFor(
-        () => !!setup!.renderer.root.findDescendantById("shell-section-tab-updates"),
-      );
-      await enterLive(setup, "shell-section-tab-updates");
+      await setup.waitFor(() => reads.length === 1);
+      await openMainPage(setup, "updates");
       return setup;
     },
     async dispose() {
@@ -104,9 +108,12 @@ test.each([
       }),
       width,
       height,
+      reads,
     );
     try {
+      // The default installed inventory can read its current Skill before Updates opens.
       const setup = await mounted.mount();
+      const startupReads = [...reads];
       const failed = "updates-browser-row-source-12:cell-status";
       await setup.waitFor(() => text(setup, failed) === "Check needed", { maxPasses: 200 });
       expect([...calls].sort()).toEqual(
@@ -154,7 +161,7 @@ test.each([
       const action = setup.renderer.root.findDescendantById(
         height <= 18 ? "updates-feedback-details" : "updates-check",
       )!;
-      expect(setup.renderer.currentFocusedRenderable).toBe(action);
+      expect(setup.renderer.currentFocusedRenderable === action).toBe(true);
       const pane = setup.renderer.root.findDescendantById("updates-page")!;
       expect(action.screenY).toBeGreaterThanOrEqual(pane.screenY + 1);
       expect(action.screenY + action.height).toBeLessThanOrEqual(pane.screenY + pane.height - 1);
@@ -165,7 +172,7 @@ test.each([
       setup.mockInput.pressKey(KeyCodes.HOME);
       for (let i = 0; i < 3; i++) await setup.renderOnce();
       expect(setup.captureCharFrame()).not.toContain("Remote unavailable:");
-      expect(reads).toEqual([]);
+      expect(reads).toEqual(startupReads);
     } finally {
       await mounted.dispose();
     }
@@ -210,9 +217,11 @@ test("RENDER App Source table submits one selected Skill once at the checked exa
     }),
     80,
     24,
+    reads,
   );
   try {
     const setup = await mounted.mount();
+    const startupReads = [...reads];
     await setup.waitFor(() => text(setup, "updates-browser-row-team-main:cell-updates") === "120", {
       maxPasses: 200,
     });
@@ -246,7 +255,7 @@ test("RENDER App Source table submits one selected Skill once at the checked exa
       },
     ]);
     expect(checks).toEqual(["team-main"]);
-    expect(reads).toEqual([]);
+    expect(reads).toEqual(startupReads);
   } finally {
     await mounted.dispose();
   }

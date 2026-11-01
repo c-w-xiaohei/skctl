@@ -10,8 +10,7 @@ import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { testRender } from "@opentui/solid";
 import type { CollectionView } from "@skctl/core";
 import { App } from "../src/app";
-import { collectionRelationRows } from "../src/collections-page";
-import { collectionRelationKey } from "../src/collections/relationship-inspector";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import {
   enterLive,
@@ -97,13 +96,10 @@ function assertInside(child: Renderable, parent: Renderable) {
   expect(child.screenX + child.width).toBeLessThanOrEqual(parent.screenX + parent.width);
 }
 async function openContents(setup: Setup) {
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("shell-section-tab-collections"),
-  );
-  await enterLive(setup, "shell-section-tab-collections");
+  await openMainPage(setup, "collections");
   await enterLive(setup, "collection-browser");
   await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("collection-relationships-header-actions"),
+    () => !!setup.renderer.root.findDescendantById("collection-current-actions-pane"),
   );
   const table = await focusLive(setup, "collection-relationships");
   await setup.flush();
@@ -120,18 +116,13 @@ async function clickControl(setup: Setup, id: string, paneId: string) {
   await setup.mockMouse.click(target.screenX + 1, target.screenY);
   await setup.flush();
 }
-function expectTab(setup: Setup, tab: "entries" | "relations") {
+function expectTab(setup: Setup, tab: "members" | "settings") {
   const trigger = setup.renderer.root.findDescendantById(`collection-tabs-tab-${tab}`);
   expect(trigger).toBeInstanceOf(TabsTabRenderable);
   expect((trigger as TabsTabRenderable).getState().selected).toBe(true);
 }
 async function manageCurrent(setup: Setup) {
-  await focusLive(setup, "collection-relationships");
-  setup.mockInput.pressArrow("right");
-  await setup.waitFor(
-    () => setup.renderer.currentFocusedRenderable?.id.includes(":action-") === true,
-  );
-  await parsedEnter(setup);
+  await enterLive(setup, "collection-current-details");
 }
 
 test("RENDER 80x16 Collection Contents reads directly, Manage opens ownership, and Source Back restores its row", async () => {
@@ -168,7 +159,7 @@ test("RENDER 80x16 Collection Contents reads directly, Manage opens ownership, a
   try {
     const table = await openContents(setup);
     expect(table).toBeInstanceOf(BoxRenderable);
-    expectTab(setup, "entries");
+    expectTab(setup, "members");
     expect(setup.renderer.root.findDescendantById("collection-actions-toggle")).toBeUndefined();
     // Row Enter is Read, never the removed membership-management step.
     await parsedEnter(setup);
@@ -189,12 +180,13 @@ test("RENDER 80x16 Collection Contents reads directly, Manage opens ownership, a
     ).toContain("team-main/review");
     expect(setup.renderer.root.findDescendantById("collection-membership-actions")).toBeUndefined();
     for (const pointer of [false, true]) {
-      if (pointer) await clickControl(setup, "membership.open-source", "collection-detail-pane");
+      if (pointer)
+        await clickControl(setup, "membership.open-source", "collection-inspector-surface");
       else await enterLive(setup, "membership.open-source");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-pane"));
       expect(setup.captureCharFrame()).toContain("team-main");
       if (!setup.renderer.root.findDescendantById("source-metadata"))
-        await enterLive(setup, "source-details-toggle");
+        await enterLive(setup, "source-view-tab-settings");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
       await setup.waitForFrame((frame) => frame.includes("https://github.com/acme/main"));
       await parsedEscape(setup);
@@ -203,24 +195,19 @@ test("RENDER 80x16 Collection Contents reads directly, Manage opens ownership, a
       );
       expect(setup.renderer.root.findDescendantById("membership.open-source")).toBeDefined();
     }
-    await enterLive(setup, "route-back");
+    await enterLive(setup, "collection.inspector-back");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById(rowId(memberKey)));
-    expectTab(setup, "entries");
-    await enterLive(setup, "collection-tabs-tab-relations");
-    expectTab(setup, "relations");
-    const relation = collectionRelationRows("team", collectionProjection()).find(
-      (row) => row.intent?.kind === "collection-reference" && row.intent.name === "docs",
-    )!;
-    const key = collectionRelationKey(relation);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById(rowId(key)));
-    await enterLive(setup, "collection-relationships");
+    expectTab(setup, "members");
+    await focusLive(setup, "collection-relationships");
+    setup.mockInput.pressArrow("down");
+    await setup.flush();
+    await enterLive(setup, "collection-current-details");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
     );
     expect(setup.captureCharFrame()).toContain("Read team documentation");
-    await enterLive(setup, "route-back");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById(rowId(key)));
-    expectTab(setup, "relations");
+    await enterLive(setup, "collection.inspector-back");
+    expectTab(setup, "members");
     expect(reads).toHaveLength(1);
     expect(mutations).toEqual([]);
   } finally {
@@ -248,16 +235,19 @@ test.each([
       expect(body).toBeInstanceOf(ScrollBoxRenderable);
       expect(body!.height).toBeGreaterThanOrEqual(1);
       assertInside(table, pane);
-      const actions = setup.renderer.root.findDescendantById(`${rowId(memberKey)}:actions`)!;
+      const actions = setup.renderer.root.findDescendantById("collection-current-actions-pane")!;
       expect(actions).toBeDefined();
       assertInside(actions, pane);
       expect(setup.captureCharFrame()).toContain("review");
       await manageCurrent(setup);
-      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership.open-skill"));
-      for (const id of ["membership.open-skill", "membership.open-source"]) {
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership.open-source"));
+      for (const id of ["collection.inspector-back", "membership.open-source"]) {
         const control = await focusLive(setup, id);
         await setup.flush();
-        assertInside(control, pane);
+        assertInside(
+          control,
+          setup.renderer.root.findDescendantById("collection-inspector-surface")!,
+        );
         expect(control.screenY + control.height).toBeLessThanOrEqual(height - 1);
       }
     } finally {
@@ -285,15 +275,7 @@ test("RENDER Reference-only Contents preserves the exact owner through Relations
     // References are real Contents now, not an empty Entries fallback button.
     expect(setup.renderer.root.findDescendantById("collection-open-relations")).toBeUndefined();
     expect(setup.captureCharFrame()).toContain("docs");
-    await enterLive(setup, "collection-tabs-tab-relations");
-    const relation = collectionRelationRows("team", referenceOnly).find(
-      (row) => row.intent?.kind === "collection-reference" && row.intent.name === "docs",
-    )!;
-    const key = collectionRelationKey(relation);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById(rowId(key)));
-    const row = setup.renderer.root.findDescendantById(rowId(key))!;
-    await setup.mockMouse.click(row.screenX + 2, row.screenY);
-    await enterLive(setup, "collection-relationships");
+    await enterLive(setup, "collection-current-details");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
     );
@@ -305,11 +287,10 @@ test("RENDER Reference-only Contents preserves the exact owner through Relations
       .join(" ");
     expect(ownership).toContain("/collections/team");
     // Legal relationship commands are direct native controls, without another Actions disclosure.
-    expect(setup.renderer.root.findDescendantById("relationship.remove-reference")).toBeDefined();
+    expect(!!setup.renderer.root.findDescendantById("relationship.remove-reference")).toBe(false);
     expect(setup.renderer.root.findDescendantById("collection-relation-actions")).toBeUndefined();
-    await enterLive(setup, "route-back");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById(rowId(key)));
-    expectTab(setup, "relations");
+    await enterLive(setup, "collection.inspector-back");
+    expectTab(setup, "members");
   } finally {
     setup.renderer.destroy();
   }

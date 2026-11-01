@@ -41,6 +41,8 @@ export type TuiCore = Pick<
   | "createCollection"
   | "setCollectionContent"
   | "removeCollection"
+  | "previewCollectionRename"
+  | "renameCollection"
   | "addMember"
   | "removeMember"
   | "editMembers"
@@ -108,6 +110,11 @@ export type InstalledSkillReview = {
       readonly impact: api.RebindImpact;
     }
 );
+export type IdentityApplyOutcome =
+  | { readonly status: "applied"; readonly workspace: "fresh" | "stale" }
+  | { readonly status: "blocked" }
+  | { readonly status: "stale"; readonly diagnostic: api.Diagnostic }
+  | { readonly status: "uncertain"; readonly diagnostic: api.Diagnostic };
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const cancelled = (error: unknown) => error instanceof SkctlError && error.code === "CANCELLED";
 const diagnostic = (error: unknown): api.Diagnostic => ({
@@ -256,8 +263,6 @@ export function createTuiSession(
       const scheduleIdentity = scheduleKey(request.source);
       checking = current;
       const signal = current.controller.signal;
-      setCheckActivity({ source: request.source, phase: "checking" });
-      applyCheck({ source: request.source, status: "checking" });
       let ok = false;
       try {
         let observation: api.UpdateObservation | undefined;
@@ -268,23 +273,27 @@ export function createTuiSession(
           checkedAt <= Date.now() &&
           Date.now() - checkedAt < AUTO_CHECK_INTERVAL;
         if (request.mode === "auto" && recent) {
-          try {
-            observation = (
-              await core.checkUpdate(
-                environment,
-                { source: request.source, observation: "retained" },
-                { signal },
-              )
-            ).value;
-          } catch (error) {
-            if (signal.aborted || cancelled(error)) throw error;
-            // A retained object may have been reclaimed. Current checks repair
-            // missing evidence through Core rather than frontend cache recovery.
-          }
+          observation = (
+            await core.checkUpdate(
+              environment,
+              { source: request.source, observation: "retained" },
+              { signal },
+            )
+          ).value;
           restored = !!observation;
           if (closed || current.ignored) continue;
+          if (!observation) {
+            applyCheck({ source: request.source, status: "not-checked" });
+            continue;
+          }
         }
         if (!observation) {
+          setCheckActivity({ source: request.source, phase: "checking" });
+          applyCheck({ source: request.source, status: "checking" });
+          // Persist attempts before network work so failure or application exit
+          // cannot turn restart into an automatic retry inside the interval.
+          lastCheck.set(scheduleIdentity, Date.now());
+          saveSchedule();
           observation = (
             await core.checkUpdate(environment, { source: request.source }, { signal })
           ).value;
@@ -326,10 +335,7 @@ export function createTuiSession(
           request.resolve(ok);
         }
         if (!closed) {
-          const next = queue.values().next().value;
-          setCheckActivity(
-            next ? { source: next.source, phase: paused ? "paused" : "checking" } : undefined,
-          );
+          setCheckActivity(undefined);
         }
       }
     }
@@ -487,6 +493,36 @@ export function createTuiSession(
           operation.settle(id, refreshed ? completed : `${completed}; Workspace is stale`);
         }
         return true;
+      },
+      { title, semanticOwner },
+    );
+  const applyIdentity = (
+    title: string,
+    semanticOwner: ProjectionOwner,
+    body: (signal: AbortSignal) => Promise<unknown>,
+    consume: () => void,
+    completed: string,
+    reviewed = true,
+  ): Promise<IdentityApplyOutcome> =>
+    withForeground<IdentityApplyOutcome>(
+      "execute",
+      { status: "blocked" },
+      async ({ id, signal, active }) => {
+        try {
+          await body(signal);
+        } catch (error) {
+          consume();
+          const problem = diagnostic(error);
+          if (active()) operation.settle(id, problem.message, problem);
+          return reviewed && error instanceof SkctlError && error.code === "CONFIG_CONFLICT"
+            ? { status: "stale", diagnostic: problem }
+            : { status: "uncertain", diagnostic: problem };
+        }
+        consume();
+        const refreshed = active() ? await refresh() : undefined;
+        if (active())
+          operation.settle(id, refreshed ? completed : `${completed}; Workspace is stale`);
+        return { status: "applied", workspace: refreshed ? "fresh" : "stale" };
       },
       { title, semanticOwner },
     );
@@ -971,25 +1007,43 @@ export function createTuiSession(
       return liveInstalledReview;
     });
   };
+  const applyRebind = (reviewed: InstalledSkillReview): Promise<IdentityApplyOutcome> => {
+    if (reviewed.kind !== "rebind" || liveInstalledReview !== reviewed || !reviewed.impact.allowed)
+      return Promise.resolve({ status: "blocked" });
+    return applyIdentity(
+      "Rebinding Skill",
+      { kind: "installed-skill", address: reviewed.address },
+      (signal) =>
+        core.rebindSkill(
+          environment,
+          {
+            ...reviewed.address,
+            owner: reviewed.owner,
+            ownerPath: reviewed.ownerPath,
+            reviewedImpact: reviewed.impact,
+          },
+          { signal },
+        ),
+      () => {
+        if (liveInstalledReview === reviewed) liveInstalledReview = undefined;
+      },
+      "Skill rebound",
+    );
+  };
   const confirmInstalled = (reviewed: InstalledSkillReview) => {
+    if (reviewed.kind === "rebind")
+      return applyRebind(reviewed).then((outcome) => outcome.status === "applied");
     if (liveInstalledReview !== reviewed || !reviewed.impact.allowed) return Promise.resolve(false);
     return execute(
-      reviewed.kind === "uninstall" ? "Uninstalling Skill" : "Rebinding Skill",
+      "Uninstalling Skill",
       { kind: "installed-skill", address: reviewed.address },
-      (signal) => {
-        if (reviewed.kind === "uninstall")
-          return core.uninstallSkills(
-            environment,
-            { source: reviewed.address.source, paths: [reviewed.address.path] },
-            { signal },
-          );
-        return core.rebindSkill(
+      (signal) =>
+        core.uninstallSkills(
           environment,
-          { ...reviewed.address, owner: reviewed.owner, ownerPath: reviewed.ownerPath },
+          { source: reviewed.address.source, paths: [reviewed.address.path] },
           { signal },
-        );
-      },
-      reviewed.kind === "uninstall" ? "Skill uninstalled" : "Skill rebound",
+        ),
+      "Skill uninstalled",
       () => {
         liveInstalledReview = undefined;
       },
@@ -1016,6 +1070,8 @@ export function createTuiSession(
   const executeCollection = (
     reviewed: CollectionReview | Extract<CollectionIntent, { readonly kind: "collection-create" }>,
   ) => {
+    if (reviewed.kind === "collection-rename")
+      return applyCollectionRename(reviewed).then((outcome) => outcome.status === "applied");
     const intent = reviewed.kind === "collection-create" ? reviewed : reviewed.intent;
     if (
       reviewed.kind !== "collection-create" &&
@@ -1102,6 +1158,32 @@ export function createTuiSession(
       },
     );
   };
+  const applyCollectionRename = (reviewed: CollectionReview): Promise<IdentityApplyOutcome> => {
+    if (
+      reviewed.kind !== "collection-rename" ||
+      liveCollection !== reviewed ||
+      !reviewed.impact.allowed
+    )
+      return Promise.resolve({ status: "blocked" });
+    return applyIdentity(
+      "Renaming Collection",
+      { kind: "collection", id: reviewed.intent.collection },
+      (signal) =>
+        core.renameCollection(
+          environment,
+          {
+            collection: reviewed.intent.collection,
+            target: reviewed.intent.target,
+            reviewedImpact: reviewed.impact,
+          },
+          { signal },
+        ),
+      () => {
+        if (liveCollection === reviewed) liveCollection = undefined;
+      },
+      "Collection renamed",
+    );
+  };
   return {
     refresh,
     review,
@@ -1110,8 +1192,10 @@ export function createTuiSession(
     install,
     reviewInstalled,
     confirmInstalled,
+    applyRebind,
     previewCollection: reviewCollection,
     confirmCollection: (reviewed: CollectionReview) => executeCollection(reviewed),
+    applyCollectionRename,
     createCollection: (intent: Extract<CollectionIntent, { readonly kind: "collection-create" }>) =>
       executeCollection(intent),
     setCollectionContent: (request: api.SetCollectionContentRequest) =>
@@ -1221,7 +1305,7 @@ export function createTuiSession(
       );
     },
     checkActivity,
-    checkingActive: () => !closed && !!checkActivity(),
+    checkingActive: () => !closed && (!!checking || queue.size > 0),
     updateChecksWarning: scheduleWarning,
     stopUpdateChecks,
     observeConfig: (id: string) =>
@@ -1295,6 +1379,15 @@ export function createTuiSession(
             ? core.registerSource(environment, request, { signal })
             : core.registerConfigSource(environment, request, { signal });
         },
+      ),
+    registerReplacementSource: (request: api.RegisterSourceRequest) =>
+      applyIdentity(
+        "Registering replacement Source",
+        { kind: "source", id: request.id },
+        (signal) => core.registerSource(environment, request, { signal }),
+        () => {},
+        "Replacement Source registered",
+        false,
       ),
     pending: () => foreground !== undefined,
     pendingKind: () => foreground?.kind,

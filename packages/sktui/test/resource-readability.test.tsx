@@ -129,21 +129,14 @@ test.each([
   expect(reads).toEqual([path]);
   const body = setup!.renderer.root.findDescendantById("resource-content") as ScrollBoxRenderable;
   const back = setup!.renderer.root.findDescendantById("route-back")!;
-  const selectedPath = setup!.renderer.root.findDescendantById(
-    "reader-resource-path",
-  ) as TextRenderable;
-  expect(selectedPath.plainText).toBe(path);
-  expect(back.screenY).toBeLessThan(selectedPath.screenY);
+  expect(setup!.renderer.root.findDescendantById("reader-resource-path")).toBeUndefined();
+  expect(back.screenY).toBeLessThan(body.screenY);
   expect(body.height).toBeGreaterThanOrEqual(height === 13 ? 1 : 6);
   await focusLive(setup!, "resource-content");
   setup!.mockInput.pressArrow("down");
   await setup!.flush();
   await setup!.waitForFrame((frame) => frame.includes("Resource prose."));
-  if (width >= 100) {
-    const context = setup!.renderer.root.findDescendantById("resource-browser")!;
-    expect(context.height).toBeLessThanOrEqual(3);
-    expect(body.height).toBeGreaterThan(context.height);
-  }
+  expect(setup!.renderer.root.findDescendantById("resource-browser")).toBeUndefined();
   await capture(`resources-reading-${width}x${height}`);
   await parsedEscape(setup!);
   await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "resource-browser");
@@ -184,9 +177,7 @@ test("compact return restores a deeply scrolled resource, and a positive executa
   expect(Bun.stringWidth(unicodeLabel)).toBeLessThanOrEqual(returned.width - 5);
   await parsedEnter(setup!);
   await waitForReaderBody(setup!, "Resource heading");
-  expect(
-    (setup!.renderer.root.findDescendantById("reader-resource-path") as TextRenderable).plainText,
-  ).toBe(unicodePath);
+  expect(reads.at(-1)).toBe(unicodePath);
   await parsedEscape(setup!);
   await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "resource-browser");
   expect(
@@ -197,18 +188,17 @@ test("compact return restores a deeply scrolled resource, and a positive executa
   expect(reads).toEqual([selected, unicodePath]);
   expect(acquisitions).toEqual([]);
 });
-test("wide context selection does not relabel the opened document or read another file", async () => {
+test("wide reading keeps the opened path and restores list selection on return", async () => {
   const { reads } = await mount(144, 40);
   const browser = setup!.renderer.root.findDescendantById("resource-browser") as SelectRenderable;
   browser.setSelectedIndex(2);
   await parsedEnter(setup!);
   await waitForReaderBody(setup!, "Resource prose.");
-  await focusLive(setup!, "resource-browser");
-  setup!.mockInput.pressArrow("down");
-  await setup!.waitFor(() => browser.getSelectedIndex() === 3);
+  expect(setup!.renderer.root.findDescendantById("resource-browser")).toBeUndefined();
   await setup!.flush();
-  expect(
-    (setup!.renderer.root.findDescendantById("reader-resource-path") as TextRenderable).plainText,
-  ).toBe(path);
   expect(reads).toEqual([path]);
+  await parsedEscape(setup!);
+  await setup!.flush();
+  const returned = setup!.renderer.root.findDescendantById("resource-browser") as SelectRenderable;
+  expect(returned.getSelectedOption()?.value).toBe(path);
 });

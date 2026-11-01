@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import type { MutationRequest, IntegrationTarget } from "@skctl/integrations";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import type { IntegrationsApi } from "../src/integrations/state";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
@@ -56,18 +57,8 @@ test("shared-file confirmation remains keyboard reachable after the disconnect c
     { width: 100, height: 24 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-scope-select"));
-    await focusLive(setup, "shell-scope-select");
-    await parsedEnter(setup);
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
-    setup.mockInput.pressArrow("down");
-    setup.mockInput.pressArrow("down");
-    await setup.flush();
-    await parsedEnter(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("shell-section-project-tab-integrations"),
-    );
-    await focusLive(setup, "shell-section-project-tab-integrations");
+    await openMainPage(setup, "agent");
+    await focusLive(setup, "agent-view-tab-project");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-entries"));
     await focusLive(setup, "integration-disconnect");
@@ -168,16 +159,8 @@ for (const brokenWorkspace of [false, true]) {
     };
     try {
       await setup.waitFor(() => reads > 0);
-      await focusLive(setup, "shell-scope-select");
-      await parsedEnter(setup);
-      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
-      await key("ARROW_DOWN");
-      await key("ARROW_DOWN");
-      await parsedEnter(setup);
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("shell-section-project-tab-integrations"),
-      );
-      await focusLive(setup, "shell-section-project-tab-integrations");
+      await openMainPage(setup, "agent");
+      await focusLive(setup, "agent-view-tab-project");
       await parsedEnter(setup);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-hosts"));
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-entries"));

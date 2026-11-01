@@ -6,6 +6,7 @@ import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
@@ -42,7 +43,17 @@ async function capture(setup: ReaderSetup, name: string) {
   if (!output) return;
   await mkdir(output, { recursive: true });
   await writeFile(join(output, `${name}.txt`), setup.captureCharFrame());
-  await writeFile(join(output, `${name}.json`), JSON.stringify(geometry(setup), null, 2));
+  await writeFile(
+    join(output, `${name}.json`),
+    JSON.stringify(
+      geometry(
+        setup,
+        shellSlots.filter((id) => !!setup.renderer.root.findDescendantById(id)),
+      ),
+      null,
+      2,
+    ),
+  );
 }
 async function chooseAction(setup: ReaderSetup, id: string) {
   setup.mockInput.pressKey("p", { ctrl: true });
@@ -128,10 +139,14 @@ test.each([
       expect(live(setup, "route-back-slot").width).toBe(6);
       expect(live(setup, "shell-context-panel").screenY).toBe(width < 80 ? 1 : 0);
       expect(live(setup, "route-content").screenY).toBe(chromeHeight);
-      // Compact controls must leave room for all four page captions at 80 columns.
-      const pageEnd = live(setup, "shell-section-tab-updates");
       const pages = live(setup, "section-nav");
-      expect(pageEnd.screenX + pageEnd.width).toBeLessThanOrEqual(pages.screenX + pages.width);
+      const pageControl = live(
+        setup,
+        width < 100 ? "shell-pages-select" : "shell-section-tab-settings",
+      );
+      expect(pageControl.screenX + pageControl.width).toBeLessThanOrEqual(
+        pages.screenX + pages.width,
+      );
       for (const id of shellSlots) {
         const node = live(setup, id);
         expect(node.height).toBeGreaterThan(0);
@@ -149,37 +164,60 @@ test.each([
       await openAllInstalledSkills(setup);
       await setup.flush();
       expect(geometry(setup)).toEqual(shell);
-      const views = geometry(setup, ["skills-local-views"]);
-      const viewNode = live(setup, "skills-local-views");
+      let views = geometry(setup, ["skills-local-views"]);
+      let viewNode = live(setup, "skills-local-views");
+      let compactReaderShell: ReturnType<typeof geometry> | undefined;
+      let inReader = false;
       const assertStable = async () => {
         await setup.flush();
+        if (width < 100 && inReader) {
+          expect(setup.renderer.root.findDescendantById("skills-local-views")).toBeUndefined();
+          if (width < 80) {
+            expect(live(setup, "global-bar").height).toBe(1);
+            expect(live(setup, "route-content").screenY).toBe(1);
+            const current = geometry(setup, [
+              "global-bar",
+              "route-back-slot",
+              "route-content",
+              "command-status",
+            ]);
+            compactReaderShell ??= current;
+            expect(current).toEqual(compactReaderShell);
+          } else {
+            expect(geometry(setup)).toEqual(shell);
+          }
+          return;
+        }
         expect(geometry(setup)).toEqual(shell);
         expect(geometry(setup, ["skills-local-views"])).toEqual(views);
-        expect(live(setup, "skills-local-views")).toBe(viewNode);
+        expect(live(setup, "skills-local-views") === viewNode).toBe(true);
       };
       await parsedEnter(setup);
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
       await waitForReaderBody(setup, "Read without moving navigation.");
+      inReader = true;
       await assertStable();
       await capture(setup, `${width}x${height}-reader`);
-      for (const id of [
-        "reader-tabs-tab-details",
-        "shell-scope-select",
-        "shell-more-actions",
-        "route-back",
-      ]) {
+      for (const id of ["reader-tabs-tab-details", "shell-more-actions", "route-back"]) {
         await focusLive(setup, id);
         await assertStable();
         if (id === "route-back") {
           expect(setup.captureCharFrame()).toContain("Back to Skills");
           const back = live(setup, "route-back");
-          const scope = live(setup, "shell-scope-select");
           const actions = live(setup, "shell-more-actions");
-          expect(scope.screenX - back.screenX - back.width).toBeGreaterThanOrEqual(1);
-          expect(actions.screenX - scope.screenX - scope.width).toBeGreaterThanOrEqual(1);
+          expect(actions.screenX - back.screenX - back.width).toBeGreaterThanOrEqual(1);
         }
       }
       // Native pointer down/up must hit the same page-view control after focus changes.
+      if (width < 100) {
+        await enterLive(setup, "route-back");
+        await setup.waitFor(
+          () => !!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills"),
+        );
+        inReader = false;
+        views = geometry(setup, ["skills-local-views"]);
+        viewNode = live(setup, "skills-local-views");
+      }
       const tab = live(setup, "skills-view-tab-all-installed-skills");
       const position = [tab.screenX, tab.screenY];
       await setup.mockMouse.pressDown(position[0]! + 1, position[1]!);
@@ -195,11 +233,29 @@ test.each([
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
       );
+      inReader = false;
+      if (width < 100) {
+        views = geometry(setup, ["skills-local-views"]);
+        viewNode = live(setup, "skills-local-views");
+      }
       await assertStable();
+      await openMainPage(setup, "settings");
+      await setup.flush();
+      const settingsShell = geometry(setup);
+      expect(geometry(setup, ["global-bar", "route-content", "command-status"])).toEqual(
+        Object.fromEntries(
+          ["global-bar", "route-content", "command-status"].map((id) => [id, shell[id]]),
+        ),
+      );
       await enterLive(setup, "shell-scope-select");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("scope-choices"));
-      await assertStable();
+      expect(geometry(setup)).toEqual(settingsShell);
       await parsedEscape(setup);
+      await setup.flush();
+      expect(geometry(setup)).toEqual(settingsShell);
+      await openMainPage(setup, "skills");
+      views = geometry(setup, ["skills-local-views"]);
+      viewNode = live(setup, "skills-local-views");
       await focusLive(setup, "installed-skill-browser");
       setup.mockInput.pressKey("p", { ctrl: true });
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("palette-choices"));
@@ -210,7 +266,7 @@ test.each([
       await assertStable();
       await capture(setup, `${width}x${height}-stopped`);
       for (const section of ["sources", "collections", "updates", "skills"]) {
-        await enterLive(setup, `shell-section-tab-${section}`);
+        await openMainPage(setup, section as "skills" | "sources" | "collections" | "updates");
         await setup.flush();
         expect(geometry(setup)).toEqual(shell);
       }
@@ -259,22 +315,25 @@ test.each([144, 80])(
       await setup.flush();
       const shell = geometry(setup);
       await enterLive(setup, "skills-view-tab-unassigned");
-      await enterLive(setup, "shell-section-tab-collections");
+      await openMainPage(setup, "collections");
       await enterLive(setup, "collection-browser");
       await enterLive(setup, "collection-relationships");
       await waitForReaderBody(setup, "Exact installed object");
-      expect(selected("all-installed-skills")).toBe(true);
       if (width >= 100) {
         // A semantic Reader route does not erase the useful wide inventory pane.
+        expect(selected("all-installed-skills")).toBe(true);
         const browser = live(setup, "installed-skill-browser") as SelectRenderable;
         expect(browser.getSelectedOption()?.value).toBe(JSON.stringify(["team-main", "guide"]));
+      } else {
+        expect(setup.renderer.root.findDescendantById("skills-local-views")).toBeUndefined();
       }
-      expect(geometry(setup)).toEqual(shell);
+      if (width >= 100) expect(geometry(setup)).toEqual(shell);
+      else expect(live(setup, "route-content").height).toBeGreaterThan(0);
       await enterLive(setup, "route-back");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
       );
-      await enterLive(setup, "shell-section-tab-skills");
+      await openMainPage(setup, "skills");
       expect(selected("unassigned")).toBe(true);
       expect(geometry(setup)).toEqual(shell);
     } finally {

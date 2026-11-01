@@ -135,7 +135,7 @@ function renderableText(node: { getChildren(): readonly unknown[] }): string {
   return node
     .getChildren()
     .flatMap((child) =>
-      child instanceof TextBufferRenderable
+      child instanceof TextBufferRenderable || child instanceof TextRenderable
         ? [child.plainText]
         : child && typeof child === "object" && "getChildren" in child
           ? renderableText(
@@ -796,10 +796,10 @@ test.each([
     try {
       await openRelationships(setup, "source");
       await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "source-details-toggle",
+        () => setup.renderer.currentFocusedRenderable?.id === "source-view-tab-installed",
       );
       expect(live(setup, "source-details-pane").height).toBeGreaterThan(0);
-      expect(live(setup, "source-details-toggle").focused).toBe(true);
+      expect(live(setup, "source-view-tab-installed").focused).toBe(true);
       expect((live(setup, "source-details-pane") as BoxRenderable).title).toBe("team-main");
       if (width >= 100)
         expect((live(setup, "source-browser") as SelectRenderable).getSelectedOption()?.value).toBe(
@@ -865,6 +865,17 @@ test("Details discloses the Local Config Source contributed declaration file", a
   );
   try {
     await openDetailsActions(setup, true, { source: "local-team/lark", path: "guide" });
+    await setup.waitFor(() =>
+      renderableText(live(setup, "reader-details-summary")).includes("/sources/lark"),
+    );
+    const summary = renderableText(live(setup, "reader-details-summary"));
+    expect(summary).toContain(
+      "Contributed declaration\nlocal /workspace/shared-skills/skctl.jsonc /sources/lark",
+    );
+    expect(summary).toContain(
+      "Config Source host\nproject /workspace/skctl/skctl.jsonc /configSources/local-team",
+    );
+    expect(summary).not.toContain("Declaration owner\nproject /workspace/skctl/skctl.jsonc");
     await focusLive(setup, "reader-details-metadata");
     await parsedEnter(setup);
     const details = setup.renderer.root.findDescendantById("reader-details") as ScrollBoxRenderable;
@@ -989,7 +1000,7 @@ test("Details contributed Source relationship focuses the mounted Source surface
   try {
     await openRelationships(setup, "source", { source: "team-config/lark", path: "guide" });
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "source-details-toggle",
+      () => setup.renderer.currentFocusedRenderable?.id === "source-view-tab-installed",
     );
     expect(
       (
@@ -998,7 +1009,7 @@ test("Details contributed Source relationship focuses the mounted Source surface
     ).toBe("team-config/lark");
     expect(setup.captureCharFrame()).toContain("team-config/lark");
     expect(live(setup, "source-details-pane").height).toBeGreaterThan(0);
-    expect(live(setup, "source-details-toggle").focused).toBe(true);
+    expect(live(setup, "source-view-tab-installed").focused).toBe(true);
     expect(setup.renderer.root.findDescendantById("source-command-config-source")).toBeUndefined();
   } finally {
     setup.renderer.destroy();

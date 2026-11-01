@@ -207,7 +207,6 @@ export function createReaderOwner(
         match: saved.match,
         scroll: saved.scroll,
         detailsScroll: saved.detailsScroll,
-        detailsManagementOpen: saved.detailsManagementOpen,
         detailsDescriptionOpen: saved.detailsDescriptionOpen,
         detailsMetadataOpen: saved.detailsMetadataOpen,
         focus: saved.focus,

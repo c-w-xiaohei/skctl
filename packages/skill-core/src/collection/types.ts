@@ -1,6 +1,16 @@
 import type * as v from "valibot";
 import type * as schema from "./domain.schema";
 
+export type CollectionRenameRequest = Readonly<
+  v.InferOutput<typeof schema.collectionRenameRequestSchema>
+>;
+export type CollectionRenameImpact = Readonly<
+  v.InferOutput<typeof schema.collectionRenameImpactSchema>
+>;
+export type ReviewedCollectionRenameRequest = Readonly<
+  v.InferOutput<typeof schema.reviewedCollectionRenameRequestSchema>
+>;
+
 export type CollectionView = Readonly<v.InferOutput<typeof schema.collectionViewSchema>>;
 export type UseWriteResult = Readonly<v.InferOutput<typeof schema.useWriteResultSchema>>;
 export type ImpactBlocker = Readonly<v.InferOutput<typeof schema.impactBlockerSchema>>;

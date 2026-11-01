@@ -1,4 +1,5 @@
 import * as api from "@skctl/core";
+import { resolve as resolvePath } from "node:path";
 import {
   createCliRenderer,
   InputRenderable,
@@ -12,12 +13,13 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  For,
   onCleanup,
   onMount,
   Show,
   untrack,
 } from "solid-js";
-import type { ConfigSourceObservation, ConfigSourceImpact, WorkspaceView } from "@skctl/core";
+import type { ConfigSourceObservation, ConfigSourceImpact } from "@skctl/core";
 import type { SkillAddress } from "@skctl/core";
 import {
   actionIntent,
@@ -118,7 +120,8 @@ import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
 import { selectScrollOffset } from "./select-scroll";
 import { SkillsFilterPopup } from "./skills-filter-popup";
 import { ModalBody, ModalShell, modalCommand } from "./operations/modal";
-import { CollectionContentOverlay } from "./operations/collection-forms";
+import { CollectionContentOverlay, CollectionRenameOverlay } from "./operations/collection-forms";
+import { SourceReplacementOverlay } from "./operations/source-replacement";
 import { createPanelNavigation, isMounted } from "./panel-navigation";
 import {
   createModalControlRegistry,
@@ -128,10 +131,12 @@ import {
   useModalControls,
 } from "./modal-controls";
 const topOptions = () =>
-  destinations.map((value) => ({
-    label: value === "workspace" ? "Workspace" : value[0]!.toUpperCase() + value.slice(1),
-    value,
-  }));
+  destinations
+    .filter((value) => value !== "workspace")
+    .map((value) => ({
+      label: value[0]!.toUpperCase() + value.slice(1),
+      value,
+    }));
 /** Context is chosen explicitly; moving through the menu never changes the route. */
 function ScopeChoices(props: {
   readonly current: Destination;
@@ -186,13 +191,16 @@ function ScopeChoices(props: {
           name: `${option.value === props.current ? "✓ " : "  "}${option.label}`,
           description:
             props.targets?.find((item) => item.level === option.value)?.file.file ??
-            (option.value === "workspace" ? "Effective workspace" : "Configuration declarations"),
+            "Configuration declarations",
           value: option.value,
         }))}
         selectedIndex={
           props.targets
             ? props.targets.findIndex((item) => item.level === props.current)
-            : destinations.indexOf(props.current)
+            : Math.max(
+                0,
+                topOptions().findIndex((option) => option.value === props.current),
+              )
         }
         height={props.targets ? props.targets.length * 2 : 4}
         showDescription={!!props.targets}
@@ -214,10 +222,47 @@ type CollectionDraft = Extract<
       | "reference-add"
       | "reference-remove"
       | "link-change"
+      | "collection-rename"
       | "collection-use";
   }
 >;
 type AppOverlayPayload =
+  | {
+      readonly family: "source-replacement";
+      readonly oldSource: string;
+      readonly oldOwner?: api.ConfigDeclarationOwner;
+      readonly addresses: readonly api.SkillAddress[];
+      readonly newSource?: string;
+      readonly registered?: boolean;
+      readonly registration?: api.RegisterSourceRequest;
+      readonly registrationFile?: string;
+      readonly receipt: readonly string[];
+      readonly installed?: readonly api.SkillAddress[];
+      readonly uncertainInstall?: readonly api.SkillAddress[];
+      readonly uncertainInstallRevision?: string;
+      readonly uncertainInstallLocalRequired?: boolean;
+      readonly uncertainInstallLocal?: {
+        readonly origin: string;
+        readonly root: string;
+        readonly declarationOrigin: string;
+        readonly declarationRoot: string;
+        readonly owner: api.ConfigDeclarationOwner;
+      };
+      readonly uncertainRebind?: api.RebindImpact;
+      readonly pendingRemoval?: api.ConfigDeclarationOwner;
+      readonly pendingUninstall?: api.SkillAddress;
+      readonly uncertain?: string;
+      readonly review?: InstalledSkillReview;
+      readonly request?: InstalledSkillPreviewRequest;
+      readonly selectedAddress?: api.SkillAddress;
+      readonly targetPath?: string;
+    }
+  | {
+      readonly family: "rename-outcome";
+      readonly review: Extract<CollectionReview, { kind: "collection-rename" }>;
+      readonly applied: boolean;
+      readonly message: string;
+    }
   | {
       readonly family: "collection-content";
       readonly collection: string;
@@ -238,11 +283,13 @@ type AppOverlayPayload =
   | {
       readonly family: "source-removal";
       readonly review?: SourceRemovalReview;
+      readonly replacement?: Extract<AppOverlayPayload, { family: "source-replacement" }>;
     }
   | {
       readonly family: "source-observation";
       readonly intent: ReturnType<typeof sourceOperationIntent>;
       readonly target?: Extract<AppOverlayPayload, { family: "membership-chooser" }>;
+      readonly replacement?: Extract<AppOverlayPayload, { family: "source-replacement" }>;
     }
   | {
       readonly family: "config-observation";
@@ -254,6 +301,7 @@ type AppOverlayPayload =
       readonly review: DiscoveryReview;
       readonly selectedPaths: readonly string[];
       readonly target?: Extract<AppOverlayPayload, { family: "membership-chooser" }>;
+      readonly replacement?: Extract<AppOverlayPayload, { family: "source-replacement" }>;
     }
   | {
       readonly family: "installed-preview";
@@ -261,6 +309,7 @@ type AppOverlayPayload =
       readonly failed?: boolean;
       readonly review?: InstalledSkillReview;
       readonly sourceRemoval?: SourceRemovalReview;
+      readonly replacement?: Extract<AppOverlayPayload, { family: "source-replacement" }>;
     }
   | {
       readonly family: "installed-rebind";
@@ -270,6 +319,7 @@ type AppOverlayPayload =
         readonly path: string;
       };
       readonly sourceRemoval?: SourceRemovalReview;
+      readonly replacement?: Extract<AppOverlayPayload, { family: "source-replacement" }>;
     }
   | {
       readonly family: "palette";
@@ -281,6 +331,9 @@ type AppOverlayPayload =
     }
   | {
       readonly family: "skills-filter";
+    }
+  | {
+      readonly family: "pages-selection";
     }
   | {
       readonly family: "scope-selection";
@@ -331,6 +384,8 @@ type AppOverlayPayload =
   | {
       readonly family: "membership-removal-plan";
       readonly plan: ReturnType<typeof collectionRemovalPlan>;
+      readonly ownerIndex?: number;
+      readonly review?: CollectionReview;
     }
   | {
       readonly family: "collection-draft";
@@ -359,6 +414,7 @@ type AppOverlayPayload =
       readonly kind: "source" | "config-source";
       readonly level?: "global" | "project" | "local";
       readonly target?: Extract<AppOverlayPayload, { family: "membership-chooser" }>;
+      readonly replacement?: Extract<AppOverlayPayload, { family: "source-replacement" }>;
     };
 export function App(props: {
   readonly core: TuiCore;
@@ -368,6 +424,12 @@ export function App(props: {
 }) {
   const operation = createOperationState();
   const [overlaySession, setOverlaySession] = createSignal(createOverlaySession());
+  const [replacementTasks, setReplacementTasks] = createSignal<
+    Record<string, Extract<AppOverlayPayload, { family: "source-replacement" }>>
+  >({});
+  const [renameOutcomes, setRenameOutcomes] = createSignal<
+    Record<string, Extract<AppOverlayPayload, { family: "rename-outcome" }>>
+  >({});
   const overlayKind = () => overlaySession().kind;
   const [transition, setTransition] = createSignal<string | undefined>();
   const environment = props.environment ?? { cwd: process.cwd() };
@@ -558,11 +620,7 @@ export function App(props: {
   };
   renderer.on("focused_renderable", syncPhysicalFocus);
   let route: ReturnType<typeof createRoute>;
-  const skillWorkspace = () =>
-    workspaceState.section() === "skills" &&
-    ["all-installed-skills", "unassigned", "current-exposure"].includes(
-      workspaceState.skillsView(),
-    );
+  const skillWorkspace = () => workspaceState.section() === "skills";
   function cancelPendingShellFocus() {
     shellFocusRevision += 1;
     if (pendingShellFocus) renderer.off("frame", pendingShellFocus.listener);
@@ -605,18 +663,16 @@ export function App(props: {
     }
     focus.request(target);
   };
-  const sourceInspectorFocus = (source: WorkspaceView["effective"]["sources"][number]) => {
+  const sourceInspectorFocus = () => {
     // The destination's registry may not be mounted yet. Request its primary
     // action by identity, never a relationship hidden behind Actions.
     const snapshot = projection.workspace();
-    const id = snapshot?.installedSkills.some((skill) => skill.address.source === source.id)
-      ? "check-updates"
-      : "add-skills";
+    const id = "add-skills";
     return reachableActions("workspace", snapshot, pageActionFacts()).some(
       (action) => action.id === id && action.enabled,
     )
       ? (`command:${id}` as const)
-      : ("command:source.details.toggle" as const);
+      : ("inspector" as const);
   };
   let effects!: ReturnType<typeof createTuiSession>;
   route = createRoute(
@@ -914,6 +970,13 @@ export function App(props: {
     phase: "review" | "preview" | "observing" | "executing" = "review",
   ) =>
     batch(() => {
+      if (payload.family === "source-replacement")
+        setReplacementTasks((current) => ({ ...current, [payload.oldSource]: payload }));
+      if (payload.family === "rename-outcome")
+        setRenameOutcomes((current) => ({
+          ...current,
+          [payload.review.intent.collection]: payload,
+        }));
       setOverlaySession((current) =>
         reduceOverlaySession(current, {
           type: "open",
@@ -925,6 +988,7 @@ export function App(props: {
       );
     });
   const openScopeSelection = () => openSession("selection", { family: "scope-selection" });
+  const openPagesSelection = () => openSession("selection", { family: "pages-selection" });
   const openPalette = () => openSession("palette", { family: "palette" });
   const replaceSession = (
     revision: number,
@@ -952,7 +1016,22 @@ export function App(props: {
     requestEpoch: number,
     phase: "review" | "preview" | "observing" | "executing" | "cancelling",
     next?: AppOverlayPayload,
-  ) =>
+  ) => {
+    if (
+      next?.family === "source-replacement" &&
+      sessionMatchesOverlay(
+        overlaySession(),
+        { revision, requestEpoch },
+        "form",
+        "source-replacement",
+      )
+    )
+      setReplacementTasks((current) => ({ ...current, [next.oldSource]: next }));
+    if (
+      next?.family === "rename-outcome" &&
+      sessionMatchesOverlay(overlaySession(), { revision, requestEpoch }, "form", "rename-outcome")
+    )
+      setRenameOutcomes((current) => ({ ...current, [next.review.intent.collection]: next }));
     setOverlaySession((current) =>
       reduceOverlaySession(current, {
         type: "settle",
@@ -962,6 +1041,7 @@ export function App(props: {
         payload: next,
       }),
     );
+  };
   const sessionMatches = (
     begun: ReturnType<typeof beginSession>,
     kind: import("./types").Overlay,
@@ -992,7 +1072,11 @@ export function App(props: {
     else settleSession(begun.revision, begun.requestEpoch, "review");
   };
   const setSessionPayload = (next: AppOverlayPayload) =>
-    replaceSession(overlaySession().revision, next);
+    batch(() => {
+      if (next.family === "source-replacement")
+        setReplacementTasks((current) => ({ ...current, [next.oldSource]: next }));
+      replaceSession(overlaySession().revision, next);
+    });
   const selectReaderSkill = (address: SkillAddress) => {
     const current = reader();
     if (!current?.address || !sameSkillAddress(current.address, address)) {
@@ -1207,21 +1291,30 @@ export function App(props: {
     }
     if (payload?.family === "installed-preview") {
       if (payload.review) effects.discardInstalledReview(payload.review);
-      closeSession();
+      if (payload.replacement && payload.sourceRemoval)
+        openSession("confirm", {
+          family: "source-removal",
+          review: payload.sourceRemoval,
+          replacement: payload.replacement,
+        });
+      else closeSession();
       return;
     } else if (payload?.family === "source-removal") {
       if (payload.review) effects.discardReview(payload.review);
-      closeSession();
+      if (payload.replacement) openSession("form", payload.replacement);
+      else closeSession();
       return;
-    } else if (
-      payload?.family === "source-observation" ||
-      payload?.family === "config-observation"
-    ) {
+    } else if (payload?.family === "source-observation") {
+      if (payload.replacement) openSession("form", payload.replacement);
+      else closeSession();
+      return;
+    } else if (payload?.family === "config-observation") {
       closeSession();
       return;
     } else if (payload?.family === "source-selection") {
       effects.discardDiscovery(payload.review);
-      if (payload.target)
+      if (payload.replacement) openSession("form", payload.replacement);
+      else if (payload.target)
         openSession("form", {
           ...payload.target,
           discoveryDrafts: {
@@ -1235,26 +1328,339 @@ export function App(props: {
       else closeSession();
       return;
     } else if (payload?.family === "installed-rebind") {
-      closeSession();
+      if (payload.replacement && payload.sourceRemoval)
+        openSession("confirm", {
+          family: "source-removal",
+          review: payload.sourceRemoval,
+          replacement: payload.replacement,
+        });
+      else closeSession();
       return;
-    } else if (payload?.family === "collection-review" && payload.review) {
+    } else if (
+      (payload?.family === "collection-review" || payload?.family === "membership-removal-plan") &&
+      payload.review
+    ) {
       effects.discardCollectionReview(payload.review);
       closeSession(revision);
     } else closeSession();
   };
+  type Replacement = Extract<AppOverlayPayload, { family: "source-replacement" }>;
+  const previewReplacement = async (
+    current: Replacement,
+    request: InstalledSkillPreviewRequest,
+  ) => {
+    const begun = beginSession(overlaySession().revision, "preview");
+    operation.clearProblem();
+    const review = await effects.reviewInstalled(request);
+    if (!sessionMatches(begun, "form", "source-replacement")) return;
+    if (overlaySession().dismissed) return openSession("form", current);
+    settleSession(begun.revision, begun.requestEpoch, "review", { ...current, request, review });
+  };
+  const applyReplacement = async (current: Replacement) => {
+    if (!current.review || current.review.kind !== "rebind") return;
+    const review = current.review;
+    const begun = beginSession(overlaySession().revision, "executing");
+    const outcome = await effects.applyRebind(review);
+    if (!sessionMatches(begun, "form", "source-replacement")) return;
+    if (outcome.status === "applied") {
+      const next: Replacement = {
+        ...current,
+        review: undefined,
+        request: undefined,
+        addresses: current.addresses.filter(
+          (address) => !sameSkillAddress(address, review.address),
+        ),
+        receipt: [
+          ...current.receipt,
+          `Rebound ${review.address.source}/${review.address.path} → ${review.owner}/${review.ownerPath}${outcome.workspace === "stale" ? " (workspace stale)" : ""}`,
+        ],
+        uncertainRebind: outcome.workspace === "stale" ? review.impact : undefined,
+        uncertain:
+          outcome.workspace === "stale"
+            ? "Workspace is stale. Inspect and refresh before continuing."
+            : undefined,
+      };
+      if (overlaySession().dismissed) openSession("form", next);
+      else settleSession(begun.revision, begun.requestEpoch, "review", next);
+      return;
+    }
+    if (outcome.status === "uncertain") {
+      const next = {
+        ...current,
+        review: undefined,
+        uncertainRebind: review.impact,
+        uncertain: `Rebind outcome unknown: ${outcome.diagnostic.message}. Inspect and refresh before retry.`,
+      };
+      if (overlaySession().dismissed) openSession("form", next);
+      else settleSession(begun.revision, begun.requestEpoch, "review", next);
+      return;
+    }
+    settleSession(begun.revision, begun.requestEpoch, "review");
+  };
+  const inspectReplacement = async (current: Replacement) => {
+    const begun = beginSession(overlaySession().revision, "observing");
+    const fresh = await effects.refresh();
+    if (!sessionMatches(begun, "form", "source-replacement")) return;
+    if (overlaySession().dismissed) return openSession("form", current);
+    const view = projection.workspace();
+    if (!fresh || !view || view.effective.status !== "complete") {
+      settleSession(begun.revision, begun.requestEpoch, "review", {
+        ...current,
+        uncertain: "Workspace inspection failed. No retry is safe yet.",
+      });
+      return;
+    }
+    const request = current.registration;
+    const declaration =
+      request &&
+      view.configs
+        .find(
+          (config) =>
+            config.level === request.level && config.file.file === current.registrationFile,
+        )
+        ?.direct.sources.find((source) => source.id === request.id);
+    const binding = request?.binding;
+    const origin = binding?.kind === "local" ? binding.path : binding?.origin;
+    // Exact comparisons are intentionally conservative: equivalent unnormalized
+    // input remains inspect-needed instead of guessing Core's canonical binding.
+    const registrationMatches =
+      !!request &&
+      !!binding &&
+      !!declaration &&
+      declaration.ref.owner.level === request.level &&
+      declaration.ref.owner.file === current.registrationFile &&
+      declaration.ref.owner.pointer ===
+        `/sources/${request.id.replace(/~/g, "~0").replace(/\//g, "~1")}` &&
+      !declaration.ref.owner.contribution &&
+      declaration.kind === binding.kind &&
+      declaration.origin === origin &&
+      declaration.root === binding.root &&
+      (binding.kind === "local" || declaration.trackedRef === binding.ref);
+    const registered = current.registered || registrationMatches;
+    if (current.uncertain) {
+      if (current.pendingRemoval) {
+        const owner = current.pendingRemoval;
+        const config = view.configs.find(
+          (item) => item.level === owner.level && item.file.file === owner.file,
+        );
+        const absent =
+          config?.file.status === "valid" &&
+          !config.direct.sources.some(
+            (source) =>
+              source.id === current.oldSource && source.ref.owner.pointer === owner.pointer,
+          );
+        const noDependents =
+          !view.installedSkills.some(
+            (skill) =>
+              skill.owner.source === current.oldSource ||
+              skill.address.source === current.oldSource,
+          ) &&
+          view.effective.status === "complete" &&
+          !view.effective.collectionsView.some((collection) =>
+            collection.members.some((member) => member.address.source === current.oldSource),
+          );
+        if (absent && noDependents) {
+          settleSession(begun.revision, begun.requestEpoch, "review", {
+            ...current,
+            pendingRemoval: undefined,
+            uncertain: undefined,
+            receipt: [...current.receipt, `Inspected removal of Source ${current.oldSource}`],
+          });
+          return;
+        }
+      } else if (current.pendingUninstall) {
+        const address = current.pendingUninstall;
+        const absent =
+          !view.installedSkills.some((skill) => sameSkillAddress(skill.address, address)) &&
+          view.effective.status === "complete" &&
+          !view.effective.collectionsView.some((collection) =>
+            collection.members.some((member) => sameSkillAddress(member.address, address)),
+          );
+        if (absent) {
+          settleSession(begun.revision, begun.requestEpoch, "review", {
+            ...current,
+            pendingUninstall: undefined,
+            uncertain: undefined,
+            addresses: current.addresses.filter((item) => !sameSkillAddress(item, address)),
+            receipt: [...current.receipt, `Inspected uninstall ${address.source}/${address.path}`],
+          });
+          return;
+        }
+      } else if (current.uncertainRebind) {
+        const impact = current.uncertainRebind;
+        const destination = { source: impact.owner, path: impact.ownerPath };
+        const skill = view.installedSkills.find((item) =>
+          sameSkillAddress(item.address, destination),
+        );
+        // The reviewed evidence describes the persisted install, not the old
+        // Source's possibly drifted current declaration. Until Core supplies it,
+        // the operation remains inspect-needed.
+        const identity = impact.identity;
+        const targetSource = view.effective.sources.find((source) => source.id === impact.owner);
+        const identityMatches =
+          !!identity &&
+          !!targetSource &&
+          targetSource.origin === identity.canonicalOrigin &&
+          [targetSource.root, impact.ownerPath].filter(Boolean).join("/") ===
+            identity.originRelativeSkillRoot &&
+          (identity.kind === "local"
+            ? targetSource.kind === "local" &&
+              resolvePath(targetSource.origin, targetSource.root, impact.ownerPath) ===
+                identity.localRoot &&
+              (!skill?.owner.relevantLocalRoot ||
+                skill.owner.relevantLocalRoot === identity.localRoot)
+            : targetSource.kind !== "local");
+        const membershipsMatch = impact.directMemberships.every((change) => {
+          const collection =
+            view.effective.status === "complete" &&
+            view.effective.collectionsView.find((item) => item.id === change.collection);
+          const member =
+            collection &&
+            collection.members.find(
+              (item) => item.name === change.name && sameSkillAddress(item.address, change.after),
+            );
+          return (
+            !!member &&
+            member.paths.some(
+              (path) =>
+                path.kind === "direct" &&
+                path.owner?.level === change.owner.level &&
+                path.owner.file === change.owner.file &&
+                path.owner.pointer === change.owner.pointer,
+            )
+          );
+        });
+        if (
+          identityMatches &&
+          skill?.owner.source === impact.owner &&
+          skill.owner.health === "healthy" &&
+          membershipsMatch &&
+          !view.installedSkills.some((item) => sameSkillAddress(item.address, impact.address))
+        ) {
+          settleSession(begun.revision, begun.requestEpoch, "review", {
+            ...current,
+            uncertain: undefined,
+            uncertainRebind: undefined,
+            addresses: current.addresses.filter(
+              (address) => !sameSkillAddress(address, impact.address),
+            ),
+            receipt: [
+              ...current.receipt,
+              `Inspected rebind ${impact.address.source}/${impact.address.path} → ${impact.owner}/${impact.ownerPath}`,
+            ],
+          });
+          return;
+        }
+      } else if (current.uncertainInstall?.length) {
+        const proven = current.uncertainInstall.every((address) => {
+          const skill = view.installedSkills.find((item) =>
+            sameSkillAddress(item.address, address),
+          );
+          if (skill?.owner.source !== address.source || skill.owner.health !== "healthy")
+            return false;
+          if (current.uncertainInstallLocal) {
+            const source = view.effective.sources.find((item) => item.id === address.source);
+            const expected = current.uncertainInstallLocal;
+            const owner = declaration?.ref.owner;
+            return (
+              !!declaration &&
+              declaration.kind === "local" &&
+              declaration.origin === expected.declarationOrigin &&
+              declaration.root === expected.declarationRoot &&
+              !!owner &&
+              owner.level === expected.owner.level &&
+              owner.file === expected.owner.file &&
+              owner.pointer === expected.owner.pointer &&
+              owner.namespace === expected.owner.namespace &&
+              !owner.contribution &&
+              !!source &&
+              source.kind === "local" &&
+              source.origin === expected.origin &&
+              source.root === expected.root &&
+              !!skill.owner.relevantLocalRoot &&
+              skill.owner.relevantLocalRoot ===
+                resolvePath(expected.origin, expected.root, address.path)
+            );
+          }
+          if (current.uncertainInstallLocalRequired) return false;
+          return (
+            !!current.uncertainInstallRevision &&
+            skill.owner.relevantRemoteRevision === current.uncertainInstallRevision
+          );
+        });
+        if (proven) {
+          settleSession(begun.revision, begun.requestEpoch, "review", {
+            ...current,
+            uncertain: undefined,
+            installed: [...(current.installed ?? []), ...current.uncertainInstall],
+            receipt: [
+              ...current.receipt,
+              ...current.uncertainInstall.map(
+                (address) => `Inspected installation ${address.source}/${address.path}`,
+              ),
+            ],
+            uncertainInstall: undefined,
+            uncertainInstallRevision: undefined,
+            uncertainInstallLocal: undefined,
+            uncertainInstallLocalRequired: undefined,
+          });
+          return;
+        }
+      } else if (!current.registered && registrationMatches) {
+        settleSession(begun.revision, begun.requestEpoch, "review", {
+          ...current,
+          registered: true,
+          uncertain: undefined,
+          receipt: [...current.receipt, `Inspected registration ${request!.id}`],
+        });
+        return;
+      } else if (
+        current.registered &&
+        current.uncertain === "Workspace is stale. Inspect and refresh before continuing." &&
+        registrationMatches
+      ) {
+        settleSession(begun.revision, begun.requestEpoch, "review", {
+          ...current,
+          uncertain: undefined,
+        });
+        return;
+      }
+      settleSession(begun.revision, begun.requestEpoch, "review", {
+        ...current,
+        uncertain: `${current.uncertain} Workspace evidence is insufficient; inspect-needed.`,
+      });
+      return;
+    }
+    settleSession(begun.revision, begun.requestEpoch, "review", {
+      ...current,
+      registered,
+      uncertain: registered
+        ? undefined
+        : `Replacement Source ${current.newSource ?? ""} was not found. Inspect its declaration before starting again.`,
+      addresses: current.addresses.filter((address) =>
+        view.installedSkills.some((skill) => sameSkillAddress(skill.address, address)),
+      ),
+    });
+  };
   const discoverSource = async (
     source: string,
     target?: Extract<AppOverlayPayload, { family: "membership-chooser" }>,
+    replacement?: Replacement,
   ) => {
     operation.clearProblem();
     const intent = { kind: "source-discovery" as const, source };
-    openSession("selection", { family: "source-observation", intent, target }, "observing");
+    openSession(
+      "selection",
+      { family: "source-observation", intent, target, replacement },
+      "observing",
+    );
     const begun = beginSession(overlaySession().revision, "observing");
     const review = await effects.discover(intent);
     if (!sessionMatches(begun, "selection", "source-observation")) return;
     if (overlaySession().dismissed) {
       if (review) effects.discardDiscovery(review);
-      closeSession(begun.revision);
+      if (replacement) openSession("form", replacement);
+      else closeSession(begun.revision);
       return;
     }
     settleSession(
@@ -1266,6 +1672,7 @@ export function App(props: {
             family: "source-selection",
             review,
             target,
+            replacement,
             query: target?.discoveryDrafts?.[source]?.query ?? "",
             selectedPaths: (target?.discoveryDrafts?.[source]?.selectedPaths ?? []).filter(
               (path) =>
@@ -1669,7 +2076,11 @@ export function App(props: {
               ? workspaceState.section()
               : configState.section(destination),
         } as RouteTarget,
-        "command:source.skills",
+        returnFocus ??
+          (overlaySession().kind === "palette"
+            ? overlaySession().restoreFocus
+            : physicalFocusOwner()) ??
+          route.snapshot().current.focus,
       );
       return;
     }
@@ -1748,7 +2159,7 @@ export function App(props: {
         if (view && exposurePath)
           routeRelationship({
             destination: "workspace",
-            section: "collections",
+            section: "agent",
             selection: exposurePath.segments[0]!.collection,
             returnFocus:
               returnFocus ??
@@ -1767,7 +2178,6 @@ export function App(props: {
           });
         if (exposurePath) {
           queueMicrotask(() => {
-            workspaceState.selectSkillsView("current-exposure");
             workspaceState.showWorkArea();
             for (let index = 1; index < exposurePath.segments.length; index++)
               workspaceState.expandExposurePath({
@@ -1798,7 +2208,8 @@ export function App(props: {
         operation.report({
           code: "SOURCE_NOT_FOUND",
           severity: "warning",
-          message: "No alternative Source is available for Rebind",
+          message:
+            "No other Source is available. Add a Source in Sources, then try Change Source again.",
         });
         return;
       }
@@ -1821,14 +2232,12 @@ export function App(props: {
     }
     if (id === "skill-check-updates") {
       if (skill) {
-        openUpdates({ kind: "skill", address: skill.address });
-        void effects.submitUpdates([skill.address]);
+        openUpdates({ kind: "skill", address: skill.address }, true);
       }
       return;
     }
     if (id === "collection-check-updates") {
-      const agentAccess =
-        workspaceState.section() === "skills" && workspaceState.skillsView() === "current-exposure";
+      const agentAccess = workspaceState.section() === "agent";
       const exposure = agentAccess
         ? deriveAgentAccessTree(workspace, workspaceState.expandedExposurePaths()).rows.find(
             (row) => row.key === workspaceState.selectedExposurePath(),
@@ -1856,6 +2265,7 @@ export function App(props: {
   const previewCollection = async (
     intent: import("./collection-protocol").CollectionPreviewIntent,
     removedOriginKeys?: readonly string[],
+    expectedRemovalOwner?: api.ConfigDeclarationOwner,
   ) => {
     const source = sessionPayload();
     const kind = overlayKind();
@@ -1874,6 +2284,29 @@ export function App(props: {
       if (source.family === "collection-review") return closeSession(begun.revision);
       return settleSession(begun.revision, begun.requestEpoch, "review");
     }
+    if (source.family === "membership-removal-plan") {
+      settleSession(begun.revision, begun.requestEpoch, "review", { ...source, review });
+      return;
+    }
+    if (expectedRemovalOwner && review.kind === "collection-removal") {
+      const actual =
+        review.impact.decision?.kind === "direct" ? review.impact.decision.owner : undefined;
+      if (
+        !actual ||
+        actual.level !== expectedRemovalOwner.level ||
+        actual.file !== expectedRemovalOwner.file ||
+        actual.pointer !== expectedRemovalOwner.pointer
+      ) {
+        effects.discardCollectionReview(review);
+        operation.report({
+          code: "TRANSACTION_CONFLICT",
+          severity: "warning",
+          message: "The Collection declaration changed. Refresh and review its owner again.",
+        });
+        closeSession(begun.revision);
+        return;
+      }
+    }
     const next: AppOverlayPayload = {
       family: "collection-review",
       review,
@@ -1884,6 +2317,7 @@ export function App(props: {
           intent.kind === "reference-add" ||
           intent.kind === "reference-remove" ||
           intent.kind === "link-change" ||
+          intent.kind === "collection-rename" ||
           intent.kind === "collection-use")
           ? { ...source, draft: intent }
           : source.family === "collection-review"
@@ -1894,19 +2328,76 @@ export function App(props: {
       settleSession(begun.revision, begun.requestEpoch, "review", next);
     else openSession("confirm", next);
   };
+  const previewRemovalLocation = async (ownerIndex: number) => {
+    const current = membershipRemovalPlan();
+    const group = current?.plan.ownerGroups[ownerIndex];
+    if (!current || !group || overlaySession().phase === "executing") return;
+    if (current.review) effects.discardCollectionReview(current.review);
+    replaceSession(overlaySession().revision, { ...current, ownerIndex, review: undefined });
+    operation.clearProblem();
+    await previewCollection({
+      kind: "membership-batch",
+      level: group.owner.level,
+      collection: current.plan.collection,
+      expectedOwner: group.owner,
+      additions: [],
+      removals: group.rows.map((row) => ({ name: row.entryName, expectedAddress: row.address })),
+    });
+  };
   const applyCollectionReview = async () => {
     const current = collectionReviewPayload()?.review;
     if (!current) return;
     const begun = beginSession(overlaySession().revision, "executing");
-    const complete = await effects.confirmCollection(current);
+    const identity =
+      current.kind === "collection-rename"
+        ? await effects.applyCollectionRename(current)
+        : undefined;
+    if (
+      identity &&
+      current.kind === "collection-rename" &&
+      sessionMatches(begun, "confirm", "collection-review")
+    ) {
+      if (
+        identity.status === "uncertain" ||
+        (identity.status === "applied" && identity.workspace === "stale")
+      ) {
+        openSession("form", {
+          family: "rename-outcome",
+          review: current,
+          applied: identity.status === "applied",
+          message:
+            identity.status === "applied"
+              ? "Rename applied; workspace is stale. Inspect before opening the target."
+              : `Rename outcome unknown: ${identity.diagnostic.message}. Inspect before retry.`,
+        });
+        return;
+      }
+      if (identity.status === "stale" && overlaySession().dismissed) {
+        const draft = collectionReviewPayload()?.draft;
+        if (draft) openSession("form", draft);
+        else closeSession(begun.revision);
+        return;
+      }
+    }
+    const complete = identity
+      ? identity.status === "applied"
+      : await effects.confirmCollection(current);
     if (complete && sessionMatches(begun, "confirm", "collection-review")) {
       const collection =
-        current.kind === "collection-import"
-          ? current.intent.into
-          : current.kind === "collection-use"
-            ? undefined
-            : current.intent.collection;
-      if (collection) collectionsState.select(collection);
+        current.kind === "collection-rename"
+          ? current.intent.target
+          : current.kind === "collection-import"
+            ? current.intent.into
+            : current.kind === "collection-use"
+              ? undefined
+              : current.intent.collection;
+      if (collection) {
+        collectionsState.select(collection);
+        if (current.kind === "collection-rename") {
+          collectionsState.selectTab(collection, "settings");
+          route.syncCurrent({ object: collection });
+        }
+      }
       if (current.kind === "membership-batch") {
         // Completing a Collection edit does not change the separate checked set.
         const keys = collectionReviewPayload()?.removedOriginKeys;
@@ -1916,6 +2407,93 @@ export function App(props: {
     } else if (sessionMatches(begun, "confirm", "collection-review") && overlaySession().dismissed)
       closeSession(begun.revision);
     else settleFailedExecution(begun);
+  };
+  const inspectRename = async (
+    outcome: Extract<AppOverlayPayload, { family: "rename-outcome" }>,
+  ) => {
+    const begun = beginSession(overlaySession().revision, "observing");
+    const fresh = await effects.refresh();
+    if (!sessionMatches(begun, "form", "rename-outcome")) return;
+    const view = projection.workspace();
+    const impact = outcome.review.impact;
+    const effective = view?.effective;
+    const target =
+      effective?.status === "complete"
+        ? effective.collectionsView.find((item) => item.id === impact.target)
+        : undefined;
+    const sameOwner = (a: api.ConfigDeclarationOwner, b: api.ConfigDeclarationOwner) =>
+      a.level === b.level &&
+      a.file === b.file &&
+      a.namespace === b.namespace &&
+      a.pointer === b.pointer;
+    const escaped = (id: string) => id.replace(/~/g, "~0").replace(/\//g, "~1");
+    const relocated = (owner: api.ConfigDeclarationOwner) => ({
+      ...owner,
+      pointer: owner.pointer.replace(
+        `/collections/${escaped(impact.collection)}`,
+        `/collections/${escaped(impact.target)}`,
+      ),
+    });
+    const declarations =
+      !!target &&
+      impact.declarations.every((owner) =>
+        target.declared.some((actual) => sameOwner(actual, relocated(owner))),
+      );
+    const references =
+      effective?.status === "complete" &&
+      impact.references.every((ref) => {
+        const owner = relocated(ref.owner);
+        if (ref.kind === "use")
+          return view!.configs.some((config) =>
+            config.direct.collectionUse.some(
+              (item) => item.collection === impact.target && sameOwner(item.owner, owner),
+            ),
+          );
+        return effective.collectionsView.some((collection) =>
+          ref.kind === "reference"
+            ? collection.references.some(
+                (item) => item.collection === impact.target && sameOwner(item.owner, owner),
+              )
+            : collection.links.some(
+                (item) => item.collection === impact.target && sameOwner(item.owner, owner),
+              ),
+        );
+      });
+    const addresses =
+      !!target &&
+      impact.addresses.every(
+        ({ after }) =>
+          after === impact.target ||
+          (after.startsWith(`${impact.target}:`) &&
+            target.members.some((member) => member.name === after.slice(impact.target.length + 1))),
+      );
+    if (
+      fresh &&
+      effective?.status === "complete" &&
+      !effective.collections.includes(impact.collection) &&
+      declarations &&
+      references &&
+      addresses
+    ) {
+      setRenameOutcomes((current) => {
+        const next = { ...current };
+        delete next[impact.collection];
+        return next;
+      });
+      collectionsState.select(impact.target);
+      collectionsState.selectTab(impact.target, "settings");
+      route.syncCurrent({ object: impact.target });
+      closeSession(begun.revision);
+    } else if (overlaySession().dismissed)
+      openSession("form", {
+        ...outcome,
+        message: `${outcome.message} Current workspace does not prove the reviewed effects.`,
+      });
+    else
+      settleSession(begun.revision, begun.requestEpoch, "review", {
+        ...outcome,
+        message: `${outcome.message} Current workspace does not prove the reviewed effects.`,
+      });
   };
   const previewMembershipRemoval = async (
     intent: Extract<
@@ -1982,31 +2560,96 @@ export function App(props: {
     });
   };
   const confirm = async () => {
-    const current = sourceRemovalPayload()?.review;
+    const surface = sourceRemovalPayload();
+    const current = surface?.review;
     if (!current) return;
     const begun = beginSession(overlaySession().revision, "executing");
     const complete = await effects.confirm(current);
+    if (surface?.replacement && !sessionMatches(begun, "confirm", "source-removal")) {
+      const replacement = surface.replacement;
+      setReplacementTasks((tasks) => {
+        const latest = tasks[replacement.oldSource] ?? replacement;
+        return {
+          ...tasks,
+          [replacement.oldSource]: complete
+            ? { ...latest, receipt: [...latest.receipt, `Removed Source ${current.intent.source}`] }
+            : {
+                ...latest,
+                pendingRemoval: current.intent.owner,
+                uncertain: "Source removal outcome unknown. Inspect before retry.",
+              },
+        };
+      });
+      return;
+    }
     if (
       complete &&
       overlaySession().revision === begun.revision &&
       overlaySession().requestEpoch === begun.requestEpoch
     ) {
-      closeSession();
+      if (surface?.replacement)
+        openSession("form", {
+          ...surface.replacement,
+          receipt: [...surface.replacement.receipt, `Removed Source ${current.intent.source}`],
+        });
+      else closeSession();
     } else if (
       overlaySession().revision === begun.revision &&
       overlaySession().requestEpoch === begun.requestEpoch &&
       overlaySession().dismissed
-    )
-      closeSession(begun.revision);
-    else settleFailedExecution(begun);
+    ) {
+      if (surface?.replacement)
+        openSession("form", {
+          ...surface.replacement,
+          pendingRemoval: current.intent.owner,
+          uncertain: `Removal of ${current.intent.source} has an unknown outcome. Inspect and refresh before retry.`,
+        });
+      else closeSession(begun.revision);
+    } else if (surface?.replacement) {
+      openSession("form", {
+        ...surface.replacement,
+        pendingRemoval: current.intent.owner,
+        uncertain: `Removal of ${current.intent.source} has an unknown outcome. Inspect and refresh before retry.`,
+      });
+    } else settleFailedExecution(begun);
+  };
+  const previewReplacementRemoval = async (replacement: Replacement) => {
+    const owner = replacement.oldOwner;
+    if (!owner) {
+      operation.report({
+        code: "INVALID_ARGUMENT",
+        severity: "warning",
+        message: `No writable direct declaration captured for ${replacement.oldSource}.`,
+      });
+      return;
+    }
+    openSession("confirm", { family: "source-removal", replacement }, "preview");
+    const begun = beginSession(overlaySession().revision, "preview");
+    const review = await effects.review({
+      kind: "source-removal",
+      source: replacement.oldSource,
+      owner,
+    });
+    if (!sessionMatches(begun, "confirm", "source-removal")) return;
+    if (!review || overlaySession().dismissed) {
+      if (review) effects.discardReview(review);
+      openSession("form", replacement);
+      return;
+    }
+    settleSession(begun.revision, begun.requestEpoch, "review", {
+      family: "source-removal",
+      review,
+      replacement,
+    });
   };
   const previewRepairInstalled = async (
     request: InstalledSkillPreviewRequest,
     sourceReview: SourceRemovalReview,
+    replacement?: Replacement,
   ) => {
     openSession(
       "confirm",
-      { family: "installed-preview", request, sourceRemoval: sourceReview },
+      { family: "installed-preview", request, sourceRemoval: sourceReview, replacement },
       "preview",
     );
     const begun = beginSession(overlaySession().revision, "preview");
@@ -2021,12 +2664,14 @@ export function App(props: {
         ...installedPreviewPayload()!,
         review: next,
       });
-    else if (sessionMatches(begun, "confirm", "installed-preview") && overlaySession().dismissed)
-      closeSession(begun.revision);
-    else if (sessionMatches(begun, "confirm", "installed-preview"))
+    else if (sessionMatches(begun, "confirm", "installed-preview") && overlaySession().dismissed) {
+      if (replacement) openSession("form", replacement);
+      else closeSession(begun.revision);
+    } else if (sessionMatches(begun, "confirm", "installed-preview"))
       settleSession(begun.revision, begun.requestEpoch, "review", {
         family: "source-removal",
         review: sourceReview,
+        replacement,
       });
   };
   const confirmRepairInstalled = async () => {
@@ -2037,13 +2682,28 @@ export function App(props: {
     const begun = beginSession(overlaySession().revision, "executing");
     const complete = await effects.confirmInstalled(current);
     if (!complete) {
+      if (surface?.replacement && sessionMatches(begun, "confirm", "installed-preview")) {
+        openSession("form", {
+          ...surface.replacement,
+          ...(current.kind === "uninstall"
+            ? { pendingUninstall: current.address }
+            : { uncertainRebind: current.impact }),
+          uncertain: "Repair outcome unknown. Inspect and refresh before retry.",
+        });
+        return;
+      }
       if (
         overlaySession().revision === begun.revision &&
         overlaySession().requestEpoch === begun.requestEpoch &&
         overlaySession().dismissed
-      )
-        closeSession(begun.revision);
-      else if (
+      ) {
+        if (surface?.replacement)
+          openSession("form", {
+            ...surface.replacement,
+            uncertain: "Repair outcome unknown. Inspect and refresh before retry.",
+          });
+        else closeSession(begun.revision);
+      } else if (
         overlaySession().revision === begun.revision &&
         overlaySession().requestEpoch === begun.requestEpoch
       )
@@ -2051,6 +2711,19 @@ export function App(props: {
       return;
     }
     if (!sessionMatches(begun, "confirm", "installed-preview")) return;
+    const replacement = surface?.replacement
+      ? {
+          ...surface.replacement,
+          addresses: surface.replacement.addresses.filter(
+            (address) => !sameSkillAddress(address, current.address),
+          ),
+          receipt: [
+            ...surface.replacement.receipt,
+            `${current.kind === "rebind" ? "Rebound" : "Uninstalled"} ${current.address.source}/${current.address.path} during removal repair`,
+          ],
+        }
+      : undefined;
+    if (overlaySession().dismissed && replacement) return openSession("form", replacement);
     const rereview = beginSession(begun.revision, "preview");
     const next = await effects.review(sourceReview.intent);
     if (
@@ -2061,22 +2734,99 @@ export function App(props: {
       settleSession(rereview.revision, rereview.requestEpoch, "review", {
         family: "source-removal",
         review: next,
+        replacement,
       });
-    else if (sessionMatches(rereview, "confirm", "installed-preview"))
-      closeSession(rereview.revision);
+    else if (sessionMatches(rereview, "confirm", "installed-preview")) {
+      if (replacement) openSession("form", replacement);
+      else closeSession(rereview.revision);
+    }
   };
   const applySourceSelection = async () => {
     const surface = sourceSelectionPayload();
     if (!surface) return;
     const current = surface.review;
+    const installedAddresses = surface.selectedPaths.map((path) => ({
+      source: current.observation.source,
+      path,
+    }));
+    const replacement = surface.replacement;
+    const view = projection.workspace();
+    const source = view?.effective.sources.find((item) => item.id === current.observation.source);
+    const declaration =
+      replacement?.registration &&
+      view?.configs
+        .find(
+          (config) =>
+            config.level === replacement.registration!.level &&
+            config.file.file === replacement.registrationFile &&
+            config.file.status === "valid",
+        )
+        ?.direct.sources.find((item) => item.id === current.observation.source);
+    const owner = declaration?.ref.owner;
+    const uncertainInstallLocal =
+      current.observation.kind === "local" &&
+      source?.kind === "local" &&
+      declaration?.kind === "local" &&
+      owner &&
+      !owner.contribution &&
+      owner.level === replacement?.registration?.level &&
+      owner.file === replacement.registrationFile &&
+      owner.pointer ===
+        `/sources/${current.observation.source.replace(/~/g, "~0").replace(/\//g, "~1")}`
+        ? {
+            origin: source.origin,
+            root: source.root,
+            declarationOrigin: declaration.origin,
+            declarationRoot: declaration.root,
+            owner: structuredClone(owner),
+          }
+        : undefined;
+    const uncertainInstallLocalRequired = current.observation.kind === "local";
     const begun = beginSession(overlaySession().revision, "executing");
     const complete = await effects.install(current, surface.selectedPaths);
+    if (surface.replacement && !sessionMatches(begun, "selection", "source-selection")) {
+      const replacement = surface.replacement;
+      setReplacementTasks((tasks) => ({
+        ...tasks,
+        [replacement.oldSource]: complete
+          ? {
+              ...replacement,
+              installed: [...(replacement.installed ?? []), ...installedAddresses],
+              receipt: [
+                ...replacement.receipt,
+                ...installedAddresses.map(
+                  (address) => `Installed separately ${address.source}/${address.path}`,
+                ),
+              ],
+            }
+          : {
+              ...replacement,
+              uncertainInstall: installedAddresses,
+              uncertainInstallRevision: current.observation.exactRevision,
+              uncertainInstallLocal,
+              uncertainInstallLocalRequired,
+              uncertain: "Installation outcome unknown. Inspect and refresh before retry.",
+            },
+      }));
+      return;
+    }
     if (
       complete &&
       overlaySession().revision === begun.revision &&
       overlaySession().requestEpoch === begun.requestEpoch
     ) {
-      if (overlaySession().dismissed) closeSession();
+      if (surface.replacement) {
+        openSession("form", {
+          ...surface.replacement,
+          installed: [...(surface.replacement.installed ?? []), ...installedAddresses],
+          receipt: [
+            ...surface.replacement.receipt,
+            ...installedAddresses.map(
+              (address) => `Installed separately ${address.source}/${address.path}`,
+            ),
+          ],
+        });
+      } else if (overlaySession().dismissed) closeSession();
       else if (surface.target) {
         const installed = projection.workspace()?.installedSkills ?? [];
         const additions = [...(surface.target.additions ?? [])];
@@ -2104,15 +2854,34 @@ export function App(props: {
       overlaySession().revision === begun.revision &&
       overlaySession().requestEpoch === begun.requestEpoch &&
       overlaySession().dismissed
-    )
-      closeSession(begun.revision);
-    else settleFailedExecution(begun);
+    ) {
+      if (surface.replacement)
+        openSession("form", {
+          ...surface.replacement,
+          uncertainInstall: installedAddresses,
+          uncertainInstallRevision: current.observation.exactRevision,
+          uncertainInstallLocal,
+          uncertainInstallLocalRequired,
+          uncertain: "Installation outcome unknown. Inspect and refresh before retry.",
+        });
+      else closeSession(begun.revision);
+    } else if (surface.replacement) {
+      effects.discardDiscovery(current);
+      openSession("form", {
+        ...surface.replacement,
+        uncertainInstall: installedAddresses,
+        uncertainInstallRevision: current.observation.exactRevision,
+        uncertainInstallLocal,
+        uncertainInstallLocalRequired,
+        uncertain: "Installation outcome unknown. Inspect and refresh before retry.",
+      });
+    } else settleFailedExecution(begun);
   };
   let exitRequested = false;
   const navigationFacts = () => {
     const workspace = projection.workspace();
     const visibleReader = (
-      workspaceState.skillsView() === "current-exposure"
+      workspaceState.section() === "agent"
         ? (workspace?.installedSkills ?? [])
         : filterSkills(workspace?.installedSkills ?? [], {
             query: workspaceState.query(),
@@ -2215,9 +2984,17 @@ export function App(props: {
             collectionsState.closeFilter();
             setTransition("Back to Browser");
           } else if (event.type === "collections.inspector.back") {
+            const inspector = collectionsState.inspector();
             collectionsState.closeInspector();
-            requestFocus("collection-relationships");
-            setTransition("Back to Relations");
+            const tab = collectionsState.tab(collectionsState.selected() ?? "");
+            requestFocus(
+              tab === "settings" && inspector?.kind === "relation"
+                ? `command:collection.settings.relation.${encodeURIComponent(inspector.relation)}`
+                : tab === "members"
+                  ? "collection-relationships"
+                  : "work-area",
+            );
+            setTransition(tab === "settings" ? "Back to Settings" : "Back to Collection");
           } else if (event.type === "config.surface.back") {
             configState.backConfigSourceSurface(configDestination());
             requestFocus("browser");
@@ -2473,7 +3250,7 @@ export function App(props: {
             return;
           const effective = projection.workspace()?.effective;
           if (
-            workspaceState.skillsView() === "current-exposure" &&
+            workspaceState.section() === "agent" &&
             effective?.status === "complete" &&
             effective.agent.status === "available" &&
             effective.use.length
@@ -2636,7 +3413,7 @@ export function App(props: {
       const target =
         run.addresses.length === 1
           ? `${run.addresses[0]!.source}/${run.addresses[0]!.path || "."}`
-          : `${run.addresses.length} Skills · ${new Set(run.addresses.map((address) => address.source)).size} Sources`;
+          : `${run.addresses.length} Skills from ${new Set(run.addresses.map((address) => address.source)).size} Sources`;
       records.push(
         command(
           "updates.task.show",
@@ -2650,7 +3427,7 @@ export function App(props: {
           command(
             "updates.task.stop",
             "Stop update",
-            `${target} · completed updates remain published`,
+            `${target}. Completed updates remain published.`,
             () => {
               effects.stopUpdates();
             },
@@ -2679,6 +3456,8 @@ export function App(props: {
     }
     return records;
   });
+  const mainPages = ["skills", "collections", "sources", "updates", "agent", "settings"] as const;
+  type MainPage = import("./types").MainPage;
   const commandRegistry = createCommandRegistry((): readonly ExecutableCommand[] => [
     ...returnCommands(),
     ...[...pageCommands().values()].flat(),
@@ -2704,23 +3483,21 @@ export function App(props: {
       execute: () =>
         openSession("help", { family: "diagnostic-log", text: renderer.console.getCachedLogs() }),
     },
-    ...destinations.map((destination) => ({
+    ...mainPages.map((page) => ({
       record: {
-        id: `navigate.${destination}`,
+        id: `navigate.${page}`,
         keys: ["enter"],
-        verb:
-          destination === "workspace"
-            ? "Workspace"
-            : destination[0]!.toUpperCase() + destination.slice(1),
-        destination:
-          destination === "workspace"
-            ? "Workspace"
-            : `${destination[0]!.toUpperCase() + destination.slice(1)} Config`,
+        verb: page[0]!.toUpperCase() + page.slice(1),
+        destination: page[0]!.toUpperCase() + page.slice(1),
+        object: page[0]!.toUpperCase() + page.slice(1),
+        scopeText: "Navigation",
+        opens: page[0]!.toUpperCase() + page.slice(1),
+        group: "navigation" as const,
         scope: "route" as const,
         enabled: true,
         danger: false,
       },
-      execute: () => selectDestination(destination),
+      execute: () => selectMainPage(page),
     })),
   ]);
   const executePaletteCommand = (id: string) => {
@@ -2740,7 +3517,7 @@ export function App(props: {
         ? "Skills"
         : section[0]!.toUpperCase() + section.slice(1);
   const readerTabLabel = (tab: import("./types").ReaderState["tab"]) =>
-    tab === "skill" ? "SKILL.md" : tab === "resources" ? "Resources" : "Details";
+    tab === "skill" ? "SKILL.md" : tab === "resources" ? "Resources" : "Settings";
   const routeTargetLabel = (target: Pick<RouteTarget, "destination" | "section">) =>
     target.destination === "workspace"
       ? `Workspace > ${sectionTitle(target.section)}`
@@ -2915,8 +3692,8 @@ export function App(props: {
   };
   const scopeMenuRecord = (): CommandRecord => ({
     id: "shell.scope",
-    verb: `${layout.width() < compactControlsBelow ? "" : "Scope: "}${topOptions().find((option) => option.value === route.snapshot().destination)!.label} ▾`,
-    destination: "Choose Workspace or a configuration scope",
+    verb: `${layout.width() < compactControlsBelow ? "" : "Scope: "}${topOptions().find((option) => option.value === route.snapshot().destination)?.label ?? "Global"} ▾`,
+    destination: "Choose a configuration scope",
     scope: "shell",
     keys: ["enter"],
     enabled: true,
@@ -2926,15 +3703,31 @@ export function App(props: {
     validSections(context).map((value) => ({
       label: sectionTitle(value),
       compactLabel:
-        value === "collections"
-          ? "Cols"
-          : value === "config-sources"
-            ? "Configs"
-            : value === "integrations"
-              ? "Agents"
-              : sectionTitle(value),
+        value === "config-sources"
+          ? "Configs"
+          : value === "integrations"
+            ? "Agents"
+            : sectionTitle(value),
       value,
     }));
+  const mainPage = (): MainPage => {
+    return route.snapshot().current.page;
+  };
+  const selectMainPage = (page: MainPage) => {
+    if (page === "settings") {
+      route.switchContext("global", "local-nav");
+      if (configState.section("global") === "integrations")
+        route.switchSection("sources", "local-nav");
+    } else if (page === "agent") {
+      if (route.snapshot().destination !== "workspace")
+        route.switchContext("workspace", "local-nav");
+      route.switchSection("agent", "local-nav");
+    } else {
+      if (route.snapshot().destination !== "workspace")
+        route.switchContext("workspace", "local-nav");
+      selectSection(page);
+    }
+  };
   const processStatus = createMemo<
     | {
         readonly label: string;
@@ -3039,7 +3832,7 @@ export function App(props: {
             {(layout.width() >= compactControlsBelow ||
               (layout.width() >= 64 && layout.width() < stackedNavigationBelow)) &&
             processStatus()?.source
-              ? ` · ${processStatus()!.source}`
+              ? ` (${processStatus()!.source})`
               : ""}
           </text>
         }
@@ -3149,10 +3942,10 @@ export function App(props: {
     const useChoiceHint =
       target?.id === "collection-use-values"
         ? overlaySession().phase === "cancelling"
-          ? { full: "Cancelling · selection locked", short: "Cancelling" }
+          ? { full: "Cancelling. Selection locked.", short: "Cancelling" }
           : overlaySession().phase === "preview"
-            ? { full: "Reviewing · selection locked", short: "Reviewing" }
-            : { full: "↑↓ Collections · Space/Enter check", short: "Space/Enter check" }
+            ? { full: "Reviewing. Selection locked.", short: "Reviewing" }
+            : { full: "↑↓ Collections  Space/Enter check", short: "Space/Enter check" }
         : undefined;
     const mode: InteractionMode =
       target instanceof InputRenderable
@@ -3171,8 +3964,8 @@ export function App(props: {
         mode: "browse",
         width: hintWidth(),
         browseHint: {
-          full: `←→ actions · Enter ${command?.verb ?? "press"} · Esc row`,
-          short: "←→ actions · Esc row",
+          full: `←→ actions  Enter ${command?.verb ?? "press"}  Esc row`,
+          short: "←→ actions  Esc row",
         },
       });
     return keyboardGuidance({
@@ -3194,43 +3987,50 @@ export function App(props: {
         useChoiceHint ??
         (filter
           ? target?.id === "skills-filter-dimensions"
-            ? { full: "↑↓ dimension · Enter options", short: "Enter options" }
-            : { full: "↑↓ option · Enter apply · / search", short: "Enter apply · / search" }
+            ? { full: "↑↓ dimension  Enter options", short: "Enter options" }
+            : { full: "↑↓ option  Enter apply  / search", short: "Enter apply  / search" }
           : treeTarget?.id === "collection-browser"
             ? {
-                full: "↑↓ Collections · ←→ level · Enter contents · / search",
-                short: "Enter contents · ←→ level",
+                full: "↑↓ Collections  ←→ level  Enter contents  / search",
+                short: "Enter contents  ←→ level",
               }
             : treeBrowser
               ? exposureRow?.kind === "skill"
                 ? exposureRow.availability.status === "available"
-                  ? { full: "↑↓ nodes · Enter read · ← parent", short: "Enter read" }
-                  : { full: "Unavailable · ↑↓ nodes · ← parent", short: "Unavailable" }
+                  ? { full: "↑↓ nodes  Enter read  ← parent", short: "Enter read" }
+                  : { full: "Unavailable. Use ↑↓ to browse.", short: "Unavailable" }
                 : treeTarget?.id === "collection-filter-tree" && !collection
-                  ? { full: "↑↓ nodes · Enter Skills", short: "Enter Skills" }
+                  ? { full: "↑↓ nodes  Enter Skills", short: "Enter Skills" }
                   : treeRow && !treeRow.expandable
-                    ? { full: "No children · ↑↓ nodes · ← parent", short: "No children" }
+                    ? { full: "No children. Use ↑↓ to browse.", short: "No children" }
                     : {
-                        full: `↑↓ nodes · Enter ${treeExpanded ? "collapse" : "expand"} · ←→ level`,
+                        full: `↑↓ nodes  Enter ${treeExpanded ? "collapse" : "expand"}  ←→ level`,
                         short: `Enter ${treeExpanded ? "collapse" : "expand"}`,
                       }
               : owner === "collection-relationships" &&
-                  collectionsState.tab(collectionsState.selected() ?? "") === "entries"
+                  collectionsState.tab(collectionsState.selected() ?? "") === "members"
                 ? {
-                    full: "Enter open · → actions · Space check origins",
-                    short: "→ actions · Space check",
+                    full: "Enter open  → actions  Space check",
+                    short: "Enter open  Space check",
                   }
                 : owner === "collection-relationships"
-                  ? { full: "Enter manage · → actions", short: "→ actions" }
+                  ? { full: "Enter manage  → actions", short: "→ actions" }
                   : skillWorkspace() && owner === "browser"
-                    ? { full: "Enter read · / filter · Space check", short: "Enter read" }
+                    ? { full: "Enter read  / filter  Space check", short: "Enter read" }
                     : undefined),
       modal: !!overlayKind() || !!operation.task(),
       modalBack: filter && target?.id === "skills-filter-search" ? "options" : "close",
     });
   });
   const selectDestination = (destination: Destination) => {
+    const section = route.snapshot().current.section;
     route.switchContext(destination, "top-nav");
+    if (
+      destination !== "workspace" &&
+      section !== "integrations" &&
+      validSections(destination).includes(section)
+    )
+      route.switchSection(section, "top-nav");
     setTransition(
       `Opened ${destination === "workspace" ? "Workspace" : `${destination[0]!.toUpperCase()}${destination.slice(1)} Config`}`,
     );
@@ -3239,7 +4039,7 @@ export function App(props: {
     const destination = route.snapshot().destination;
     return destination === "workspace" ? "global" : destination;
   };
-  const selectSection = (section: Section) => {
+  const selectSection = (section: Section, owner: FocusOwner = "local-nav") => {
     cancelPendingShellFocus();
     const destination = route.snapshot().destination;
     if (destination === "workspace" && section === "updates") {
@@ -3249,7 +4049,7 @@ export function App(props: {
     }
     if (destination !== "workspace")
       configState.selectSection(destination, section as ConfigSection);
-    route.switchSection(section, "local-nav");
+    route.switchSection(section, owner);
     const routeRevision = route.snapshot().revision;
     const revision = shellFocusRevision;
     const listener = () => {
@@ -3261,10 +4061,10 @@ export function App(props: {
         current.destination !== destination ||
         current.current.section !== section ||
         current.current.surface !== "browser" ||
-        focus.desired() !== "local-nav"
+        focus.desired() !== owner
       )
         return;
-      focusRegistry.applyFocus("local-nav");
+      focusRegistry.applyFocus(owner);
     };
     pendingShellFocus = {
       revision,
@@ -3274,65 +4074,6 @@ export function App(props: {
       listener,
     };
     renderer.once("frame", listener);
-  };
-  const shellNavigationRecord = (
-    scope: "context" | "section",
-    direction: "previous" | "next",
-  ): CommandRecord => {
-    const values =
-      scope === "context" ? destinations : validSections(route.snapshot().current.context);
-    const current =
-      scope === "context" ? route.snapshot().current.context : route.snapshot().current.section;
-    const index = values.findIndex((value) => value === current);
-    const target =
-      values[
-        Math.max(0, Math.min(values.length - 1, index + (direction === "previous" ? -1 : 1)))
-      ]!;
-    const label =
-      scope === "context"
-        ? target === "workspace"
-          ? "Workspace"
-          : `${target[0]!.toUpperCase()}${target.slice(1)} Config`
-        : sectionTitle(target as Section);
-    return {
-      id: `${scope}.${direction}`,
-      keys: [direction === "previous" ? "left" : "right"],
-      verb:
-        direction === "previous"
-          ? `Previous ${scope === "context" ? "Context" : "Section"}`
-          : `Next ${scope === "context" ? "Context" : "Section"}`,
-      destination: label,
-      scope: "shell",
-      enabled: true,
-      danger: false,
-    };
-  };
-  const commitShellNavigation = (
-    scope: "context" | "section",
-    target: Destination | Section,
-    record?: CommandRecord,
-  ) => {
-    if (!record) {
-      if (scope === "context") {
-        requestFocus("local-nav");
-        queueMicrotask(() => {
-          if (!focus.apply()) renderer.once("frame", () => focus.apply());
-        });
-      }
-      return;
-    }
-    const direction = record.id === `${scope}.previous` ? "previous" : "next";
-    const expected = shellNavigationRecord(scope, direction);
-    if (
-      record.id !== expected.id ||
-      record.scope !== expected.scope ||
-      record.destination !== expected.destination ||
-      record.keys[0] !== expected.keys[0]
-    )
-      return;
-    if (scope === "context") selectDestination(target as Destination);
-    else selectSection(target as Section);
-    setTransition(`${record.verb}: ${record.destination}`);
   };
   return (
     <Show
@@ -3358,34 +4099,15 @@ export function App(props: {
             <RouteShell
               mode={layout.mode()}
               columns={layout.width()}
+              compactObject={
+                layout.width() < 80 &&
+                route.snapshot().destination === "workspace" &&
+                (workspaceState.narrowLevel() === "detail" ||
+                  route.snapshot().current.surface === "reader")
+              }
               slots={{
                 scopeControls: () => (
                   <>
-                    <box
-                      width={layout.width() < compactControlsBelow ? 13 : 20}
-                      height={1}
-                      flexShrink={0}
-                    >
-                      <CommandControl
-                        id="shell-scope-select"
-                        record={scopeMenuRecord()}
-                        keyboard={false}
-                        register={(target) => {
-                          const unbind = focusRegistry.register("top-nav", target);
-                          const unregister = registerPageCommand(
-                            { ...scopeMenuRecord(), verb: "Change Scope" },
-                            "top-nav",
-                            "shell-scope-select",
-                            openScopeSelection,
-                          );
-                          return () => {
-                            unbind();
-                            unregister();
-                          };
-                        }}
-                        execute={openScopeSelection}
-                      />
-                    </box>
                     <box width={layout.width() < 120 ? 9 : 16} height={1} flexShrink={0}>
                       <CommandControl
                         id="shell-more-actions"
@@ -3424,6 +4146,7 @@ export function App(props: {
                         id="route-back"
                         record={back.record}
                         label="Back"
+                        shortcutHint="Esc"
                         register={bindRouteBack}
                         keyboard={false}
                         execute={() => executeVisibleReturn(back)}
@@ -3439,36 +4162,170 @@ export function App(props: {
                       </text>
                     </Show>
                     <box flexGrow={1} flexBasis={0} minWidth={0} height={1}>
-                      {/* Scope replaces the native tab set, never its viewport. */}
-                      <Show when={route.snapshot().destination} keyed>
-                        {(context) => (
-                          <SectionTabs
-                            id={
-                              context === "workspace" ? "shell-section" : `shell-section-${context}`
-                            }
-                            panelId={
-                              context === "workspace" ? "shell-section" : `shell-section-${context}`
-                            }
-                            owner="local-nav"
-                            compact={layout.width() < 132}
-                            options={sectionOptions(context)}
-                            value={route.snapshot().current.section}
-                            focusRegistry={focusRegistry}
-                            commandForDirection={(direction) =>
-                              shellNavigationRecord("section", direction)
-                            }
-                            onNavigate={(section, record) =>
-                              commitShellNavigation("section", section, record)
-                            }
-                            onActivate={() => requestFocus("browser")}
+                      <Show
+                        when={layout.width() >= 100}
+                        fallback={
+                          <CommandControl
+                            id="shell-pages-select"
+                            record={{
+                              id: "shell.pages",
+                              verb: "Pages ▾",
+                              destination: "Choose page",
+                              object: "Pages",
+                              scopeText: "Main navigation",
+                              opens: "Pages chooser",
+                              group: "navigation",
+                              scope: "shell",
+                              keys: ["enter"],
+                              enabled: true,
+                              danger: false,
+                            }}
+                            register={(target) => {
+                              const releaseCommand = focusRegistry.register(
+                                "command:shell.pages",
+                                target,
+                              );
+                              const releaseNavigation = focusRegistry.register("local-nav", target);
+                              return () => {
+                                releaseNavigation();
+                                releaseCommand();
+                              };
+                            }}
+                            execute={openPagesSelection}
                           />
-                        )}
+                        }
+                      >
+                        <SectionTabs
+                          id="shell-section"
+                          panelId="shell-section"
+                          owner="local-nav"
+                          compact={layout.width() < 132}
+                          options={mainPages.map((value) => ({
+                            value,
+                            label: value[0]!.toUpperCase() + value.slice(1),
+                            compactLabel: value[0]!.toUpperCase() + value.slice(1),
+                          }))}
+                          value={mainPage()}
+                          focusRegistry={focusRegistry}
+                          onNavigate={(page) => selectMainPage(page)}
+                          onActivate={() => requestFocus("browser")}
+                        />
                       </Show>
                     </box>
                   </box>
                 ),
                 content: () => (
-                  <>
+                  <box flexDirection="column" flexGrow={1} minHeight={0}>
+                    <Show when={mainPage() === "settings"}>
+                      <box height={1} flexShrink={0}>
+                        <CommandControl
+                          id="shell-scope-select"
+                          record={scopeMenuRecord()}
+                          keyboard={false}
+                          register={(target) => {
+                            const unbind = focusRegistry.register("top-nav", target);
+                            const unregister = registerPageCommand(
+                              { ...scopeMenuRecord(), verb: "Change Scope" },
+                              "top-nav",
+                              "shell-scope-select",
+                              openScopeSelection,
+                            );
+                            return () => {
+                              unbind();
+                              unregister();
+                            };
+                          }}
+                          execute={openScopeSelection}
+                        />
+                      </box>
+                    </Show>
+                    <Show
+                      when={
+                        mainPage() === "collections" && Object.values(renameOutcomes()).length > 0
+                      }
+                    >
+                      <For each={Object.values(renameOutcomes())}>
+                        {(outcome) => {
+                          const key = encodeURIComponent(outcome.review.intent.collection);
+                          const id = `rename-outcome-resume-${key}`;
+                          const record = modalCommand(
+                            `rename.resume.${key}`,
+                            `Resume rename ${outcome.review.intent.collection}`,
+                            "Inspect the retained rename outcome",
+                            true,
+                          );
+                          const owner: FocusOwner = `command:${record.id}`;
+                          const execute = () => openSession("form", outcome);
+                          return (
+                            <box id={`rename-outcome-${key}-pane`} height={1} flexShrink={0}>
+                              <CommandControl
+                                id={id}
+                                record={record}
+                                register={(target) => {
+                                  const releaseFocus = focusRegistry.register(owner, target);
+                                  const releaseCommand = registerPageCommand(
+                                    record,
+                                    owner,
+                                    id,
+                                    execute,
+                                  );
+                                  return () => {
+                                    releaseFocus();
+                                    releaseCommand();
+                                  };
+                                }}
+                                execute={execute}
+                              />
+                            </box>
+                          );
+                        }}
+                      </For>
+                    </Show>
+                    <Show when={mainPage() === "agent"}>
+                      <SectionTabs
+                        id="agent-view"
+                        panelId="agent-view"
+                        owner="skills-views"
+                        options={
+                          [
+                            { value: "catalog", label: "Catalog" },
+                            { value: "global", label: "Global connections" },
+                            { value: "project", label: "Project connections" },
+                          ] as const
+                        }
+                        value={
+                          route.snapshot().destination === "workspace"
+                            ? "catalog"
+                            : configDestination() === "global"
+                              ? "global"
+                              : "project"
+                        }
+                        focusRegistry={focusRegistry}
+                        onNavigate={(view) => {
+                          if (view === "catalog") {
+                            route.switchContext("workspace", "browser");
+                            route.switchSection("agent", "browser");
+                          } else {
+                            route.switchContext(view, "browser");
+                            route.switchSection("integrations", "browser");
+                          }
+                        }}
+                      />
+                    </Show>
+                    <Show when={mainPage() === "settings"}>
+                      <SectionTabs
+                        id="settings-section"
+                        panelId="settings-section"
+                        owner="skills-views"
+                        options={sectionOptions(configDestination()).filter(
+                          (item) => item.value !== "integrations",
+                        )}
+                        value={configState.section(configDestination())}
+                        focusRegistry={focusRegistry}
+                        onNavigate={(section) => selectSection(section, "skills-views")}
+                        onActivate={() => requestFocus("browser")}
+                      />
+                    </Show>
                     {route.snapshot().destination === "workspace" ? (
                       <WorkspacePage
                         surface={route.snapshot().current.surface}
@@ -3496,6 +4353,38 @@ export function App(props: {
                         onRequestFocus={requestFocus}
                         executeCommand={executePageCommand}
                         actions={actions()}
+                        hasReplacementTask={(source) => !!replacementTasks()[source]}
+                        missingReplacementSources={Object.keys(replacementTasks()).filter(
+                          (source) =>
+                            !projection
+                              .workspace()
+                              ?.effective.sources.some((item) => item.id === source),
+                        )}
+                        onReplaceSource={(source) => {
+                          const existing = replacementTasks()[source];
+                          if (existing) {
+                            openSession("form", existing);
+                            return;
+                          }
+                          const addresses = (projection.workspace()?.installedSkills ?? [])
+                            .filter((skill) => skill.address.source === source)
+                            .map((skill) => ({ ...skill.address }));
+                          const oldOwner = projection
+                            .workspace()
+                            ?.configs.flatMap((config) => config.direct.sources)
+                            .find((item) => item.id === source)?.ref.owner;
+                          openSession("form", {
+                            family: "source-registration",
+                            kind: "source",
+                            replacement: {
+                              family: "source-replacement",
+                              oldSource: source,
+                              oldOwner,
+                              addresses,
+                              receipt: [],
+                            },
+                          });
+                        }}
                         onSourceRelationship={(relationship: string) => {
                           const source = projection
                             .workspace()
@@ -3511,7 +4400,7 @@ export function App(props: {
                                 section: "sources",
                                 selection: source.id,
                               },
-                              "command:source.skills",
+                              physicalFocusOwner() ?? route.snapshot().current.focus,
                             );
                           } else if (relationship === "config-source" && source.contribution) {
                             routeSource({
@@ -3585,7 +4474,7 @@ export function App(props: {
                             { kind: "source", source },
                             workspace,
                           );
-                          if (state) void effects.submitUpdates(state.scope.addresses);
+                          if (state) openUpdates({ kind: "source", source }, true);
                         }}
                         onUpdatesStop={() => effects.stopUpdates()}
                         onUpdatesStopChecking={() => effects.stopUpdateChecks()}
@@ -3604,13 +4493,13 @@ export function App(props: {
                               section: "sources",
                               selection: source,
                               surface: "inspector",
-                              focus: sourceInspectorFocus(binding),
+                              focus: sourceInspectorFocus(),
                             },
                             () => {
                               workspaceState.land("sources", source);
                               workspaceState.selectSource(source);
                               workspaceState.clearSourceUpdatesView();
-                              workspaceState.patchSourceBrowseView(source, { detailsOpen: true });
+                              workspaceState.patchSourceBrowseView(source, { tab: "settings" });
                               workspaceState.openDetail();
                             },
                           );
@@ -3622,6 +4511,10 @@ export function App(props: {
                         environment={environment}
                         onBrowseSources={() => {
                           const sources = projection.workspace()?.effective.sources ?? [];
+                          if (!sources.length) {
+                            void dispatchAction("add-source");
+                            return;
+                          }
                           routeSource({
                             destination: "workspace",
                             section: "sources",
@@ -3650,11 +4543,7 @@ export function App(props: {
                                 section: "sources",
                                 selection: source,
                                 surface: "inspector",
-                                focus: sourceInspectorFocus(
-                                  projection
-                                    .workspace()!
-                                    .effective.sources.find((item) => item.id === source)!,
-                                ),
+                                focus: sourceInspectorFocus(),
                               },
                               () => workspaceState.openDetail(),
                             );
@@ -3899,9 +4788,58 @@ export function App(props: {
                           );
                         }}
                         onCollectionRelationship={(intent: CollectionRelationshipIntent) => {
-                          if (intent.kind === "collection-info") {
-                            collectionsState.openCollectionInfo(intent.collection);
-                            requestFocus("inspector");
+                          if (intent.kind === "collection-rename") {
+                            const existing = renameOutcomes()[intent.collection];
+                            if (existing) {
+                              openSession("form", existing);
+                              return;
+                            }
+                            openSession("form", {
+                              family: "collection-draft",
+                              draft: {
+                                kind: "collection-rename",
+                                collection: intent.collection,
+                                target: "",
+                              },
+                            });
+                            return;
+                          }
+                          if (intent.kind === "collection-use-level") {
+                            beginCollectionUse(intent.level);
+                            return;
+                          }
+                          if (intent.kind === "collection-remove-declaration") {
+                            const owner = intent.owner;
+                            const declared = projection
+                              .workspace()
+                              ?.configs.find((config) => config.level === owner.level)
+                              ?.direct.collections.find(
+                                (collection) => collection.id === intent.collection,
+                              )?.owner;
+                            if (
+                              owner.contribution ||
+                              !declared ||
+                              declared.file !== owner.file ||
+                              declared.pointer !== owner.pointer
+                            ) {
+                              operation.report({
+                                code: "TRANSACTION_CONFLICT",
+                                severity: "warning",
+                                message:
+                                  "The Collection declaration changed. Refresh and review its owner again.",
+                              });
+                              return;
+                            }
+                            openSession("confirm", { family: "collection-review" });
+                            void previewCollection(
+                              {
+                                kind: "collection-removal",
+                                level: owner.level,
+                                collection: intent.collection,
+                              },
+                              undefined,
+                              owner,
+                            );
                             return;
                           }
                           if (intent.kind === "collection-membership-inspect") {
@@ -4157,40 +5095,11 @@ export function App(props: {
                               : undefined;
                           if (!collectionView) return;
                           const plan = collectionRemovalPlan(collectionView, rows);
-                          if (plan.ownerGroups.length > 1) {
-                            operation.start({
-                              id: "membership-impact-task",
-                              title: "Membership impact requires multiple owners",
-                              cancellationRequested: false,
-                              dismissible: true,
-                              semanticOwner: {
-                                kind: "collection",
-                                id: collection,
-                              },
-                              details: [
-                                `Collection: ${collection}`,
-                                ...plan.ownerGroups.map(
-                                  (group) =>
-                                    `Owner: ${group.owner.level} ${group.owner.file} ${group.owner.pointer}`,
-                                ),
-                                ...rows.map(
-                                  (row) =>
-                                    `Selected: ${row.name} ${row.address.source}/${row.address.path}`,
-                                ),
-                                ...plan.explanations,
-                                "No changes were applied",
-                              ],
-                            });
-                            if (layout.narrow()) workspaceState.openTask();
-                            queueMicrotask(() =>
-                              renderer.root.findDescendantById("membership-impact-task")?.focus(),
-                            );
-                            return;
-                          }
                           openSession("form", {
                             family: "membership-removal-plan",
                             plan,
                           });
+                          if (plan.ownerGroups.length === 1) void previewRemovalLocation(0);
                         }}
                         onProblem={(intent, key) => {
                           if (intent.kind === "installed-skill") {
@@ -4312,8 +5221,8 @@ export function App(props: {
                                 destination: "workspace",
                                 section: "sources",
                                 selection: skill.owner.source,
-                                focus: sourceInspectorFocus(skill.source),
-                                returnFocus: `command:reader.relationship.${relationship}`,
+                                focus: sourceInspectorFocus(),
+                                returnFocus: "command:reader.more",
                                 handoff,
                               });
                           } else if (relationship === "config") {
@@ -4346,20 +5255,12 @@ export function App(props: {
                             });
                           else if (relationship.startsWith("collection:")) {
                             const collection = relationship.slice("collection:".length);
-                            const direct = skill.collections
-                              .find((item) => item.id === collection)
-                              ?.paths.find((path) => path.kind === "direct");
-                            const owner = direct?.kind === "direct" ? direct.owner : undefined;
-                            if (owner)
+                            if (skill.collections.some((item) => item.id === collection))
                               routeRelationship({
-                                destination: owner.contribution
-                                  ? owner.contribution.configSource.level
-                                  : owner.level,
-                                section: owner.contribution ? "config-sources" : "collections",
-                                selection: owner.contribution
-                                  ? owner.contribution.configSource.pointer
-                                  : collection,
-                                returnFocus: `command:reader.relationship.${relationship}`,
+                                destination: "workspace",
+                                section: "collections",
+                                selection: collection,
+                                returnFocus: "command:reader.more",
                               });
                           } else if (relationship === "selectors")
                             void dispatchAction(
@@ -4431,7 +5332,7 @@ export function App(props: {
                         }}
                       />
                     )}
-                  </>
+                  </box>
                 ),
                 commandStatus: () => (
                   <box height={1} width="100%" minWidth={0} flexDirection="row">
@@ -4515,6 +5416,40 @@ export function App(props: {
               onClose={closeOverlay}
             />
             <Dialog
+              open={sessionPayload()?.family === "pages-selection"}
+              onOpenChange={(open) => {
+                if (!open && sessionPayload()?.family === "pages-selection") closeOverlay();
+              }}
+            >
+              <Show when={sessionPayload()?.family === "pages-selection"}>
+                <DialogContent
+                  id="shell-pages-popup"
+                  anchor={() => renderer.root.findDescendantById("shell-pages-select")}
+                  width={Math.min(28, layout.width() - 2)}
+                  maxWidth={28}
+                  backdropColor="transparent"
+                >
+                  <DataList
+                    id="shell-pages-choices"
+                    focused
+                    height={6}
+                    showDescription={false}
+                    options={mainPages.map((value) => ({
+                      name: value[0]!.toUpperCase() + value.slice(1),
+                      description: "",
+                      value,
+                    }))}
+                    selectedIndex={mainPages.indexOf(mainPage())}
+                    onSelect={(_index, option) => {
+                      if (!option) return;
+                      closeSession(overlaySession().revision, false);
+                      selectMainPage(option.value);
+                    }}
+                  />
+                </DialogContent>
+              </Show>
+            </Dialog>
+            <Dialog
               open={sessionPayload()?.family === "scope-selection"}
               onOpenChange={(open) => {
                 if (!open && sessionPayload()?.family === "scope-selection") closeOverlay();
@@ -4582,6 +5517,7 @@ export function App(props: {
             </Show>
             {installedRebindPayload() && (
               <RebindSourceOverlay
+                address={installedRebindPayload()!.address}
                 sources={installedRebindPayload()!.sources}
                 onClose={closeOverlay}
                 onSelect={(owner, ownerPath) => {
@@ -4597,6 +5533,7 @@ export function App(props: {
                     void previewRepairInstalled(
                       { kind: "rebind", address, owner, ownerPath },
                       surface.sourceRemoval,
+                      surface.replacement,
                     );
                   else
                     void previewInstalled({
@@ -4608,6 +5545,103 @@ export function App(props: {
                 }}
               />
             )}
+            <Show when={payload("source-replacement")}>
+              {(replacement) => (
+                <Show
+                  when={replacement().review}
+                  keyed
+                  fallback={
+                    <SourceReplacementOverlay
+                      {...replacement()}
+                      pending={overlaySession().phase !== "review"}
+                      onDraft={(selectedAddress, targetPath) =>
+                        setSessionPayload({ ...replacement(), selectedAddress, targetPath })
+                      }
+                      onClose={closeOverlay}
+                      onInspect={() => void inspectReplacement(replacement())}
+                      onAcquire={() => {
+                        const current = replacement();
+                        if (current.newSource)
+                          void discoverSource(current.newSource, undefined, current);
+                      }}
+                      onRemove={() => void previewReplacementRemoval(replacement())}
+                      onPreview={(address, ownerPath) => {
+                        const current = replacement();
+                        if (current.newSource)
+                          void previewReplacement(current, {
+                            kind: "rebind",
+                            address,
+                            owner: current.newSource,
+                            ownerPath,
+                          });
+                      }}
+                    />
+                  }
+                >
+                  {(review) => (
+                    <InstalledSkillReviewOverlay
+                      review={review}
+                      pending={overlaySession().phase === "executing"}
+                      error={operation.problem()}
+                      onResolveMembership={() => {}}
+                      onCancel={() => {
+                        const current = replacement();
+                        if (overlaySession().phase !== "review") closeOverlay();
+                        else {
+                          if (current.review) effects.discardInstalledReview(current.review);
+                          setSessionPayload({ ...current, review: undefined });
+                        }
+                      }}
+                      onPreviewAgain={() => {
+                        const current = replacement();
+                        if (current.request) void previewReplacement(current, current.request);
+                      }}
+                      onConfirm={() => void applyReplacement(replacement())}
+                    />
+                  )}
+                </Show>
+              )}
+            </Show>
+            <Show when={payload("rename-outcome")}>
+              {(outcome) => (
+                <ModalShell>
+                  <ModalBody
+                    controls={modalControls}
+                    header={
+                      <text>{`Rename ${outcome().review.intent.collection} → ${outcome().review.intent.target}`}</text>
+                    }
+                    footer={
+                      <box flexDirection="row" gap={1}>
+                        <ModalCommand
+                          id="rename-outcome-inspect"
+                          controls={modalControls}
+                          record={modalCommand(
+                            "rename.inspect",
+                            "Inspect / refresh",
+                            "Verify reviewed effects",
+                            overlaySession().phase === "review",
+                          )}
+                          execute={() => void inspectRename(outcome())}
+                        />
+                        <ModalCommand
+                          id="rename-outcome-close"
+                          controls={modalControls}
+                          record={modalCommand(
+                            "rename.close",
+                            "Close",
+                            "Keep outcome for inspection",
+                            overlaySession().phase === "review",
+                          )}
+                          execute={closeOverlay}
+                        />
+                      </box>
+                    }
+                  >
+                    <text wrapMode="word">{outcome().message}</text>
+                  </ModalBody>
+                </ModalShell>
+              )}
+            </Show>
             <Show when={payload("collection-content")}>
               {(content) => (
                 <CollectionContentOverlay
@@ -4649,26 +5683,26 @@ export function App(props: {
                 <ModalShell>
                   <ModalBody controls={modalControls}>
                     <text>{`Installed ${result().addresses.length} Skills from ${result().source}`}</text>
+                    <For each={result().addresses}>
+                      {(address) => (
+                        <text wrapMode="word">{`${address.source}/${address.path}`}</text>
+                      )}
+                    </For>
                     <ModalCommand
                       id="installed-result-view"
                       controls={modalControls}
                       initialFocus
                       record={modalCommand(
                         "installed-result.view",
-                        "View installed Skills",
-                        result().source,
+                        "View first installed Skill",
+                        result().addresses[0]
+                          ? `${result().addresses[0]!.source}/${result().addresses[0]!.path}`
+                          : result().source,
                       )}
                       execute={() => {
-                        const source = result().source;
                         const first = result().addresses[0];
                         closeSession();
-                        openInstalledSkillsFromSource(
-                          source,
-                          { destination: route.snapshot().destination, section: "sources" },
-                          "command:source.skills",
-                          "inspector",
-                          first,
-                        );
+                        if (first) openReaderSkill(first, "skill");
                       }}
                     />
                     <ModalCommand
@@ -4916,11 +5950,11 @@ export function App(props: {
                         collectionsState.clearFilters();
                         collectionsState.select(target.collection);
                         collectionsState.closeInspector();
-                        collectionsState.selectTab(target.collection, "entries");
+                        collectionsState.selectTab(target.collection, "members");
                         if (additions[0])
                           collectionsState.selectRow(
                             target.collection,
-                            "entries",
+                            "members",
                             collectionMemberKey(additions[0]),
                           );
                         routeSource({
@@ -4943,35 +5977,29 @@ export function App(props: {
             </Show>
             {overlayKind() === "form" && membershipRemovalPlan() && (
               <MembershipRemovalPlanOverlay
-                collection={membershipRemovalPlan()!.plan.collection}
-                lines={[
-                  ...membershipRemovalPlan()!.plan.removals.map(
-                    (row) => `Remove: ${row.name} ${row.address.source}/${row.address.path}`,
-                  ),
-                  ...membershipRemovalPlan()!.plan.explanations,
-                ]}
-                executableCount={membershipRemovalPlan()!.plan.removals.length}
-                pending={overlaySession().phase === "preview"}
+                plan={membershipRemovalPlan()!.plan}
+                ownerIndex={membershipRemovalPlan()!.ownerIndex}
+                review={membershipRemovalPlan()!.review}
+                pending={
+                  overlaySession().phase === "preview" || overlaySession().phase === "executing"
+                }
                 error={operation.problem()}
                 onCancel={closeOverlay}
-                onContinue={() => {
-                  const plan = membershipRemovalPlan()!.plan;
-                  const owner = plan.ownerGroups[0]?.owner;
-                  if (!owner || !plan.executable) return;
-                  void previewCollection(
-                    {
-                      kind: "membership-batch",
-                      level: owner.level,
-                      collection: plan.collection,
-                      expectedOwner: owner,
-                      additions: [],
-                      removals: plan.removals.map((row) => ({
-                        name: row.entryName,
-                        expectedAddress: row.address,
-                      })),
-                    },
-                    plan.removals.map((row) => row.key),
-                  );
+                onSelect={(index) => void previewRemovalLocation(index)}
+                onConfirm={async () => {
+                  const current = membershipRemovalPlan();
+                  const group = current?.plan.ownerGroups[current.ownerIndex ?? 0];
+                  if (!current?.review || !group) return;
+                  const begun = beginSession(overlaySession().revision, "executing");
+                  const complete = await effects.confirmCollection(current.review);
+                  if (!sessionMatches(begun, "form", "membership-removal-plan")) return;
+                  if (complete) {
+                    collectionsState.clearOrigins(
+                      current.plan.collection,
+                      group.rows.flatMap((row) => (row.key ? [row.key] : [])),
+                    );
+                    closeSession(begun.revision);
+                  } else settleFailedExecution(begun);
                 }}
               />
             )}
@@ -5068,6 +6096,55 @@ export function App(props: {
                   }}
                   onSubmit={(value, discover) => {
                     const registration = sourceRegistration()!;
+                    if (registration.replacement) {
+                      const replacement = registration.replacement;
+                      if (value.id === replacement.oldSource) {
+                        operation.report({
+                          code: "INVALID_ARGUMENT",
+                          severity: "warning",
+                          message: "Replacement requires a distinct Source ID.",
+                        });
+                        return;
+                      }
+                      const registrationFile = projection
+                        .workspace()
+                        ?.configs.find((config) => config.level === value.level)?.file.file;
+                      const begun = beginSession(overlaySession().revision, "executing");
+                      void effects.registerReplacementSource(value).then((outcome) => {
+                        if (!sessionMatches(begun, "form", "source-registration")) return;
+                        const next: Extract<AppOverlayPayload, { family: "source-replacement" }> = {
+                          ...replacement,
+                          newSource: value.id,
+                          registration: value,
+                          registrationFile,
+                          registered: outcome.status === "applied",
+                          receipt:
+                            outcome.status === "applied"
+                              ? [
+                                  `Registered ${value.id}${outcome.workspace === "stale" ? " (workspace stale)" : ""}`,
+                                ]
+                              : [],
+                          uncertain:
+                            outcome.status === "uncertain"
+                              ? `Registration outcome unknown for ${value.id}. Inspect and refresh before retry.`
+                              : outcome.status === "applied" && outcome.workspace === "stale"
+                                ? "Workspace is stale. Inspect and refresh before continuing."
+                                : undefined,
+                        };
+                        if (
+                          outcome.status === "applied" &&
+                          outcome.workspace === "fresh" &&
+                          discover &&
+                          !overlaySession().dismissed
+                        ) {
+                          setReplacementTasks((tasks) => ({ ...tasks, [next.oldSource]: next }));
+                          void discoverSource(value.id, undefined, next);
+                        } else if (outcome.status === "applied" || outcome.status === "uncertain")
+                          openSession("form", next);
+                        else settleSession(begun.revision, begun.requestEpoch, "review");
+                      });
+                      return;
+                    }
                     const begun = beginSession(overlaySession().revision, "executing");
                     void effects
                       .registerSource({
@@ -5116,6 +6193,33 @@ export function App(props: {
                         else settleFailedExecution(begun);
                       });
                   }}
+                />
+              )}
+            </Show>
+            <Show
+              when={
+                collectionDraft()?.kind === "collection-rename"
+                  ? (collectionDraft() as Extract<CollectionDraft, { kind: "collection-rename" }>)
+                  : undefined
+              }
+            >
+              {(draft) => (
+                <CollectionRenameOverlay
+                  collection={draft().collection}
+                  target={draft().target}
+                  pending={overlaySession().phase === "preview"}
+                  error={operation.problem()}
+                  onChange={(target) => {
+                    const current = collectionDraftPayload();
+                    if (current?.draft.kind === "collection-rename")
+                      setSessionPayload({ ...current, draft: { ...current.draft, target } });
+                  }}
+                  onPreview={() => {
+                    const current = collectionDraft();
+                    if (current?.kind === "collection-rename")
+                      void previewCollection({ ...current, target: current.target.trim() });
+                  }}
+                  onCancel={closeOverlay}
                 />
               )}
             </Show>
@@ -5218,6 +6322,15 @@ export function App(props: {
                 review={collectionReview()!}
                 pending={overlaySession().phase === "executing"}
                 error={operation.problem()}
+                onPreviewAgain={
+                  collectionReview()?.kind === "collection-rename"
+                    ? () => {
+                        const current = collectionReview();
+                        if (current?.kind === "collection-rename")
+                          void previewCollection(current.intent);
+                      }
+                    : undefined
+                }
                 onCancel={closeOverlay}
                 onConfirm={() => void applyCollectionReview()}
               />
@@ -5434,8 +6547,13 @@ export function App(props: {
                     onCancel={closeOverlay}
                     onRepair={(action, address) => {
                       const current = removal;
+                      const replacement = sourceRemovalPayload()?.replacement;
                       if (action === "uninstall")
-                        void previewRepairInstalled({ kind: "uninstall", address }, current);
+                        void previewRepairInstalled(
+                          { kind: "uninstall", address },
+                          current,
+                          replacement,
+                        );
                       else {
                         const sources = projection
                           .workspace()
@@ -5447,12 +6565,14 @@ export function App(props: {
                             sources,
                             address,
                             sourceRemoval: current,
+                            replacement,
                           });
                         else
                           operation.report({
                             code: "SOURCE_NOT_FOUND",
                             severity: "warning",
-                            message: "No alternative Source is available for Rebind",
+                            message:
+                              "No other Source is available. Add a Source in Sources, then try Change Source again.",
                           });
                       }
                     }}
@@ -5463,7 +6583,7 @@ export function App(props: {
               {(selection) => (
                 <SourceSelectionOverlay
                   collection={selection().target?.collection}
-                  onBack={selection().target ? closeOverlay : undefined}
+                  onBack={selection().target || selection().replacement ? closeOverlay : undefined}
                   review={selection().review}
                   installed={
                     new Set(
@@ -5498,8 +6618,7 @@ export function App(props: {
                       closeOverlay();
                       return;
                     }
-                    effects.discardDiscovery(selection().review);
-                    closeSession();
+                    closeOverlay();
                   }}
                 />
               )}
@@ -5530,8 +6649,13 @@ export function App(props: {
               <SourceObservationOverlay
                 title="Discovering Skills"
                 onBack={
-                  sourceObservationPayload()!.target && overlaySession().phase === "review"
-                    ? () => openSession("form", sourceObservationPayload()!.target!)
+                  (sourceObservationPayload()!.target || sourceObservationPayload()!.replacement) &&
+                  overlaySession().phase === "review"
+                    ? () => {
+                        const current = sourceObservationPayload();
+                        if (current?.replacement) openSession("form", current.replacement);
+                        else if (current?.target) openSession("form", current.target);
+                      }
                     : undefined
                 }
                 source={sourceObservationPayload()!.intent.source}
@@ -5539,7 +6663,7 @@ export function App(props: {
                 error={operation.problem()}
                 onRetry={() => {
                   const current = sourceObservationPayload()!;
-                  void discoverSource(current.intent.source, current.target);
+                  void discoverSource(current.intent.source, current.target, current.replacement);
                 }}
                 onClose={closeOverlay}
               />

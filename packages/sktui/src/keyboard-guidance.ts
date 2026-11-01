@@ -15,8 +15,8 @@ export function keyboardGuidance(input: {
 }) {
   const modes: Record<InteractionMode, string> = {
     browse: "Enter open",
-    horizontal: "←→ move · Enter open",
-    scroll: "↑↓ scroll · PgUp/PgDn",
+    horizontal: "←→ move  Enter open",
+    scroll: "↑↓ scroll  PgUp/PgDn",
     edit: input.command ? `Enter ${input.command.verb}` : "Type text",
     command: input.command
       ? `${input.command.enabled ? "Enter" : "Unavailable:"} ${input.command.enabled ? input.command.verb : (input.command.disabledReason ?? input.command.verb)}`
@@ -28,17 +28,17 @@ export function keyboardGuidance(input: {
   const local =
     input.mode === "browse" && input.browseHint
       ? input.browseHint.full
-      : modes[input.mode] + (input.mode === "browse" && bindings.has("/") ? " · / filter" : "");
+      : modes[input.mode] + (input.mode === "browse" && bindings.has("/") ? "  / filter" : "");
   const global = input.modal
-    ? `Tab controls · Esc ${input.modalBack ?? "close"}`
+    ? `Tab controls  Esc ${input.modalBack ?? "close"}`
     : input.mode === "edit"
-      ? "Tab panels · Esc cancel"
-      : "Tab panels · Esc back · Ctrl+P Actions";
+      ? "Tab panels  Esc cancel"
+      : "Tab panels  Esc back  Ctrl+P Actions";
   const shortGlobal = input.modal
-    ? `Tab · Esc ${input.modalBack ?? "close"}`
+    ? `Tab  Esc ${input.modalBack ?? "close"}`
     : input.mode === "edit"
       ? "Esc cancel"
-      : "Tab · Esc · Ctrl+P Actions";
+      : "Tab  Esc  Ctrl+P Actions";
   const shortLocal =
     input.mode === "browse"
       ? (input.browseHint?.short ?? "Enter open")
@@ -50,7 +50,7 @@ export function keyboardGuidance(input: {
     : input.mode === "edit"
       ? "Esc cancel"
       : "^P Actions";
-  const compactGlobal = input.modal || input.mode === "edit" ? minimumGlobal : "Esc · ^P Actions";
+  const compactGlobal = input.modal || input.mode === "edit" ? minimumGlobal : "Esc  ^P Actions";
   const candidates: readonly (readonly [string, string])[] = [
     [local, global],
     ...(input.mode === "browse" && input.browseHint ? ([[local, shortGlobal]] as const) : []),

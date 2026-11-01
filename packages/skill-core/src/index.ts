@@ -1,6 +1,7 @@
 export { getWorkspace } from "./workspace/query";
 export * from "./collection/edit";
 export * from "./collection/preview";
+export * from "./collection/rename";
 export { inspectCollection } from "./collection/inspect";
 export * from "./collection/use";
 export { discoverSkills } from "./source/discover";
@@ -17,6 +18,7 @@ export {
 export { installSkills } from "./installed/install";
 export { uninstallSkills, previewUninstall } from "./installed/uninstall";
 export { rebindSkill, previewRebind } from "./installed/rebind";
+export { rebindImpactSchema } from "./installed/domain.schema";
 export { checkUpdate, getUpdateBaseline, previewUpdate, updateSkills } from "./installed/update";
 export {
   loadInstalledSkill,

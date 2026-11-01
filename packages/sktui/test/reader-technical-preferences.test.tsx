@@ -27,7 +27,7 @@ test("Reader cache keeps technical disclosure per address through selection and 
 
   owner.select(readerSecondAddress);
   expect(owner.current()?.detailsMetadataOpen).toBeUndefined();
-  owner.patch({ detailsManagementOpen: true });
+  owner.patch({ detailsDescriptionOpen: true });
   owner.restore(saved);
 
   expect(owner.current()).toMatchObject({
@@ -37,7 +37,7 @@ test("Reader cache keeps technical disclosure per address through selection and 
     detailsDescriptionOpen: true,
   });
   expect(owner.cached(readerSecondAddress)?.detailsMetadataOpen).toBeUndefined();
-  expect(owner.cached(readerSecondAddress)?.detailsManagementOpen).toBe(true);
+  expect(owner.cached(readerSecondAddress)?.detailsDescriptionOpen).toBe(true);
 });
 
 test("production App restores expanded technical details on exact relationship Back without leaking to another Skill", async () => {

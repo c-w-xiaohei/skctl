@@ -18,6 +18,7 @@ import {
   openAllInstalledSkills,
   openReaderTab,
   parsedEnter,
+  parsedEscape,
   selectedReaderTab,
   waitForReaderBody,
 } from "./reader-test-controls";
@@ -79,19 +80,19 @@ test("RENDER Reader names one Installed Skill and retains exact ownership across
     await openAllInstalledSkills(setup);
     await enterInstalledAddress(setup, readerAddress);
     await waitForReaderBody(setup, "needle in prose");
-    for (const [index, view] of ["SKILL.md", "Resources", "Details"].entries()) {
+    for (const [index, view] of ["Content", "Resources", "Settings"].entries()) {
       expectVisibleIdentity(setup, setup.captureCharFrame(), "guide");
       expect<number>(selectedReaderTab(setup)).toBe(index);
       expect(
         (live(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value,
       ).toBe(JSON.stringify([readerAddress.source, readerAddress.path]));
       expect(setup.captureCharFrame()).toContain(view);
-      if (view === "Details") {
+      if (view === "Settings") {
         await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
         expect(textIn(live(setup, "reader-details-summary"))).toContain("Address\nteam-main/guide");
         expect(setup.captureCharFrame()).toContain("team-main/guide");
       }
-      if (view !== "Details") {
+      if (view !== "Settings") {
         await openReaderTab(setup, (index + 1) as 1 | 2);
       }
     }
@@ -154,13 +155,14 @@ test("RENDER Reader retains full structural identity and native Markdown/raw wra
     ] as const) {
       setup.resize(width, height);
       await setup.flush();
+      if (setup.renderer.root.findDescendantById("reader-scrollbox")) await parsedEscape(setup);
       await openAllInstalledSkills(setup);
       await enterInstalledAddress(setup, address);
       await waitForReaderBody(setup, "A deliberately long");
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-scrollbox");
       const frame = setup.captureCharFrame();
       expectVisibleIdentity(setup, frame, longSkill.name);
-      expect(frame).toContain("SKILL.md");
+      expect(frame).toContain("Content");
       expectReaderBounds(setup, width, height);
       const reader = live(setup, "reader-scrollbox") as ScrollBoxRenderable;
       const markdown = reader

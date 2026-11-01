@@ -1,25 +1,12 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
-import { type BaseRenderable } from "@opentui/core";
-import { ButtonRenderable } from "@tuiparts/core/button";
 import type { ConfigDeclarationOwner, MembershipBatchImpact } from "@skctl/core";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { enterLive } from "./reader-test-controls";
-function findManage(root: BaseRenderable): ButtonRenderable | undefined {
-  for (const child of root.getChildren()) {
-    if (
-      child instanceof ButtonRenderable &&
-      child.id.includes("guide") &&
-      child.id.includes(".manage")
-    )
-      return child;
-    const nested = findManage(child);
-    if (nested) return nested;
-  }
-}
+import { openMainPage } from "./main-page-controls";
 for (const fault of [
   "level",
   "file",
@@ -113,18 +100,13 @@ for (const fault of [
     });
     try {
       await setup.flush();
-      await enterLive(setup, "shell-section-tab-collections");
+      await openMainPage(setup, "collections");
       await enterLive(setup, "collection-browser");
       await setup.flush();
-      const manage = findManage(setup.renderer.root);
-      expect(manage).toBeDefined();
-      await enterLive(setup, manage!.id);
-      await setup.flush();
-      const remove = setup.renderer.root.findDescendantById("membership.remove");
-      expect(remove).toBeDefined();
+      const remove = setup.renderer.root.findDescendantById("collection-current-membership.remove");
       if (fault === "missing" || fault === "contributed") {
-        expect(remove!.focusable).toBe(false);
-      } else await enterLive(setup, "membership.remove");
+        expect(!!remove).toBe(false);
+      } else await enterLive(setup, "collection-current-membership.remove");
       await setup.flush();
       expect(requests).toHaveLength(fault.startsWith("receipt-") ? 1 : 0);
       expect(!!setup.renderer.root.findDescendantById("collection-review-confirm")).toBe(false);

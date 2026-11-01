@@ -203,6 +203,11 @@ export function directSourceCore(projection: WorkspaceView, hooks: Partial<TuiCo
         owner,
         ownerPath: ownerPath ?? path,
         proof: "proven",
+        scope: "captured-workspace",
+        limitation: "External projects are not inspected",
+        baseline: "rebind-baseline",
+        directMemberships: [],
+        blockers: [],
         allowed: true,
       }),
     rebindSkill: async () => result(undefined),
@@ -318,6 +323,20 @@ export function directSourceCore(projection: WorkspaceView, hooks: Partial<TuiCo
     removeConfig: async () => result(undefined),
     createCollection: async () =>
       result({ level: "project", file: directOwner.file, changed: true }),
+    previewCollectionRename: async (_environment, request) =>
+      result({
+        kind: "collection-rename",
+        ...request,
+        scope: "captured-workspace",
+        limitation: "External projects are not inspected",
+        baseline: "rename-baseline",
+        declarations: [],
+        references: [],
+        addresses: [],
+        blockers: [],
+        allowed: true,
+      }),
+    renameCollection: async (_environment, request) => result(request.reviewedImpact),
     removeCollection: async () =>
       result({ level: "project", file: directOwner.file, changed: true }),
     addMember: async () => result({ level: "project", file: directOwner.file, changed: true }),
@@ -513,7 +532,7 @@ export async function openReaderFromInspector(setup: Awaited<ReturnType<typeof t
     const views = setup.renderer.root.findDescendantById("reader-views");
     const skillTab = setup.renderer.root.findDescendantById("reader-tabs-tab-skill");
     const resourcesTab = setup.renderer.root.findDescendantById("reader-tabs-tab-resources");
-    const detailsTab = setup.renderer.root.findDescendantById("reader-tabs-tab-details");
-    return !!views && !!skillTab && !!resourcesTab && !!detailsTab;
+    const more = setup.renderer.root.findDescendantById("reader-more");
+    return !!views && !!skillTab && !!resourcesTab && !!more;
   });
 }

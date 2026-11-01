@@ -1,7 +1,7 @@
 import { sameSkillAddress, type ConfigDeclarationOwner, type SkillAddress } from "@skctl/core";
 import { SelectRenderable } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/solid";
-import { createSignal, Index } from "solid-js";
+import { createSignal, Index, Show } from "solid-js";
 import {
   createModalControlRegistry,
   useModalControl,
@@ -13,13 +13,14 @@ import { ownerLine } from "./collection-review";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
 
 export function RebindSourceOverlay(props: {
+  readonly address?: SkillAddress;
   readonly sources: readonly string[];
   readonly onSelect: (source: string, ownerPath: string) => void;
   readonly onClose: () => void;
 }) {
   const controls = createModalControlRegistry();
   const [ownerPath, setOwnerPath] = createSignal("");
-  const [owner, setOwner] = createSignal<string>();
+  const [owner, setOwner] = createSignal<string | undefined>(props.sources[0]);
   const registerSource = useModalControl("rebind-source-choice", controls, 10);
   const registerPath = useModalControl("rebind-owner-path", controls, 20);
   useModalControlTraversal(controls, props.onClose);
@@ -29,55 +30,88 @@ export function RebindSourceOverlay(props: {
   };
   return (
     <ModalShell>
-      <ModalBody>
-        <text>Rebind Skill</text>
-        <DataList
-          id="rebind-source-choice"
-          ref={registerSource}
-          focused
-          options={props.sources.map((source) => ({
-            name: source,
-            description: "Prove this Source owns the same Installed Skill identity",
-            value: source,
-          }))}
-          showDescription
-          onSelect={(_index, option) => {
-            if (option) setOwner(option.value);
-          }}
-        />
-        <Input
-          id="rebind-owner-path"
-          ref={registerPath}
-          focused={false}
-          placeholder="Replacement Source-root-relative Skill path"
-          value={ownerPath()}
-          onInput={setOwnerPath}
-        />
-        <box flexDirection="column" gap={1} flexShrink={0}>
-          <ModalCommand
-            id="rebind-preview"
-            intent="primary"
-            order={30}
-            controls={controls}
-            record={modalCommand(
-              "rebind.review",
-              "Review Rebind",
-              "Preview identity proof",
-              validPath(),
-              false,
-              "Select a replacement Source and enter a valid Skill path",
-            )}
-            execute={() => props.onSelect(owner()!, ownerPath().trim())}
+      <ModalBody
+        controls={controls}
+        maxWidth={76}
+        maxHeight={Math.min(4, props.sources.length) + 11}
+        footer={
+          <box flexDirection="row" gap={1} flexShrink={0}>
+            <ModalCommand
+              id="rebind-preview"
+              intent="primary"
+              order={30}
+              controls={controls}
+              record={modalCommand(
+                "rebind.review",
+                "Review change",
+                "Check the new Source and preview affected references",
+                validPath(),
+              )}
+              execute={() => props.onSelect(owner()!, ownerPath().trim())}
+            />
+            <ModalCommand
+              id="rebind-cancel"
+              order={40}
+              controls={controls}
+              record={modalCommand("rebind.cancel", "Cancel", "Return to previous view")}
+              execute={props.onClose}
+            />
+          </box>
+        }
+      >
+        <text flexShrink={0}>Change Source</text>
+        <Show when={props.address}>
+          <text
+            wrapMode="word"
+            flexShrink={0}
+          >{`Current Skill: ${props.address!.source}/${props.address!.path}`}</text>
+        </Show>
+        <Show
+          when={props.sources.length}
+          fallback={
+            <text wrapMode="word">
+              No other Source is available. Add a Source in Sources, then try again.
+            </text>
+          }
+        >
+          <text flexShrink={0}>New Source</text>
+          <DataList
+            id="rebind-source-choice"
+            ref={registerSource}
+            focused
+            height={Math.min(4, props.sources.length)}
+            flexShrink={0}
+            options={props.sources.map((source) => ({
+              name: source,
+              description: "",
+              value: source,
+            }))}
+            showDescription={false}
+            onChange={(_index, option) => {
+              if (option) setOwner(option.value);
+            }}
+            onSelect={(_index, option) => {
+              if (option) setOwner(option.value);
+            }}
           />
-          <ModalCommand
-            id="rebind-cancel"
-            order={40}
-            controls={controls}
-            record={modalCommand("rebind.cancel", "Cancel", "Return to Details")}
-            execute={props.onClose}
+          <text flexShrink={0}>Skill path in new Source</text>
+          <Input
+            id="rebind-owner-path"
+            ref={registerPath}
+            focused={false}
+            placeholder="e.g. skills/my-skill"
+            value={ownerPath()}
+            onInput={setOwnerPath}
           />
-        </box>
-        {!validPath() && <text>Enter a valid replacement Source-root-relative Skill path.</text>}
+          <text wrapMode="word" flexShrink={0}>
+            Relative path. Review checks Skill identity.
+          </text>
+          <Show when={ownerPath().trim() && !validPath()}>
+            <text wrapMode="word" flexShrink={0}>
+              Use a relative path without ..
+            </text>
+          </Show>
+        </Show>
       </ModalBody>
     </ModalShell>
   );
@@ -103,41 +137,63 @@ export function CollectionHandoffOverlay(props: {
   useModalControlTraversal(controls, props.onClose);
   return (
     <ModalShell>
-      <ModalBody>
-        <text>Add to collection</text>
-        <DataList
-          id="collection-handoff-choice"
-          focused={true}
-          showDescription
-          ref={registerChoice}
-          options={props.choices.map((choice, index) => ({
-            name: `${choice.collection}${choice.owner ? ` (${ownerLine(choice.owner)})` : choice.level ? ` (${choice.level})` : ""}`,
-            description: choice.level
-              ? `Add to its ${choice.level} declaration`
-              : "Create a direct contribution before adding",
-            value: `${index}`,
-          }))}
-          onSelect={(_index, option) =>
-            option && props.onSelect(props.choices[Number(option.value)]!)
+      <ModalBody
+        controls={controls}
+        maxWidth={76}
+        maxHeight={Math.min(8, props.choices.length * 2) + 5}
+        header={<text flexShrink={0}>Add to Collection</text>}
+        footer={
+          <box flexDirection="row" gap={1} flexShrink={0}>
+            <Show when={props.onCreate}>
+              <ModalCommand
+                id="collection-handoff-create"
+                controls={controls}
+                record={modalCommand(
+                  "collection-handoff.create",
+                  "New Collection…",
+                  "Create and continue",
+                )}
+                execute={() => props.onCreate?.()}
+              />
+            </Show>
+            <ModalCommand
+              id="collection-handoff-cancel"
+              controls={controls}
+              record={modalCommand(
+                "collection-handoff.cancel",
+                "Cancel",
+                "Return to previous view",
+              )}
+              execute={props.onClose}
+            />
+          </box>
+        }
+      >
+        <Show
+          when={props.choices.length}
+          fallback={
+            <text wrapMode="word">No available Collection. Create one to add this Skill.</text>
           }
-        />
-        <ModalCommand
-          id="collection-handoff-create"
-          controls={controls}
-          record={modalCommand(
-            "collection-handoff.create",
-            "New Collection…",
-            "Create and continue",
-            !!props.onCreate,
-          )}
-          execute={() => props.onCreate?.()}
-        />
-        <ModalCommand
-          id="collection-handoff-cancel"
-          controls={controls}
-          record={modalCommand("collection-handoff.cancel", "Cancel", "Return to Details")}
-          execute={props.onClose}
-        />
+        >
+          <DataList
+            id="collection-handoff-choice"
+            focused={true}
+            height={Math.min(8, props.choices.length * 2)}
+            flexShrink={0}
+            showDescription
+            ref={registerChoice}
+            options={props.choices.map((choice, index) => ({
+              name: `${choice.collection}${choice.owner ? ` (${ownerLine(choice.owner)})` : choice.level ? ` (${choice.level})` : ""}`,
+              description: choice.level
+                ? `Add to its ${choice.level} declaration`
+                : "Create a direct contribution before adding",
+              value: `${index}`,
+            }))}
+            onSelect={(_index, option) =>
+              option && props.onSelect(props.choices[Number(option.value)]!)
+            }
+          />
+        </Show>
       </ModalBody>
     </ModalShell>
   );
@@ -297,7 +353,7 @@ export function InstalledSkillChooserOverlay(props: {
             toggle(Number(option.value));
           }}
         />
-        <text>{`${selected().length} selected · Space check · Tab switch controls`}</text>
+        <text>{`${selected().length} selected. Space checks items. Tab switches controls.`}</text>
         <Index each={selected()}>
           {(item, index) => (
             <Input

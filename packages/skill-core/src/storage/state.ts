@@ -101,8 +101,9 @@ export class StateCoordinator {
   async publish(
     targets: readonly { readonly target: string; readonly bytes: string | Uint8Array }[],
     expectedState?: number,
+    readSet?: readonly { readonly path: string; readonly hash: string | null }[],
   ) {
-    return this.withLock(() => this.transactions.publish(targets, expectedState));
+    return this.withLock(() => this.transactions.publish(targets, expectedState, readSet));
   }
 
   async write(next: StateContents, expected: number): Promise<PrivateState> {

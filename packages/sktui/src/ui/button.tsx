@@ -1,12 +1,13 @@
 /** @jsxImportSource @opentui/solid */
 // Source: https://tuiparts.sh/r/solid/button.json, @tuiparts/solid@0.0.5 (MIT).
 import { Button as ButtonPrimitive } from "@tuiparts/solid/button";
-import { splitProps } from "solid-js";
+import { Show, splitProps } from "solid-js";
 import { tint } from "./theme";
 import { useTheme } from "./use-theme";
 export interface ButtonProps extends Omit<ButtonPrimitive.Props, "children"> {
-  intent?: "neutral" | "primary" | "danger" | "quiet";
+  intent?: "neutral" | "primary" | "danger" | "quiet" | "menu";
   label: string;
+  shortcutHint?: string;
   size?: "compact" | "comfortable";
   /** Composite controls may omit the marker without changing padding or native focus. */
   showFocusIndicator?: boolean;
@@ -16,6 +17,7 @@ export function Button(props: ButtonProps) {
     "disabled",
     "intent",
     "label",
+    "shortcutHint",
     "size",
     "showFocusIndicator",
   ]);
@@ -24,7 +26,7 @@ export function Button(props: ButtonProps) {
   const foreground = (state: ButtonPrimitive.State) =>
     state.disabled
       ? tokens().colors.disabledForeground
-      : state.focused || state.pressed || intent() === "primary"
+      : state.pressed || intent() === "primary"
         ? intent() === "danger"
           ? tokens().colors.destructiveForeground
           : tokens().colors.primaryForeground
@@ -44,15 +46,19 @@ export function Button(props: ButtonProps) {
                     tokens().colors.background,
                     0.18,
                   )
-                : state.focused
-                  ? intent() === "danger"
-                    ? tokens().colors.destructive
-                    : tokens().colors.primary
-                  : intent() === "primary"
-                    ? tokens().colors.primary
-                    : intent() === "danger"
-                      ? tokens().colors.destructiveSurface
-                      : tokens().colors.control
+                : intent() === "primary"
+                  ? tokens().colors.primary
+                  : state.focused
+                    ? intent() === "danger"
+                      ? tint(tokens().colors.destructiveSurface, tokens().colors.destructive, 0.25)
+                      : tint(tokens().colors.control, tokens().colors.focus, 0.25)
+                    : intent() === "menu"
+                      ? "transparent"
+                      : intent() === "danger"
+                        ? tokens().colors.destructiveSurface
+                        : intent() === "quiet"
+                          ? tint(tokens().colors.control, tokens().colors.surface, 0.5)
+                          : tokens().colors.control
           }
           flexDirection="row"
           paddingRight={
@@ -72,6 +78,14 @@ export function Button(props: ButtonProps) {
             {state.focused && recipe.showFocusIndicator !== false ? "›" : " "}
           </text>
           <text content={recipe.label} wrapMode="none" fg={foreground(state)} />
+          <Show when={recipe.shortcutHint}>
+            <text
+              marginLeft={2}
+              content={recipe.shortcutHint}
+              wrapMode="none"
+              fg={tokens().colors.mutedForeground}
+            />
+          </Show>
         </box>
       )}
     </ButtonPrimitive>

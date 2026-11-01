@@ -4,6 +4,7 @@ import type { WorkspaceView, UpdateObservation } from "@skctl/core";
 import { SelectRenderable, TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { collectionFilterPathKey } from "../src/collections/collection-filter-tree";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import {
@@ -123,8 +124,7 @@ function collectionScopeProjection(): WorkspaceView {
   };
 }
 async function openWorkspaceUpdates(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-updates"));
-  await enterLive(setup, "shell-section-tab-updates");
+  await openMainPage(setup, "updates");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
 }
 async function chooseAction(setup: Awaited<ReturnType<typeof testRender>>, id: string) {
@@ -248,9 +248,15 @@ test("App automatic checks stay read-only and updating the current Source preser
       };
       return { value: undefined, diagnostics: [] };
     },
-    loadInstalledSkill: async () => {
+    loadInstalledSkill: async (_environment, { address }) => {
       contentLoads++;
-      throw new Error("Updates must not load installed content");
+      return {
+        address,
+        name: address.path,
+        description: "",
+        rawText: "Startup content",
+        markdownText: "Startup content",
+      };
     },
   });
   const setup = await testRender(() => <App core={core} exit={() => {}} />, {
@@ -258,6 +264,9 @@ test("App automatic checks stay read-only and updating the current Source preser
     height: 16,
   });
   try {
+    await setup.waitFor(() => contentLoads === 1);
+    const startupLoads = contentLoads;
+    expect(startupLoads).toBe(1);
     await openWorkspaceUpdates(setup);
     await setup.waitFor(() =>
       [addresses.first.source, addresses.second.source].every((source) => {
@@ -267,7 +276,7 @@ test("App automatic checks stay read-only and updating the current Source preser
         return status instanceof TextRenderable && status.plainText === "Updates available";
       }),
     );
-    expect(contentLoads).toBe(0);
+    expect(contentLoads).toBe(startupLoads);
     expect(checks).toEqual([addresses.first.source, addresses.second.source]);
     expect(updates).toEqual([]);
     await chooseAction(setup, "updates.update-source");
@@ -280,7 +289,7 @@ test("App automatic checks stay read-only and updating the current Source preser
         expectedBaseline: "baseline:test",
       },
     ]);
-    expect(contentLoads).toBe(0);
+    expect(contentLoads).toBe(startupLoads);
   } finally {
     setup.renderer.destroy();
   }
@@ -338,11 +347,7 @@ test("App checks survive semantic Back, Stop checks cancels only reads, and host
         return status instanceof TextRenderable && status.plainText === "Updates available";
       }),
     );
-    // A Sources row with installed content enters its direct Reader inventory.
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("shell-section-tab-sources"),
-    );
-    await enterLive(setup, "shell-section-tab-sources");
+    await openMainPage(setup, "sources");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
     await focusLive(setup, "source-browser");
     holdChecks = true;
@@ -365,7 +370,7 @@ test("App checks survive semantic Back, Stop checks cancels only reads, and host
     if (!destroyed) setup.renderer.destroy();
   }
 });
-test("App Collection checks include Reference descendants while direct Reader Update submits only its Skill", async () => {
+test("App Collection checks include Reference descendants while Reader review updates only its Skill", async () => {
   const projection = collectionScopeProjection();
   const checks: string[] = [];
   const updates: Parameters<typeof import("@skctl/core").updateSkills>[1][] = [];
@@ -412,10 +417,8 @@ test("App Collection checks include Reference descendants while direct Reader Up
       }),
     );
     const startup = checks.length;
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("shell-section-tab-collections"),
-    );
-    await enterWithFocusContext(setup, "shell-section-tab-collections");
+    const startupReads = [...reads];
+    await openMainPage(setup, "collections");
     const releaseKey = collectionFilterPathKey({ segments: [{ collection: "release" }] });
     const release = setup.renderer.root.findDescendantById(
       `collection-browser-row-${encodeURIComponent(releaseKey)}-name`,
@@ -431,17 +434,19 @@ test("App Collection checks include Reference descendants while direct Reader Up
     expect(checks.slice(startup)).toEqual([addresses.first.source, addresses.second.source]);
     expect(checks.slice(startup)).not.toContain("unrelated-source");
     expect(updates).toEqual([]);
-    expect(reads).toEqual([]);
+    expect(reads).toEqual(startupReads);
     expect(setup.captureCharFrame()).toContain("Collection release");
     await parsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
     expect(setup.captureCharFrame()).toContain("release");
-    await enterWithFocusContext(setup, "shell-section-tab-skills");
+    await openMainPage(setup, "skills");
     await openAllInstalledSkills(setup);
     await parsedEnter(setup);
     await waitForReaderBody(setup, "Installed guide");
     await enterWithFocusContext(setup, "reader-action-skill-check-updates");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
+    expect(updates).toEqual([]);
+    await enterWithFocusContext(setup, "updates-update-all");
     await setup.waitFor(() => updates.length === 1);
     expect(updates).toEqual([
       {

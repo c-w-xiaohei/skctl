@@ -118,7 +118,7 @@ test("clicking a visible installed skill after native scrolling opens that row",
     expect(identity).toBeInstanceOf(TextRenderable);
     expect((identity as TextRenderable).plainText).toContain(selectedPath);
     expect(activeBrowser.getSelectedOption()?.value).toBe(target.value);
-    expect(setup.renderer.currentFocusedRenderable).toBe(activeBrowser);
+    expect(setup.renderer.currentFocusedRenderable === activeBrowser).toBe(true);
     expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeUndefined();
   } finally {
     setup.renderer.destroy();

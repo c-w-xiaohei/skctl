@@ -152,8 +152,22 @@ test("failed B reads and retries stay B while the list remains usable", async ()
       };
     },
   });
+  await waitForBody("Body of guide");
+  expect(reads).toEqual(["guide"]);
   setup!.mockInput.pressArrow("down");
-  await setup!.waitForFrame((frame) => frame.includes("B instructions missing"));
+  await setup!.waitFor(() => reads.includes("reference"));
+  expect(attempts).toBe(1);
+  try {
+    await setup!.waitForFrame((frame) => frame.includes("B instructions missing"));
+  } catch (error) {
+    console.error("Failed B read did not render", {
+      reads,
+      attempts,
+      focus: setup!.renderer.currentFocusedRenderable?.id,
+      frame: setup!.captureCharFrame(),
+    });
+    throw error;
+  }
   expect(setup!.captureCharFrame()).not.toContain("Body of guide");
   expect(setup!.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
   await capture("direct-reader-error-144x40");
@@ -284,7 +298,6 @@ test("explicit installed Reload refreshes Local instructions and an already-acti
   await openReaderTab(setup!, 2);
   const beforeChecks = checks;
   version = 1;
-  await enterLive(setup!, "reader-details-manage");
   await enterLive(setup!, "reader-reload");
   await setup!.waitFor(() => reads.length === 2);
   expect(selectedReaderTab(setup!)).toBe(2);
@@ -363,6 +376,11 @@ test("Back after a remote update restores Resources with current payloads and a 
   expect(index).toBeGreaterThanOrEqual(0);
   choices.setSelectedIndex(index);
   await parsedEnter(setup!);
+  await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("updates-browser"));
+  expect(mutations).toEqual([]);
+  await enterLive(setup!, "updates-browser");
+  await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("source-updates-browser"));
+  await enterLive(setup!, "source-updates-update-all");
   await setup!.waitForFrame((frame) => frame.includes("Updated 1 Skill"), { maxPasses: 200 });
   expect(mutations).toHaveLength(1);
   expect(mutations[0]).toMatchObject({
@@ -370,6 +388,8 @@ test("Back after a remote update restores Resources with current payloads and a 
     paths: [address.path],
     exactRevision: revision,
   });
+  await enterLive(setup!, "route-back");
+  await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("updates-browser"));
   await enterLive(setup!, "route-back");
   await setup!.waitForFrame((frame) => frame.includes("v1.txt"));
   expect(selectedReaderTab(setup!)).toBe(1);
@@ -469,7 +489,6 @@ test("Collection dispatch uses only current B or explicitly checked A/C, includi
     await enterLive(setup!, "installed-skill-choice-submit");
   };
   await openReaderTab(setup!, 2);
-  await enterLive(setup!, "reader-details-manage");
   await preview("reader-details-action-skill-add-to-collection");
   await setup!.waitFor(() => previews.length === 1);
   expect(previews[0]).toEqual([addresses[1]]);
@@ -615,7 +634,7 @@ test.each([
     const update = setup!.renderer.root.findDescendantById("reader-action-skill-check-updates")!;
     expect(update.screenX).toBeGreaterThan(pane.screenX);
     expect(update.screenX + update.width).toBeLessThanOrEqual(pane.screenX + pane.width - 1);
-    expect(setup!.captureCharFrame().split("\n")[update.screenY]).toContain("Update");
+    expect(setup!.captureCharFrame().split("\n")[update.screenY]).toContain("Check updates");
     expect(body.height).toBeGreaterThanOrEqual(3);
     if (raw) expect(raw.screenX + raw.width).toBeLessThanOrEqual(pane.screenX + pane.width);
     else {

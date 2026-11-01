@@ -71,6 +71,11 @@ test("Rebind review renders exact old and new address with disabled unprovable t
       owner: "replacement",
       ownerPath: "alternate/guide",
       proof: "unprovable",
+      scope: "captured-workspace",
+      limitation: "External projects are not inspected",
+      baseline: "fixture-baseline",
+      directMemberships: [],
+      blockers: [],
       allowed: false,
     },
   };

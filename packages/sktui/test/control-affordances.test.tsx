@@ -20,7 +20,6 @@ import { SourceObservationOverlay } from "../src/operations";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
 import {
-  enterLive,
   focusLive,
   live,
   openAllInstalledSkills,
@@ -104,6 +103,13 @@ test.each(["dark", "light"] as const)(
       expect(rgba(face(live(setup, "default")).backgroundColor)).toEqual(
         rgba(face(live(setup, "neutral")).backgroundColor),
       );
+      const quiet = live(setup, "quiet");
+      const neutral = live(setup, "neutral");
+      const surface = parseColor(theme.get().colors.surface);
+      const distance = (a: RGBA, b: RGBA) => Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
+      const quietCell = cell(setup, quiet.screenX + 1, quiet.screenY);
+      const neutralCell = cell(setup, neutral.screenX + 1, neutral.screenY);
+      expect(distance(quietCell.bg, surface)).toBeLessThan(distance(neutralCell.bg, surface));
       await capture(setup, `buttons-${mode}`);
     } finally {
       setup.renderer.destroy();
@@ -262,15 +268,14 @@ test.each([
       await focusLive(setup, source.id);
       await setup.flush();
       await capture(setup, `connections-${width}x${height}`);
-      await focusLive(setup, "reader-details-manage");
+      await focusLive(setup, "reader-reload");
       await setup.flush();
-      const trigger = live(setup, "reader-details-manage");
+      const trigger = live(setup, "reader-reload");
       expect(trigger.screenY).toBeGreaterThan(pane.screenY);
       expect(trigger.screenY + trigger.height).toBeLessThan(pane.screenY + pane.height);
       const focused = cell(setup, trigger.screenX + 2, trigger.screenY);
-      expect(rgba(focused.bg)).toEqual(rgba(theme.get().colors.primary));
-      await enterLive(setup, "reader-details-manage");
-      await focusLive(setup, "reader-reload");
+      expect(rgba(focused.bg)).not.toEqual(rgba(theme.get().colors.primary));
+      expect(setup.captureCharFrame()).toContain("›Reload");
       await setup.flush();
       await capture(setup, `reader-${width}x${height}`);
       expect(live(setup, "reader-details-relationship-source")).toBe(source);

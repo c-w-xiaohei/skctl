@@ -15,7 +15,7 @@ import type { ConfigDeclarationOwner, Diagnostic } from "@skctl/core";
 import type { SkillAddress } from "@skctl/core";
 
 export interface SourceBrowseView {
-  readonly detailsOpen?: boolean;
+  readonly tab?: "installed" | "settings";
   readonly currentSkill?: string;
 }
 
@@ -24,6 +24,7 @@ export interface WorkspaceSnapshot {
   readonly section: WorkspaceSection;
   readonly selectedSource?: string;
   readonly selectedSkill?: SkillAddress;
+  readonly inventorySkill?: SkillAddress;
   readonly selectedProblem?: string;
   readonly diagnosticDetail?: string;
   readonly selectedSkills: readonly SkillAddress[];
@@ -302,7 +303,7 @@ export function createWorkspaceState(
     ReadonlyMap<string, { readonly query: string; readonly filter: "all" | "updates" }>
   >(new Map());
   const [snapshot, setSnapshot] = createSignal<WorkspaceSnapshot>({
-    skillsView: "current-exposure",
+    skillsView: "all-installed-skills",
     section: "skills",
     readerOpen: false,
     selectedSkills: [],
@@ -382,6 +383,9 @@ export function createWorkspaceState(
       update((current) => ({
         ...current,
         section,
+        ...(section === "skills" && current.section !== "skills"
+          ? { selectedSkill: current.inventorySkill }
+          : {}),
         sourceFilter: section === "skills" ? current.sourceFilter : undefined,
         readerOpen: false,
       }));
@@ -417,7 +421,7 @@ export function createWorkspaceState(
           ? { selectedSource: selection }
           : {}),
         ...(section === "skills" && selection && typeof selection !== "string"
-          ? { selectedSkill: selection }
+          ? { selectedSkill: selection, inventorySkill: selection }
           : {}),
       }));
     },
@@ -430,9 +434,18 @@ export function createWorkspaceState(
         !sameSkillAddress(
           current.selectedSkill ?? { source: "", path: "" },
           selectedSkill ?? { source: "", path: "" },
-        )
+        ) ||
+        (current.section === "skills" &&
+          !sameSkillAddress(
+            current.inventorySkill ?? { source: "", path: "" },
+            selectedSkill ?? { source: "", path: "" },
+          ))
       )
-        setSnapshot({ ...current, selectedSkill });
+        setSnapshot({
+          ...current,
+          selectedSkill,
+          ...(current.section === "skills" ? { inventorySkill: selectedSkill } : {}),
+        });
     },
     selectProblem(selectedProblem?: string) {
       update((current) => ({ ...current, selectedProblem }));
@@ -621,13 +634,13 @@ export function createWorkspaceState(
               ? nextProblemRow.intent.address
               : undefined;
           const exposure =
-            state.skillsView === "current-exposure"
+            state.section === "agent"
               ? deriveAgentAccessTree(current, state.expandedExposurePaths).rows.find(
                   (row) => row.key === state.selectedExposurePath,
                 )
               : undefined;
           const nextSkill =
-            state.skillsView === "current-exposure"
+            state.section === "agent"
               ? exposure?.kind === "skill" && exposure.availability.status === "available"
                 ? exposure.address
                 : undefined
@@ -638,6 +651,7 @@ export function createWorkspaceState(
                   ? state.selectedSkill
                   : problemSkill
                 : nearestSkill(state.selectedSkill, values, prior);
+          const inventorySkill = nearestSkill(state.inventorySkill, values, prior);
           const next = {
             ...state,
             selectedSource: nearest(
@@ -646,6 +660,7 @@ export function createWorkspaceState(
               previous?.effective.sources.map((source) => source.id) ?? [],
             ),
             selectedSkill: nextSkill,
+            inventorySkill,
             selectedProblem: nextProblem,
             readerOpen:
               state.readerOpen && (state.skillsView !== "problems" || problemSkill !== undefined),

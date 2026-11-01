@@ -5,7 +5,7 @@ import {
   type BaseRenderable,
   type BoxRenderable,
 } from "@opentui/core";
-import { createMemo, createSignal, For, Match, Show, Switch, type JSX } from "solid-js";
+import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import type { CollectionView, ConfigDeclarationOwner } from "@skctl/core";
 import type { MemberOriginPath } from "@skctl/core";
@@ -15,11 +15,17 @@ import { collectionMemberKey, type CollectionsReadonly } from "./state";
 import { relationshipCommands, type RelationshipCommand } from "./relationship-commands";
 import type { FocusRegistry, FocusTarget } from "../focus";
 import type { CommandExecution, CommandRegistration } from "../types";
-import { usePageReturn } from "../page-navigation";
 import { useTheme } from "../ui/use-theme";
+import { Dialog, DialogContent } from "../ui/dialog";
 
 export type CollectionRelationshipIntent =
-  | { readonly kind: "collection-info"; readonly collection: string }
+  | { readonly kind: "collection-rename"; readonly collection: string }
+  | { readonly kind: "collection-use-level"; readonly level: ConfigDeclarationOwner["level"] }
+  | {
+      readonly kind: "collection-remove-declaration";
+      readonly collection: string;
+      readonly owner: ConfigDeclarationOwner;
+    }
   | {
       readonly kind: "collection-membership-inspect";
       readonly collection: string;
@@ -144,15 +150,9 @@ const compactAddress = (address: { readonly source: string; readonly path: strin
   `${address.source}/${address.path}`;
 
 export function RelationshipInspector(props: {
-  readonly editContent?: () => JSX.Element;
   readonly collection: CollectionView;
-  readonly contextIssue?: string;
   readonly memberOrigins: readonly CollectionMemberOriginRow[];
   readonly relationRows: readonly CollectionRelationRow[];
-  readonly memberDescription: (address: {
-    readonly source: string;
-    readonly path: string;
-  }) => string | undefined;
   readonly memberAvailable: (address: {
     readonly source: string;
     readonly path: string;
@@ -224,9 +224,8 @@ export function RelationshipInspector(props: {
   };
   const backRecord = (): RelationshipCommand => ({
     id: "collection.inspector-back",
-    verb: "Back",
-    destination:
-      props.collections.tab(props.collection.id) === "relations" ? "Relations" : "Contents",
+    verb: "Close",
+    destination: props.collections.tab(props.collection.id) === "settings" ? "Settings" : "Members",
     scope: "page",
     keys: ["enter", "return"],
     enabled: true,
@@ -235,19 +234,6 @@ export function RelationshipInspector(props: {
   });
   let surface: BoxRenderable | undefined;
   const [width, setWidth] = createSignal(0);
-  const sharedReturn = usePageReturn(() => {
-    if (inspector()?.collection !== props.collection.id) return undefined;
-    const record = backRecord();
-    return {
-      record,
-      anchor: () => surface,
-      execute: () =>
-        props.onRelationship({
-          kind: "collection-inspector-back",
-          collection: props.collection.id,
-        }),
-    };
-  });
   const execute = (record: RelationshipCommand) => {
     if (!record.enabled || !record.intent) return;
     props.onRelationship(record.intent);
@@ -259,7 +245,7 @@ export function RelationshipInspector(props: {
       case "relationship.open-owner":
         return record.intent?.kind === "collection-open-link" ? "Open Link" : "Open Config";
       case "membership.open-link":
-        return "Open Link";
+        return "Open Collection";
       case "membership.open-source":
         return record.intent?.kind === "collection-contribution" ? "Config Source" : "Open Source";
       case "relationship.edit-use":
@@ -267,7 +253,7 @@ export function RelationshipInspector(props: {
       case "membership.remove":
         return "Remove Membership…";
       case "membership.unlink":
-        return "Unlink Membership…";
+        return "Remove Link…";
       default:
         return record.verb;
     }
@@ -301,8 +287,8 @@ export function RelationshipInspector(props: {
     );
   };
   const Actions = (actions: { readonly commands: readonly RelationshipCommand[] }) => (
-    <box id="collection-inspector-actions" flexDirection="column" gap={1} flexShrink={0}>
-      <Show when={actions.commands.some((record) => !record.danger)}>
+    <box id="collection-inspector-actions" flexDirection="column" gap={0} flexShrink={0}>
+      <Show when={actions.commands.length}>
         <box
           id="collection-inspector-normal-actions"
           flexDirection="row"
@@ -311,30 +297,12 @@ export function RelationshipInspector(props: {
           flexShrink={0}
           overflow="hidden"
         >
-          <For each={actions.commands.filter((record) => !record.danger)}>
-            {(record) => <InspectorCommand record={record} />}
-          </For>
+          <For each={actions.commands}>{(record) => <InspectorCommand record={record} />}</For>
         </box>
       </Show>
-      <Show when={actions.commands.some((record) => record.danger)}>
-        <box
-          id="collection-inspector-danger-actions"
-          flexDirection="row"
-          gap={1}
-          height={1}
-          flexShrink={0}
-          overflow="hidden"
-        >
-          <For each={actions.commands.filter((record) => record.danger)}>
-            {(record) => <InspectorCommand record={record} />}
-          </For>
-        </box>
-      </Show>
-      <Show when={!sharedReturn}>
-        <box height={1} flexShrink={0}>
-          <InspectorCommand record={backRecord()} />
-        </box>
-      </Show>
+      <box height={1} flexShrink={0}>
+        <InspectorCommand record={backRecord()} />
+      </box>
     </box>
   );
   const Ownership = (owner: {
@@ -342,7 +310,7 @@ export function RelationshipInspector(props: {
     readonly fallback?: string;
   }) => (
     <box id="collection-inspector-ownership" flexDirection="column" flexShrink={0}>
-      <text wrapMode="word">{`Owner  ${owner.value ? ownerText(owner.value) : (owner.fallback ?? "Owner unavailable")}`}</text>
+      <text wrapMode="word">{`Configuration: ${owner.value ? ownerText(owner.value) : (owner.fallback ?? "Location unavailable")}`}</text>
       <Show when={owner.value?.contribution}>
         <text wrapMode="word">{`Config Source  ${ownerText(owner.value!.contribution!.configSource)}`}</text>
       </Show>
@@ -364,37 +332,6 @@ export function RelationshipInspector(props: {
     mode(target, true);
     retainScroll(target, scroll);
   };
-  const Info = () => (
-    <>
-      <scrollbox
-        id="collection-info"
-        flexGrow={1}
-        minHeight={1}
-        focusable
-        ref={(target) => bindBody(target, `collection:${props.collection.id}:about`)}
-      >
-        <Show when={props.contextIssue}>
-          <text wrapMode="word">{props.contextIssue}</text>
-        </Show>
-        <text fg={tokens().colors.mutedForeground}>Description</text>
-        <text wrapMode="word">{props.collection.description || "No description provided."}</text>
-        <Show when={props.collection.instructions}>
-          {(instructions) => (
-            <>
-              <text marginTop={1} fg={tokens().colors.mutedForeground}>
-                Instructions
-              </text>
-              <text id="collection-info-instructions" wrapMode="word">
-                {instructions()}
-              </text>
-            </>
-          )}
-        </Show>
-      </scrollbox>
-      {props.editContent?.()}
-      <Actions commands={[]} />
-    </>
-  );
   const Missing = (missing: { readonly kind: string }) => (
     <>
       <scrollbox
@@ -458,7 +395,7 @@ export function RelationshipInspector(props: {
         kind: "membership",
         member: { ...details.member, available: props.memberAvailable(details.member.address) },
         origin: selected()?.path,
-      }),
+      }).filter((command) => !command.danger && command.id !== "membership.open-skill"),
     );
     return (
       <>
@@ -510,10 +447,18 @@ export function RelationshipInspector(props: {
         >
           <box id="collection-inspector-object" flexDirection="column" flexShrink={0}>
             <text wrapMode="word">{`Target  ${compactAddress(details.member.address)}`}</text>
-            <text wrapMode="word">
-              {props.memberDescription(details.member.address) ?? "Skill description unavailable."}
-            </text>
-            <text wrapMode="word">{`In ${props.collection.id} · ${selected()?.origin ?? "Origin unavailable"}`}</text>
+            <text wrapMode="word">{`Collection: ${props.collection.id}`}</text>
+            <text wrapMode="word">{`Added through: ${selected()?.origin ?? "Origin unavailable"}`}</text>
+            <Show when={selected()?.path?.kind === "repository-derived"}>
+              <text wrapMode="word">
+                Membership is defined by the repository. Change it at the source.
+              </text>
+            </Show>
+            <Show when={selected()?.path?.kind === "via-link"}>
+              <text wrapMode="word">
+                Included from another Collection. Open that Collection to manage its members.
+              </text>
+            </Show>
           </box>
           <Ownership value={selectedOwner()} fallback={selected()?.origin} />
           <Unavailable commands={commands()} />
@@ -537,7 +482,10 @@ export function RelationshipInspector(props: {
   };
   const RelationDetails = (details: { readonly relation: CollectionRelationRow }) => {
     const commands = createMemo(() =>
-      relationshipCommands(props.collection.id, { kind: "relation", relation: details.relation }),
+      relationshipCommands(props.collection.id, {
+        kind: "relation",
+        relation: details.relation,
+      }).filter((command) => !command.danger && command.id !== "relationship.edit-use"),
     );
     return (
       <>
@@ -564,7 +512,8 @@ export function RelationshipInspector(props: {
                   : ""}
               </text>
             </Show>
-            <text wrapMode="word">{`Relation in ${props.collection.id} · ${details.relation.effect}`}</text>
+            <text wrapMode="word">{`Collection: ${props.collection.id}`}</text>
+            <text wrapMode="word">{details.relation.effect}</text>
           </box>
           <Ownership value={details.relation.owner} />
           <Unavailable commands={commands()} />
@@ -575,30 +524,45 @@ export function RelationshipInspector(props: {
   };
   return (
     <Show when={inspector()?.collection === props.collection.id}>
-      <box
-        id="collection-inspector-surface"
-        flexDirection="column"
-        flexGrow={1}
-        minHeight={0}
-        minWidth={0}
-        ref={(target) => {
-          surface = target;
-          setWidth(target.width);
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open)
+            props.onRelationship({
+              kind: "collection-inspector-back",
+              collection: props.collection.id,
+            });
         }}
-        onSizeChange={() => setWidth(surface?.width ?? 0)}
       >
-        <Switch>
-          <Match when={inspector()?.kind === "collection"}>
-            <Info />
-          </Match>
-          <Match when={inspector()?.kind === "membership"}>
-            <Membership />
-          </Match>
-          <Match when={inspector()?.kind === "relation"}>
-            <Relation />
-          </Match>
-        </Switch>
-      </box>
+        <DialogContent
+          id="collection-inspector-surface"
+          width={Math.min(78, terminal().width - 4)}
+          maxWidth={78}
+          backgroundColor={tokens().colors.background}
+          border
+          title="Details"
+          paddingX={1}
+          flexDirection="column"
+          height={Math.max(6, Math.min(14, terminal().height - 5))}
+          flexShrink={0}
+          minHeight={0}
+          minWidth={0}
+          ref={(target) => {
+            surface = target;
+            setWidth(target.width);
+          }}
+          onSizeChange={() => setWidth(surface?.width ?? 0)}
+        >
+          <Switch>
+            <Match when={inspector()?.kind === "membership"}>
+              <Membership />
+            </Match>
+            <Match when={inspector()?.kind === "relation"}>
+              <Relation />
+            </Match>
+          </Switch>
+        </DialogContent>
+      </Dialog>
     </Show>
   );
 }

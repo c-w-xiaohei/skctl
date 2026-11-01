@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { BoxRenderable, InputRenderable, parseColor, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import {
@@ -45,6 +46,10 @@ async function openFilter(setup: Setup) {
   await setup.waitFor(
     () => setup.renderer.currentFocusedRenderable?.id === "skills-filter-dimensions",
   );
+  // Focus is assigned on mount, before native layout and its pointer hit grid.
+  // Outside clicks exercise the displayed popup, not the preceding page frame.
+  await setup.renderOnce();
+  await setup.waitForFrame((frame) => frame.includes("Filter Skills"));
 }
 
 function renderable(setup: Setup, id: string) {
@@ -57,7 +62,7 @@ function renderable(setup: Setup, id: string) {
 }
 
 function findTopNavigation(setup: Setup) {
-  return renderable(setup, "shell-scope-select");
+  return renderable(setup, "shell-section-tab-settings");
 }
 
 test("RENDER outside click closes filter and consumes destination click", async () => {
@@ -68,7 +73,6 @@ test("RENDER outside click closes filter and consumes destination click", async 
   try {
     await setup.renderOnce();
     await openAllInstalledSkills(setup);
-    await focusLive(setup, "shell-scope-select");
     await openFilter(setup);
     const navigation = findTopNavigation(setup);
     const browser = renderable(setup, "installed-skill-browser") as SelectRenderable;
@@ -76,13 +80,19 @@ test("RENDER outside click closes filter and consumes destination click", async 
     await setup.mockMouse.click(navigation.screenX + 1, navigation.screenY);
     await setup.renderOnce();
     expect(setup.renderer.root.findDescendantById("skills-filter-overlay")).toBeUndefined();
+    expect(renderable(setup, "installed-skill-browser") === browser).toBe(true);
+    await openMainPage(setup, "settings");
     await focusLive(setup, "shell-scope-select");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("scope-choices"));
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "shell-scope-select");
     expect(setup.renderer.root.findDescendantById("scope-choices")).toBeUndefined();
-    expect(browser.getSelectedOption()?.value).toBe(selection);
+    await openMainPage(setup, "skills");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
+    expect(
+      (renderable(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value,
+    ).toBe(selection);
     await openFilter(setup);
     await clickFilterOption(setup, "skills-filter-dimensions", "Source");
     await setup.renderOnce();

@@ -3,6 +3,7 @@ import { ScrollBoxRenderable, TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEscape } from "./reader-test-controls";
 
@@ -64,6 +65,7 @@ test("RENDER Current Exposure restores its native path, offset, and browser focu
   );
   try {
     await setup.flush();
+    await openMainPage(setup, "agent");
     const browser = (await focusLive(setup, "current-exposure-browser")) as ScrollBoxRenderable;
     setup.mockInput.pressArrow("right");
     await setup.flush();
@@ -76,7 +78,7 @@ test("RENDER Current Exposure restores its native path, offset, and browser focu
     const scroll = browser.scrollTop;
     await enterLive(setup, "agent-access-collection-details");
     await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("collection-tabs-tab-entries"),
+      () => !!setup.renderer.root.findDescendantById("collection-tabs-tab-members"),
     );
     expect(!!setup.renderer.root.findDescendantById("current-exposure-browser")).toBe(false);
     await parsedEscape(setup);

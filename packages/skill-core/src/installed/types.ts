@@ -8,6 +8,9 @@ export type UpdateObservation = Readonly<v.InferOutput<typeof schema.updateObser
 export type UpdateFileChange = SourceFileChange;
 export type UpdatePreview = Readonly<v.InferOutput<typeof schema.updatePreviewSchema>>;
 export type RebindRequest = Readonly<v.InferOutput<typeof schema.rebindRequestSchema>>;
+export type ReviewedRebindRequest = Readonly<
+  v.InferOutput<typeof schema.reviewedRebindRequestSchema>
+>;
 export type InstalledSelection = Readonly<v.InferOutput<typeof schema.installedSelectionSchema>>;
 export type InstallRequest = Readonly<v.InferOutput<typeof schema.installRequestSchema>>;
 export type UpdateRequest = Readonly<v.InferOutput<typeof schema.updateRequestSchema>>;

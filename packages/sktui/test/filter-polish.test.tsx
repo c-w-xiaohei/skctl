@@ -90,7 +90,7 @@ test("Filter native Dialog contains Tab and search Escape returns before dismiss
   await setup!.renderOnce();
   setup!.mockInput.pressArrow("left");
   await setup!.renderOnce();
-  expect(setup!.renderer.currentFocusedRenderable).toBe(input);
+  expect(setup!.renderer.currentFocusedRenderable === input).toBe(true);
   expect(input.value).toBe("child");
   await parsedEscape(setup!);
   await setup!.waitFor(
@@ -121,7 +121,7 @@ test("Filter candidate viewport is independent of category count and applies des
   ) as SelectRenderable;
   expect(values.height).toBeGreaterThan(dimensions.options.length);
   await parsedEnter(setup!);
-  expect(setup!.renderer.currentFocusedRenderable).toBe(values);
+  expect(setup!.renderer.currentFocusedRenderable === values).toBe(true);
   values.setSelectedIndex(values.options.findIndex((option) => option.value === "parent"));
   await setup!.renderOnce();
   // A highlighted candidate is not yet applied; activation, not movement, changes the filter.
@@ -153,7 +153,7 @@ test("compact Filter retains control identities, input and modal containment on 
   await setup!.renderOnce();
   expect(setup!.renderer.root.findDescendantById("skills-filter-search")).toBe(input);
   expect(setup!.renderer.root.findDescendantById("skills-filter-values")).toBe(values);
-  expect(setup!.renderer.currentFocusedRenderable).toBe(input);
+  expect(setup!.renderer.currentFocusedRenderable === input).toBe(true);
   expect(input.value).toBe("parent");
   const popup = setup!.renderer.root.findDescendantById("skills-filter-overlay")!;
   expect(values.screenY + values.height).toBeLessThanOrEqual(popup.screenY + popup.height - 1);

@@ -67,6 +67,7 @@ interface ActionIntent {
   readonly description?: string;
   readonly enabled: boolean;
   readonly reason?: string;
+  readonly object?: string;
 }
 
 /** A generic action's visible command and its dispatch identifier are one record. */
@@ -109,13 +110,27 @@ export function installedSkillContext(
   pages: PageActionFacts,
 ): { readonly skill: WorkspaceView["installedSkills"][number] } | undefined {
   const workspace = pages.workspace;
-  if (!projection || destination !== "workspace" || workspace.section !== "skills")
+  if (
+    !projection ||
+    destination !== "workspace" ||
+    !["skills", "agent"].includes(workspace.section)
+  )
     return undefined;
   const selected = workspace.selectedSkill;
   if (!selected) return undefined;
   let candidates = projection.installedSkills;
   if (!pages.explicitSkillDetail) {
-    if (workspace.skillsView === "problems") {
+    if (workspace.section === "agent") {
+      const row = deriveAgentAccessTree(projection, workspace.expandedExposurePaths).rows.find(
+        (candidate) => candidate.key === workspace.selectedExposurePath,
+      );
+      if (
+        row?.kind !== "skill" ||
+        row.availability.status !== "available" ||
+        !sameSkillAddress(row.address, selected)
+      )
+        return undefined;
+    } else if (workspace.skillsView === "problems") {
       const problem = filterProblemRows(
         problemRows(projection),
         workspace.query,
@@ -124,16 +139,6 @@ export function installedSkillContext(
       if (
         problem?.intent?.kind !== "installed-skill" ||
         !sameSkillAddress(problem.intent.address, selected)
-      )
-        return undefined;
-    } else if (workspace.skillsView === "current-exposure") {
-      const row = deriveAgentAccessTree(projection, workspace.expandedExposurePaths).rows.find(
-        (candidate) => candidate.key === workspace.selectedExposurePath,
-      );
-      if (
-        row?.kind !== "skill" ||
-        row.availability.status !== "available" ||
-        !sameSkillAddress(row.address, selected)
       )
         return undefined;
     } else {
@@ -374,14 +379,30 @@ function reachableActionIntents(
         ]
       : [
           ...(projection &&
-          currentSection === "skills" &&
-          skillsStatus(projection)?.action === "add-source"
-            ? [{ id: "add-source" as const, title: "Add a Source", enabled: true }]
+          (currentSection === "skills" || currentSection === "agent") &&
+          skillsStatus(projection, undefined, true)?.action === "add-source"
+            ? [
+                {
+                  id: "add-source" as const,
+                  title: "Add a Source",
+                  enabled: projection.configs.some((config) =>
+                    ["valid", "missing"].includes(config.file.status),
+                  ),
+                },
+              ]
             : []),
           ...(projection &&
-          currentSection === "skills" &&
-          skillsStatus(projection)?.action === "create-collection"
-            ? [{ id: "new-collection" as const, title: "Create a Collection", enabled: true }]
+          (currentSection === "skills" || currentSection === "agent") &&
+          skillsStatus(projection, undefined, true)?.action === "create-collection"
+            ? [
+                {
+                  id: "new-collection" as const,
+                  title: "Create a Collection",
+                  enabled: projection.configs.some((config) =>
+                    ["valid", "missing"].includes(config.file.status),
+                  ),
+                },
+              ]
             : []),
           ...selectedSkillActionIntents(destination, projection, pages),
           ...checkedSkillActionIntents(destination, projection, pages),
@@ -447,7 +468,7 @@ function collectionMutationIntents(): readonly ActionIntent[] {
   return [
     {
       id: "add-membership",
-      title: "Add Membership",
+      title: "Add Skills to Collection",
       enabled: true,
     },
     {
@@ -457,17 +478,17 @@ function collectionMutationIntents(): readonly ActionIntent[] {
     },
     {
       id: "import-collection",
-      title: "Import Collection",
+      title: "Copy Skills from Collection",
       enabled: true,
     },
     {
       id: "add-reference",
-      title: "Add Reference",
+      title: "Add Collection entry",
       enabled: true,
     },
     {
       id: "add-link",
-      title: "Add Link",
+      title: "Include Collection",
       enabled: true,
     },
     {
@@ -527,7 +548,7 @@ function selectedSkillActionIntents(
     },
     {
       id: "skill-check-updates",
-      title: "Update Skill",
+      title: "Check updates",
       enabled: !!source && healthy,
       reason: sourceReason ?? (healthy ? undefined : `Owner is ${skill.owner.health}`),
     },
@@ -588,7 +609,7 @@ const actionDestination = (id: ActionId): string => {
     case "open-config-source":
       return "Config Source";
     case "add-skills":
-      return "Source selection";
+      return "Source candidates";
     case "check-updates":
     case "skill-check-updates":
     case "update-selected-skills":
@@ -652,17 +673,90 @@ const dangerousAction = (id: ActionId) =>
     "config-remove",
   ].includes(id);
 
-const commandRecord = (intent: ActionIntent): ActionRecord => ({
-  id: intent.id,
-  keys: ["enter"],
-  verb: intent.title,
-  destination: actionDestination(intent.id),
-  scope: "page",
-  ...(intent.description !== undefined ? { description: intent.description } : {}),
-  enabled: intent.enabled,
-  ...(intent.reason ? { disabledReason: intent.reason } : {}),
-  danger: dangerousAction(intent.id),
-});
+const commandRecord = (
+  intent: ActionIntent,
+  destination: Destination,
+  projection: WorkspaceView | undefined,
+  pages: PageActionFacts,
+): ActionRecord => {
+  const source = selectedSourceContext(destination, projection, pages);
+  const skill = installedSkillContext(destination, projection, pages)?.skill;
+  const batch =
+    intent.id === "skill-add-selected-to-collection" || intent.id === "update-selected-skills";
+  const sourceAction = [
+    "add-skills",
+    "check-updates",
+    "view-installed-skills",
+    "open-config",
+    "open-config-source",
+    "remove-source",
+  ].includes(intent.id);
+  const skillAction = intent.id.startsWith("skill-") && !batch;
+  const collectionAction =
+    intent.id !== "new-collection" &&
+    (intent.id.includes("collection") ||
+      [
+        "add-membership",
+        "remove-membership",
+        "add-reference",
+        "remove-reference",
+        "add-link",
+        "remove-link",
+        "import-collection",
+      ].includes(intent.id));
+  const object =
+    intent.object ??
+    (intent.id === "skill-open-source"
+      ? skill?.owner.source
+      : intent.id === "open-config"
+        ? source?.directOwner && `${source.directOwner.level}: ${source.directOwner.file}`
+        : intent.id === "open-config-source"
+          ? source?.contribution &&
+            `${source.contribution.configSource.level}: ${source.contribution.configSource.file} ${source.contribution.configSource.pointer}`
+          : sourceAction
+            ? source?.source
+            : skillAction && skill
+              ? `${skill.address.source}/${skill.address.path}`
+              : collectionAction &&
+                  destination === "workspace" &&
+                  pages.workspace.section === "collections"
+                ? pages.collections.selected
+                : undefined);
+  const opens = actionDestination(intent.id);
+  return {
+    id: intent.id,
+    keys: ["enter"],
+    verb: intent.title,
+    destination: opens,
+    opens,
+    ...(object ? { object } : {}),
+    ...(batch
+      ? {
+          scopeText: `${pages.workspace.selectedSkills.length} checked Skills`,
+          group: "batch" as const,
+        }
+      : object
+        ? {
+            scopeText:
+              intent.id === "skill-open-source" && skill
+                ? `From Skill ${skill.address.source}/${skill.address.path}`
+                : intent.id === "open-config" || intent.id === "open-config-source"
+                  ? `From Source ${source?.source}`
+                  : sourceAction
+                    ? `Source ${object}`
+                    : skillAction
+                      ? `Installed Skill ${object}`
+                      : `Collection ${object}`,
+            group: "current" as const,
+          }
+        : {}),
+    scope: "page",
+    ...(intent.description !== undefined ? { description: intent.description } : {}),
+    enabled: intent.enabled,
+    ...(intent.reason ? { disabledReason: intent.reason } : {}),
+    danger: dangerousAction(intent.id),
+  };
+};
 
 export function reachableActions(
   destination: Destination,
@@ -672,8 +766,7 @@ export function reachableActions(
   const intents = [...reachableActionIntents(destination, projection, pages)];
   if (
     destination === "workspace" &&
-    pages.workspace.section === "skills" &&
-    pages.workspace.skillsView === "current-exposure" &&
+    pages.workspace.section === "agent" &&
     projection?.effective.status === "complete"
   ) {
     const row = deriveAgentAccessTree(projection, pages.workspace.expandedExposurePaths).rows.find(
@@ -686,6 +779,7 @@ export function reachableActions(
         projection.effective.collectionsView.some((view) => view.id === collection);
       intents.push({
         id: "collection-check-updates",
+        object: collection,
         title: "Check Collection updates",
         description: `Check installed Skills reachable from ${collection}`,
         enabled: available,
@@ -693,7 +787,7 @@ export function reachableActions(
       });
     }
   }
-  return intents.map(commandRecord);
+  return intents.map((intent) => commandRecord(intent, destination, projection, pages));
 }
 
 export function selectedSkillActions(
@@ -701,7 +795,9 @@ export function selectedSkillActions(
   projection: WorkspaceView | undefined,
   pages: PageActionFacts,
 ): readonly ActionRecord[] {
-  return selectedSkillActionIntents(destination, projection, pages).map(commandRecord);
+  return selectedSkillActionIntents(destination, projection, pages).map((intent) =>
+    commandRecord(intent, destination, projection, pages),
+  );
 }
 
 export function skillSourceIntent(

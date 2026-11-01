@@ -27,6 +27,13 @@ async function fixture() {
   process.env.SKCTL_SOURCE_CACHE_DIR = join(root, "cache");
   return { root, skills, global, core: { cwd: root, userConfigPath: global } };
 }
+async function reviewedRebind(
+  core: Parameters<typeof api.previewRebind>[0],
+  request: Parameters<typeof api.previewRebind>[1],
+) {
+  const reviewedImpact = (await api.previewRebind(core, request)).value;
+  return api.rebindSkill(core, { ...request, reviewedImpact });
+}
 function legacyLocal(root: string, source: string, path: string) {
   const origin = canonicalLocalOrigin("./skills", root);
   return {
@@ -253,7 +260,7 @@ test("MGMT-005 diagnoses missing or drifted owners, keeps content readable, and 
       join(value.root, "skctl.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
-    await api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" });
+    await reviewedRebind(value.core, { source: "first", path: "one", owner: "second" });
     expect((await api.getWorkspace(value.core)).value.installedSkills[0]!.address.source).toBe(
       "second",
     );
@@ -284,7 +291,7 @@ test("SRC-003 rebinds same canonical identity through a different binding and re
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "nested" }, "third": { "kind": "local", "path": "./skills", "root": "other" } } }\n',
     );
     const before = await Bun.file(join(value.root, "state", "state.json")).text();
-    await api.rebindSkill(value.core, {
+    await reviewedRebind(value.core, {
       source: "first",
       path: "nested/one",
       owner: "second",
@@ -294,7 +301,7 @@ test("SRC-003 rebinds same canonical identity through a different binding and re
       .installed[0];
     expect(rebound).toMatchObject({ source: "second", path: "one" });
     await expect(
-      api.rebindSkill(value.core, { source: "second", path: "one", owner: "third" }),
+      reviewedRebind(value.core, { source: "second", path: "one", owner: "third" }),
     ).rejects.toMatchObject({ code: "CONFIG_CONFLICT" });
     expect(await Bun.file(join(value.root, "state", "state.json")).text()).not.toBe(before);
     expect(
@@ -318,7 +325,7 @@ test("MGMT-009 rebinds a missing legacy owner only when retained identity eviden
       join(value.root, "skctl.jsonc"),
       '{ "sources": { "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
-    await api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" });
+    await reviewedRebind(value.core, { source: "first", path: "one", owner: "second" });
     expect((await api.getWorkspace(value.core)).value.installedSkills[0]!.address).toEqual({
       source: "second",
       path: "one",
@@ -422,7 +429,7 @@ test("MGMT-009 migrates literal v1 Local evidence once, then proves a differentl
       join(value.root, "skctl.jsonc"),
       '{ "sources": { "second": { "kind": "local", "path": "./skills", "root": "nested" } } }\n',
     );
-    await api.rebindSkill(value.core, {
+    await reviewedRebind(value.core, {
       source: "first",
       path: "nested/one",
       owner: "second",
@@ -472,7 +479,7 @@ test("MGMT-009 degrades an already-missing literal v1 owner without provider acc
       path: "one",
     });
     await expect(
-      api.rebindSkill(core, { source: "missing", path: "one", owner: "second" }),
+      reviewedRebind(core, { source: "missing", path: "one", owner: "second" }),
     ).rejects.toMatchObject({ code: "REBIND_UNPROVABLE" });
     await api.uninstallSkills(core, { source: "missing", paths: ["one"] });
     expect(
@@ -537,7 +544,7 @@ test("MGMT-009 derives literal v1 Remote evidence during a state-only uninstall 
     await rm(value.root, { recursive: true, force: true });
   }
 });
-test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner without state publication", async () => {
+test("MGMT-029 Rebind rejects a reviewed owner removed after preview without state publication", async () => {
   const value = await fixture();
   try {
     await api.registerSource(value.core, {
@@ -551,23 +558,22 @@ test("MGMT-029 Rebind ignores advisory preview and rejects a newly removed owner
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
     const before = await Bun.file(join(value.root, "state", "state.json")).text();
-    expect(
-      (await api.previewRebind(value.core, { source: "first", path: "one", owner: "second" }))
-        .value,
-    ).toMatchObject({ proof: "proven", allowed: true });
+    const request = { source: "first", path: "one", owner: "second" };
+    const reviewedImpact = (await api.previewRebind(value.core, request)).value;
+    expect(reviewedImpact).toMatchObject({ proof: "proven", allowed: true });
     const removedOwnerBytes =
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" } } }\n';
     await writeFile(join(value.root, "skctl.jsonc"), removedOwnerBytes);
-    await expect(
-      api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" }),
-    ).rejects.toMatchObject({ code: "REBIND_UNPROVABLE" });
+    await expect(api.rebindSkill(value.core, { ...request, reviewedImpact })).rejects.toMatchObject(
+      { code: "CONFIG_CONFLICT" },
+    );
     expect(await Bun.file(join(value.root, "state", "state.json")).text()).toBe(before);
     expect(await Bun.file(join(value.root, "skctl.jsonc")).text()).toBe(removedOwnerBytes);
     await writeFile(
       join(value.root, "skctl.jsonc"),
       '{ "sources": { "first": { "kind": "local", "path": "./skills", "root": "" }, "second": { "kind": "local", "path": "./skills", "root": "" } } }\n',
     );
-    await api.rebindSkill(value.core, { source: "first", path: "one", owner: "second" });
+    await reviewedRebind(value.core, request);
     expect((await api.getWorkspace(value.core)).value.installedSkills[0]!.address.source).toBe(
       "second",
     );

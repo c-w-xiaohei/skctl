@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { parsedEnter, parsedEscape, enterLive } from "./reader-test-controls";
 import { readerProjection } from "./installed-reader.fixture";
@@ -150,11 +151,12 @@ test("an installed library with missing declarations stays visible and recovery 
     { width: 120, height: 30 },
   );
   try {
+    await openMainPage(setup, "agent");
     await setup.waitForFrame((frame) => frame.includes("Your installed Skills are still here"));
-    await parsedEnter(setup);
+    await enterLive(setup, "skills-setup-primary");
     await setup.waitForFrame((frame) => frame.includes("Restore your saved Source"));
     await parsedEscape(setup);
-    await enterLive(setup, "skills-setup-inventory");
+    await openMainPage(setup, "skills");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
     expect(setup.captureCharFrame()).not.toContain("Your Skill library is empty");
     expect(writes).toBe(0);
@@ -237,7 +239,7 @@ test("installation result locates the newly installed Skill ahead of older Sourc
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("shell-section-tab-sources"),
     );
-    await enterLive(setup, "shell-section-tab-sources");
+    await openMainPage(setup, "sources");
     await setup.waitForFrame((frame) => frame.includes("Find and install"));
     await enterLive(setup, "workspace-action-add-skills");
     await setup.waitFor(
@@ -316,18 +318,12 @@ test("invalid configuration shows its actual file, keeps installed inventory, an
     height: 24,
   });
   try {
+    await openMainPage(setup, "agent");
     await setup.waitForFrame((frame) => frame.includes("Could not read your configuration"));
     expect(setup.captureCharFrame()).toContain("/project/skctl.jsonc");
     expect(setup.captureCharFrame()).toContain("Invalid JSONC at line 12");
     expect(setup.captureCharFrame()).not.toContain("Add your first Source");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
-    );
-    setup.mockInput.pressTab();
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "skills-setup-inventory",
-    );
-    await parsedEnter(setup);
+    await openMainPage(setup, "skills");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
   } finally {
     setup.renderer.destroy();
@@ -376,8 +372,9 @@ test("Collection choice works without a managed declaration or an existing Confi
     { width: 100, height: 30 },
   );
   try {
+    await openMainPage(setup, "agent");
     await setup.waitForFrame((frame) => frame.includes("Choose Collections for agents"));
-    await parsedEnter(setup);
+    await enterLive(setup, "skills-setup-primary");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-use-values"));

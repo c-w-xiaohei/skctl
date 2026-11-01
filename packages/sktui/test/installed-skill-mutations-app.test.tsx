@@ -1,17 +1,12 @@
 import { expect, test } from "bun:test";
 import { TextBufferRenderable } from "@opentui/core";
+import { mkdir, writeFile } from "node:fs/promises";
 import { testRender } from "@opentui/solid";
 import { SkctlError } from "@skctl/core";
 import type { WorkspaceView, OperationResult, RebindImpact, UninstallImpact } from "@skctl/core";
 import { App } from "../src/app";
 import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
-import {
-  enterLive,
-  focusLive,
-  openAllInstalledSkills,
-  openReaderTab,
-  parsedEnter,
-} from "./reader-test-controls";
+import { enterLive, openAllInstalledSkills, parsedEnter } from "./reader-test-controls";
 const address = { source: "team-main", path: "guide" };
 const membershipOwner = {
   level: "project" as const,
@@ -131,17 +126,14 @@ function textIn(renderable: { getChildren(): readonly unknown[] }): string {
 async function openDetailsActions(setup: Awaited<ReturnType<typeof testRender>>) {
   await openAllInstalledSkills(setup);
   await openReaderFromInspector(setup);
-  await openReaderTab(setup, 2);
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
-  await focusLive(setup, "reader-details");
+  await enterLive(setup, "reader-more");
 }
 async function chooseAction(
   setup: Awaited<ReturnType<typeof testRender>>,
   id: "skill-uninstall" | "skill-rebind",
 ) {
-  if (!setup.renderer.root.findDescendantById(`reader-details-action-${id}`))
-    await enterLive(setup, "reader-details-manage");
-  await enterLive(setup, `reader-details-action-${id}`);
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById(`reader-menu-${id}`));
+  await enterLive(setup, `reader-menu-${id}`);
 }
 async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
   await new Promise<void>((resolve) => {
@@ -156,7 +148,7 @@ async function parsedEscape(setup: Awaited<ReturnType<typeof testRender>>) {
   });
   await setup.renderOnce();
 }
-test.each([[120, 40, "Tab controls · Esc close"]] as const)(
+test.each([[120, 40, "Tab controls  Esc close"]] as const)(
   "App gives the executing review overlay Esc cancel at %ix%i",
   async (width, height, expectedHelp) => {
     const executing = deferred<OperationResult<void>>();
@@ -252,7 +244,7 @@ test("App returns an Installed Skill execution failure to its live review and ca
     await enterLive(setup, "installed-skill-review-confirm");
     await setup.waitForFrame((frame) => frame.includes("INTERNAL: disk full"));
     expect(setup.captureCharFrame()).toContain("Uninstall Skill");
-    expect(textIn(setup.renderer.root)).toContain("Tab controls · Esc close");
+    expect(textIn(setup.renderer.root)).toContain("Tab controls  Esc close");
     await enterLive(setup, "installed-skill-review-confirm");
     await setup.waitFor(() => executions === 2);
   } finally {
@@ -326,7 +318,7 @@ test("App retries an operation-specific Installed Skill preview failure", async 
     await openDetailsActions(setup);
     await chooseAction(setup, "skill-uninstall");
     await setup.waitForFrame((frame) => frame.includes("Uninstall Skill preview failed"));
-    expect(textIn(setup.renderer.root)).toContain("Tab controls · Esc close");
+    expect(textIn(setup.renderer.root)).toContain("Tab controls  Esc close");
     await enterLive(setup, "installed-skill-preview-failure-retry");
     await setup.waitForFrame((frame) => frame.includes("Uninstall Skill preview"));
     retry.resolve(
@@ -341,66 +333,85 @@ test("App retries an operation-specific Installed Skill preview failure", async 
       }),
     );
     await setup.waitForFrame((frame) => frame.includes("Uninstall Skill"));
-    expect(textIn(setup.renderer.root)).toContain("Tab controls · Esc close");
+    expect(textIn(setup.renderer.root)).toContain("Tab controls  Esc close");
   } finally {
     setup.renderer.destroy();
   }
 });
-test("App Rebind form uses native Tab order and submits only a valid structural request", async () => {
-  const requests: unknown[] = [];
-  const setup = await testRender(
-    () => (
-      <App
-        core={directSourceCore(projection(), {
-          previewRebind: async (_environment: import("@skctl/core").CoreOptions, request) => {
-            requests.push(request);
-            return result<RebindImpact>({
-              kind: "rebind",
-              address,
-              owner: request.owner,
-              ownerPath: request.ownerPath ?? request.path,
-              proof: "proven",
-              allowed: true,
-            });
-          },
-        })}
-        exit={() => {}}
-      />
-    ),
-    { width: 120, height: 40 },
-  );
-  try {
-    await openDetailsActions(setup);
-    await chooseAction(setup, "skill-rebind");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "rebind-source-choice",
+test.each([120, 43])(
+  "App Change Source form shows its target and submits only a valid request at %i columns",
+  async (width) => {
+    const requests: unknown[] = [];
+    const setup = await testRender(
+      () => (
+        <App
+          core={directSourceCore(projection(), {
+            previewRebind: async (_environment: import("@skctl/core").CoreOptions, request) => {
+              requests.push(request);
+              return result<RebindImpact>({
+                kind: "rebind",
+                address,
+                owner: request.owner,
+                ownerPath: request.ownerPath ?? request.path,
+                proof: "proven",
+                scope: "captured-workspace",
+                limitation: "External projects are not observed",
+                baseline: "fixture-baseline",
+                directMemberships: [],
+                blockers: [],
+                allowed: true,
+              });
+            },
+          })}
+          exit={() => {}}
+        />
+      ),
+      { width, height: width === 43 ? 13 : 40 },
     );
-    await parsedEnter(setup);
-    await setup.renderOnce();
-    setup.mockInput.pressKey("TAB");
-    await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("rebind-owner-path");
-    await setup.mockInput.pressKeys(["/", "b", "a", "d"]);
-    setup.mockInput.pressKey("TAB");
-    await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("rebind-cancel");
-    await setup.renderOnce();
-    expect(requests).toEqual([]);
-    setup.mockInput.pressKey("TAB", { shift: true });
-    await setup.renderOnce();
-    await setup.mockInput.pressKeys(["BACKSPACE", "BACKSPACE", "BACKSPACE", "BACKSPACE"]);
-    await setup.mockInput.pressKeys(["a", "l", "t", "/", "g", "u", "i", "d", "e"]);
-    setup.mockInput.pressKey("TAB");
-    await parsedEnter(setup);
-    await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("Rebind Skill"));
-    expect(requests).toEqual([
-      { source: "team-main", path: "guide", owner: "replacement", ownerPath: "alt/guide" },
-    ]);
-  } finally {
-    setup.renderer.destroy();
-  }
-});
+    try {
+      await openDetailsActions(setup);
+      await chooseAction(setup, "skill-rebind");
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "rebind-source-choice",
+      );
+      await setup.flush();
+      const source = setup.renderer.root.findDescendantById("rebind-source-choice")!;
+      expect(source.height).toBeGreaterThan(0);
+      expect(source.width).toBeGreaterThan(10);
+      expect(setup.captureCharFrame()).toContain("replacement");
+      expect(setup.captureCharFrame()).toContain("team-main/guide");
+      expect(setup.captureCharFrame()).toContain("Review change");
+      expect(setup.captureCharFrame()).toContain("Cancel");
+      expect(textIn(setup.renderer.root)).not.toContain("Use a relative path without ..");
+      await mkdir("out/reader-redesign", { recursive: true });
+      await writeFile(`out/reader-redesign/change-source-${width}.txt`, setup.captureCharFrame());
+      await parsedEnter(setup);
+      await setup.renderOnce();
+      setup.mockInput.pressKey("TAB");
+      await setup.renderOnce();
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("rebind-owner-path");
+      await setup.mockInput.pressKeys(["/", "b", "a", "d"]);
+      setup.mockInput.pressKey("TAB");
+      await setup.renderOnce();
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("rebind-cancel");
+      await setup.renderOnce();
+      expect(requests).toEqual([]);
+      setup.mockInput.pressKey("TAB", { shift: true });
+      await setup.renderOnce();
+      await setup.mockInput.pressKeys(["BACKSPACE", "BACKSPACE", "BACKSPACE", "BACKSPACE"]);
+      await setup.mockInput.pressKeys(["a", "l", "t", "/", "g", "u", "i", "d", "e"]);
+      setup.mockInput.pressKey("TAB");
+      await parsedEnter(setup);
+      await setup.renderOnce();
+      await setup.waitForFrame((frame) => frame.includes("Rebind Skill"));
+      expect(requests).toEqual([
+        { source: "team-main", path: "guide", owner: "replacement", ownerPath: "alt/guide" },
+      ]);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 test("App routes blocked Uninstall reference resolution by Collection ID with exact owner handoff", async () => {
   const setup = await testRender(
     () => (

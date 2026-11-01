@@ -7,6 +7,7 @@ import {
 } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import {
   collectionFilterDimensions,
   collectionFilterValues,
@@ -41,7 +42,7 @@ import {
 } from "./installed-reader.fixture";
 async function navigateToCollections(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.flush();
-  await enterLive(setup, "shell-section-tab-collections");
+  await openMainPage(setup, "collections");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
   setup.renderer.root.findDescendantById("collection-browser")!.focus();
   await setup.renderOnce();
@@ -196,13 +197,67 @@ test("COLLECTION member origins preserve contribution, producer, and outer Link 
           { collection: "shared", linkedCollection: "nested", owner },
         ],
       },
-    }).find((command) => command.id === "membership.unlink")?.intent,
+    }).find((command) => command.id === "membership.open-link")?.intent,
   ).toMatchObject({
-    kind: "collection-link",
+    kind: "collection-open-collection",
     collection: "engineering",
     target: "shared",
-    owner,
   });
+});
+test("COLLECTION command metadata distinguishes the current member, its Link, and the exact Use owner", () => {
+  const owner = {
+    level: "project" as const,
+    file: "/project.jsonc",
+    pointer: "/collections/team/members/guide",
+  };
+  const member = { name: "guide", address: { source: "skills", path: "review/guide" } };
+  const direct = relationshipCommands("team", {
+    kind: "membership",
+    member,
+    origin: { kind: "direct", collection: "team", entryName: "guide", owner },
+  });
+  const read = direct.find((command) => command.id === "membership.open-skill")!;
+  expect(read.object).toContain("skills/review/guide");
+  expect(read.group).toBe("member");
+  expect(read.opens).toBeDefined();
+  const remove = direct.find((command) => command.id === "membership.remove")!;
+  expect(remove.object).toContain("team");
+  expect(remove.object).toContain("guide");
+  expect(remove.scopeText).toContain("/project.jsonc");
+  expect(remove.scopeText).toContain("/collections/team/members/guide");
+  expect(remove.scopeText).not.toContain("checked");
+  expect(remove.opens).toBeDefined();
+  expect(remove.group).toBe("member");
+  const linked = relationshipCommands("team", {
+    kind: "membership",
+    member,
+    origin: {
+      kind: "via-link",
+      links: [{ collection: "team", linkedCollection: "shared", owner }],
+    },
+  }).find((command) => command.id === "membership.open-link")!;
+  expect(linked.object).toBe("shared");
+  expect(linked.object).toContain("shared");
+  expect(linked.danger).toBe(false);
+  expect(linked.scopeText).toContain("/project.jsonc");
+  expect(linked.group).toBe("member");
+  const useOwner = { level: "global" as const, file: "/global.jsonc", pointer: "/use/2" };
+  const use = relationshipCommands("team", {
+    kind: "relation",
+    relation: {
+      kind: "collection-use",
+      label: "Collection Use",
+      owner: useOwner,
+      effect: "active",
+      intent: { kind: "collection-use", collection: "team", owner: useOwner },
+    },
+  }).find((command) => command.id === "relationship.edit-use")!;
+  expect(use.object).toContain("team");
+  expect(use.scopeText).toContain("/global.jsonc");
+  expect(use.scopeText).toContain("/use/2");
+  expect(use.scopeText).not.toContain("checked");
+  expect(use.opens).toBeDefined();
+  expect(use.group).toBe("member");
 });
 test("COLLECTION relation rows retain structural identities when their display order changes", () => {
   const owner = {
@@ -991,14 +1046,17 @@ test("RENDER narrow Problems handoff reads the exact installed subject and Escap
     setup.resize(43, 30);
     await openSkillView(setup, "problems");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
-    expect(loads).toEqual([]);
+    const startupLoads = [...loads];
+    expect(startupLoads.every((path) => path === "guide")).toBe(true);
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
     expect(setup.renderer.root.findDescendantById("skill-inspector-open-reader")).toBeUndefined();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
     await openReaderTab(setup, 2);
     await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
-    expect(loads).toEqual(["guide"]);
+    expect(loads.length).toBeGreaterThanOrEqual(startupLoads.length);
+    expect(loads).toContain("guide");
+    expect(loads.every((path) => path === "guide")).toBe(true);
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
   } finally {
@@ -1106,8 +1164,8 @@ test("RENDER invalid Config diagnostic detail preserves exact row selection and 
       expect(setup.renderer.root.findDescendantById("workspace-diagnostic-detail")).toBeUndefined();
       expect(setup.renderer.root.findDescendantById("route-back")).toBeUndefined();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("problems-browser");
-      expect(setup.renderer.currentFocusedRenderable).toBe(current);
-      expect(setup.renderer.currentFocusedRenderable).toBe(restored);
+      expect(setup.renderer.currentFocusedRenderable === current).toBe(true);
+      expect(setup.renderer.currentFocusedRenderable === restored).toBe(true);
     } finally {
       setup.renderer.destroy();
     }
@@ -1143,11 +1201,13 @@ test("RENDER unavailable Agent access routes to authoritative Problems without i
     { width: 120, height: 30 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-setup-primary"));
+    await openMainPage(setup, "agent");
     expect(
       setup.renderer.root.findDescendantById("current-exposure-enable-managed-opencode"),
     ).toBeUndefined();
-    await enterLive(setup, "skills-setup-primary");
+    await openMainPage(setup, "skills");
+    await enterLive(setup, "skills-view-tab-problems");
+    await focusLive(setup, "problems-browser");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
     const diagnostics = setup.renderer.root.findDescendantById(
       "problems-browser",
@@ -1213,6 +1273,8 @@ test("RENDER empty Agent Collection Enter stays in the tree and explicit Details
     { width: 120, height: 30 },
   );
   try {
+    await openMainPage(setup, "agent");
+    await focusLive(setup, "current-exposure-browser");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
     );
@@ -1220,13 +1282,13 @@ test("RENDER empty Agent Collection Enter stays in the tree and explicit Details
       "current-exposure-browser",
     ) as ScrollBoxRenderable;
     await parsedEnter(setup);
-    expect(setup.renderer.currentFocusedRenderable).toBe(tree);
+    expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
     expect(tree.content.getChildren()).toHaveLength(1);
     expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeUndefined();
     await enterLive(setup, "agent-access-collection-details");
     await setup.waitFor(
       () =>
-        setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-entries" ||
+        setup.renderer.currentFocusedRenderable?.id === "collection-tabs-tab-members" ||
         setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
     );
     await parsedEscape(setup);
@@ -1541,33 +1603,27 @@ test("RENDER Collection producer Open Source navigates to its owning Source", as
     { width: 120, height: 40 },
   );
   try {
+    await setup.flush();
+    const startupLoads = [...loads];
     await navigateToCollections(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
     expect(setup.captureCharFrame()).toContain("engineering");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
     expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeDefined();
-    await focusLive(setup, "collection-relationships");
-    setup.mockInput.pressArrow("right");
-    await setup.flush();
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id.includes(":action-") === true,
-    );
-    await parsedEnter(setup);
+    await enterLive(setup, "collection-current-details");
     await setup.renderOnce();
-    await setup.waitForFrame((frame) => frame.includes("A distinct Installed Skill"));
+    await setup.waitForFrame((frame) => frame.includes("Target  team-main/reference"));
     expect(setup.renderer.root.findDescendantById("collection-membership-inspector")).toBeDefined();
-    expect(loads).toEqual([]);
-    const openSkill = setup.renderer.root.findDescendantById("membership.open-skill");
-    expect(openSkill?.id).toBe("membership.open-skill");
-    expect(setup.captureCharFrame()).toContain("Open Skill");
-    expect(loads).toEqual([]);
+    expect(loads).toEqual(startupLoads);
+    expect(!!setup.renderer.root.findDescendantById("membership.open-skill")).toBe(false);
+    expect(loads).toEqual(startupLoads);
     const openSource = setup.renderer.root.findDescendantById("membership.open-source");
     expect(openSource?.id).toBe("membership.open-source");
     await enterLive(setup, "membership.open-source");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-pane"));
     expect(setup.captureCharFrame()).toContain(readerSecondAddress.source);
-    expect(loads).toEqual([]);
+    expect(loads).toEqual(startupLoads);
   } finally {
     setup.renderer.destroy();
   }

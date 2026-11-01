@@ -14,6 +14,7 @@ import { SkctlError, type WorkspaceView } from "@skctl/core";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { UpdatesPage } from "../src/updates/page";
 import { deriveUpdateScope as buildUpdateScope } from "../src/updates/scope";
 import { createUpdatesState } from "../src/updates/state";
@@ -23,7 +24,7 @@ import {
   focusLive,
   openAllInstalledSkills,
   openReaderTab,
-  openReaderManagement,
+  openReaderSettings,
   parsedEnter,
   parsedEscape,
   selectedReaderTab,
@@ -176,7 +177,7 @@ async function mount(
     await setup.waitFor(
       () =>
         !!setup!.renderer.root.findDescendantById("shell-section-tab-updates") ||
-        !!setup!.renderer.root.findDescendantById("shell-section-navigation"),
+        !!setup!.renderer.root.findDescendantById("shell-pages-select"),
     );
     await openAllInstalledSkills(setup);
     await setup.waitFor(() => loaded.length === 1);
@@ -184,21 +185,12 @@ async function mount(
     if (skillScope) {
       await enterLive(setup, "installed-skill-browser");
       await enterLive(setup, "reader-action-skill-check-updates");
-    } else if (setup.renderer.root.findDescendantById("shell-section-tab-updates"))
-      await enterLive(setup, "shell-section-tab-updates");
-    else {
-      await focusLive(setup, "shell-section-navigation");
-      for (let index = 0; index < 3; index++) {
-        setup.mockInput.pressArrow("down");
-        await setup.renderOnce();
-      }
-      await parsedEnter(setup);
-    }
+    } else await openMainPage(setup, "updates");
     await setup.waitForFrame(
       (frame) =>
         frame.includes("Source") &&
         frame.includes("team-main") &&
-        (skillScope ? frame.includes("Updated 1") : frame.includes("Updates available")),
+        frame.includes("Updates available"),
       { maxPasses: 200 },
     );
     return {
@@ -281,7 +273,7 @@ test.each([
     try {
       setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
       await setup.waitFor(
-        () => checks === 1 && !!setup!.renderer.root.findDescendantById("skills-setup-pane"),
+        () => checks === 1 && !!setup!.renderer.root.findDescendantById("installed-skill-browser"),
       );
       const status = setup.renderer.root.findDescendantById("process-status") as TextRenderable;
       await setup.waitFor(() => status.plainText.includes("Checking"));
@@ -294,7 +286,7 @@ test.each([
       expect(status.screenY).toBeLessThan(header.screenY + header.height - 1);
       expect(status.screenX + status.width).toBeLessThanOrEqual(width - 1);
       expect(footer.findDescendantById("process-status")).toBeUndefined();
-      for (const id of ["shell-scope-select", "shell-more-actions"]) {
+      for (const id of ["shell-more-actions"]) {
         const control = setup.renderer.root.findDescendantById(id)!;
         expect(control.screenX + control.width).toBeLessThanOrEqual(width - 1);
         expect(
@@ -305,7 +297,7 @@ test.each([
       expect(signal?.aborted).toBe(false);
       expect(checks).toBe(1);
       await capture(setup, `top-checking-${width}x${height}`);
-      await focusLive(setup, "skills-view-tab-current-exposure");
+      await focusLive(setup, "installed-skill-browser");
       await chooseAction(setup, "checks.task.show");
       await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("updates-browser"));
       expect(checks).toBe(1);
@@ -640,13 +632,7 @@ test.each([
           .findDescendantById("command-status")!
           .findDescendantById("process-status"),
       ).toBeUndefined();
-      if (setup.renderer.root.findDescendantById("shell-section-tab-sources")) {
-        await enterLive(setup, "shell-section-tab-sources");
-      } else {
-        await focusLive(setup, "shell-section-navigation");
-        setup.mockInput.pressArrow("up");
-        await parsedEnter(setup);
-      }
+      await openMainPage(setup, "sources");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
       await setup.flush();
       expect(chromeGeometry()).toEqual(chrome);
@@ -667,7 +653,7 @@ test.each([
           expect(status().screenY).toBeLessThan(bar.screenY + bar.height - 1);
           expect(status().plainText).toContain("Updating");
           expectHeaderActivitySpacing(setup, nextWidth);
-          for (const id of ["shell-scope-select", "shell-more-actions"]) {
+          for (const id of ["shell-more-actions"]) {
             const control = setup.renderer.root.findDescendantById(id)!;
             expect(
               status().screenX + status().width <= control.screenX ||
@@ -686,7 +672,7 @@ test.each([
       expect(chromeGeometry()).toEqual(chrome);
       expect(status().screenX + status().width).toBeLessThanOrEqual(width - 1);
       expectHeaderActivitySpacing(setup, width);
-      for (const id of ["shell-scope-select", "shell-more-actions"]) {
+      for (const id of ["shell-more-actions"]) {
         const control = setup.renderer.root.findDescendantById(id)!;
         expect(
           status().screenX + status().width <= control.screenX ||
@@ -737,7 +723,7 @@ test("quiet App preserves hidden selection, isolates text entry and keeps arrows
     setup.mockInput.pressArrow("up");
     setup.mockInput.pressArrow("left");
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable).toBe(browser);
+    expect(setup.renderer.currentFocusedRenderable === browser).toBe(true);
     await setup.mockInput.typeText("/");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable instanceof InputRenderable);
     await setup.mockInput.typeText("Audit");
@@ -746,7 +732,7 @@ test("quiet App preserves hidden selection, isolates text entry and keeps arrows
     const input = setup.renderer.currentFocusedRenderable;
     setup.mockInput.pressArrow("left");
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable).toBe(input);
+    expect(setup.renderer.currentFocusedRenderable === input).toBe(true);
     await parsedEnter(setup);
     await setup.waitForFrame((frame) => frame.includes("selected") && frame.includes("hidden"));
     await enterLive(setup, "source-updates-update-all");
@@ -822,6 +808,8 @@ test("Source drill-down cannot widen a Skill-scoped update to other installed Sk
   const mounted = await mount(80, 24, false, true);
   try {
     const { setup, calls } = mounted;
+    expect(calls).toEqual([]);
+    await enterLive(setup, "updates-update-all");
     await setup.waitForFrame((frame) => frame.includes("Updated 1"));
     calls.length = 0;
     await enterLive(setup, "updates-browser");
@@ -871,16 +859,7 @@ async function chooseAction(setup: Setup, id: string) {
   await parsedEnter(setup);
 }
 async function openSection(setup: Setup, section: "skills" | "sources" | "updates") {
-  const tab = `shell-section-tab-${section}`;
-  if (setup.renderer.root.findDescendantById(tab)) return enterLive(setup, tab);
-  const navigation = (await focusLive(setup, "shell-section-navigation")) as SelectRenderable;
-  const index = ["skills", "collections", "sources", "updates"].indexOf(section);
-  const current = navigation.getSelectedIndex();
-  for (let step = 0; step < Math.abs(index - current); step++) {
-    setup.mockInput.pressArrow(index > current ? "down" : "up");
-    await setup.renderOnce();
-  }
-  await parsedEnter(setup);
+  await openMainPage(setup, section);
 }
 test.each([
   [144, 40],
@@ -923,7 +902,7 @@ test.each([
       expect(loaded).toEqual([{ source: "team-main", path: "skill-0" }]);
       expect(acquisitions).toEqual([]);
       await openReaderTab(setup, 2);
-      await openReaderManagement(setup);
+      await openReaderSettings(setup);
       const add = setup.renderer.root.findDescendantById(
         "reader-details-action-skill-add-to-collection",
       )!;
@@ -931,8 +910,11 @@ test.each([
       add.focus();
       await setup.flush();
       expect(add.screenY).toBeGreaterThan(update.screenY);
-      // Opening the palette has no side effects; the direct Reader button updates its current Skill once.
+      // Checking opens review without mutation; only explicit submission updates the current Skill.
       await enterLive(setup, "reader-action-skill-check-updates");
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-update-all"));
+      expect(calls).toEqual([]);
+      await enterLive(setup, "updates-update-all");
       await setup.waitFor(() => calls.length === 1);
       expect(calls).toEqual([
         {
@@ -952,7 +934,6 @@ test("shared filter lists apply an exact Source from a pointer row and preserve 
   try {
     const { setup, calls } = mounted;
     await openSection(setup, "skills");
-    await enterLive(setup, "skills-view-tab-all-installed-skills");
     await enterLive(setup, "open-skills-filter");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "skills-filter-dimensions",
@@ -1012,14 +993,14 @@ test.each([
       expect(calls).toHaveLength(1);
       expect(checks.length).toBe(beforeChecks);
       expect(mounted.signal()?.aborted).toBe(false);
-      await chooseAction(setup, "navigate.global");
+      await chooseAction(setup, "navigate.settings");
       await setup.waitFor(
         () =>
           !setup.renderer.root.findDescendantById("updates-browser") &&
           !setup.renderer.root.findDescendantById("source-browser"),
       );
       expect(mounted.signal()?.aborted).toBe(false);
-      await focusLive(setup, "shell-section-global-tab-collections");
+      await focusLive(setup, "settings-section-tab-sources");
       await chooseAction(setup, "updates.task.stop");
       await setup.waitFor(() => mounted.signal()?.aborted === true);
       const status = setup.renderer.root.findDescendantById("process-status") as TextRenderable;
@@ -1176,9 +1157,9 @@ test.each([
       await focusLive(setup, "updates-browser");
       setup.mockInput.pressArrow("down");
       await setup.renderOnce();
-      await chooseAction(setup, "navigate.global");
+      await chooseAction(setup, "navigate.settings");
       await setup.waitFor(() => !setup.renderer.root.findDescendantById("updates-browser"));
-      await focusLive(setup, "shell-section-global-tab-collections");
+      await focusLive(setup, "settings-section-tab-sources");
       setup.mockInput.pressKey("p", { ctrl: true });
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
       const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
@@ -1190,7 +1171,7 @@ test.each([
       ).toBe(false);
       expect(choices.options.some((option) => option.value.id === "diagnostics.logs")).toBe(true);
       await parsedEscape(setup);
-      await chooseAction(setup, "navigate.workspace");
+      await chooseAction(setup, "navigate.updates");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
       await focusLive(setup, "updates-browser");
       await chooseAction(setup, "updates.update-source");
@@ -1291,7 +1272,7 @@ test("Source scan orders updates before current and unchecked results without co
       baseline: "baseline:test",
     });
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable).toBe(browser);
+    expect(setup.renderer.currentFocusedRenderable === browser).toBe(true);
     await parsedEnter(setup);
     expect(opened).toEqual(["has-updates", "has-updates"]);
   } finally {
@@ -1335,7 +1316,7 @@ test("Ctrl+U submits the selected Source directly from its table without toolbar
       source: "team-main",
       paths: ["skill-0", "skill-1", "skill-2"],
     });
-    expect(setup.renderer.currentFocusedRenderable).toBe(table);
+    expect(setup.renderer.currentFocusedRenderable === table).toBe(true);
   } finally {
     await mounted.dispose();
   }

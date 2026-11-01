@@ -66,7 +66,9 @@ export async function resolveEffectiveCollections(
   workspace: WorkspaceView,
   state: StateContents,
   coordinator: StateCoordinator,
-  override?: { readonly file: string; readonly value: ConfigDocument },
+  override?:
+    | { readonly file: string; readonly value: ConfigDocument }
+    | readonly { readonly file: string; readonly value: ConfigDocument }[],
 ) {
   const declarations: CollectionContribution[] = [];
   const files = configInputs(
@@ -75,8 +77,11 @@ export async function resolveEffectiveCollections(
   );
   for (const { level, file } of files) {
     let host: ConfigDocument;
-    if (override?.file === file) {
-      host = override.value;
+    const replacement = Array.isArray(override)
+      ? override.find((item) => item.file === file)
+      : (override as { readonly file: string; readonly value: ConfigDocument } | undefined);
+    if (replacement?.file === file) {
+      host = replacement.value;
       if (!v.is(configSchemaFor(level), host))
         throw invalidConfig(file, "Invalid declaration override");
     } else {

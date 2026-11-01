@@ -15,6 +15,63 @@ import { DataList } from "../ui/data-list";
 import { Input } from "../ui/input";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
 
+export function CollectionRenameOverlay(props: {
+  readonly collection: string;
+  readonly target: string;
+  readonly pending: boolean;
+  readonly error?: { readonly code: string; readonly message: string };
+  readonly onChange: (target: string) => void;
+  readonly onPreview: () => void;
+  readonly onCancel: () => void;
+}) {
+  const controls = createModalControlRegistry();
+  useModalControlTraversal(controls, props.onCancel);
+  return (
+    <ModalShell>
+      <ModalBody
+        controls={controls}
+        header={<text>{`Rename ${props.collection}`}</text>}
+        footer={
+          <box flexDirection="row" gap={1}>
+            <ModalCommand
+              id="collection-rename-preview"
+              controls={controls}
+              order={20}
+              intent="primary"
+              record={modalCommand(
+                "collection-rename.preview",
+                "Preview",
+                props.collection,
+                !props.pending && !!props.target.trim() && props.target.trim() !== props.collection,
+              )}
+              execute={props.onPreview}
+            />
+            <ModalCommand
+              id="collection-rename-cancel"
+              controls={controls}
+              order={30}
+              record={modalCommand("collection-rename.cancel", "Cancel", "Discard draft")}
+              execute={props.onCancel}
+            />
+          </box>
+        }
+      >
+        <text>New Collection ID</text>
+        <Input
+          id="collection-rename-target"
+          ref={useModalControl("collection-rename-target", controls, 10)}
+          focused
+          value={props.target}
+          onInput={props.onChange}
+        />
+        {props.error && (
+          <text wrapMode="word">{`${props.error.code}: ${props.error.message}`}</text>
+        )}
+      </ModalBody>
+    </ModalShell>
+  );
+}
+
 export function CollectionContentOverlay(props: {
   readonly collection: string;
   readonly owner: ConfigDeclarationOwner;
@@ -284,7 +341,7 @@ export function CollectionCreateOverlay(
           onInput={setDescription}
         />
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <text>{`Tab switch controls · Enter activate · Esc ${props.onBack ? "back" : "discard draft"}`}</text>
+        <text>{`Tab switches controls. Enter activates. Esc ${props.onBack ? "goes back" : "discards the draft"}.`}</text>
       </ModalBody>
     </ModalShell>
   );
@@ -311,7 +368,7 @@ export function CollectionImportOverlay(props: {
     <ModalShell>
       <ModalBody
         controls={controls}
-        header={<text>Import Collection</text>}
+        header={<text>Copy Skills from Collection</text>}
         footer={
           <box flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}>
             <ModalCommand
@@ -326,7 +383,7 @@ export function CollectionImportOverlay(props: {
               controls={controls}
               record={modalCommand(
                 "collection-import.review",
-                "Review Import",
+                "Preview copy",
                 "Preview all-or-none import",
                 !props.pending && !!from().trim() && !!into().trim(),
                 false,
@@ -395,7 +452,7 @@ export function ReferenceOverlay(props: {
   const registerTarget = useModalControl("reference-target", controls);
   const registerDescription = useModalControl("reference-description", controls);
   useModalControlTraversal(controls, props.onCancel);
-  const verb = props.remove ? "Remove Reference" : "Add Reference";
+  const verb = props.remove ? "Remove Collection entry" : "Add Collection entry";
   return (
     <ModalShell>
       <ModalBody
@@ -415,7 +472,7 @@ export function ReferenceOverlay(props: {
               controls={controls}
               record={modalCommand(
                 "reference.review",
-                props.pending ? "Reviewing" : `Review ${verb}`,
+                props.pending ? "Reviewing" : "Preview",
                 "Preview this reference",
                 !props.pending && !!name().trim() && !!target().trim(),
                 false,
@@ -453,13 +510,13 @@ export function ReferenceOverlay(props: {
           </box>
         }
       >
-        <text>{`Collection: ${props.collection} · ${props.level}`}</text>
+        <text>{`Collection: ${props.collection}\nConfiguration: ${props.level}`}</text>
         <Input
           id="reference-name"
           ref={registerName}
           focused
           value={name()}
-          placeholder="Reference name"
+          placeholder="Entry name"
           onInput={setName}
         />
         <Input
@@ -503,7 +560,7 @@ export function LinkChangeOverlay(props: {
   const [target, setTarget] = createSignal(props.target);
   const registerTarget = useModalControl("link-target", controls);
   useModalControlTraversal(controls, props.onCancel);
-  const verb = props.linked ? "Add Link" : "Remove Link";
+  const verb = props.linked ? "Include Collection" : "Stop including Collection";
   return (
     <ModalShell>
       <ModalBody
@@ -523,7 +580,7 @@ export function LinkChangeOverlay(props: {
               controls={controls}
               record={modalCommand(
                 "link.review",
-                props.pending ? "Reviewing" : `Review ${verb}`,
+                props.pending ? "Reviewing" : "Preview",
                 "Preview link paths",
                 !props.pending && !!target().trim(),
                 false,
@@ -545,7 +602,7 @@ export function LinkChangeOverlay(props: {
           </box>
         }
       >
-        <text>{`Collection: ${props.collection} · ${props.level}`}</text>
+        <text>{`Collection: ${props.collection}\nConfiguration: ${props.level}`}</text>
         <Input
           id="link-target"
           ref={registerTarget}

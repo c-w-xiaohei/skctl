@@ -56,7 +56,7 @@ export const collectionRelationRows = (
       kind: "collection-use",
       label: "Collection Use",
       target: collectionId,
-      effect: "Owner unavailable · read-only",
+      effect: "Configuration location unavailable. Read-only.",
     });
   rows.push(
     ...collection.references.map((reference) => ({

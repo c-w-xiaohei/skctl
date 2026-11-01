@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import {
+  BoxRenderable,
   CodeRenderable,
   MarkdownRenderable,
   ScrollBoxRenderable,
@@ -10,6 +11,8 @@ import { testRender } from "@opentui/solid";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
+import { exposureTreePathKey } from "../src/collections/agent-access-tree";
+import { openMainPage } from "./main-page-controls";
 import { directOwner, directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import {
@@ -131,7 +134,7 @@ async function waitForBody(text: string) {
     throw error;
   }
 }
-test("default disclosure is guided and selection reads directly in a stable Reader", async () => {
+test("default disclosure is guided and Enter reads the selected Skill in a stable Reader", async () => {
   const reads: string[] = [];
   setup = await testRender(
     () => (
@@ -156,6 +159,10 @@ test("default disclosure is guided and selection reads directly in a stable Read
     ),
     { width: 144, height: 40 },
   );
+  await openMainPage(setup, "agent");
+  await focusLive(setup, "current-exposure-browser");
+  // Initial inventory may already have cached guide; catalog browsing must not add reads.
+  const initialReads = [...reads];
   try {
     await setup.waitFor(
       () => setup!.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
@@ -171,36 +178,77 @@ test("default disclosure is guided and selection reads directly in a stable Read
     throw error;
   }
   const tree = setup.renderer.currentFocusedRenderable as ScrollBoxRenderable;
-  expect(reads).toEqual([]);
-  await setup.waitForFrame((frame) => frame.includes("Enter expand"));
+  expect(reads).toEqual(initialReads);
+  await setup.waitForFrame((frame) => frame.includes("Enter or ▸/▾ to expand/fold"));
   await capture("agent-startup-144x40");
   await parsedEnter(setup);
-  expect(setup.renderer.currentFocusedRenderable).toBe(tree);
-  expect(reads).toEqual([]);
+  expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
+  expect(reads).toEqual(initialReads);
+  const rootPath = exposureTreePathKey({ segments: [{ collection: "root" }] });
+  const childKey = exposureTreePathKey({
+    segments: [
+      { collection: "root" },
+      { collection: "child", reference: { name: "child", target: "child" } },
+    ],
+  });
+  const guideKey = JSON.stringify([rootPath, "skill", "guide", "team-main", "guide"]);
+  const row = (key: string) =>
+    setup!.renderer.root.findDescendantById(
+      `current-exposure-browser-row-${encodeURIComponent(key)}`,
+    );
+  await setup.waitFor(() => !!row(childKey) && !!row(guideKey));
   await arrow("down");
-  expect(reads).toEqual([]);
+  expect(reads).toEqual(initialReads);
   await arrow("down");
+  expect(reads).toEqual(initialReads);
+  await setup.waitFor(
+    () =>
+      row(guideKey) instanceof BoxRenderable &&
+      (row(guideKey) as BoxRenderable).backgroundColor.a > 0,
+  );
+  expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
+  await parsedEnter(setup);
   await waitForBody("Body: guide");
   const body = setup.renderer.root.findDescendantById("reader-scrollbox")!;
   expect(body).toBeDefined();
-  expect(reads).toEqual(["guide"]);
+  expect(reads).toEqual(initialReads.includes("guide") ? initialReads : [...initialReads, "guide"]);
+  await parsedEscape(setup);
+  await setup.waitFor(
+    () => setup!.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
+  );
   await arrow("down");
-  await waitForBody("Body: reference");
-  expect(setup.renderer.root.findDescendantById("reader-scrollbox")).toBe(body);
-  await arrow("up");
-  await waitForBody("Body: guide");
-  expect(setup.renderer.root.findDescendantById("reader-scrollbox")).toBe(body);
-  expect(reads).toEqual(["guide", "reference"]);
-  for (let round = 0; round < 3; round++) {
-    await arrow("down");
-    await waitForBody("Body: reference");
-    await arrow("up");
-    await waitForBody("Body: guide");
-    expect(setup.renderer.root.findDescendantById("reader-scrollbox")).toBe(body);
-  }
-  expect(reads).toEqual(["guide", "reference"]);
+  expect(reads).toEqual(initialReads.includes("guide") ? initialReads : [...initialReads, "guide"]);
   await parsedEnter(setup);
-  expect(setup.renderer.currentFocusedRenderable).toBe(body);
+  await waitForBody("Body: reference");
+  await parsedEscape(setup);
+  await setup.waitFor(
+    () => setup!.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
+  );
+  await arrow("up");
+  await parsedEnter(setup);
+  await waitForBody("Body: guide");
+  const afterSelections = [...reads];
+  expect(afterSelections.filter((path) => path === "guide")).toHaveLength(1);
+  expect(afterSelections.filter((path) => path === "reference")).toHaveLength(1);
+  for (let round = 0; round < 3; round++) {
+    await parsedEscape(setup);
+    await setup.waitFor(
+      () => setup!.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
+    );
+    await arrow("down");
+    await parsedEnter(setup);
+    await waitForBody("Body: reference");
+    await parsedEscape(setup);
+    await setup.waitFor(
+      () => setup!.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
+    );
+    await arrow("up");
+    await parsedEnter(setup);
+    await waitForBody("Body: guide");
+  }
+  expect(reads).toEqual(afterSelections);
+  const currentBody = setup.renderer.root.findDescendantById("reader-scrollbox")!;
+  expect(setup.renderer.currentFocusedRenderable === currentBody).toBe(true);
   for (const [width, height] of [
     [144, 40],
     [100, 24],
@@ -210,12 +258,14 @@ test("default disclosure is guided and selection reads directly in a stable Read
     setup.resize(width!, height!);
     await setup.renderOnce();
     await setup.waitForFrame((frame) => frame.includes("Body: guide"));
-    expect(setup.renderer.root.findDescendantById("reader-scrollbox")).toBe(body);
-    expect(setup.renderer.currentFocusedRenderable).toBe(body);
+    expect(setup.renderer.root.findDescendantById("reader-scrollbox") === currentBody).toBe(true);
+    expect(setup.renderer.currentFocusedRenderable === currentBody).toBe(true);
     await capture(`agent-reader-${width}x${height}`);
   }
   await parsedEscape(setup);
-  await setup.waitFor(() => setup!.renderer.currentFocusedRenderable === tree);
+  await setup.waitFor(
+    () => setup!.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
+  );
 });
 test("All Skills Collection tree filters descendants and survives popup clearing and responsive hiding", async () => {
   setup = await testRender(() => <App core={directSourceCore(projection())} exit={() => {}} />, {
@@ -270,7 +320,7 @@ test("All Skills Collection tree filters descendants and survives popup clearing
   expect(tree.focusable).toBe(false);
   setup.resize(144, 40);
   await setup.renderOnce();
-  expect(setup.renderer.root.findDescendantById("collection-filter-tree")).toBe(tree);
+  expect(setup.renderer.root.findDescendantById("collection-filter-tree") === tree).toBe(true);
   expect(browser.options).toHaveLength(2);
 });
 test("native Tree scrollbar focus keeps Tree commands and does not select another object", async () => {
@@ -300,6 +350,8 @@ test("native Tree scrollbar focus keeps Tree commands and does not select anothe
     width: 100,
     height: 24,
   });
+  await openMainPage(setup, "agent");
+  await focusLive(setup, "current-exposure-browser");
   await setup.waitFor(
     () => setup!.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
   );
@@ -311,7 +363,7 @@ test("native Tree scrollbar focus keeps Tree commands and does not select anothe
   await setup.renderOnce();
   await setup.mockMouse.click(thumb.screenX, thumb.screenY);
   await setup.waitForFrame((frame) => frame.includes("Enter collapse"));
-  expect(setup.renderer.currentFocusedRenderable).toBe(tree.verticalScrollBar);
+  expect(setup.renderer.currentFocusedRenderable === tree.verticalScrollBar).toBe(true);
   expect(setup.captureCharFrame()).toContain("Root task description");
   await parsedEnter(setup);
   await setup.waitForFrame((frame) => frame.includes("Enter expand"));
@@ -339,6 +391,7 @@ test("an incomplete projection offers Problems without suggesting an unrelated M
     width: 100,
     height: 24,
   });
+  await openMainPage(setup, "agent");
   await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("skills-setup-primary"));
   expect(
     setup.renderer.root.findDescendantById("current-exposure-enable-managed-opencode"),

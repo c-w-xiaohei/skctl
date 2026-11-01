@@ -12,6 +12,7 @@ import {
   type OperationResult,
 } from "@skctl/core";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { CollectionUseOverlay } from "../src/operations";
 import { theme } from "../src/ui/theme";
 import { directSourceCore } from "./direct-source.fixture";
@@ -58,7 +59,7 @@ async function expectFocusedInBody(setup: Setup, id: string, caption: string) {
         .join("\n")
         .includes(caption),
   );
-  expect(setup.renderer.currentFocusedRenderable).toBe(target);
+  expect(setup.renderer.currentFocusedRenderable === target).toBe(true);
   expect(target.screenY).toBeGreaterThanOrEqual(body.viewport.screenY);
   expect(target.screenY + target.height).toBeLessThanOrEqual(
     body.viewport.screenY + body.viewport.height,
@@ -555,6 +556,7 @@ async function chooseAction(setup: Setup, id: string) {
   await parsedEnter(setup);
 }
 async function openConfigUse(setup: Setup) {
+  await openMainPage(setup, "settings");
   await enterLive(setup, "shell-scope-select");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("scope-choices"));
   const scope = live(setup, "scope-choices") as SelectRenderable;
@@ -567,12 +569,12 @@ async function openConfigUse(setup: Setup) {
   }
   await parsedEnter(setup);
   await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("shell-section-project-tab-collections"),
+    () => !!setup.renderer.root.findDescendantById("settings-section-tab-collections"),
   );
-  await enterLive(setup, "shell-section-project-tab-collections");
+  await enterLive(setup, "settings-section-tab-collections");
   await chooseAction(setup, "set-collection-use");
 }
-for (const entry of ["Config", "relationship Edit Use"] as const) {
+for (const entry of ["Config", "relationship Edit Use", "Settings level"] as const) {
   test(`production App ${entry} reviews and commits only the exact host Use, not effective roots or current row`, async () => {
     const previews: unknown[] = [],
       changes: unknown[] = [];
@@ -612,16 +614,12 @@ for (const entry of ["Config", "relationship Edit Use"] as const) {
       height: 40,
     });
     try {
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("shell-section-tab-collections"),
-      );
       if (entry === "Config") await openConfigUse(setup);
       else {
-        await enterLive(setup, "shell-section-tab-collections");
+        await openMainPage(setup, "collections");
         await enterLive(setup, "collection-browser");
-        await enterLive(setup, "collection-tabs-tab-relations");
-        await focusLive(setup, "collection-relationships");
-        await chooseAction(setup, "relationship.edit-use");
+        await enterLive(setup, "collection-tabs-tab-settings");
+        await enterLive(setup, "collection-use-project");
       }
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-use-values",
@@ -675,7 +673,6 @@ test("production App failed Use review retains the same checked draft across sup
     height: 40,
   });
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-scope-select"));
     await openConfigUse(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-use-values",
@@ -748,7 +745,6 @@ test("production App reviews and commits explicit empty Use without substituting
     height: 24,
   });
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-scope-select"));
     await openConfigUse(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-use-values",
@@ -799,7 +795,6 @@ test("production App cancels an outstanding Use preview without applying its lat
     height: 24,
   });
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-scope-select"));
     await openConfigUse(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-use-values",

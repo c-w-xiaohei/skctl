@@ -2,14 +2,13 @@ import { expect, test } from "bun:test";
 import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { selectScrollOffset } from "../src/select-scroll";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEscape } from "./reader-test-controls";
 
 async function openSources(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-sources"));
-  const tab = setup.renderer.root.findDescendantById("shell-section-tab-sources")!;
-  await setup.mockMouse.click(tab.screenX + 1, tab.screenY);
+  await openMainPage(setup, "sources");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
   return (await focusLive(setup, "source-browser")) as SelectRenderable;
 }
@@ -66,7 +65,7 @@ test("RENDER compact Sources keeps native rows, source identity, and every detai
     expect(first).toBe(browser.num);
     await setup.mockMouse.click(browser.screenX + 1, browser.screenY);
     await enterLive(setup, "source-browser");
-    await enterLive(setup, "source-details-toggle");
+    await enterLive(setup, "source-view-tab-settings");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
     await parsedEscape(setup);
     const returned = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;
@@ -86,7 +85,7 @@ test("RENDER compact Sources keeps native rows, source identity, and every detai
     const lastY = returned.screenY + returned.height - 1;
     await setup.mockMouse.click(returned.screenX + 1, lastY);
     await enterLive(setup, "source-browser");
-    await enterLive(setup, "source-details-toggle");
+    await enterLive(setup, "source-view-tab-settings");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
     await setup.renderOnce();
     expect(setup.captureCharFrame()).toContain("source-23");
@@ -104,7 +103,7 @@ test("RENDER compact Sources keeps native rows, source identity, and every detai
     const discover = await focusLive(setup, "workspace-action-add-skills");
     await setup.flush();
     assertInsidePane(discover, pane);
-    expect(!!setup.renderer.root.findDescendantById("source-command-skills")).toBe(true);
+    expect(!!setup.renderer.root.findDescendantById("source-view-tab-installed")).toBe(true);
 
     await parsedEscape(setup);
     const restored = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;

@@ -276,7 +276,7 @@ test("RENDER an unregistered physical focus event does not request a new desired
     const readerFind = setup.renderer.root.findDescendantById("reader-find")!;
     setup.renderer.emit(CliRenderEvents.FOCUSED_RENDERABLE, readerFind, readerTabs);
     await setup.renderOnce();
-    expect(setup.renderer.currentFocusedRenderable).toBe(readerTabs);
+    expect(setup.renderer.currentFocusedRenderable === readerTabs).toBe(true);
     setup.renderer.off(CliRenderEvents.FOCUSED_RENDERABLE, observe);
   } finally {
     setup.renderer.destroy();

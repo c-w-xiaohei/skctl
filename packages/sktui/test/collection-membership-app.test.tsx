@@ -8,6 +8,7 @@ import {
   type OperationResult,
 } from "@skctl/core";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { CollectionsPage } from "../src/collections-page";
 import { createCollectionsState } from "../src/collections/state";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
@@ -24,14 +25,8 @@ function deferred<T>() {
   return { promise, resolve };
 }
 async function openAllInstalledSkills(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("skills-view-tab-current-exposure"),
-  );
-  const current = setup.renderer.root.findDescendantById("skills-view-tab-current-exposure")!;
-  current.focus();
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === current);
-  setup.mockInput.pressKey("ARROW_RIGHT");
-  await setup.renderOnce();
+  await openMainPage(setup, "skills");
+  await enterLive(setup, "skills-view-tab-all-installed-skills");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
 }
 const collectionOwner = {
@@ -97,6 +92,7 @@ function membershipProjection(): WorkspaceView {
 }
 test("Collection discovery retry and Back preserve the target and checked draft", async () => {
   let attempts = 0;
+  let step = "open";
   const setup = await testRender(
     () => (
       <App
@@ -118,13 +114,19 @@ test("Collection discovery retry and Back preserve the target and checked draft"
     { width: 120, height: 40 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-    await enterLive(setup, "shell-section-tab-collections");
+    await openMainPage(setup, "collections");
+    step = "add membership";
+    await enterLive(setup, "collection-add");
     await enterLive(setup, "collection-action-add-membership");
+    step = "select installed skill";
     await enterLive(setup, "installed-skill-choice");
+    step = "acquire";
     await enterLive(setup, "installed-skill-acquire");
+    step = "choose source";
     await enterLive(setup, "acquire-source-choice");
+    step = "observe failure";
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-observation-retry"));
+    step = "observation back";
     await enterLive(setup, "source-observation-back");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-name-0"));
     expect(
@@ -142,11 +144,13 @@ test("Collection discovery retry and Back preserve the target and checked draft"
     await focusLive(setup, "source-operation-search");
     await setup.mockInput.typeText("new");
     await enterLive(setup, "source-operation-back");
+    step = "return to membership draft";
     await setup.waitForFrame((frame) => frame.includes("Add Skills to team"));
     expect(
       (setup.renderer.root.findDescendantById("installed-skill-name-0") as InputRenderable).value,
     ).toBe("guide");
     await enterLive(setup, "installed-skill-acquire");
+    step = "reopen discovery";
     await enterLive(setup, "acquire-source-choice");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("source-operation-selection"),
@@ -163,6 +167,8 @@ test("Collection discovery retry and Back preserve the target and checked draft"
       (frame) => frame.includes("0 selected") && frame.includes("No matching Skills"),
     );
     expect(attempts).toBe(5);
+  } catch (error) {
+    throw new Error(`${step}: ${error}\n${setup.captureCharFrame()}`);
   } finally {
     setup.renderer.destroy();
   }
@@ -194,10 +200,8 @@ test.each([false, true])(
       { width: 100, height: 24 },
     );
     try {
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("shell-section-tab-collections"),
-      );
-      await enterLive(setup, "shell-section-tab-collections");
+      await openMainPage(setup, "collections");
+      await enterLive(setup, "collection-add");
       await enterLive(setup, "collection-action-add-membership");
       await enterLive(setup, "installed-skill-acquire");
       await enterLive(setup, "acquire-source-choice");
@@ -248,8 +252,8 @@ test("Collection addition keeps its draft and explains a blocked Core preview", 
     { width: 120, height: 40 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-    await enterLive(setup, "shell-section-tab-collections");
+    await openMainPage(setup, "collections");
+    await enterLive(setup, "collection-add");
     await enterLive(setup, "collection-action-add-membership");
     await enterLive(setup, "installed-skill-choice");
     await enterLive(setup, "installed-skill-choice-submit");
@@ -268,11 +272,9 @@ test("Source acquisition exposes a visible task Cancel at 43x13", async () => {
     { width: 43, height: 13 },
   );
   try {
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("shell-section-tab-collections"),
-    );
-    await enterLive(setup, "shell-section-tab-collections");
+    await openMainPage(setup, "collections");
     await enterLive(setup, "collection-browser");
+    await enterLive(setup, "collection-add");
     await enterLive(setup, "collection-action-add-membership");
     await enterLive(setup, "installed-skill-acquire");
     await setup.waitForFrame((frame) => frame.includes("Cancel"));
@@ -294,8 +296,8 @@ test("Collection acquisition inherits its owner; Back preserves selection and Ca
     { width: 120, height: 40 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-    await enterLive(setup, "shell-section-tab-collections");
+    await openMainPage(setup, "collections");
+    await enterLive(setup, "collection-add");
     await enterLive(setup, "collection-action-add-membership");
     await enterLive(setup, "installed-skill-choice");
     await enterLive(setup, "installed-skill-acquire");
@@ -410,11 +412,6 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
     height: 40,
   });
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-    const section = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
-    section.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === section);
-    await setup.renderOnce();
     await openAllInstalledSkills(setup);
     const browser = setup.renderer.root.findDescendantById(
       "installed-skill-browser",
@@ -562,12 +559,9 @@ test("repository-derived Add Membership creates its fixed ID then opens an owned
     height: 40,
   });
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-    const section = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
-    section.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === section);
-    setup.mockInput.pressArrow("right");
+    await openMainPage(setup, "collections");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
+    await enterLive(setup, "collection-add");
     await enterLive(setup, "collection-action-add-membership");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-create-level",
@@ -642,11 +636,7 @@ test("Workspace Collection create selects a level, blocks duplicate submit, and 
     height: 40,
   });
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-section-tab-skills"));
-    const section = setup.renderer.root.findDescendantById("shell-section-tab-skills")!;
-    section.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === section);
-    setup.mockInput.pressArrow("right");
+    await openMainPage(setup, "collections");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
     await enterLive(setup, "collection-action-new-collection");
     await setup.waitFor(

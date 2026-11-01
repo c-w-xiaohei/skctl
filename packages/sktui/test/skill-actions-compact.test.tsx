@@ -8,7 +8,7 @@ import {
   enterInstalledAddress,
   openAllInstalledSkills,
   openReaderTab,
-  openReaderManagement,
+  openReaderSettings,
 } from "./reader-test-controls";
 
 test("short Reader keeps routine actions and focused management controls inside its pane", async () => {
@@ -23,7 +23,7 @@ test("short Reader keeps routine actions and focused management controls inside 
     await openAllInstalledSkills(setup);
     await enterInstalledAddress(setup, readerAddress);
     await openReaderTab(setup, 2);
-    await openReaderManagement(setup);
+    await openReaderSettings(setup);
     const pane = setup.renderer.root.findDescendantById("reader-pane")!;
     const footer = setup.renderer.root.findDescendantById("command-status")!;
     for (const id of [

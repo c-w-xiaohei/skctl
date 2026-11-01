@@ -211,7 +211,7 @@ test("STATE-012 RENDER Skills compose query and dimensions, clear one physically
     await chooseFilter(setup, "Collection", "documentation");
     await chooseFilter(setup, "Source", "team-main-extra");
     await query(setup, "reference");
-    await setup.waitForFrame((frame) => frame.includes("Skills · 1 / 3"));
+    await setup.waitForFrame((frame) => frame.includes("Skills (1 of 3)"));
     expect(filterChipIds(setup)).toEqual(["Collection", "Source"]);
     expect(setup.captureCharFrame()).toContain("Collection: documentation");
     await focusLive(setup, "clear-skills-filter-source");
@@ -220,7 +220,7 @@ test("STATE-012 RENDER Skills compose query and dimensions, clear one physically
     await focusLive(setup, "clear-skills-filter-collection");
     await setup.flush();
     await click(setup, "clear-skills-filter-collection");
-    await setup.waitForFrame((frame) => frame.includes("Skills · 1 / 3"));
+    await setup.waitForFrame((frame) => frame.includes("Skills (1 of 3)"));
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "reference",
     );
@@ -229,7 +229,7 @@ test("STATE-012 RENDER Skills compose query and dimensions, clear one physically
     expect(filterChipIds(setup)).toEqual([]);
     await chooseFilter(setup, "Source", "team-main-extra");
     await click(setup, "clear-all-skills-filters");
-    await setup.waitForFrame((frame) => frame.includes("Skills · 1 / 3"));
+    await setup.waitForFrame((frame) => frame.includes("Skills (1 of 3)"));
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "reference",
     );
@@ -296,7 +296,7 @@ test("STATE-004 RENDER empty filtering clears action context and destination ret
     await setup.renderOnce();
     await focusAllInstalledSkills(setup);
     await query(setup, "no-such-skill");
-    await setup.waitForFrame((frame) => frame.includes("Skills · 0 / 3"));
+    await setup.waitForFrame((frame) => frame.includes("Skills (0 of 3)"));
     const emptyFrame = setup.captureCharFrame();
     expect(emptyFrame).toContain("No matching Skills");
     expect(emptyFrame).not.toContain("Select a Skill to read its SKILL.md,");
@@ -412,11 +412,14 @@ const refreshedProblemsTest = async () => {
       throw new Error(
         `Problems filter did not apply; focus=${setup.renderer.currentFocusedRenderable?.id}\n${setup.captureCharFrame()}`,
       );
-    await setup.waitForFrame((frame) => frame.includes("Skills · 1 / 2"));
+    await setup.waitForFrame((frame) => frame.includes("Skills (1 of 2)"));
     await enterInstalledAddress(setup, { source: "team-main", path: "guide" });
     await openReaderTab(setup, 2);
     await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
     await enterLive(setup, "reader-action-skill-check-updates");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-update-all"));
+    expect(updates).toEqual([]);
+    await enterLive(setup, "updates-update-all");
     await setup.waitFor(() => updates.length === 1);
     await setup.waitForFrame((frame) => frame.includes("Updated 1 Skill"));
     expect(checkedSources).toContain("team-main");
@@ -482,7 +485,7 @@ test("STATE-005 RENDER resize retains filters and never leaves unmounted clear f
           `Browser missing after resize ${width}; focus=${setup.renderer.currentFocusedRenderable?.id}\n${setup.captureCharFrame()}`,
         );
       const frame = setup.captureCharFrame();
-      expect(frame).toContain("1 / 3");
+      expect(frame).toContain("1 of 3");
       expect(
         (setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value,
       ).toBe("reference");

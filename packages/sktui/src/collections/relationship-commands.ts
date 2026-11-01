@@ -81,41 +81,23 @@ const membershipCommands = (
   if (path?.kind === "via-link") {
     const link = path.links[0];
     const owner = link?.owner;
-    const enabled = !!owner;
-    const openIntent = owner
+    const enabled = !!link;
+    const openIntent = link
       ? {
-          kind: "collection-open-link" as const,
-          collection: link.collection,
+          kind: "collection-open-collection" as const,
+          collection,
           target: link.linkedCollection,
-          owner,
-        }
-      : undefined;
-    const removalIntent = owner
-      ? {
-          kind: "collection-link" as const,
-          collection: link.collection,
-          target: link.linkedCollection,
-          owner,
         }
       : undefined;
     return [
       openSkill,
       command(
         "membership.open-link",
-        "Open owning Link",
-        "Owning Link",
+        "Open source Collection",
+        "Source Collection",
         enabled,
         openIntent,
         enabled ? undefined : unavailable(owner, true),
-      ),
-      command(
-        "membership.unlink",
-        "Unlink Membership",
-        "Review removal",
-        enabled && !owner!.contribution,
-        removalIntent,
-        enabled && !owner!.contribution ? undefined : unavailable(owner, true),
-        true,
       ),
     ];
   }
@@ -254,7 +236,94 @@ export function relationshipCommands(
   collection: string,
   subject: MembershipSubject | RelationSubject,
 ): readonly RelationshipCommand[] {
-  return subject.kind === "membership"
-    ? membershipCommands(collection, subject.member, subject.origin)
-    : relationCommands(collection, subject.relation);
+  const commands =
+    subject.kind === "membership"
+      ? membershipCommands(collection, subject.member, subject.origin)
+      : relationCommands(collection, subject.relation);
+  const ownerText = (owner: ConfigDeclarationOwner | undefined): string => {
+    if (!owner) return "Owner unavailable";
+    const location = [owner.level, owner.file, owner.pointer].filter(Boolean).join(" ");
+    const source = owner.contribution?.configSource;
+    return source
+      ? `${location}\nContributed by ${[source.level, source.file, source.pointer].filter(Boolean).join(" ")}`
+      : location;
+  };
+  const owner =
+    subject.kind === "relation"
+      ? subject.relation.owner
+      : subject.origin?.kind === "direct"
+        ? subject.origin.owner
+        : subject.origin?.kind === "via-link"
+          ? subject.origin.links[0]?.owner
+          : undefined;
+  const memberObject =
+    subject.kind === "membership"
+      ? `${collection}:${subject.origin?.kind === "direct" ? subject.origin.entryName : subject.member.name}\n${subject.member.address.source}/${subject.member.address.path}`
+      : undefined;
+  const relationObject =
+    subject.kind === "relation"
+      ? subject.relation.kind === "collection-use"
+        ? `${collection} Collection Use`
+        : `${collection} / ${subject.relation.label}${subject.relation.target ? ` → ${subject.relation.target}` : ""}`
+      : undefined;
+  const screens: Record<string, string> = {
+    "membership.open-skill": "Installed Skill",
+    "membership.open-source":
+      subject.kind === "membership" && subject.origin?.kind === "repository-derived"
+        ? "Source workspace"
+        : "Config Source",
+    "membership.open-owner": "Owning Config",
+    "membership.open-link": "Collection workspace",
+    "membership.remove": "Membership removal review",
+    "relationship.open-owner":
+      subject.kind === "relation" && subject.relation.kind === "collection-link"
+        ? "Owning Link"
+        : "Owning Config",
+    "relationship.edit-use": "Collection Use editor",
+    "relationship.open-collection": "Collection workspace",
+    "relationship.remove-reference": "Reference removal review",
+    "relationship.unlink": "Link removal review",
+  };
+  return commands.map((record) => {
+    const isLink = record.id === "membership.open-link";
+    const link =
+      subject.kind === "membership" && subject.origin?.kind === "via-link"
+        ? subject.origin.links[0]
+        : undefined;
+    const object =
+      isLink && link
+        ? link.linkedCollection
+        : record.id === "membership.open-skill" && subject.kind === "membership"
+          ? `${subject.member.address.source}/${subject.member.address.path}`
+          : record.id === "membership.open-source" &&
+              subject.kind === "membership" &&
+              subject.origin?.kind === "repository-derived"
+            ? subject.origin.source
+            : record.id === "membership.open-source" && owner?.contribution
+              ? ownerText(owner.contribution.configSource)
+              : (record.id === "membership.open-owner" ||
+                    record.id === "relationship.open-owner") &&
+                  owner &&
+                  !(subject.kind === "relation" && subject.relation.kind === "collection-link")
+                ? ownerText(owner)
+                : record.id === "relationship.open-collection" && subject.kind === "relation"
+                  ? subject.relation.target
+                  : (memberObject ?? relationObject);
+    const wholeLink = record.id === "relationship.unlink";
+    const scopeText = wholeLink
+      ? `Stops including this Collection and affects its contributed members.\n${ownerText(owner)}`
+      : record.id === "membership.open-skill" ||
+          (record.id === "membership.open-source" &&
+            subject.kind === "membership" &&
+            subject.origin?.kind === "repository-derived")
+        ? undefined
+        : ownerText(owner);
+    return {
+      ...record,
+      ...(object ? { object } : {}),
+      ...(scopeText ? { scopeText } : {}),
+      opens: screens[record.id],
+      group: "member" as const,
+    };
+  });
 }

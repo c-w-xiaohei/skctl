@@ -31,20 +31,25 @@ test.each([120, 80, 60])(
       const listNode = setup.renderer.root.findDescendantById("installed-skill-browser");
       const title = geometry("section-nav");
       await parsedEnter(setup);
-      expect(geometry("skills-local-views")).toEqual(scope);
-      expect(geometry("section-nav")).toEqual(title);
       const detail = geometry("skill-reader-pane");
-      expect(detail[1]).toBe(list[1]);
       if (width >= 100) {
+        expect(geometry("skills-local-views")).toEqual(scope);
+        expect(geometry("section-nav")).toEqual(title);
+        expect(detail[1]).toBe(list[1]);
         expect(geometry("skills-list-pane")).toEqual(list);
         expect(setup.renderer.root.findDescendantById("installed-skill-browser") === listNode).toBe(
           true,
         );
       }
+      expect(detail[1]).toBeGreaterThanOrEqual(0);
+      expect(detail[3]).toBeGreaterThan(0);
+      expect(detail[1]! + detail[3]!).toBeLessThanOrEqual(30);
       await waitForReaderBody(setup, "guide");
-      expect(geometry("skills-local-views")).toEqual(scope);
-      expect(geometry("section-nav")).toEqual(title);
+      expect(geometry("skill-reader-pane")).toEqual(detail);
       await parsedEscape(setup);
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+      );
       expect(geometry("skills-list-pane")).toEqual(list);
       expect(geometry("skills-local-views")).toEqual(scope);
       expect(geometry("section-nav")).toEqual(title);
@@ -90,7 +95,7 @@ test("long descriptions do not move the Skill action region", async () => {
   }
 });
 
-test("short nonwide terminals keep the same chrome budget across browser and detail", async () => {
+test("short nonwide terminals bound Reader and restore inventory geometry", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
     { width: 80, height: 16 },
@@ -104,11 +109,20 @@ test("short nonwide terminals keep the same chrome budget across browser and det
     const tabsGeometry = [tabs.screenY, tabs.height];
     await parsedEnter(setup);
     const detail = setup.renderer.root.findDescendantById("skill-reader-pane")!;
-    expect([detail.screenY, detail.height]).toEqual(origin);
-    expect([tabs.screenY, tabs.height]).toEqual(tabsGeometry);
+    const detailGeometry = [detail.screenY, detail.height];
+    expect(detail.height).toBeGreaterThan(0);
+    expect(detail.screenY).toBeGreaterThanOrEqual(0);
+    expect(detail.screenY + detail.height).toBeLessThanOrEqual(16);
+    await waitForReaderBody(setup, "guide");
+    expect([detail.screenY, detail.height]).toEqual(detailGeometry);
     await parsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
     const returned = setup.renderer.root.findDescendantById("skills-list-pane")!;
     expect([returned.screenY, returned.height]).toEqual(origin);
+    const returnedTabs = setup.renderer.root.findDescendantById("skills-local-views")!;
+    expect([returnedTabs.screenY, returnedTabs.height]).toEqual(tabsGeometry);
   } finally {
     setup.renderer.destroy();
   }
@@ -126,13 +140,17 @@ test("resizing detail preserves the surface and returns to the same Skill", asyn
       setup.resize(width, 30);
       await setup.flush();
       expect(!!setup.renderer.root.findDescendantById("skill-reader-pane")).toBe(true);
-      expect(setup.renderer.root.findDescendantById("skills-local-views")).toBeDefined();
+      if (width >= 100)
+        expect(setup.renderer.root.findDescendantById("skills-local-views")).toBeDefined();
       expect(setup.captureCharFrame()).toContain("guide");
     }
     await parsedEscape(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
+    expect(
+      (setup.renderer.currentFocusedRenderable as SelectRenderable).getSelectedOption()?.value,
+    ).toBe('["team-main","guide"]');
     expect(setup.captureCharFrame()).toContain("guide");
   } finally {
     setup.renderer.destroy();

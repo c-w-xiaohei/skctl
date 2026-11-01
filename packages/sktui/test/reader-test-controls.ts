@@ -7,6 +7,7 @@ import {
   type Renderable,
 } from "@opentui/core";
 import { TabsTabRenderable } from "@tuiparts/core/tabs";
+import { openMainPage } from "./main-page-controls";
 
 export type ReaderSetup = Awaited<ReturnType<typeof testRender>>;
 
@@ -163,11 +164,22 @@ export async function clickLive(setup: ReaderSetup, id: string, x = 1, y = 0) {
 }
 
 export async function openAllInstalledSkills(setup: ReaderSetup) {
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills"),
-  );
-  await focusLive(setup, "skills-view-tab-all-installed-skills");
-  await parsedEnter(setup);
+  const installedTab = () =>
+    setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills");
+  const installedSelected = () => {
+    const tab = installedTab();
+    return tab instanceof TabsTabRenderable && tab.getState().selected;
+  };
+  if (!installedSelected()) {
+    if (!installedTab()) await openMainPage(setup, "skills");
+    await setup.waitFor(() => !!installedTab());
+    if (!installedSelected()) {
+      const tab = installedTab()!;
+      expect(tab.visible && tab.width > 0 && tab.height > 0).toBe(true);
+      await setup.mockMouse.click(tab.screenX + 1, tab.screenY);
+      await setup.waitFor(installedSelected);
+    }
+  }
   await setup.waitFor(() => {
     const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
     return !!browser && !browser.isDestroyed && !!browser.parent;
@@ -227,7 +239,7 @@ export async function enterInstalledAddress(
 }
 
 export async function enterReaderDetailsAction(setup: ReaderSetup, actionId: string) {
-  await openReaderManagement(setup);
+  await openReaderSettings(setup);
   await setup.waitFor(
     () =>
       !!setup.renderer.root.findDescendantById("reader-details") &&
@@ -236,11 +248,11 @@ export async function enterReaderDetailsAction(setup: ReaderSetup, actionId: str
   await enterLive(setup, `reader-details-action-${actionId}`);
 }
 
-export async function openReaderManagement(setup: ReaderSetup) {
-  if (!setup.renderer.root.findDescendantById("reader-details-action-skill-uninstall")) {
-    await focusLive(setup, "reader-details-manage");
-    await parsedEnter(setup);
-  }
+export async function openReaderSettings(setup: ReaderSetup) {
+  if (selectedReaderTab(setup) !== 2) await openReaderTab(setup, 2);
+  await setup.waitFor(
+    () => !!setup.renderer.root.findDescendantById("reader-details-action-skill-uninstall"),
+  );
 }
 
 export async function enterReaderDetailsRelationship(setup: ReaderSetup, value: string) {

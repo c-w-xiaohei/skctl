@@ -72,8 +72,8 @@ and 8 KiB by default; `--limit` accepts 1–200 entries and `--offset` continues
 truncated listing. Changes to the installed Skill between calls may cause offset
 pages to omit or repeat entries. Unsupported entries are marked and not followed.
 
-In the TUI, Collection **Info** shows its description and custom instructions.
-**Agent access** previews the selected Collection's instructions under
+In the TUI, a Collection's **Description & instructions** view shows both fields.
+The **Agent** catalog previews the selected Collection's instructions under
 "Instructions · disclosed on entry"; selecting a Reference previews its target's
 instructions while retaining the Reference's own entry description.
 
@@ -240,19 +240,42 @@ existing environment and Git proxy settings.
 
 ## Terminal workbench
 
-The Skills page opens in **Agent access**, showing the Collections available to
-your agent. Expand a Collection and select a Skill to read it. **All Skills**
-shows your full installed inventory.
+The **Skills** page opens your installed inventory. With no Source or installed
+content, it offers **Add Source** to begin finding Skills. The main pages are
+**Skills, Collections, Sources, Updates, Agent, Settings**.
 
 - Use Tab to move between regions and arrow keys to browse.
 - Press Enter to move into the Reader and Escape to return.
-- Use **Scope** to switch configuration contexts.
-- Open **Details** for Skill management or press Ctrl+P for **Actions**.
+- Use **Settings** to choose Global, Project or Local configuration scope.
+- Open a Skill's **Settings** for Reload, Change Source and Uninstall.
+- Press Ctrl+P for **Actions**, an accelerator for the visible page commands.
 
-In **Global** or **Project**, open **Integrations** to select Codex or OpenCode
-and use **Connect / update**, **Inspect** or **Disconnect**. This page reads host
-entry files independently of the content workspace. Custom host paths and
+The **Agent** page separates the catalog available to agents from host connections.
+Choose a Global or Project connection to select Codex or OpenCode and use
+**Connect / update**, **Inspect** or **Disconnect**. Connection inspection reads
+host entry files independently of the content workspace. Custom host paths and
 shared-file removal confirmation currently use the CLI.
+
+Collections provide **Members**, **Description & instructions**, and **Settings**.
+Sources provide **Installed** and **Source settings**, with **Find and install**
+available in the Source workspace. Removing Collection membership and uninstalling
+a Skill are separate operations.
+
+### Reviewed Source ownership changes
+
+To move an installed Skill to a different Source owner, save and inspect a review
+before applying it:
+
+```sh
+skctl rebind preview old-source skills/review new-source --json > rebind-review.json
+skctl rebind apply rebind-review.json
+```
+
+Use `--path` on `preview` when the Skill has a different Source-relative path at
+the destination. Core must prove that both addresses identify the same Skill. The
+review includes affected direct Collection memberships; apply repairs writable
+addresses together with ownership and rejects stale evidence. The operation covers
+the captured workspace, not unknown projects that also refer to the old address.
 
 ### Updates
 

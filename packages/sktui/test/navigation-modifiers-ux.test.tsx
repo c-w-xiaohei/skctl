@@ -78,7 +78,7 @@ test.each([
     expect(result).toBe("declined");
     expect(value()).toBe("skills");
     expect(navigations).toEqual([]);
-    expect(setup.renderer.currentFocusedRenderable).toBe(focused);
+    expect(setup.renderer.currentFocusedRenderable === focused).toBe(true);
   }
 });
 

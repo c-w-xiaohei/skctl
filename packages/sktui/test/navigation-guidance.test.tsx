@@ -84,6 +84,7 @@ test("Scope opens native choices and Escape restores the Scope trigger", async (
   const mounted = await mount(100, 30);
   const { setup } = mounted;
   try {
+    await enterLive(setup, "shell-section-tab-settings");
     await focusLive(setup, "shell-scope-select");
     await setup.renderOnce();
     const grammar = hint(setup, "navigation-guidance");

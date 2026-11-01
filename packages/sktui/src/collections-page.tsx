@@ -156,13 +156,21 @@ export function CollectionsPage(props: CollectionsPageProps) {
       />
     );
   };
-  const managedAction = (id: ActionRecord["id"], label?: string, compactCaption?: string) => {
+  const managedAction = (
+    id: ActionRecord["id"],
+    label?: string,
+    onExecute?: () => void,
+    compactCaption?: string,
+  ) => {
     const record = props.actions?.find((candidate) => candidate.id === id);
     return record
       ? commandZone(
           `collection-action-${id}`,
           label ? { ...record, verb: label } : record,
-          () => props.onAction?.(id),
+          () => {
+            onExecute?.();
+            props.onAction?.(id);
+          },
           id === "add-membership",
           compactCaption,
         )
@@ -408,7 +416,7 @@ export function CollectionsPage(props: CollectionsPageProps) {
                   <text>Create a Collection here, or install one supplied by a repository.</text>
                 </>
               ) : (
-                <text>Select a Collection to see its Entries and Relations.</text>
+                <text>Select a Collection to see its members and settings.</text>
               )}
             </box>
           }
@@ -440,14 +448,14 @@ export function CollectionsPage(props: CollectionsPageProps) {
       id="collections-list-pane"
       borderTitle={
         props.projection()?.effective.status === "complete"
-          ? `Collections · ${collections().length}`
+          ? `Collections (${collections().length})`
           : "Collections"
       }
       borderBottomTitle={
         selectedNavigatorRow()?.issue
           ? selectedNavigatorRow()?.cycle
-            ? "Reference cycle · Enter contents"
-            : "Unavailable · Enter reason"
+            ? "Reference cycle. Enter to view contents."
+            : "Unavailable. Enter for details."
           : undefined
       }
       width="100%"
@@ -530,7 +538,7 @@ export function CollectionsPage(props: CollectionsPageProps) {
               setCollectionToolbarWidth(collectionToolbar?.width ?? 0);
             }}
           >
-            {managedAction("new-collection", undefined, utilityCaptions()[0])}
+            {managedAction("new-collection", undefined, undefined, utilityCaptions()[0])}
             {commandZone(
               "collections-expand-all",
               {
@@ -647,7 +655,7 @@ export function CollectionsPage(props: CollectionsPageProps) {
     <Show
       when={filterState().open}
       fallback={
-        <box flexDirection="row" flexGrow={1} minHeight={0}>
+        <box width="100%" minWidth={0} flexDirection="row" flexGrow={1} minHeight={0} gap={1}>
           <box
             width={
               props.mode === "wide"
@@ -660,7 +668,14 @@ export function CollectionsPage(props: CollectionsPageProps) {
             <BrowserList />
           </box>
           <Show when={props.mode === "wide"}>
-            <box flexGrow={1} minHeight={0} minWidth={0} flexDirection="column">
+            <box
+              flexGrow={1}
+              flexBasis={0}
+              minHeight={0}
+              minWidth={0}
+              overflow="hidden"
+              flexDirection="column"
+            >
               <Show when={selected()} keyed fallback={detail(undefined)}>
                 {(collection) => detail(collection)}
               </Show>

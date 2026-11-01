@@ -18,6 +18,7 @@ import type {
   UpdatePreview,
 } from "@skctl/core";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 const revision = "a".repeat(40);
@@ -147,10 +148,7 @@ async function mount(
       { width: options.width ?? 80, height: 24 },
     );
     const mounted = setup;
-    await mounted.waitFor(
-      () => !!mounted.renderer.root.findDescendantById("shell-section-tab-updates"),
-    );
-    await enterLive(mounted, "shell-section-tab-updates");
+    await openMainPage(mounted, "updates");
     // App starts checks asynchronously after projection/cache hydration. A mounted
     // table alone does not prove it has an activatable row or a checked baseline.
     await mounted.waitFor(
@@ -221,7 +219,7 @@ test("RED shared Back closes a preview exactly once: aborts its read, ignores it
         setup.renderer.currentFocusedRenderable?.id === "source-updates-browser" &&
         setup.captureCharFrame().includes("Filter: guide"),
     );
-    expect(setup.renderer.currentFocusedRenderable).toBe(sourceBrowser);
+    expect(setup.renderer.currentFocusedRenderable === sourceBrowser).toBe(true);
     expect(setup.renderer.root.findDescendantById("source-updates-page")).toBe(sourcePage);
     expect(setup.renderer.root.findDescendantById("source-updates-browser-body")).toBe(sourceBody);
     expect(sourceBrowser.isDestroyed).toBe(false);
@@ -234,7 +232,7 @@ test("RED shared Back closes a preview exactly once: aborts its read, ignores it
     expect(queryInput.value).toBe("guide");
     await setup.mockInput.typeText("-cancelled");
     expect(queryInput.value).toBe("guide-cancelled");
-    expect(setup.renderer.currentFocusedRenderable).toBe(queryInput);
+    expect(setup.renderer.currentFocusedRenderable === queryInput).toBe(true);
     expect(queryInput.isDestroyed).toBe(false);
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === sourceBrowser);

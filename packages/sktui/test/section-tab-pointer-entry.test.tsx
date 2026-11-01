@@ -58,7 +58,7 @@ for (const activationMode of ["automatic", "manual"] as const) {
         await click(setup, target, batched);
         expect(value()).toBe("second");
         expect(target.getState().selected).toBe(true);
-        expect(setup.renderer.currentFocusedRenderable).toBe(target);
+        expect(setup.renderer.currentFocusedRenderable === target).toBe(true);
         expect(navigations).toBe(1);
         expect(activations).toBe(0);
         await click(setup, target, batched);
@@ -85,6 +85,7 @@ test.each(["global", "project", "local"] as const)(
     });
     try {
       await setup.flush();
+      await enterLive(setup, "shell-section-tab-settings");
       await enterLive(setup, "shell-scope-select");
       await setup.flush();
       const scope = setup.renderer.root.findDescendantById("scope-choices") as SelectRenderable;
@@ -97,7 +98,7 @@ test.each(["global", "project", "local"] as const)(
       await parsedEnter(setup);
       await setup.flush();
       const target = setup.renderer.root.findDescendantById(
-        `shell-section-${level}-tab-collections`,
+        "settings-section-tab-collections",
       ) as TabsTabRenderable;
       expect(target.getState().selected).toBe(false);
       await click(setup, target, true);

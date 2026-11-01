@@ -4,6 +4,7 @@ import {
   type AddMemberRequest,
   type AddReferenceRequest,
   type CollectionRequest,
+  type CollectionRenameRequest,
   type CreateCollectionRequest,
   type ConfigDeclarationOwner,
   type ConfigLevel,
@@ -15,6 +16,7 @@ import {
   type SetUseRequest,
 } from "@skctl/core";
 export type CollectionPreviewIntent =
+  | ({ readonly kind: "collection-rename" } & CollectionRenameRequest)
   | ({
       readonly kind: "add-to-collection";
     } & AddMemberRequest)
@@ -90,6 +92,7 @@ type CollectionPreviewCore = Pick<
   | "previewLinkChange"
   | "previewCollectionRemoval"
   | "previewCollectionUse"
+  | "previewCollectionRename"
 >;
 export async function previewCollection(
   core: CollectionPreviewCore,
@@ -99,6 +102,16 @@ export async function previewCollection(
   environment: api.CoreOptions = { cwd: process.cwd() },
 ) {
   switch (intent.kind) {
+    case "collection-rename": {
+      const { kind: _, ...request } = intent;
+      const impact = (await core.previewCollectionRename(environment, request, { signal })).value;
+      matches(
+        impact.kind === "collection-rename" &&
+          impact.collection === intent.collection &&
+          impact.target === intent.target,
+      );
+      return { kind: intent.kind, id, intent, impact } as const;
+    }
     case "add-to-collection": {
       const { kind: _, ...request } = intent;
       const impact = (await core.previewAddToCollection(environment, request, { signal })).value;

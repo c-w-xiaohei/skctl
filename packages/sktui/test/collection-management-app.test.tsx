@@ -28,7 +28,7 @@ test("RENDER Collection reference and link previews disclose direct-only exposur
   );
   try {
     await reference.renderOnce();
-    expect(reference.captureCharFrame()).toContain("Reference");
+    expect(reference.captureCharFrame()).toContain("Collection entry");
     expect(reference.captureCharFrame()).toContain("documentation");
   } finally {
     reference.renderer.destroy();
@@ -70,7 +70,7 @@ test("RENDER Collection reference and link previews disclose direct-only exposur
   );
   try {
     await link.renderOnce();
-    expect(link.captureCharFrame()).toContain("Add Link");
+    expect(link.captureCharFrame()).toContain("Include Collection");
     expect(link.captureCharFrame()).toContain("Retained: team:guide");
   } finally {
     link.renderer.destroy();

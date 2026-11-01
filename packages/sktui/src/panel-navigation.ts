@@ -6,6 +6,8 @@ const titles: Record<string, string> = {
   "shell-context-panel": "Context",
   "section-nav": "Pages",
   "skills-local-views": "Skill views",
+  "settings-section": "Settings sections",
+  "agent-view": "Agent views",
   "skills-list-pane": "Skills",
   "skill-inspector": "Skill details",
   "sources-list-pane": "Sources",

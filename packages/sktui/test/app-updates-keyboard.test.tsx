@@ -97,7 +97,7 @@ test("App keyboard navigation reaches Updates commands and active Stop without f
     await setup.waitFor(
       () =>
         checks.length === 2 &&
-        setup.renderer.currentFocusedRenderable?.id === "skills-setup-primary",
+        setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
     // Start from App-owned focus; do not force focus onto a test-only target.
     stage = "Tab traversal to section navigation";

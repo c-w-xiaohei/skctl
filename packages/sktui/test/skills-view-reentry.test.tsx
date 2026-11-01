@@ -14,6 +14,7 @@ import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerAddress, readerProjection, readerSecondAddress } from "./installed-reader.fixture";
 import {
@@ -38,8 +39,12 @@ const viewOrder: readonly SkillsView[] = [
 const addressKey = (address: { readonly source: string; readonly path: string }) =>
   JSON.stringify([address.source, address.path]);
 const interactionTraces = new WeakMap<ReaderSetup, unknown[]>();
-function interactionState(setup: ReaderSetup, view?: SkillsView) {
-  const tab = view ? setup.renderer.root.findDescendantById(`skills-view-tab-${view}`) : undefined;
+function interactionState(setup: ReaderSetup, view?: SkillsView, tabId?: string) {
+  const tab = tabId
+    ? setup.renderer.root.findDescendantById(tabId)
+    : view
+      ? setup.renderer.root.findDescendantById(`skills-view-tab-${view}`)
+      : undefined;
   const navigation = setup.renderer.root.findDescendantById("workarea-navigation-pane");
   const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
   const query = setup.renderer.root.findDescendantById("skills-query");
@@ -307,6 +312,8 @@ async function mount(width = 80) {
   }
 }
 function selectedView(setup: ReaderSetup): SkillsView | undefined {
+  const agent = setup.renderer.root.findDescendantById("shell-section-tab-agent");
+  if (agent instanceof TabsTabRenderable && agent.getState().selected) return "current-exposure";
   return viewOrder.find((view) => {
     const tab = setup.renderer.root.findDescendantById(`skills-view-tab-${view}`);
     return tab instanceof TabsTabRenderable && tab.getState().selected;
@@ -323,21 +330,31 @@ function visible(node: BaseRenderable | undefined): boolean {
   return node.width > 0 && node.height > 0;
 }
 async function pointerView(setup: ReaderSetup, view: SkillsView) {
-  const tab = live(setup, `skills-view-tab-${view}`);
+  const crossPage =
+    view === "current-exposure" ||
+    (view === "all-installed-skills" && selectedView(setup) === "current-exposure");
+  const tab = live(
+    setup,
+    view === "current-exposure"
+      ? "shell-section-tab-agent"
+      : crossPage
+        ? "shell-section-tab-skills"
+        : `skills-view-tab-${view}`,
+  );
   expect(visible(tab)).toBe(true);
   const x = tab.screenX + 2;
   const y = tab.screenY;
-  const before = interactionState(setup, view);
+  const before = interactionState(setup, view, tab.id);
   await setup.mockMouse.pressDown(x, y);
   await setup.flush();
-  const down = interactionState(setup, view);
+  const down = interactionState(setup, view, tab.id);
   // One physical click: focus cannot relocate navigation between down and up.
-  expect(down.navigation).toEqual(before.navigation);
+  if (!crossPage) expect(down.navigation).toEqual(before.navigation);
   expect(down.tab).toEqual(before.tab);
   await setup.mockMouse.release(x, y);
   await setup.flush();
-  const after = interactionState(setup, view);
-  expect(after.navigation).toEqual(before.navigation);
+  const after = interactionState(setup, view, tab.id);
+  if (!crossPage) expect(after.navigation).toEqual(before.navigation);
   expect(after.tab).toEqual(before.tab);
   const trace = interactionTraces.get(setup);
   trace?.push({ event: "pointer view", view, x, y, before, down, after });
@@ -352,6 +369,23 @@ async function pointerView(setup: ReaderSetup, view: SkillsView) {
     );
 }
 async function keyboardView(setup: ReaderSetup, view: SkillsView) {
+  if (view === "current-exposure") {
+    for (
+      let step = 0;
+      step < 16 && setup.renderer.currentFocusedRenderable?.id !== "shell-section-tab-skills";
+      step++
+    ) {
+      setup.mockInput.pressTab();
+      await setup.flush();
+    }
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-section-tab-skills");
+    for (let step = 0; step < 4; step++) {
+      setup.mockInput.pressArrow("right");
+      await setup.flush();
+    }
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-section-tab-agent");
+    return;
+  }
   // Reach the view strip by ordinary Tab after the compact-to-wide resize.
   for (
     let step = 0;
@@ -412,7 +446,7 @@ async function enterCompactInlineReader(setup: ReaderSetup) {
   await waitForReaderBody(setup, "FI2 installed reference");
   expect(
     visible(setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills")),
-  ).toBe(true);
+  ).toBe(false);
   // Keep non-default preferences on the same exact address across view changes.
   await enterLive(setup, "reader-raw");
   await assertRawReference(setup);
@@ -424,6 +458,33 @@ async function enterCompactInlineReader(setup: ReaderSetup) {
   expect(selectedView(setup)).toBe("all-installed-skills");
   // No focus repair or local Back between Reader entry and the tested view input.
 }
+
+test("inventory cursor survives Agent then Sources before returning to Skills", async () => {
+  const mounted = await mount(144);
+  const { setup } = mounted;
+  try {
+    const browser = await openAllInstalledSkills(setup);
+    setup.mockInput.pressKey(" ");
+    await focusLive(setup, "skills-query");
+    await setup.mockInput.typeText("FI2");
+    await parsedEnter(setup);
+    setup.mockInput.pressArrow("down");
+    await setup.waitFor(
+      () => browser.getSelectedOption()?.value === addressKey(readerSecondAddress),
+    );
+    await openMainPage(setup, "agent");
+    await openMainPage(setup, "sources");
+    await openMainPage(setup, "skills");
+    const restored = live(setup, "installed-skill-browser") as SelectRenderable;
+    expect(restored.getSelectedOption()?.value).toBe(addressKey(readerSecondAddress));
+    expect((live(setup, "skills-query") as InputRenderable).value).toBe("FI2");
+    expect(
+      restored.options.filter((item) => item.name.startsWith("✓")).map((item) => item.value),
+    ).toEqual([addressKey(readerAddress)]);
+  } finally {
+    await mounted.dispose();
+  }
+});
 async function assertViewContent(
   setup: ReaderSetup,
   view: Exclude<SkillsView, "all-installed-skills">,
@@ -547,9 +608,13 @@ test("FI2 explicit Problems Reader route still restores its Reader after a Skill
     await openReaderTab(setup, 2);
     const reads = [...mounted.reads];
     await routeCommand(setup, true);
-    await pointerView(setup, "current-exposure");
-    await setup.waitFor(() => selectedView(setup) === "current-exposure");
-    expect(visible(live(setup, "current-exposure-browser"))).toBe(true);
+    await pointerView(setup, "unassigned");
+    await setup.waitFor(() => selectedView(setup) === "unassigned");
+    expect(visible(live(setup, "installed-skill-browser"))).toBe(true);
+    const unassigned = live(setup, "installed-skill-browser") as SelectRenderable;
+    expect(unassigned.options.map((option) => option.value)).toEqual([
+      addressKey(readerSecondAddress),
+    ]);
     await routeCommand(setup, true);
     const back = live(setup, "route-back");
     await setup.mockMouse.click(back.screenX + 1, back.screenY);

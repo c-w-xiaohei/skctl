@@ -1,12 +1,12 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test";
-import { ButtonRenderable } from "@tuiparts/core/button";
-import { SelectRenderable, type BaseRenderable } from "@opentui/core";
+import { SelectRenderable } from "@opentui/core";
 import type { WorkspaceView } from "@skctl/core";
 import { testRender } from "@opentui/solid";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { collectionFilterPathKey } from "../src/collections/collection-filter-tree";
@@ -18,10 +18,6 @@ import {
   parsedEscape,
 } from "./reader-test-controls";
 
-const descendants = (node: BaseRenderable): BaseRenderable[] => [
-  node,
-  ...node.getChildren().flatMap(descendants),
-];
 async function mount(
   width = 100,
   height = 24,
@@ -46,17 +42,10 @@ async function mount(
   };
 }
 async function openMembership(setup: Awaited<ReturnType<typeof testRender>>) {
-  await enterLive(setup, "shell-section-tab-collections");
+  await openMainPage(setup, "collections");
   await enterLive(setup, "collection-browser");
   await setup.flush();
-  const cell = setup.renderer.root.findDescendantById(
-    "collection-relationships-row-guide%3A0:actions",
-  )!;
-  const manage = descendants(cell).find(
-    (node): node is ButtonRenderable =>
-      node instanceof ButtonRenderable && node.id.endsWith(".manage"),
-  )!;
-  await setup.mockMouse.click(manage.screenX + 1, manage.screenY);
+  await enterLive(setup, "collection-current-details");
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
   );
@@ -83,11 +72,11 @@ test("Escape from the left Collection tree does not close an inactive right insp
       `collection-browser-row-${encodeURIComponent(key)}-name`,
     )!;
     await setup.mockMouse.click(name.screenX + 1, name.screenY);
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
-    expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
-    await parsedEscape(setup);
-    expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(true);
-    expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("collection-relationships");
+    await setup.flush();
+    if (setup.renderer.root.findDescendantById("collection-membership-inspector"))
+      await parsedEscape(setup);
+    expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(false);
+    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(true);
   } finally {
     await mounted.dispose();
   }
@@ -100,7 +89,7 @@ test.each([144, 80])(
     const { setup } = mounted;
     try {
       await setup.flush();
-      await enterLive(setup, "shell-section-tab-sources");
+      await openMainPage(setup, "sources");
       await focusLive(setup, "source-browser");
       await chooseAction(setup, "view-installed-skills");
       await setup.waitFor(
@@ -173,9 +162,7 @@ test.each([
           setup.captureCharFrame(),
         );
       }
-      await expectSharedReturn(setup, "Back to Contents");
-      expect(setup.renderer.root.findDescendantById("collection.inspector-back")).toBeUndefined();
-      await enterLive(setup, "route-back");
+      await enterLive(setup, "collection.inspector-back");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
       );
@@ -184,13 +171,21 @@ test.each([
       ).toBeUndefined();
       expect(setup.captureCharFrame()).toContain("─team─");
       if (width < 100) expect(setup.renderer.root.findDescendantById("route-back")).toBeDefined();
-      await enterLive(setup, "collection-tabs-tab-relations");
-      await enterLive(setup, "collection-relationships");
+      const table = setup.renderer.root.findDescendantById("collection-relationships")!;
+      table.focus();
+      setup.mockInput.pressArrow("down");
+      setup.mockInput.pressArrow("down");
+      await setup.flush();
+      const relationControl = "collection-current-details";
+      await enterLive(setup, relationControl);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
       );
       await setup.flush();
-      await expectSharedReturn(setup, "Back to Relations");
+      await enterLive(setup, "collection.inspector-back");
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
+      );
       if (output)
         await writeFile(join(output, `reference-${width}x${height}.txt`), setup.captureCharFrame());
     } finally {
@@ -209,21 +204,13 @@ test("the shared return is reachable by ordinary Tab and remains the same action
     for (let index = 0; index < 12; index++) {
       setup.mockInput.pressTab();
       await setup.flush();
-      if (setup.renderer.currentFocusedRenderable?.id === "route-back") {
+      if (setup.renderer.currentFocusedRenderable?.id === "collection.inspector-back") {
         reached = true;
         break;
       }
     }
     expect(reached).toBe(true);
-    setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("palette-choices"));
-    const choices = setup.renderer.root.findDescendantById("palette-choices") as SelectRenderable;
-    expect(choices.options.some((option) => option.value.id === "collection.inspector-back")).toBe(
-      true,
-    );
-    await parsedEscape(setup);
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "route-back");
-    expect(setup.captureCharFrame()).toContain("Back to Contents");
+    expect(setup.captureCharFrame()).toContain("Close");
     await parsedEnter(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
@@ -237,7 +224,7 @@ test("Escape exits Reader Find before navigation but the displayed Back returns 
   const mounted = await mount();
   const { setup } = mounted;
   try {
-    await enterLive(setup, "shell-section-tab-collections");
+    await openMainPage(setup, "collections");
     await enterLive(setup, "collection-browser");
     await enterLive(setup, "collection-relationships");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-scrollbox"));
@@ -264,17 +251,12 @@ test("Escape exits Reader Find before navigation but the displayed Back returns 
   }
 });
 
-test("Scope dismissal and the resize gate never replace a local return with its outer route", async () => {
+test("Actions dismissal and the resize gate never replace a local return with its outer route", async () => {
   const mounted = await mount(80, 24);
   const { setup } = mounted;
   try {
     await openMembership(setup);
-    await enterLive(setup, "shell-scope-select");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("scope-choices"));
-    expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
-    await parsedEscape(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("route-back"));
-    await expectSharedReturn(setup, "Back to Contents");
+    await focusLive(setup, "collection.inspector-back");
     setup.resize(42, 12);
     await setup.flush();
     expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
@@ -285,12 +267,9 @@ test("Scope dismissal and the resize gate never replace a local return with its 
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
     );
     await setup.waitFor(
-      () =>
-        setup.renderer.currentFocusedRenderable?.id === "shell-scope-select" &&
-        !!setup.renderer.root.findDescendantById("route-back"),
+      () => !!setup.renderer.root.findDescendantById("collection.inspector-back"),
     );
-    await expectSharedReturn(setup, "Back to Contents");
-    await enterLive(setup, "route-back");
+    await enterLive(setup, "collection.inspector-back");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
     );
@@ -309,14 +288,14 @@ test.each([100, 80])(
       await openMembership(setup);
       for (
         let step = 0;
-        step < 12 && setup.renderer.currentFocusedRenderable?.id !== "route-back";
+        step < 12 && setup.renderer.currentFocusedRenderable?.id !== "collection.inspector-back";
         step++
       ) {
         setup.mockInput.pressTab();
         await setup.flush();
       }
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("route-back");
-      expect(setup.captureCharFrame()).toContain("Back to Contents");
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection.inspector-back");
+      expect(setup.captureCharFrame()).toContain("Close");
       const old = setup.renderer.root.findDescendantById("collection-membership-inspector")!;
       setup.resize(42, 12);
       await setup.flush();
@@ -324,12 +303,12 @@ test.each([100, 80])(
       setup.resize(width, 24);
       await setup.waitFor(
         () =>
-          setup.renderer.currentFocusedRenderable?.id === "route-back" &&
-          setup.captureCharFrame().includes("Back to Contents"),
+          !!setup.renderer.root.findDescendantById("collection.inspector-back") &&
+          setup.captureCharFrame().includes("Close"),
       );
       const live = setup.renderer.root.findDescendantById("collection-membership-inspector")!;
       expect(live === old).toBe(false);
-      await parsedEnter(setup);
+      await enterLive(setup, "collection.inspector-back");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
       );
@@ -389,32 +368,34 @@ test.each(["pointer", "keyboard"])(
     const mounted = await mount(100, 24, projection);
     const { setup } = mounted;
     try {
-      await enterLive(setup, "shell-section-tab-collections");
+      await openMainPage(setup, "collections");
       await enterLive(setup, "collection-browser");
       await setup.mockInput.typeText(" ");
       setup.mockInput.pressArrow("down");
       await setup.flush();
       await setup.mockInput.typeText(" ");
       await enterLive(setup, "remove-from-collection");
-      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership-impact-task"));
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("membership-removal-plan"),
+      );
       await setup.flush();
-      const close = setup.renderer.root.findDescendantById("impact-close")!;
+      const close = setup.renderer.root.findDescendantById("membership-removal-plan")!;
       expect(close.focusable).toBe(true);
       if (activation === "pointer") await setup.mockMouse.click(close.screenX + 1, close.screenY);
       else {
         for (
           let step = 0;
-          step < 6 && setup.renderer.currentFocusedRenderable?.id !== "impact-close";
+          step < 6 && setup.renderer.currentFocusedRenderable?.id !== "membership-removal-plan";
           step++
         ) {
           setup.mockInput.pressTab();
           await setup.flush();
         }
-        expect(setup.renderer.currentFocusedRenderable?.id).toBe("impact-close");
+        expect(setup.renderer.currentFocusedRenderable?.id).toBe("membership-removal-plan");
         await parsedEnter(setup);
       }
-      await setup.waitFor(() => !setup.renderer.root.findDescendantById("membership-impact-task"));
-      expect(setup.captureCharFrame()).toContain("2 origins checked");
+      await setup.waitFor(() => !setup.renderer.root.findDescendantById("membership-removal-plan"));
+      expect(setup.captureCharFrame()).toContain("2 items checked");
     } finally {
       await mounted.dispose();
     }

@@ -96,11 +96,12 @@ import {
   parsedEnter as awaitParsedEnter,
   parsedEscape as awaitParsedEscape,
 } from "./reader-test-controls";
+import { openMainPage } from "./main-page-controls";
 async function readySourceCommand(
   setup: Awaited<ReturnType<typeof testRender>>,
-  id: "source-command-config-source" | "source-command-skills",
+  id: "source-command-config-source",
 ) {
-  if (id === "source-command-config-source") await activateControl(setup, "source-details-toggle");
+  await activateControl(setup, "source-view-tab-settings");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById(id));
   return focusLive(setup, id);
 }
@@ -129,14 +130,7 @@ async function populated(
   scope: "collections" | "sources" | "all-installed-skills",
 ) {
   await setup.flush();
-  const target =
-    scope === "collections"
-      ? "shell-section-tab-collections"
-      : scope === "sources"
-        ? "shell-section-tab-sources"
-        : "skills-view-tab-all-installed-skills";
-  if (scope === "all-installed-skills") await activateControl(setup, "shell-section-tab-skills");
-  await activateControl(setup, target);
+  await openMainPage(setup, scope === "all-installed-skills" ? "skills" : scope);
   const browser =
     scope === "collections"
       ? "collection-browser"
@@ -176,13 +170,23 @@ async function focusCollection(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitForFrame((frame) => frame.includes("team"));
 }
 async function openProjectConfigSourceActions(setup: Awaited<ReturnType<typeof testRender>>) {
-  await activatePaletteCommand(setup, "navigate.project");
-  await activateControl(setup, "shell-section-project-tab-config-sources");
+  await navigateProjectSettings(setup);
+  await activateControl(setup, "settings-section-tab-config-sources");
   await setup.waitForFrame((frame) => frame.includes("team-remote"));
   await focusLive(setup, "config-config-source-browser");
   await awaitParsedEnter(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-source-inspector"));
   await focusLive(setup, "config-command-config-observe");
+}
+async function navigateProjectSettings(setup: Awaited<ReturnType<typeof testRender>>) {
+  await activatePaletteCommand(setup, "navigate.settings");
+  await activateControl(setup, "shell-scope-select");
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("scope-choices"));
+  const choices = setup.renderer.root.findDescendantById("scope-choices") as SelectRenderable;
+  const index = choices.options.findIndex((option) => option.value === "project");
+  expect(index).toBeGreaterThanOrEqual(0);
+  choices.setSelectedIndex(index);
+  await awaitParsedEnter(setup);
 }
 function repairProjection() {
   return {
@@ -581,15 +585,11 @@ test("RENDER cancelled Membership removal settles before a fresh removal and nev
     { width: 120, height: 40 },
   );
   const beginRemoval = async () => {
-    if (!setup.renderer.root.findDescendantById("membership.remove")) {
-      await focusLive(setup, "collection-relationships");
-      setup.mockInput.pressArrow("right");
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id.includes(":action-") === true,
-      );
-      await awaitParsedEnter(setup);
-    }
-    await activateControl(setup, "membership.remove");
+    await setup.waitFor(
+      () => !!setup.renderer.root.findDescendantById("collection-current-membership.remove"),
+    );
+    await activateControl(setup, "collection-current-membership.remove");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership-removal-plan"));
   };
   try {
     await openCollectionDetail(setup);
@@ -631,6 +631,7 @@ test("RENDER cancelled Membership removal settles before a fresh removal and nev
     });
     await setup.waitFor(() => consumedA === 1);
     await setup.waitFor(() => !setup.renderer.root.findDescendantById("collection-review-choice"));
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("membership-removal-plan"));
     await beginRemoval();
     await setup.waitFor(() => requests.length === 2);
     expect(consumedA).toBe(1);
@@ -665,12 +666,12 @@ test("RENDER cancelled Membership removal settles before a fresh removal and nev
     await setup.waitForFrame((frame) => frame.includes("Affected: current-b:guide"));
     const membershipFrame = setup.captureCharFrame();
     expect(consumedB).toBe(1);
-    expect(membershipFrame).toContain("Remove from Collection");
-    expect(membershipFrame).toContain("Collection: team");
-    expect(membershipFrame).toContain("Remove: guide team-main/guide");
+    expect(membershipFrame).toContain("Remove from team");
+    expect(membershipFrame).toContain("Remove: guide");
+    expect(membershipFrame).toContain("team-main/guide");
     expect(membershipFrame).toContain("Affected: current-b:guide");
     expect(membershipFrame).not.toContain("stale-a");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-review-choice");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("membership-removal-plan");
   } finally {
     setup.renderer.destroy();
   }
@@ -922,15 +923,8 @@ test("RENDER zero-owned Source exposes its named Installed Skills command and re
     browser.focus();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
     await awaitParsedEnter(setup);
-    await readySourceCommand(setup, "source-command-skills");
-    await awaitParsedEnter(setup);
-    await setup.flush();
-    await setup.waitForFrame(
-      (frame) => frame.includes("Source: team-config/lark") && frame.includes("No matching Skills"),
-    );
-    setup.renderer.root.findDescendantById("clear-source-filter")!.focus();
-    await awaitParsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-pane"));
+    await setup.waitForFrame((frame) => frame.includes("No installed Skills"));
     expect(setup.captureCharFrame()).toContain("team-config/lark");
     expect(loads).toBe(0);
   } finally {
@@ -1334,7 +1328,7 @@ test("RENDER Source browser pointer opens direct and contributed rows exactly on
     const direct = await readySourceBrowser(setup);
     await setup.mockMouse.click(direct.screenX + 1, direct.screenY);
     await setup.flush();
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-toggle"));
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-view-tab-settings"));
     expect(setup.captureCharFrame()).toContain("team-main");
     expect(!!setup.renderer.root.findDescendantById("source-browser")).toBe(true);
     await awaitParsedEscape(setup);
@@ -1342,7 +1336,7 @@ test("RENDER Source browser pointer opens direct and contributed rows exactly on
     const contributed = await readySourceBrowser(setup);
     await setup.mockMouse.click(contributed.screenX + 1, contributed.screenY + 1);
     await setup.flush();
-    await activateControl(setup, "source-details-toggle");
+    await activateControl(setup, "source-view-tab-settings");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("source-command-config-source"),
     );
@@ -1843,6 +1837,11 @@ test("RENDER source-removal rebind repair executes then restores the same parent
               owner: request.owner,
               ownerPath: request.ownerPath ?? request.path,
               proof: "proven" as const,
+              scope: "captured-workspace" as const,
+              limitation: "External projects are not inspected",
+              baseline: "fixture-baseline",
+              directMemberships: [],
+              blockers: [],
               allowed: true,
             },
             diagnostics: [],
@@ -2090,7 +2089,7 @@ test("RENDER Palette routes its Project destination and omits contributed remova
   );
   try {
     await populated(setup, "sources");
-    await activatePaletteCommand(setup, "navigate.project");
+    await navigateProjectSettings(setup);
     await setup.waitFor(
       () =>
         (

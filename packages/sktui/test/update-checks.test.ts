@@ -183,7 +183,7 @@ test.each(["expired", "future", "missing"])(
   },
 );
 
-test("missing retained objects cause current checks even with a recent schedule", async () => {
+test("missing retained objects never bypass the eight-hour automatic interval", async () => {
   const view = snapshot();
   const first = session(view, {
     checkUpdate: async (_options, { source }) => result(observation(source)),
@@ -212,10 +212,10 @@ test("missing retained objects cause current checks even with a recent schedule"
   });
   await next.startUpdateChecks(view);
   await until(() => !next.checkingActive());
-  expect(calls).toEqual([{ source: "first", observation: "retained" }, { source: "first" }]);
+  expect(calls).toEqual([{ source: "first", observation: "retained" }]);
 });
 
-test("retained metadata failure repairs through a current Core check", async () => {
+test("retained metadata failure waits for an explicit or due check", async () => {
   const view = snapshot();
   const first = session(view, {
     checkUpdate: async (_options, { source }) => result(observation(source)),
@@ -234,8 +234,57 @@ test("retained metadata failure repairs through a current Core check", async () 
   });
   await next.startUpdateChecks(view);
   await until(() => !next.checkingActive());
-  expect(calls).toEqual([{ source: "first", observation: "retained" }, { source: "first" }]);
-  expect(next.updatesSubmittable()).toEqual([{ source: "first", path: "guide" }]);
+  expect(calls).toEqual([{ source: "first", observation: "retained" }]);
+  expect(next.updatesSubmittable()).toEqual([]);
+});
+
+test("failed automatic attempts stay throttled across restart", async () => {
+  const view = snapshot();
+  const first = session(view, {
+    checkUpdate: async () => {
+      throw new Error("offline");
+    },
+  });
+  await first.startUpdateChecks(view);
+  await until(() => !first.checkingActive());
+  await first.teardown();
+  expect(Object.keys(await schedule())).toHaveLength(1);
+  const calls: unknown[] = [];
+  const next = session(view, {
+    checkUpdate: async (_options, request) => {
+      calls.push(request);
+      throw new Error("no retained observation");
+    },
+  });
+  await next.startUpdateChecks(view);
+  await until(() => !next.checkingActive());
+  expect(calls).toEqual([{ source: "first", observation: "retained" }]);
+});
+
+test("retained startup restores without showing checking activity", async () => {
+  const view = snapshot();
+  const first = session(view, {
+    checkUpdate: async (_options, { source }) => result(observation(source)),
+  });
+  await first.checkUpdates();
+  await first.teardown();
+  const started = deferred<void>();
+  const held = deferred<void>();
+  const next = session(view, {
+    checkUpdate: async (_options, { source }) => {
+      started.resolve();
+      await held.promise;
+      return result(observation(source));
+    },
+  });
+  await next.startUpdateChecks(view);
+  await started.promise;
+  try {
+    expect(next.checkActivity()).toBeUndefined();
+  } finally {
+    held.resolve();
+  }
+  await until(() => !next.checkingActive());
 });
 
 test("manual check interrupts retained-only startup and cannot accept its late observation", async () => {

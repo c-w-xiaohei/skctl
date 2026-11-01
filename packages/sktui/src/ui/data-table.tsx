@@ -237,7 +237,16 @@ export function DataTable<T>(props: DataTableProps<T>) {
   });
 
   const locate = (index: number) => {
+    // A keyboard event can arrive after native layout but before the next frame
+    // has copied its dimensions into the table's reactive measurement.
+    if (!fits() && root && body && root.height >= 2 && body.viewport.width > 0) {
+      batch(() => {
+        setWidth(body!.viewport.width);
+        setHeight(root!.height);
+      });
+    }
     if (!fits()) return;
+    restorePending = false;
     const keys = data().keys;
     const key = keys[Math.max(0, Math.min(index, keys.length - 1))];
     if (key !== undefined && key !== props.currentKey) props.onCurrentChange(key);

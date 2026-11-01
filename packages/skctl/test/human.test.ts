@@ -242,7 +242,6 @@ test("CLI-001/PROJ-023 maps finalized source and management commands through Cor
     ["install", "local", "review"],
     ["update", "check", "local"],
     ["update", "apply", "local", "review", "--remove", "old"],
-    ["rebind", "old", "review", "new", "--path", "renamed"],
     ["uninstall", "local", "review"],
   ])
     expect(await runMain(["--project", "/workspace", ...argv], options)).toBe(0);
@@ -271,7 +270,6 @@ test("CLI-001/PROJ-023 maps finalized source and management commands through Cor
     ["install", { source: "local", paths: ["review"], exactRevision: undefined }],
     ["check", { source: "local" }],
     ["update", { source: "local", paths: ["review"], remove: ["old"], exactRevision: undefined }],
-    ["rebind", { source: "old", path: "review", owner: "new", ownerPath: "renamed" }],
     ["uninstall", { source: "local", paths: ["review"] }],
   ]);
 });

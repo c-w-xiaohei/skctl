@@ -8,6 +8,7 @@ import {
   type NavigationContext,
   type NavigationRegion,
   type NavigationSurface,
+  type MainPage,
   type ReaderState,
   type RouteHandoff,
   sameSkillAddress,
@@ -58,6 +59,7 @@ export type RouteTarget = (
 };
 
 export interface NavigationFrame {
+  readonly page: MainPage;
   readonly context: NavigationContext;
   readonly section: RouteTarget["section"];
   readonly object?: string | SkillAddress;
@@ -250,6 +252,12 @@ export function createRoute(
     focus: FocusOwner = focusFor(surface),
     sublocation = sublocationFor(context, section, surface),
   ): NavigationFrame => ({
+    page:
+      context === "workspace"
+        ? (section as WorkspaceSection)
+        : section === "integrations"
+          ? "agent"
+          : "settings",
     context,
     section,
     ...((object ?? objectFor(context, section)) === undefined
@@ -448,6 +456,12 @@ export function createRoute(
       const next: NavigationFrame = {
         ...current.current,
         ...patch,
+        page:
+          context === "workspace"
+            ? (section as WorkspaceSection)
+            : section === "integrations"
+              ? "agent"
+              : "settings",
         object,
         workspace: structuredClone(
           section === current.current.section && surface === current.current.surface

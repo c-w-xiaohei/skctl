@@ -206,7 +206,7 @@ test("Tree owns arrows and Enter, stops at boundaries, and never activates an in
     setup.tree().focus();
     await press(setup, "ARROW_UP");
     expect(setup.selected()).toBe("root");
-    expect(setup.renderer.currentFocusedRenderable).toBe(setup.tree());
+    expect(setup.renderer.currentFocusedRenderable === setup.tree()).toBe(true);
     await press(setup, "RETURN");
     expect(setup.toggles).toEqual([{ key: "root", expanded: true }]);
     expect(setup.activations).toEqual([]);
@@ -231,7 +231,7 @@ test("Tree owns arrows and Enter, stops at boundaries, and never activates an in
     await press(setup, "RETURN");
     expect(setup.selected()).toBe("empty");
     expect(setup.toggles).toHaveLength(toggles);
-    expect(setup.renderer.currentFocusedRenderable).toBe(setup.tree());
+    expect(setup.renderer.currentFocusedRenderable === setup.tree()).toBe(true);
     setup.setSelected("removed");
     await press(setup, "RETURN");
     await press(setup, "ARROW_DOWN");
@@ -255,7 +255,7 @@ test("all three disclosure cells press a real Button without selection or page a
       await setup.flush();
       expect(setup.toggles).toHaveLength(before + 1);
       expect(setup.selected()).toBe("empty");
-      expect(setup.renderer.currentFocusedRenderable).toBe(setup.tree());
+      expect(setup.renderer.currentFocusedRenderable === setup.tree()).toBe(true);
     }
     expect(setup.activations).toEqual([]);
     const name = setup.live(`${rowId("root")}-name`);
@@ -283,7 +283,7 @@ test("collapse falls back to the ancestor before removing its selected descendan
     expect(setup.expanded().has("branch")).toBe(true);
     expect(setup.renderer.root.findDescendantById(rowId("nested"))).toBeUndefined();
     expect(setup.tree().scrollTop).toBe(0);
-    expect(setup.renderer.currentFocusedRenderable).toBe(setup.tree());
+    expect(setup.renderer.currentFocusedRenderable === setup.tree()).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -308,7 +308,7 @@ test("mixed Button focus obeys controlled selection, consumes Enter once, and ha
     await press(setup, "TAB");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("other");
     await press(setup, "TAB");
-    expect(setup.renderer.currentFocusedRenderable).toBe(setup.tree());
+    expect(setup.renderer.currentFocusedRenderable === setup.tree()).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -327,7 +327,7 @@ test("stable key rows preserve native Button identity while labels and callbacks
     ]);
     await setup.flush();
     expect(setup.live(disclosureId("branch"))).toBe(button);
-    expect(setup.renderer.currentFocusedRenderable).toBe(button);
+    expect(setup.renderer.currentFocusedRenderable === button).toBe(true);
     const name = setup.live(`${rowId("branch")}-name`) as TextRenderable;
     expect(name.chunks.map((chunk) => chunk.text).join("")).toContain("Changed branch");
     await press(setup, "RETURN");
@@ -500,12 +500,12 @@ test("modal focus opened by a disclosure callback is not stolen by Tree restorat
     setup.setSelected("leaf");
     setup.resize(43, 13);
     await setup.flush();
-    expect(setup.renderer.currentFocusedRenderable).toBe(modal);
+    expect(setup.renderer.currentFocusedRenderable === modal).toBe(true);
     await press(setup, "ARROW_DOWN");
     expect(setup.selected()).toBe("leaf");
     expect(setup.toggles).toHaveLength(1);
     expect(setup.activations).toEqual([]);
-    expect(setup.renderer.currentFocusedRenderable).toBe(modal);
+    expect(setup.renderer.currentFocusedRenderable === modal).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -549,7 +549,7 @@ test("restored scrolling, wheel and native scrollbar preserve selection until tr
     await setup.flush();
     expect(tree.scrollTop).toBeGreaterThan(before);
     expect(setup.selected()).toBe("root");
-    expect(setup.renderer.currentFocusedRenderable).toBe(bar);
+    expect(setup.renderer.currentFocusedRenderable === bar).toBe(true);
     expect(setup.registry.target("browser")).toBe(tree);
     await press(setup, "ARROW_DOWN");
     expect(setup.selected()).toBe("item-0");
@@ -622,7 +622,7 @@ test("empty rows retain the region without inventing a selected or activatable o
     expect(setup.selections).toEqual([]);
     expect(setup.selected()).toBe("absent");
     expect(setup.registry.target("browser")).toBe(setup.tree());
-    expect(setup.renderer.currentFocusedRenderable).toBe(setup.tree());
+    expect(setup.renderer.currentFocusedRenderable === setup.tree()).toBe(true);
   } finally {
     setup.renderer.destroy();
   }

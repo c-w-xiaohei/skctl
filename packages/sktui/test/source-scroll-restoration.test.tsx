@@ -3,6 +3,7 @@ import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
 import { selectScrollOffset } from "../src/select-scroll";
@@ -16,7 +17,7 @@ function native(id: string, setup: Setup): SelectRenderable {
 }
 
 async function openSources(setup: Setup) {
-  await enterLive(setup, "shell-section-tab-sources");
+  await openMainPage(setup, "sources");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
   await focusLive(setup, "source-browser");
 }
@@ -77,13 +78,13 @@ test("RENDER Sources restores exact selected source and native offset after Insp
     expect(selected).toBe("source-10");
     await parsedEnter(setup);
     await setup.flush();
-    await enterLive(setup, "source-details-toggle");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-command-skills"));
+    await enterLive(setup, "source-view-tab-settings");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-metadata"));
     await setup.waitForFrame((frame) => frame.includes("https://github.com/acme/source-10"));
     const detailFrame = setup.captureCharFrame();
     expect(detailFrame).toContain("source-10");
     expect(detailFrame).toContain("https://github.com/acme/source-10");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-details-toggle");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-view-tab-settings");
     let escapeCount = 0;
     const onEscape = (event: { readonly name: string }) => {
       if (event.name === "escape" || event.name === "esc") escapeCount += 1;

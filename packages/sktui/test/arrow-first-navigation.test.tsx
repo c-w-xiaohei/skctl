@@ -125,7 +125,7 @@ test("arrow-first browser selection reads directly, cycles Reader views, and ret
         restored.getSelectedOption()?.value === selectedAddress
       );
     });
-    expect(setup.renderer.currentFocusedRenderable).toBe(list);
+    expect(setup.renderer.currentFocusedRenderable === list).toBe(true);
     expect(loads).toEqual(["guide", "reference"]);
   } finally {
     setup.renderer.destroy();
@@ -180,7 +180,7 @@ test("update workbench arrows preserve selection and Escape leaves without apply
     const selection = await focusLive(setup, "source-updates-browser");
     await parsedArrow(setup, "down");
     await parsedArrow(setup, "up");
-    expect(setup.renderer.currentFocusedRenderable).toBe(selection);
+    expect(setup.renderer.currentFocusedRenderable === selection).toBe(true);
     expect(updates).toEqual([]);
     // Space marks the current installed root; navigation and checking never publish.
     setup.mockInput.pressKey(" ");

@@ -16,6 +16,7 @@ import { configDeclarationOwnerKey, createConfigState } from "../src/config/stat
 import { createWorkspaceState, problemRowKey, problemRows } from "../src/workspace/state";
 import { parseNavKey, resolve, type NavFacts } from "../src/navigation";
 import { configSourceOwner, directOwner, workspaceProjection } from "./direct-source.fixture";
+import { exposureTreePathKey } from "../src/collections/agent-access-tree";
 
 function pages() {
   const workspace = createWorkspaceState();
@@ -73,6 +74,122 @@ function collectionTargetProjection(
     })),
   };
 }
+
+test("creation and Source navigation command records describe their actual destinations", () => {
+  const projection = collectionTargetProjection();
+  const owners = pages();
+  owners.workspace.selectSection("collections");
+  owners.collections.select("team");
+  const create = reachableActions("workspace", projection, owners.facts).find(
+    (action) => action.id === "new-collection",
+  )!;
+  expect(create.object).toBeUndefined();
+  expect(create.opens).toBe("Collection form");
+  owners.workspace.selectSection("sources");
+  owners.workspace.selectSource("team-main");
+  const direct = reachableActions("workspace", projection, owners.facts);
+  expect(direct.find((action) => action.id === "add-skills")).toMatchObject({
+    object: "team-main",
+    opens: "Source candidates",
+  });
+  expect(direct.find((action) => action.id === "open-config")).toMatchObject({
+    object: `${directOwner.level}: ${directOwner.file}`,
+    scopeText: "From Source team-main",
+    opens: "Config",
+  });
+  owners.workspace.selectSource("team-config/lark");
+  expect(
+    reachableActions("workspace", projection, owners.facts).find(
+      (action) => action.id === "open-config-source",
+    ),
+  ).toMatchObject({
+    object: `${configSourceOwner.level}: ${configSourceOwner.file} ${configSourceOwner.pointer}`,
+    scopeText: "From Source team-config/lark",
+    opens: "Config Source",
+  });
+  owners.workspace.selectSection("skills");
+  owners.workspace.selectSkill(projection.installedSkills[0]!.address);
+  expect(
+    selectedSkillActions("workspace", projection, owners.facts).find(
+      (action) => action.id === "skill-open-source",
+    ),
+  ).toMatchObject({ object: "team-main", scopeText: "From Skill team-main/a", opens: "Source" });
+});
+
+test("Agent Collection update record names the selected Reference target", () => {
+  const base = collectionTargetProjection();
+  if (base.effective.status !== "complete") throw new Error("complete projection required");
+  const team = base.effective.collectionsView[0]!;
+  const projection: WorkspaceView = {
+    ...base,
+    effective: {
+      ...base.effective,
+      use: ["team"],
+      collections: ["team", "docs"],
+      agent: { ...base.effective.agent, status: "available" },
+      collectionsView: [
+        {
+          ...team,
+          references: [
+            { name: "manual", collection: "docs", description: "Manual", owner: directOwner },
+          ],
+        },
+        { ...team, id: "docs", references: [] },
+      ],
+    },
+  };
+  const owners = pages();
+  owners.workspace.selectSection("agent");
+  owners.workspace.expandExposurePath({ segments: [{ collection: "team" }] });
+  owners.workspace.selectExposurePath(
+    exposureTreePathKey({
+      segments: [
+        { collection: "team" },
+        { collection: "docs", reference: { name: "manual", target: "docs" } },
+      ],
+    }),
+  );
+  expect(
+    reachableActions("workspace", projection, owners.facts).find(
+      (action) => action.id === "collection-check-updates",
+    ),
+  ).toMatchObject({ object: "docs", scopeText: "Collection docs", opens: "Updates" });
+});
+
+test("Agent Skill actions target its selected row despite a retained Problems view and checked inventory", () => {
+  const base = collectionTargetProjection();
+  if (base.effective.status !== "complete") throw new Error("complete projection required");
+  const [a, b] = base.installedSkills.map((skill) => skill.address);
+  const team = base.effective.collectionsView[0]!;
+  const projection: WorkspaceView = {
+    ...base,
+    effective: {
+      ...base.effective,
+      use: ["team"],
+      agent: { ...base.effective.agent, status: "available" },
+      collectionsView: [{ ...team, members: [{ name: "b", address: b!, paths: [] }] }],
+    },
+  };
+  const owners = pages();
+  owners.workspace.selectSkill(a!);
+  owners.workspace.toggleSkill(a!);
+  owners.workspace.selectSkillsView("problems");
+  owners.workspace.selectSection("agent");
+  const root = exposureTreePathKey({ segments: [{ collection: "team" }] });
+  owners.workspace.expandExposurePath({ segments: [{ collection: "team" }] });
+  owners.workspace.selectExposurePath(JSON.stringify([root, "skill", "b", b!.source, b!.path]));
+  owners.workspace.selectSkill(b!);
+  expect(installedSkillContext("workspace", projection, owners.facts)?.skill.address).toEqual(b);
+  expect(skillSourceIntent("workspace", projection, owners.facts)).toEqual({
+    kind: "source-update",
+    source: b!.source,
+    path: b!.path,
+  });
+  expect(owners.workspace.selectedSkills()).toEqual([a]);
+  owners.workspace.selectExposurePath(root);
+  owners.workspace.selectSkill(undefined);
+  expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
+});
 
 test("K6 current B Collection and update actions never inherit checked A/C targets", () => {
   const projection = collectionTargetProjection();
@@ -613,7 +730,11 @@ test("Task6 action projection exposes command records with the dispatched action
     id: "add-skills",
     keys: ["enter"],
     verb: "Add Skills",
-    destination: "Source selection",
+    destination: "Source candidates",
+    opens: "Source candidates",
+    object: "team-main",
+    scopeText: "Source team-main",
+    group: "current",
     scope: "page",
     enabled: true,
     danger: false,
@@ -805,16 +926,16 @@ test("Config Collection actions retain their direct owner wording and Use eligib
     actions.map(({ id, verb, destination, danger }) => [id, verb, destination, danger]),
   ).toEqual([
     ["new-collection", "New Collection", "Collection form", false],
-    ["add-membership", "Add Membership", "Membership form", false],
+    ["add-membership", "Add Skills to Collection", "Membership form", false],
     [
       "edit-collection-content",
       "Edit Collection description and instructions",
       "Collection form",
       false,
     ],
-    ["import-collection", "Import Collection", "Import form", false],
-    ["add-reference", "Add Reference", "Review form", false],
-    ["add-link", "Add Link", "Review form", false],
+    ["import-collection", "Copy Skills from Collection", "Import form", false],
+    ["add-reference", "Add Collection entry", "Review form", false],
+    ["add-link", "Include Collection", "Review form", false],
     ["remove-collection", "Remove Collection", "Review form", true],
     ["set-collection-use", "Set Collection Use", "Collection Use form", false],
   ]);

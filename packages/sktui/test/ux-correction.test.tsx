@@ -3,6 +3,7 @@ import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import {
@@ -31,6 +32,8 @@ const mount = (empty = false, width = 120, height = 40) =>
   );
 
 async function scope(setup: Setup, destination: string) {
+  if (!setup.renderer.root.findDescendantById("shell-scope-select"))
+    await openMainPage(setup, "settings");
   await enterLive(setup, "shell-scope-select");
   const choices = (await focusLive(setup, "scope-choices")) as SelectRenderable;
   const index = choices.options.findIndex((option) => option.value === destination);
@@ -52,12 +55,7 @@ test.each([120, 80, 43])(
     const setup = await mount(true, width, 24);
     try {
       await setup.waitForFrame((frame) => frame.includes("Add your first Source"));
-      for (const id of [
-        "shell-scope-select",
-        "shell-more-actions",
-        "section-nav",
-        "command-status",
-      ]) {
+      for (const id of ["shell-more-actions", "section-nav", "command-status"]) {
         const control = setup.renderer.root.findDescendantById(id)!;
         expect(control.screenX).toBeGreaterThanOrEqual(0);
         expect(control.screenX + control.width).toBeLessThanOrEqual(width);
@@ -83,7 +81,7 @@ test("Source empty state provides its own registration action", async () => {
   const setup = await mount(true);
   try {
     await setup.flush();
-    await enterLive(setup, "shell-section-tab-sources");
+    await openMainPage(setup, "sources");
     await setup.waitForFrame((frame) => frame.includes("No Sources yet"));
     await enterLive(setup, "workspace-action-add-source");
     await setup.waitFor(
@@ -104,16 +102,16 @@ test.each([120, 80, 43])(
         (setup.renderer.root.findDescendantById("reader-identity") as TextRenderable).plainText,
       ).toBe("guide");
       for (const [index, label] of [
-        [0, "SKILL.md"],
+        [0, "Content"],
         [1, "Resources"],
-        [2, "Details"],
+        [2, "Settings"],
       ] as const) {
         await openReaderTab(setup, index);
         expect(selectedReaderTab(setup)).toBe(index);
         expect(setup.captureCharFrame()).toContain(label);
       }
       await focusLive(setup, "reader-action-skill-check-updates");
-      await setup.waitForFrame((frame) => frame.includes("Enter Update"));
+      await setup.waitForFrame((frame) => frame.includes("Check updates"));
       await focusLive(setup, "reader-details-action-skill-add-to-collection");
       expect(setup.renderer.currentFocusedRenderable?.id).toBe(
         "reader-details-action-skill-add-to-collection",
@@ -172,16 +170,20 @@ test("Scope selection commits on activation, including reselecting the current S
   const setup = await mount(true);
   try {
     await setup.flush();
+    await openMainPage(setup, "settings");
     await enterLive(setup, "shell-scope-select");
     const choices = (await focusLive(setup, "scope-choices")) as SelectRenderable;
-    choices.setSelectedIndex(choices.options.findIndex((option) => option.value === "global"));
+    expect(choices.getSelectedOption()?.value).toBe("global");
+    setup.mockInput.pressArrow("down");
+    await setup.waitFor(() => choices.getSelectedOption()?.value === "project");
     await setup.flush();
-    expect(!!setup.renderer.root.findDescendantById("shell-section-tab-skills")).toBe(true);
+    expect(setup.captureCharFrame()).toContain("Scope: Global");
     await parsedEnter(setup);
     await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("shell-section-global-tab-sources"),
+      () => !!setup.renderer.root.findDescendantById("settings-section-tab-sources"),
     );
-    await scope(setup, "global");
+    expect(setup.captureCharFrame()).toContain("Scope: Project");
+    await scope(setup, "project");
     expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
     await focusLive(setup, "shell-scope-select");
     await setup.waitForFrame((frame) => frame.includes("Enter Change Scope"));
@@ -205,15 +207,12 @@ test("Workspace and Config page arrows activate one page without creating histor
       ).toBe(true);
       expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
     }
-    setup.mockInput.pressArrow("right");
-    await setup.flush();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("updates-browser");
     await scope(setup, "global");
-    await focusLive(setup, "shell-section-global-tab-sources");
-    for (const section of ["config-sources", "collections", "integrations"]) {
+    await focusLive(setup, "settings-section-tab-sources");
+    for (const section of ["config-sources", "collections"]) {
       setup.mockInput.pressArrow("right");
       await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === `shell-section-global-tab-${section}`,
+        () => setup.renderer.currentFocusedRenderable?.id === `settings-section-tab-${section}`,
       );
       expect(
         (setup.renderer.currentFocusedRenderable as TabsTabRenderable).getState().selected,
@@ -235,7 +234,7 @@ test("empty Config pages provide direct actions", async () => {
       ["config-sources", "Add Config Source"],
       ["collections", "New Collection"],
     ]) {
-      await enterLive(setup, `shell-section-global-tab-${section}`);
+      await enterLive(setup, `settings-section-tab-${section}`);
       await setup.waitForFrame((frame) => frame.includes(label!));
     }
   } finally {

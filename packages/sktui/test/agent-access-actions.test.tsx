@@ -129,6 +129,7 @@ test("RENDER Agent access Reference full text is adjacent and scrollable; global
   );
   try {
     const tree = await openAgentAccess(setup);
+    const startupLoads = contentLoads;
     await focusLive(setup, "current-exposure-browser");
     await press(setup, "ARROW_RIGHT");
     expect(tree.content.getChildren()).toHaveLength(2);
@@ -153,7 +154,7 @@ test("RENDER Agent access Reference full text is adjacent and scrollable; global
     await press(setup, "\u001b[6~");
     expect(description.scrollTop).toBeGreaterThan(0);
     expect(setup.renderer.currentFocusedRenderable).toBe(description);
-    expect(contentLoads).toBe(0);
+    expect(contentLoads).toBe(startupLoads);
     await parsedEscape(setup);
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable).toBe(tree);
@@ -164,7 +165,7 @@ test("RENDER Agent access Reference full text is adjacent and scrollable; global
     setup.resize(144, 24);
     await setup.flush();
     expect(setup.captureCharFrame()).toContain("Collection child");
-    expect(contentLoads).toBe(0);
+    expect(contentLoads).toBe(startupLoads);
   } finally {
     setup.renderer.destroy();
   }
@@ -187,6 +188,7 @@ test("RENDER Agent access Reference Enter stays in the tree and optional Details
   );
   try {
     const tree = await openAgentAccess(setup);
+    const startupLoads = contentLoads;
     await focusLive(setup, "current-exposure-browser");
     await press(setup, "RETURN");
     expect(tree.content.getChildren()).toHaveLength(2);
@@ -207,7 +209,7 @@ test("RENDER Agent access Reference Enter stays in the tree and optional Details
     expect(update).toMatchObject({ enabled: true });
     expect(update.description).toContain("child");
     expect(update.description).not.toContain("root");
-    expect(contentLoads).toBe(0);
+    expect(contentLoads).toBe(startupLoads);
   } finally {
     setup.renderer.destroy();
   }
@@ -246,6 +248,7 @@ test("RENDER Collection instructions follow the selected target and remain reada
   );
   try {
     await openAgentAccess(setup);
+    const startupLoads = contentLoads;
     expect((live(setup, "agent-node-instructions") as TextRenderable).plainText).toBe(
       "Root guidance only.",
     );
@@ -261,19 +264,20 @@ test("RENDER Collection instructions follow the selected target and remain reada
     expect(setup.captureCharFrame()).not.toContain("Root guidance only.");
     expect(setup.captureCharFrame()).not.toContain("Child Collection description");
     await enterLive(setup, "agent-access-collection-details");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-about"));
-    await enterLive(setup, "collection-about");
     await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("collection-info-instructions"),
+      () => !!setup.renderer.root.findDescendantById("collection-tabs-tab-description"),
     );
-    expect((live(setup, "collection-info-instructions") as TextRenderable).plainText).toBe(
-      childInstructions,
-    );
+    await enterLive(setup, "collection-tabs-tab-description");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-description"));
+    const description = live(setup, "collection-description") as ScrollBoxRenderable;
+    const text = (node: import("@opentui/core").BaseRenderable): string =>
+      node instanceof TextRenderable ? node.plainText : node.getChildren().map(text).join("\n");
+    expect(text(description)).toContain(childInstructions);
     expect(setup.captureCharFrame()).toContain("Child Collection description");
-    await focusLive(setup, "collection-info");
+    await focusLive(setup, "collection-description");
     await press(setup, "\u001b[6~");
-    expect((live(setup, "collection-info") as ScrollBoxRenderable).scrollTop).toBeGreaterThan(0);
-    expect(contentLoads).toBe(0);
+    expect(description.scrollTop).toBeGreaterThan(0);
+    expect(contentLoads).toBe(startupLoads);
   } finally {
     setup.renderer.destroy();
   }
@@ -335,11 +339,17 @@ test("RENDER Agent access Reader Update submits only its current Skill despite o
   );
   try {
     await openAgentAccess(setup);
+    await focusLive(setup, "current-exposure-browser");
     await press(setup, "ARROW_RIGHT");
     await selectTreeName(setup, skillKey("reference"));
-    await waitForBody(setup, "Body reference");
     await press(setup, "RETURN");
+    await waitForBody(setup, "Body reference");
     await enterLive(setup, "reader-action-skill-check-updates");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
+    expect(updates).toEqual([]);
+    await enterLive(setup, "updates-browser");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-updates-browser"));
+    await enterLive(setup, "source-updates-update-all");
     await setup.waitForFrame((frame) => frame.includes("Updated 1 Skill"), { maxPasses: 200 });
     expect(updates).toHaveLength(1);
     expect(updates[0]).toMatchObject({
@@ -470,15 +480,14 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
     await press(setup, "ARROW_DOWN");
     await press(setup, " ");
     // The checked set is A/C; entering Agent access must not repurpose it as current B.
-    await enterLive(setup, "skills-view-tab-current-exposure");
+    await openAgentAccess(setup);
     await setup.flush();
     await focusLive(setup, "current-exposure-browser");
     await press(setup, "ARROW_RIGHT");
     await selectTreeName(setup, skillKey("reference"));
-    await waitForBody(setup, "Body reference");
     await press(setup, "RETURN");
+    await waitForBody(setup, "Body reference");
     await openReaderTab(setup, 2);
-    await enterLive(setup, "reader-details-manage");
     await enterLive(setup, "reader-details-action-skill-uninstall");
     await setup.waitFor(() => previews.length === 1);
     await setup.waitFor(
@@ -535,6 +544,9 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
     expect(mutations).toBe(1);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
     await enterLive(setup, "route-back");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
+    expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("reference");
+    await parsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
     await setup.flush();
     await focusLive(setup, "current-exposure-browser");
@@ -553,13 +565,27 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
         (option) => option.value.id === "skill-add-to-collection" && option.value.enabled,
       ),
     ).toBe(false);
-    expect(
-      collectionActions.options.some(
-        (option) => option.value.id === "skill-add-selected-to-collection" && option.value.enabled,
-      ),
-    ).toBe(true);
+    await parsedEscape(setup);
+    await openAllInstalledSkills(setup);
+    const checkedActions = await palette(setup);
+    const checked = checkedActions.options.find(
+      (option) => option.value.id === "skill-add-selected-to-collection",
+    )?.value;
+    expect(checked).toMatchObject({ enabled: true });
+    expect(checked?.description ?? checked?.destination).toContain("guide");
+    expect(checked?.description ?? checked?.destination).toContain("third");
+    expect(checked?.description ?? checked?.destination).not.toContain("reference");
     expect(previews).toHaveLength(1);
     expect(mutations).toBe(1);
+  } catch (error) {
+    console.error("Agent current and checked return", {
+      focus: setup.renderer.currentFocusedRenderable?.id,
+      frame: setup.captureCharFrame(),
+      previews,
+      batches,
+      mutations,
+    });
+    throw error;
   } finally {
     setup.renderer.destroy();
   }
@@ -606,10 +632,11 @@ test("RENDER Agent access late A content cannot replace selected B or B's Reader
   );
   try {
     await openAgentAccess(setup);
+    await focusLive(setup, "current-exposure-browser");
     await press(setup, "ARROW_RIGHT");
-    await selectTreeName(setup, skillKey("guide"));
     await setup.waitFor(() => reads.length === 1);
     await selectTreeName(setup, skillKey("reference"));
+    await press(setup, "RETURN");
     await setup.waitFor(() => reads.length === 2);
     await waitForBody(setup, "Current B instructions");
     resolveFirst({
@@ -624,7 +651,7 @@ test("RENDER Agent access late A content cannot replace selected B or B's Reader
     await setup.flush();
     expect(setup.captureCharFrame()).toContain("Current B instructions");
     expect(setup.captureCharFrame()).not.toContain("Late A instructions");
-    expect(selected(setup, skillKey("reference"))).toBe(true);
+    expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("reference");
     const choices = await palette(setup);
     const current = choices.options.find(
       (option) => option.value.id === "skill-add-to-collection",
@@ -633,9 +660,12 @@ test("RENDER Agent access late A content cannot replace selected B or B's Reader
     expect(current.description ?? current.destination).toContain("reference");
     expect(reads).toEqual(["guide", "reference"]);
     await parsedEscape(setup);
+    await parsedEscape(setup);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
     await setup.flush();
     await focusLive(setup, "current-exposure-browser");
     await selectTreeName(setup, skillKey("guide"));
+    await press(setup, "RETURN");
     await waitForBody(setup, "Fresh A instructions");
     expect(setup.captureCharFrame()).not.toContain("Current B instructions");
     expect(setup.captureCharFrame()).not.toContain("Late A instructions");
@@ -647,6 +677,13 @@ test("RENDER Agent access late A content cannot replace selected B or B's Reader
     expect(freshCurrent).toMatchObject({ enabled: true });
     expect(freshCurrent.description ?? freshCurrent.destination).toContain("guide");
     expect(freshCurrent.description ?? freshCurrent.destination).not.toContain("reference");
+  } catch (error) {
+    console.error("Agent late content", {
+      focus: setup.renderer.currentFocusedRenderable?.id,
+      frame: setup.captureCharFrame(),
+      reads,
+    });
+    throw error;
   } finally {
     setup.renderer.destroy();
   }

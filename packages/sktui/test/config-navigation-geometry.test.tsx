@@ -5,10 +5,10 @@ import { testRender } from "@opentui/solid";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
-import { validSections } from "../src/types";
 
 for (const level of ["global", "project", "local"] as const) {
   test.each([132, 139, 140, 144, 150, 100, 80, 79, 43])(
@@ -25,6 +25,8 @@ for (const level of ["global", "project", "local"] as const) {
         });
       try {
         await setup.flush();
+        await openMainPage(setup, "settings");
+        await setup.flush();
         const before = geometry();
         await enterLive(setup, "shell-scope-select");
         const choices = setup.renderer.root.findDescendantById("scope-choices") as SelectRenderable;
@@ -37,28 +39,27 @@ for (const level of ["global", "project", "local"] as const) {
         }
         await parsedEnter(setup);
         await setup.flush();
-        const viewport = setup.renderer.root.findDescendantById("section-nav")!;
-        for (const page of validSections(level)) {
-          const tab = setup.renderer.root.findDescendantById(`shell-section-${level}-tab-${page}`)!;
+        const viewport = setup.renderer.root.findDescendantById("settings-section")!;
+        await focusLive(setup, "settings-section-tab-sources");
+        for (const [index, page] of ["sources", "config-sources", "collections"].entries()) {
+          if (index) {
+            setup.mockInput.pressArrow("right");
+            await setup.waitFor(
+              () => setup.renderer.currentFocusedRenderable?.id === `settings-section-tab-${page}`,
+            );
+          }
+          const tab = setup.renderer.root.findDescendantById(`settings-section-tab-${page}`)!;
           expect(tab).toBeDefined();
-          expect(tab.screenY).toBe(0);
+          expect(tab.screenY).toBe(viewport.screenY);
           expect(tab.screenX).toBeGreaterThanOrEqual(viewport.screenX);
           expect(tab.screenX + tab.width).toBeLessThanOrEqual(viewport.screenX + viewport.width);
         }
         expect(geometry()).toEqual(before);
-        if (level !== "local") {
-          expect(setup.captureCharFrame().split("\n")[0]).toContain(
-            width >= 132 ? "Integrations" : "Agents",
-          );
-        } else {
-          expect(
-            !!setup.renderer.root.findDescendantById("shell-section-local-tab-integrations"),
-          ).toBe(false);
-        }
-        await enterLive(
-          setup,
-          `shell-section-${level}-tab-${level === "local" ? "collections" : "integrations"}`,
-        );
+        expect(
+          setup.renderer.root.findDescendantById(
+            width < 154 ? "shell-pages-select" : "shell-section-tab-agent",
+          ),
+        ).toBeDefined();
         await setup.flush();
         expect(geometry()).toEqual(before);
         if (process.env.PAGE_INTERACTION_CAPTURE_DIR) {

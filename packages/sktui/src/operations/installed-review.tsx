@@ -33,7 +33,7 @@ export function InstalledSkillPreviewOverlay(props: {
         <ModalCommand
           id="installed-skill-preview-progress"
           controls={controls}
-          record={modalCommand("installed.preview.cancel", "Cancel", "Return to Details")}
+          record={modalCommand("installed.preview.cancel", "Cancel", "Return to previous view")}
           initialFocus
           execute={props.onCancel}
         />
@@ -66,7 +66,7 @@ export function InstalledSkillPreviewFailureOverlay(props: {
           <ModalCommand
             id="installed-skill-preview-failure-cancel"
             controls={controls}
-            record={modalCommand("installed.preview.cancel", "Cancel", "Return to Details")}
+            record={modalCommand("installed.preview.cancel", "Cancel", "Return to previous view")}
             initialFocus
             execute={props.onCancel}
           />
@@ -97,81 +97,129 @@ export function InstalledSkillReviewOverlay(props: {
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
   readonly onResolveMembership: (owner: ConfigDeclarationOwner) => void;
+  readonly onPreviewAgain?: () => void;
 }) {
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, props.onCancel);
-  const uninstall = props.review.kind === "uninstall";
-  const blocked = !props.review.impact.allowed;
-  const directMemberships = uninstall ? props.review.impact.directMemberships : [];
-  const lines = uninstall
-    ? [
-        ...props.review.impact.directMemberships.map(
-          (owner) => `Direct Membership: ${owner.level} (${owner.pointer})`,
-        ),
-        ...props.review.impact.disappearingSelectors.map((item) => `Disappears: ${item.selector}`),
-        ...props.review.impact.retainedSelectors.map((item) => `Retained: ${item.selector}`),
-      ]
-    : [
-        `Old owner: ${props.review.address.source}`,
-        `New owner: ${props.review.owner}`,
-        `New path: ${props.review.ownerPath}`,
-        `Identity proof: ${props.review.impact.proof}`,
-      ];
+  const uninstall = () => props.review.kind === "uninstall";
+  const blocked = () => !props.review.impact.allowed;
+  const directMemberships = () =>
+    props.review.kind === "uninstall" ? props.review.impact.directMemberships : [];
+  const lines = () =>
+    props.review.kind === "uninstall"
+      ? [
+          ...props.review.impact.directMemberships.map(
+            (owner) => `Direct Membership: ${owner.level} (${owner.pointer})`,
+          ),
+          ...props.review.impact.disappearingSelectors.map(
+            (item) => `Disappears: ${item.selector}`,
+          ),
+          ...props.review.impact.retainedSelectors.map((item) => `Retained: ${item.selector}`),
+        ]
+      : [
+          `Old owner: ${props.review.address.source}`,
+          `New owner: ${props.review.owner}`,
+          `New path: ${props.review.ownerPath}`,
+          `Identity proof: ${props.review.impact.proof}`,
+          `Scope: ${props.review.impact.scope}`,
+          `Limitation: ${props.review.impact.limitation}`,
+          ...props.review.impact.directMemberships.map(
+            (item) =>
+              `Membership ${item.collection}:${item.name}: ${item.before.source}/${item.before.path} -> ${item.after.source}/${item.after.path} (${item.owner.level}: ${item.owner.file} ${item.owner.pointer})`,
+          ),
+          ...props.review.impact.blockers.map(
+            (item) =>
+              `Blocker: ${item.reason}${item.owner ? ` (${item.owner.level}: ${item.owner.file} ${item.owner.pointer})` : ""}`,
+          ),
+        ];
   return (
     <ModalShell>
-      <ModalBody controls={controls}>
-        <text>{uninstall ? "Uninstall Skill" : "Rebind Skill"}</text>
-        <text>{`Installed Skill: ${props.review.address.source}/${props.review.address.path}`}</text>
-        {lines.map((line) => (
-          <text>{line}</text>
-        ))}
-        {blocked && <text>Operation is blocked by current dependencies.</text>}
-        {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <box flexDirection="column" gap={1} flexShrink={0}>
-          <ModalCommand
-            id="installed-skill-review-cancel"
-            controls={controls}
-            record={modalCommand("installed.cancel", "Cancel", "Details")}
-            initialFocus
-            execute={props.onCancel}
-          />
-          {blocked &&
-            directMemberships.map((owner, index) => (
-              <ModalCommand
-                id={`installed-skill-review-resolve-${index}`}
-                controls={controls}
-                record={modalCommand(
-                  `installed.resolve.${index}`,
-                  `Resolve References: ${owner.level} (${owner.pointer})`,
-                  owner.file,
-                )}
-                execute={() => props.onResolveMembership(owner)}
-              />
-            ))}
-          {!blocked && (
+      <ModalBody
+        controls={controls}
+        header={
+          <>
+            <text>{uninstall() ? "Uninstall Skill" : "Rebind Skill"}</text>
+            <text>{`Installed Skill: ${props.review.address.source}/${props.review.address.path}`}</text>
+          </>
+        }
+        footer={
+          <box flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}>
             <ModalCommand
-              id="installed-skill-review-confirm"
-              intent="primary"
+              id="installed-skill-review-cancel"
               controls={controls}
               record={modalCommand(
-                "installed.confirm",
+                "installed.cancel",
+                props.pending ? "Stop" : "Cancel",
                 props.pending
-                  ? "Applying"
-                  : props.error
-                    ? "Retry"
-                    : uninstall
-                      ? "Uninstall Skill"
-                      : "Rebind Skill",
-                "Apply reviewed operation",
-                !props.pending,
-                true,
-                props.pending ? "Wait for the current operation to settle" : undefined,
+                  ? "Request stop; operation may already have been applied"
+                  : "Return to previous view",
               )}
-              execute={props.onConfirm}
+              initialFocus
+              execute={props.onCancel}
             />
-          )}
-        </box>
-        <text>Cancel is selected by default</text>
+            {props.review.kind === "rebind" &&
+              props.error?.code === "CONFIG_CONFLICT" &&
+              props.onPreviewAgain && (
+                <ModalCommand
+                  id="installed-skill-preview-again"
+                  controls={controls}
+                  record={modalCommand(
+                    "installed.preview-again",
+                    "Preview again",
+                    "Review current impact",
+                    !props.pending,
+                  )}
+                  execute={props.onPreviewAgain}
+                />
+              )}
+            {!props.pending && !blocked() && !(props.review.kind === "rebind" && props.error) && (
+              <ModalCommand
+                id="installed-skill-review-confirm"
+                intent="primary"
+                controls={controls}
+                record={modalCommand(
+                  "installed.confirm",
+                  props.pending
+                    ? "Applying"
+                    : props.error
+                      ? "Retry"
+                      : uninstall()
+                        ? "Uninstall Skill"
+                        : "Rebind Skill",
+                  "Apply reviewed operation",
+                  !props.pending,
+                  true,
+                  props.pending ? "Wait for the current operation to settle" : undefined,
+                )}
+                execute={props.onConfirm}
+              />
+            )}
+          </box>
+        }
+      >
+        {lines().map((line) => (
+          <text>{line}</text>
+        ))}
+        {blocked() && <text>Operation is blocked by current dependencies.</text>}
+        {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
+        {blocked() &&
+          directMemberships().map((owner, index) => (
+            <ModalCommand
+              id={`installed-skill-review-resolve-${index}`}
+              controls={controls}
+              record={modalCommand(
+                `installed.resolve.${index}`,
+                `Resolve References: ${owner.level} (${owner.pointer})`,
+                owner.file,
+              )}
+              execute={() => props.onResolveMembership(owner)}
+            />
+          ))}
+        <text>
+          {props.pending
+            ? "Stop is a request; the operation may already have been applied."
+            : "Cancel is selected by default"}
+        </text>
       </ModalBody>
     </ModalShell>
   );

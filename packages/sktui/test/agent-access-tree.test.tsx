@@ -75,15 +75,91 @@ const childPathKey = JSON.stringify([
 ]);
 const skillRowKey = (pathKey: string, entry: string) =>
   JSON.stringify([pathKey, "skill", entry, "team-main", "guide"]);
-test("RENDER Agent access is the focused startup view with folded Use roots and Right reveals one layer", async () => {
+test("Agent selection never shows another Skill body before activation", async () => {
+  const base = projection();
+  const effective = base.effective;
+  const fixture = {
+    ...base,
+    effective: {
+      ...effective,
+      collectionsView: effective.collectionsView.map((item) =>
+        item.id !== "root"
+          ? item
+          : {
+              ...item,
+              members: [
+                ...item.members,
+                {
+                  name: "reference-entry",
+                  address: { source: "team-main", path: "reference" },
+                  paths: [],
+                },
+              ],
+            },
+      ),
+    },
+  };
+  const reads: string[] = [];
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(fixture, {
+          loadInstalledSkill: async (_env, { address }) => {
+            reads.push(address.path);
+            return {
+              address,
+              name: address.path,
+              description: "",
+              rawText: `Body ${address.path}`,
+              markdownText: `Body ${address.path}`,
+            };
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 144, height: 40 },
+  );
+  try {
+    await openAgentAccess(setup);
+    await clickPart(setup, rootPathKey, "disclosure");
+    await clickPart(setup, skillRowKey(rootPathKey, "guide-entry"), "name");
+    await press(setup, "RETURN");
+    await waitForBody(setup, "Body guide");
+    await parsedEscape(setup);
+    const before = [...reads];
+    const reference = JSON.stringify([
+      rootPathKey,
+      "skill",
+      "reference-entry",
+      "team-main",
+      "reference",
+    ]);
+    await clickPart(setup, reference, "name");
+    expect(reads).toEqual(before);
+    expect(setup.captureCharFrame()).not.toContain("Body guide");
+    await press(setup, "RETURN");
+    await waitForBody(setup, "Body reference");
+    expect(reads.filter((path) => path === "reference")).toHaveLength(1);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+test("RENDER Agent access opens with folded Use roots and Right reveals one layer", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection(1))} exit={() => {}} />,
     { width: 144, height: 40 },
   );
   try {
     const tree = await openAgentAccess(setup);
+    await clickPart(setup, rootPathKey, "name");
     expect(setup.renderer.root.findDescendantById("installed-skill-browser")).toBeUndefined();
-    expect(setup.renderer.currentFocusedRenderable).toBe(tree);
+    // Compare native identity without asking the assertion formatter to traverse
+    // the renderer's cyclic object graph on failure.
+    expect(
+      setup.renderer.currentFocusedRenderable === tree,
+      `before Enter: ${setup.renderer.currentFocusedRenderable?.id}`,
+    ).toBe(true);
     expect(rows(tree).map((row) => row.id)).toEqual([rowId(rootPathKey)]);
     expect(selected(setup, rootPathKey)).toBe(true);
     expect(setup.captureCharFrame()).toContain("Root description");
@@ -115,7 +191,7 @@ test("RENDER Agent access disclosure has three real Button cells and never opens
       await clickPart(setup, rootPathKey, "disclosure", cell);
       expect(rows(tree)).toHaveLength(cell === 1 ? 1 : 3);
       expect(selected(setup, rootPathKey)).toBe(true);
-      expect(setup.renderer.currentFocusedRenderable).toBe(tree);
+      expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
       expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeUndefined();
     }
   } finally {
@@ -133,7 +209,7 @@ test("RENDER Agent access name click only selects and Collection Enter toggles i
     expect(rows(tree)).toHaveLength(1);
     await press(setup, "RETURN");
     expect(rows(tree)).toHaveLength(3);
-    expect(setup.renderer.currentFocusedRenderable).toBe(tree);
+    expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
     expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeUndefined();
     await press(setup, "RETURN");
     expect(rows(tree)).toHaveLength(1);
@@ -141,31 +217,60 @@ test("RENDER Agent access name click only selects and Collection Enter toggles i
     setup.renderer.destroy();
   }
 });
-test("RENDER Agent access Down selection directly reads its exact Skill and Enter focuses the displayed body", async () => {
+test("Agent Skill activation opens the exact cached content and Back restores its tree row", async () => {
   const reads: string[] = [];
-  const setup = await testRender(() => <App core={readingCore(12, reads)} exit={() => {}} />, {
+  const mutations: string[] = [];
+  const core = {
+    ...readingCore(12, reads),
+    installSkills: async () => {
+      mutations.push("install");
+      throw new Error("Unexpected install");
+    },
+    updateSkills: async () => {
+      mutations.push("update");
+      throw new Error("Unexpected update");
+    },
+  };
+  const setup = await testRender(() => <App core={core} exit={() => {}} />, {
     width: 144,
     height: 40,
   });
   try {
-    const tree = await openAgentAccess(setup);
-    await press(setup, "ARROW_RIGHT");
-    expect(reads).toEqual([]);
-    await press(setup, "ARROW_DOWN");
-    expect(selected(setup, childPathKey)).toBe(true);
-    expect(reads).toEqual([]);
-    await press(setup, "ARROW_DOWN");
     await setup.waitFor(() => reads.length === 1);
     await waitForBody(setup, "Installed guide body");
+    const tree = await openAgentAccess(setup);
+    await clickPart(setup, rootPathKey, "name");
+    const startupReads = [...reads];
+    await press(setup, "ARROW_RIGHT");
+    expect(reads).toEqual(startupReads);
+    await press(setup, "ARROW_DOWN");
+    expect(selected(setup, childPathKey)).toBe(true);
+    expect(reads).toEqual(startupReads);
+    await press(setup, "ARROW_DOWN");
     expect(selected(setup, skillRowKey(rootPathKey, "guide-entry"))).toBe(true);
-    expect(setup.renderer.currentFocusedRenderable).toBe(tree);
-    expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeUndefined();
-    expect(reads).toEqual(["team-main/guide"]);
-    const body = live(setup, "reader-scrollbox");
+    expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
+    expect(reads).toEqual(startupReads);
+    const scroll = tree.scrollTop;
     await press(setup, "RETURN");
-    expect(setup.renderer.currentFocusedRenderable).toBe(body);
-    expect(live(setup, "reader-scrollbox")).toBe(body);
+    await waitForBody(setup, "Installed guide body");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-scrollbox");
+    expect(
+      (live(setup, "reader-identity") as import("@opentui/core").TextRenderable).plainText,
+    ).toBe("guide");
     expect(reads).toEqual(["team-main/guide"]);
+    expect(mutations).toEqual([]);
+    await parsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
+    );
+    const restored = live(setup, "current-exposure-browser") as ScrollBoxRenderable;
+    expect(selected(setup, skillRowKey(rootPathKey, "guide-entry"))).toBe(true);
+    expect(restored.scrollTop).toBe(scroll);
+    await press(setup, "RETURN");
+    await waitForBody(setup, "Installed guide body");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-scrollbox");
+    expect(reads).toEqual(["team-main/guide"]);
+    expect(mutations).toEqual([]);
   } finally {
     setup.renderer.destroy();
   }
@@ -177,13 +282,14 @@ test("RENDER Agent access tree consumes leaf Right and root Left while Skill Lef
   );
   try {
     const tree = await openAgentAccess(setup);
+    await clickPart(setup, rootPathKey, "name");
     await press(setup, "ARROW_RIGHT");
     await press(setup, "END");
     await press(setup, "ARROW_RIGHT");
     expect(selected(setup, skillRowKey(rootPathKey, "guide-entry"))).toBe(true);
     await press(setup, "ARROW_DOWN");
     expect(selected(setup, skillRowKey(rootPathKey, "guide-entry"))).toBe(true);
-    expect(setup.renderer.currentFocusedRenderable).toBe(tree);
+    expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
     await press(setup, "ARROW_LEFT");
     expect(selected(setup, rootPathKey)).toBe(true);
     await press(setup, "ARROW_LEFT");
@@ -191,7 +297,7 @@ test("RENDER Agent access tree consumes leaf Right and root Left while Skill Lef
     await press(setup, "ARROW_LEFT");
     await press(setup, "ARROW_UP");
     expect(selected(setup, rootPathKey)).toBe(true);
-    expect(setup.renderer.currentFocusedRenderable).toBe(tree);
+    expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -203,6 +309,7 @@ test("RENDER Agent access collapsing a root glyph with its direct Skill selected
   );
   try {
     const tree = await openAgentAccess(setup);
+    await clickPart(setup, rootPathKey, "name");
     await press(setup, "ARROW_RIGHT");
     await press(setup, "END");
     expect(selected(setup, skillRowKey(rootPathKey, "guide-entry"))).toBe(true);
@@ -222,6 +329,7 @@ test("RENDER Agent access collapsing a Reference glyph with its direct Skill sel
   );
   try {
     const tree = await openAgentAccess(setup);
+    await clickPart(setup, rootPathKey, "name");
     await press(setup, "ARROW_RIGHT");
     await press(setup, "ARROW_DOWN");
     await press(setup, "ARROW_RIGHT");
@@ -245,6 +353,7 @@ test("RENDER Agent access Escape restores a non-root Skill path, tree scroll and
   });
   try {
     const tree = await openAgentAccess(setup);
+    await clickPart(setup, rootPathKey, "name");
     await press(setup, "ARROW_RIGHT");
     await press(setup, "ARROW_DOWN");
     await press(setup, "ARROW_RIGHT");
@@ -261,7 +370,7 @@ test("RENDER Agent access Escape restores a non-root Skill path, tree scroll and
     await parsedEscape(setup);
     await setup.flush();
     const restored = live(setup, "current-exposure-browser") as ScrollBoxRenderable;
-    expect(setup.renderer.currentFocusedRenderable).toBe(restored);
+    expect(setup.renderer.currentFocusedRenderable === restored).toBe(true);
     expect(selected(setup, selectedKey)).toBe(true);
     expect(rows(restored)).toHaveLength(15);
     expect(restored.scrollTop).toBe(selectedScroll);

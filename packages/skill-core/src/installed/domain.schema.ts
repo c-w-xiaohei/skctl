@@ -1,7 +1,11 @@
 import * as v from "valibot";
 import { skillAddressSchema as address } from "../source/schema";
 import { configDeclarationOwnerSchema as owner } from "../config/schema";
-import { impactBlockerSchema, membershipAffectedSchema } from "../collection/domain.schema";
+import {
+  impactBlockerSchema,
+  membershipAffectedSchema,
+  identityWorkspaceSchema,
+} from "../collection/domain.schema";
 import {
   discoveredSkillCandidateSchema,
   sourceBindingViewSchema,
@@ -18,11 +22,43 @@ export const uninstallImpactSchema = v.object({
   allowed: v.boolean(),
 });
 export const rebindImpactSchema = v.object({
+  ...identityWorkspaceSchema.entries,
   kind: v.literal("rebind"),
   address,
   owner: v.string(),
   ownerPath: v.string(),
   proof: v.picklist(["proven", "distinct", "unprovable"]),
+  identity: v.optional(
+    v.variant("kind", [
+      v.object({
+        kind: v.literal("local"),
+        canonicalOrigin: v.string(),
+        originRelativeSkillRoot: v.string(),
+        localRoot: v.string(),
+      }),
+      v.object({
+        kind: v.literal("remote"),
+        canonicalOrigin: v.string(),
+        originRelativeSkillRoot: v.string(),
+      }),
+    ]),
+  ),
+  directMemberships: v.pipe(
+    v.array(
+      v.object({
+        collection: v.string(),
+        name: v.string(),
+        owner,
+        before: address,
+        after: address,
+      }),
+    ),
+    v.readonly(),
+  ),
+  blockers: v.pipe(
+    v.array(v.object({ reason: v.picklist(["immutable", "collision"]), owner: v.optional(owner) })),
+    v.readonly(),
+  ),
   allowed: v.boolean(),
 });
 const candidates = v.pipe(v.array(discoveredSkillCandidateSchema), v.readonly());
@@ -53,6 +89,10 @@ export const rebindRequestSchema = v.object({
   ...address.entries,
   owner: v.string(),
   ownerPath: v.optional(v.string()),
+});
+export const reviewedRebindRequestSchema = v.object({
+  ...rebindRequestSchema.entries,
+  reviewedImpact: rebindImpactSchema,
 });
 export const installedSelectionSchema = v.object({
   source: v.string(),

@@ -7,6 +7,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { SkctlError } from "@skctl/core";
 import { SelectRenderable } from "@opentui/core";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
@@ -94,10 +95,7 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
   let setup: Awaited<ReturnType<typeof testRender>> | undefined;
   try {
     setup = await testRender(() => <App core={core} exit={() => {}} />, { width: 80, height: 24 });
-    await setup.waitFor(
-      () => !!setup!.renderer.root.findDescendantById("shell-section-tab-updates"),
-    );
-    await enterLive(setup, "shell-section-tab-updates");
+    await openMainPage(setup, "updates");
     await setup.waitFor(() => completed.length === 1);
     await enterLive(setup, "updates-browser");
     await setup.waitFor(() => !!setup!.renderer.root.findDescendantById(sourceRow("two")));
@@ -118,7 +116,7 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
     await setup.waitFor(() => !cell(setup!, `${sourceRow("one")}:check`).includes("✓"));
     expect(cell(setup, `${sourceRow("two")}:check`)).toContain("✓");
     // Activating an update row now opens a read-only comparison, never Reader.
-    // Follow Source details → All Skills for an installed-content action instead.
+    // Follow Source settings → Installed for an installed-content action instead.
     setup.mockInput.pressKey("p", { ctrl: true });
     await setup.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "palette-choices");
     const commands = setup.renderer.currentFocusedRenderable as SelectRenderable;
@@ -128,14 +126,18 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
     expect(details).toBeGreaterThanOrEqual(0);
     commands.setSelectedIndex(details);
     await parsedEnter(setup);
-    await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("source-command-skills"));
-    await enterLive(setup, "source-command-skills");
-    await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("installed-skill-browser"));
-    await enterLive(setup, "installed-skill-browser");
+    await setup.waitFor(
+      () => !!setup!.renderer.root.findDescendantById("source-view-tab-installed"),
+    );
+    await enterLive(setup, "source-view-tab-installed");
+    await enterLive(setup, "source-installed-skills");
     await waitForReaderBody(setup, "Installed one");
     expect(setup.captureCharFrame()).toContain("one");
     expect(updates).toEqual([]);
     await enterLive(setup, "reader-action-skill-check-updates");
+    await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("updates-update-all"));
+    expect(updates).toEqual([]);
+    await enterLive(setup, "updates-update-all");
     await setup.waitFor(() => updates.length === 1);
     expect(updates).toEqual([
       {
@@ -154,10 +156,6 @@ test("RENDER Source Updates retains an exclusion after a cancelled Skill-scoped 
     );
     await enterLive(setup, "route-back");
     await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("reader-scrollbox"));
-    await enterLive(setup, "route-back");
-    await setup.waitFor(
-      () => setup!.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-    );
     await enterLive(setup, "route-back");
     await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("source-details-pane"));
     await enterLive(setup, "route-back");

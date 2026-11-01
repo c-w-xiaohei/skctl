@@ -12,6 +12,9 @@ import { SkctlError, type WorkspaceView, type SkillAddress } from "@skctl/core";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
+import { collectionRelationRows } from "../src/collections-page";
+import { collectionRelationKey } from "../src/collections/relationship-inspector";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import {
@@ -169,15 +172,13 @@ async function chooseAction(setup: Setup, id: string) {
   for (let row = 0; row < index; row++) setup.mockInput.pressArrow("down");
   await parsedEnter(setup);
 }
-async function chooseManage(setup: Setup, destination: string) {
-  const choices = await openActions(setup);
-  const option = choices.options.find(
-    (candidate) =>
-      candidate.value.verb === "Manage…" && candidate.value.destination.includes(destination),
+async function inspectRelation(setup: Setup, workspace: WorkspaceView, label: string) {
+  const row = collectionRelationRows("team", workspace).find((item) => item.label === label);
+  expect(row).toBeDefined();
+  await enterLive(
+    setup,
+    `collection-included-remove-${encodeURIComponent(collectionRelationKey(row!))}`,
   );
-  expect(option).toBeDefined();
-  await parsedEscape(setup);
-  await chooseAction(setup, option!.value.id);
 }
 async function selectRow(setup: Setup, down: number) {
   await focusLive(setup, "collection-relationships");
@@ -185,14 +186,14 @@ async function selectRow(setup: Setup, down: number) {
   await setup.flush();
 }
 async function openContents(setup: Setup) {
-  await enterLive(setup, "shell-section-tab-collections");
+  await openMainPage(setup, "collections");
   await enterLive(setup, "collection-browser");
   await setup.waitFor(
     () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
   );
   await setup.flush();
 }
-test("Collection Info opens the existing editor and saves to the selected declaration", async () => {
+test("Collection description opens the existing editor and saves to the selected declaration", async () => {
   const writes: unknown[] = [];
   const mounted = await mount(100, 24, projection(), {
     setCollectionContent: async (_environment, request) => {
@@ -206,8 +207,8 @@ test("Collection Info opens the existing editor and saves to the selected declar
   const { setup } = mounted;
   try {
     await openContents(setup);
-    await enterLive(setup, "collection-about");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-info"));
+    await enterLive(setup, "collection-tabs-tab-description");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-description"));
     await enterLive(setup, "collection-action-edit-collection-content");
     await focusLive(setup, "collection-content-description");
     const input = setup.renderer.currentFocusedRenderable as InputRenderable;
@@ -227,14 +228,19 @@ test("Collection Info opens the existing editor and saves to the selected declar
   }
 });
 
-test("Relations exposes Reference, Link, and Import at 43 by 13", async () => {
+test("Members and Settings expose Reference, Link, and Import at 43 by 13", async () => {
   const mounted = await mount(43, 13);
   const { setup } = mounted;
   try {
     await openContents(setup);
-    await enterLive(setup, "collection-tabs-tab-relations");
+    await enterLive(setup, "collection-add");
+    const reference = setup.renderer.root.findDescendantById("collection-action-add-reference");
+    expect(reference).toBeDefined();
+    expect(reference!.screenX + reference!.width).toBeLessThanOrEqual(42);
+    await parsedEscape(setup);
+    await enterLive(setup, "collection-tabs-tab-settings");
     await setup.flush();
-    for (const id of ["add-reference", "add-link", "import-collection"]) {
+    for (const id of ["add-link", "import-collection"]) {
       const control = setup.renderer.root.findDescendantById(`collection-action-${id}`);
       expect(!!control).toBe(true);
       expect(control!.screenX + control!.width).toBeLessThanOrEqual(42);
@@ -309,7 +315,8 @@ test.each(["link", "reference", "import"] as const)(
     const { setup } = mounted;
     try {
       await openContents(setup);
-      await enterLive(setup, "collection-tabs-tab-relations");
+      if (kind !== "reference") await enterLive(setup, "collection-tabs-tab-settings");
+      else await enterLive(setup, "collection-add");
       await enterLive(
         setup,
         kind === "import" ? "collection-action-import-collection" : `collection-action-add-${kind}`,
@@ -353,7 +360,7 @@ test.each([
   [80, 24],
   [43, 13],
 ])(
-  "Collections task toolbar and Actions column fit %ix%i with real-length content",
+  "Collections task toolbar and current actions fit %ix%i with real-length content",
   async (width, height) => {
     const mounted = await mount(width, height);
     const { setup } = mounted;
@@ -367,18 +374,12 @@ test.each([
           setup.captureCharFrame(),
         );
       }
+      expect(setup.renderer.root.findDescendantById("collection-add")).toBeDefined();
       expect(
-        setup.renderer.root.findDescendantById("collection-action-add-membership"),
-      ).toBeDefined();
-      const header = setup.renderer.root.findDescendantById(
-        "collection-relationships-header-actions",
-      )!;
-      expect(header).toBeDefined();
+        setup.renderer.root.findDescendantById("collection-relationships-header-actions"),
+      ).toBeUndefined();
       const body = setup.renderer.root.findDescendantById("collection-detail-pane")!;
-      const cell = setup.renderer.root.findDescendantById(
-        "collection-relationships-row-guide%3A0:actions",
-      )!;
-      expect(cell.screenX).toBe(header.screenX);
+      const cell = setup.renderer.root.findDescendantById("collection-current-actions-pane")!;
       expect(cell.screenX + cell.width).toBeLessThanOrEqual(body.screenX + body.width - 1);
       expect(cell.screenY + cell.height).toBeLessThanOrEqual(height - 2);
       expect(cell.width).toBeGreaterThan(0);
@@ -396,9 +397,9 @@ test.each([
       await setup.flush();
       expect(
         setup.renderer.root.findDescendantById("collection-relationships-header-actions"),
-      ).toBeDefined();
+      ).toBeUndefined();
       const checkedCell = setup.renderer.root.findDescendantById(
-        "collection-relationships-row-guide%3A0:actions",
+        "collection-current-actions-pane",
       )!;
       expect(checkedCell.screenY + checkedCell.height).toBeLessThan(height - 1);
       if (output)
@@ -447,17 +448,18 @@ test("multi-origin Membership has no implicit Remove and Manage preserves explic
   const { setup } = mounted;
   try {
     await openContents(setup);
+    const startupReads = [...mounted.reads];
     await selectRow(setup, 0);
     const current = await openActions(setup);
-    expect(current.options.some((option) => option.value.id === "membership.remove")).toBe(false);
+    expect(current.options.some((option) => option.value.id === "membership.remove")).toBe(true);
     await parsedEscape(setup);
-    await chooseAction(setup, "collection.row.team.guide%3A0.manage");
+    await enterLive(setup, "collection-current-details");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-origin"),
     );
     expect(mounted.previews).toEqual([]);
     expect(mounted.changes).toEqual([]);
-    expect(mounted.reads).toEqual([]);
+    expect(mounted.reads).toEqual(startupReads);
   } finally {
     await mounted.dispose();
   }
@@ -478,27 +480,26 @@ test("Tab reaches a table with unavailable Read and still reaches its enabled Ma
       actions.options.find((option) => option.value.id === "membership.open-skill")?.value,
     ).toMatchObject({ enabled: false, disabledReason: "Unavailable: installed Skill unavailable" });
     await parsedEscape(setup);
-    await focusLive(setup, "collection-action-add-membership");
-    setup.mockInput.pressTab();
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
-    );
+    await focusLive(setup, "collection-add");
+    for (
+      let i = 0;
+      i < 20 && setup.renderer.currentFocusedRenderable?.id !== "collection-relationships";
+      i++
+    ) {
+      setup.mockInput.pressTab();
+      await setup.flush();
+    }
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-relationships");
     setup.mockInput.pressTab({ shift: true });
     await setup.flush();
     setup.mockInput.pressTab();
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-relationships");
-    setup.mockInput.pressArrow("right");
-    await setup.waitFor(
-      () =>
-        setup.renderer.currentFocusedRenderable?.id ===
-        `collection-relationships-row-${encodeURIComponent("guide:0")}:action-${encodeURIComponent("collection.row.team.guide%3A0.manage")}`,
-    );
-    await parsedEnter(setup);
+    await enterLive(setup, "collection-current-details");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
     );
-    expect(mounted.reads).toEqual([]);
+    expect(mounted.reads.every((address) => address.path !== "guide")).toBe(true);
     expect(mounted.changes).toEqual([]);
   } finally {
     await mounted.dispose();
@@ -522,14 +523,11 @@ test("Reference Manage to Link preserves action meaning without entering Unlink"
   const { setup } = mounted;
   try {
     await openContents(setup);
-    await enterLive(setup, "collection-tabs-tab-relations");
-    await focusLive(setup, "collection-relationships");
-    await selectRow(setup, 1);
-    await chooseManage(setup, "Link docs");
+    await enterLive(setup, "collection-tabs-tab-settings");
+    await inspectRelation(setup, input, "Link docs");
     expect(mounted.changes).toEqual([]);
     expect(mounted.previews).toEqual([]);
-    await parsedEnter(setup);
-    expect(setup.captureCharFrame()).toContain("Link");
+    expect(setup.captureCharFrame()).toContain("Stop including Collection");
   } finally {
     await mounted.dispose();
   }
@@ -583,10 +581,8 @@ test("unlinking a direct relation previews and executes with its enclosing Colle
   const { setup } = mounted;
   try {
     await openContents(setup);
-    await enterLive(setup, "collection-tabs-tab-relations");
-    await setup.flush();
-    await selectRow(setup, 2);
-    await chooseAction(setup, "relationship.unlink");
+    await enterLive(setup, "collection-tabs-tab-settings");
+    await inspectRelation(setup, input, "Link docs");
     await enterLive(setup, "link-review");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-review-choice"));
     expect(previews).toEqual([
@@ -665,10 +661,8 @@ test("removing a direct Reference preserves its expected value and enclosing Col
   const { setup } = mounted;
   try {
     await openContents(setup);
-    await enterLive(setup, "collection-tabs-tab-relations");
-    await setup.flush();
-    await selectRow(setup, 0);
-    await chooseAction(setup, "relationship.remove-reference");
+    await selectRow(setup, team.members.length);
+    await enterLive(setup, "collection-current-relationship.remove-reference");
     await enterLive(setup, "reference-review");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-review-choice"));
     const expected = {
@@ -713,10 +707,8 @@ test("inline Use edit retains the host Config's other roots and cancellation wri
   const { setup } = mounted;
   try {
     await openContents(setup);
-    await enterLive(setup, "collection-tabs-tab-relations");
-    await setup.flush();
-    await selectRow(setup, 0);
-    await chooseAction(setup, "relationship.edit-use");
+    await enterLive(setup, "collection-tabs-tab-settings");
+    await enterLive(setup, "collection-use-project");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-use-values"));
     expect(
       (setup.renderer.root.findDescendantById("collection-use-values") as SelectRenderable).options
@@ -747,7 +739,6 @@ test("current-row Actions Remove previews only that Membership and leaves a diff
     await setup.flush();
     await chooseAction(setup, "membership.remove");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership-removal-plan"));
-    await enterLive(setup, "membership-removal-plan-continue");
     await setup.waitFor(() => mounted.previews.length === 1);
     expect(mounted.previews[0]).toMatchObject({
       collection: "team",
@@ -755,7 +746,7 @@ test("current-row Actions Remove previews only that Membership and leaves a diff
     });
     await parsedEscape(setup);
     await setup.flush();
-    expect(setup.captureCharFrame()).toContain("1 origins checked");
+    expect(setup.captureCharFrame()).toContain("1 items checked");
     expect(mounted.changes).toEqual([]);
   } finally {
     await mounted.dispose();
@@ -766,6 +757,7 @@ test("current-row Actions Read uses that row address and Back restores the Colle
   const { setup } = mounted;
   try {
     await openContents(setup);
+    const startupReads = [...mounted.reads];
     await setup.mockInput.typeText(" ");
     await setup.flush();
     await selectRow(setup, 1);
@@ -775,13 +767,15 @@ test("current-row Actions Read uses that row address and Back restores the Colle
         `${error}\nreads=${JSON.stringify(mounted.reads)} focus=${setup.renderer.currentFocusedRenderable?.id}\n${setup.captureCharFrame()}`,
       );
     });
-    expect(mounted.reads).toEqual([{ source: "team-main", path: "reference" }]);
+    expect(mounted.reads.slice(startupReads.length)).toEqual([
+      { source: "team-main", path: "reference" },
+    ]);
     await parsedEscape(setup);
     await setup.waitFor(
       () =>
         setup.renderer.root.findDescendantById("collection-relationships") instanceof BoxRenderable,
     );
-    expect(setup.captureCharFrame()).toContain("1 origins checked");
+    expect(setup.captureCharFrame()).toContain("1 items checked");
     expect(mounted.changes).toEqual([]);
   } finally {
     await mounted.dispose();
@@ -819,7 +813,7 @@ test("Collection unified preview preserves mounted Reference draft on failure an
   const { setup } = mounted;
   try {
     await openContents(setup);
-    await enterLive(setup, "collection-tabs-tab-relations");
+    await enterLive(setup, "collection-add");
     await enterLive(setup, "collection-action-add-reference");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reference-name"));
     const name = (await focusLive(setup, "reference-name")) as InputRenderable;
@@ -964,17 +958,16 @@ test("Collection removal-plan dismissal retains checked origins when a cancelled
     await setup.flush();
     await chooseAction(setup, "membership.remove");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership-removal-plan"));
-    await enterLive(setup, "membership-removal-plan-continue");
     await setup.waitFor(() => signal !== undefined);
     await parsedEscape(setup);
     expect(signal?.aborted).toBe(true);
     finish();
     await setup.waitFor(() => !setup.renderer.root.findDescendantById("membership-removal-plan"));
     await setup.waitForFrame(
-      (frame) => frame.includes("Collections") && frame.includes("1 origins checked"),
+      (frame) => frame.includes("Collections") && frame.includes("1 items checked"),
     );
     expect(setup.renderer.root.findDescendantById("collection-review-confirm")).toBeUndefined();
-    expect(setup.captureCharFrame()).toContain("1 origins checked");
+    expect(setup.captureCharFrame()).toContain("1 items checked");
     expect(mounted.changes).toEqual([]);
   } finally {
     await mounted.dispose();

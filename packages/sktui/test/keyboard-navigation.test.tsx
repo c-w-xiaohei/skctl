@@ -114,11 +114,11 @@ test("Reader pointer tabs retain monochrome cues and Find/Raw tools own reversib
     await setup.waitFor(() => (live(setup, "reader-find") as InputRenderable).value === "nxey");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-find");
     for (const [spans, name] of [
-      [detailsPaint, "Details"],
+      [detailsPaint, "Settings"],
       [resourcesPaint, "Resources"],
     ] as const) {
       const focused = spans.find((span) => span.text.includes(name))!;
-      const other = spans.find((span) => span.text.includes("SKILL.md"))!;
+      const other = spans.find((span) => span.text.includes("Content"))!;
       const luminance = ({ r, g, b }: typeof focused.bg) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
       expect(luminance(focused.fg)).not.toBe(luminance(focused.bg));
       expect(luminance(focused.bg)).not.toBe(luminance(other.bg));

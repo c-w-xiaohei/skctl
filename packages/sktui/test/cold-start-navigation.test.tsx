@@ -31,9 +31,6 @@ async function tabTo(setup: Setup, id: string) {
 
 async function openSkills(setup: Setup) {
   await setup.flush();
-  await tabTo(setup, "skills-view-tab-current-exposure");
-  await press(setup, "ARROW_RIGHT");
-  await press(setup, "ENTER");
   await tabTo(setup, "installed-skill-browser");
 }
 
@@ -94,6 +91,8 @@ test("page and Scope navigation are reachable from cold startup by keyboard", as
   );
   try {
     await setup.flush();
+    await tabTo(setup, "shell-section-tab-skills");
+    for (let index = 0; index < 5; index++) await press(setup, "ARROW_RIGHT");
     await tabTo(setup, "shell-scope-select");
     await press(setup, "ENTER");
     await expectFocus(setup, "scope-choices", "Scope opened");
@@ -106,7 +105,7 @@ test("page and Scope navigation are reachable from cold startup by keyboard", as
       await press(setup, "ARROW_DOWN");
     expect(choices.getSelectedOption()?.value).toBe("global");
     await press(setup, "ENTER");
-    await tabTo(setup, "shell-section-global-tab-sources");
+    await tabTo(setup, "settings-section-tab-sources");
     await press(setup, "ENTER");
     await setup.waitForFrame((frame) => frame.includes("Sources"));
   } finally {

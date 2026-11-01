@@ -81,6 +81,7 @@ export class Transactions {
   async publish(
     input: readonly { readonly target: string; readonly bytes: string | Uint8Array }[],
     expected?: number,
+    readSet: readonly { readonly path: string; readonly hash: string | null }[] = [],
   ) {
     if (
       !input.length ||
@@ -95,6 +96,12 @@ export class Transactions {
     const marker: Transaction = { status: "prepared", targets: [] };
     let published = false;
     try {
+      const validateReadSet = async () => {
+        for (const item of readSet)
+          if (!matches(await readTarget(item.path), item.hash))
+            conflict("Captured transaction input changed");
+      };
+      await validateReadSet();
       for (const [index, item] of input.entries()) {
         const old = await readTarget(item.target),
           stage = join(stageRoot, String(index));
@@ -127,6 +134,7 @@ export class Transactions {
       for (const target of marker.targets)
         if (!matches(await readTarget(target.target), target.old))
           conflict("Transaction target changed while staging");
+      await validateReadSet();
       const path = join(this.markers, `${id}.json`);
       await writeAtomic(path, JSON.stringify(marker));
       await syncDirectory(this.markers);

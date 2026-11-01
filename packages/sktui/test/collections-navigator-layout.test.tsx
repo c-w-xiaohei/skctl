@@ -7,6 +7,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CollectionView, WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { theme } from "../src/ui/theme";
 import {
   collectionFilterPathKey,
@@ -161,10 +162,7 @@ async function mount(width: number, height: number) {
     throw new Error("The navigator layout must not mutate configuration");
   };
   const setup = await testRender(() => <App core={core} exit={() => {}} />, { width, height });
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("shell-section-tab-collections"),
-  );
-  await enterLive(setup, "shell-section-tab-collections");
+  await openMainPage(setup, "collections");
   await setup.waitFor(
     () =>
       setup.renderer.root.findDescendantById("collection-browser") instanceof ScrollBoxRenderable,

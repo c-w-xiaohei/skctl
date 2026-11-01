@@ -218,7 +218,9 @@ for (const viewport of [
     try {
       const tree = await openAgentAccess(setup);
       expect(rows(tree).map((row) => row.id)).toEqual([rowId(rootPathKey)]);
-      expect(contentLoads).toEqual([]);
+      // Installed inventory may already have loaded its first current Skill.
+      expect(contentLoads.every((path) => path === "edge/0")).toBe(true);
+      const startupLoads = [...contentLoads];
       await focusLive(setup, "current-exposure-browser");
       await press(setup, "ARROW_RIGHT");
       await waitForTreeState(
@@ -227,13 +229,14 @@ for (const viewport of [
         () => rows(tree).length === 121,
         "Right to expand Use root",
       );
+      expect(contentLoads).toEqual(startupLoads);
       const expandedTreeHeight = tree.height;
       await selectByNativeArrows(setup, tree, 120);
       await setup.waitFor(() => tree.scrollTop > 0);
       expect(selected(setup, itemKey(119))).toBe(true);
       expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeUndefined();
-      // Selection now reads the current installed Skill, but must never acquire or mutate it.
-      expect(contentLoads).toEqual(Array.from({ length: 120 }, (_, index) => `edge/${index}`));
+      // Browsing rows does not read or mutate the selected Skills.
+      expect(contentLoads).toEqual(startupLoads);
       expect(installs).toBe(0);
       expect(mutations).toEqual([]);
       await setup.flush();
@@ -254,6 +257,7 @@ for (const viewport of [
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-scrollbox");
       await waitForBody(setup, "Installed body edge/119");
+      expect(contentLoads).toEqual([...startupLoads, "edge/119"]);
       await openReaderTab(setup, 2);
       const metadata = live(setup, "reader-details") as ScrollBoxRenderable;
       await focusLive(setup, "reader-details");
@@ -270,7 +274,7 @@ for (const viewport of [
           "\n",
         );
       expect(text(metadata)).toContain(longDescription);
-      expect(contentLoads).toHaveLength(120);
+      expect(contentLoads).toEqual([...startupLoads, "edge/119"]);
       expect(installs).toBe(0);
       expect(mutations).toEqual([]);
       await parsedEscape(setup);
@@ -283,9 +287,9 @@ for (const viewport of [
       expectTreeFrame(setup, restored, [itemName(119)]);
       expect(rows(restored)).toHaveLength(121);
       expect(restored.scrollTop).toBe(selectedScroll);
-      expect(setup.renderer.currentFocusedRenderable).toBe(restored);
+      expect(setup.renderer.currentFocusedRenderable === restored).toBe(true);
       expect(restored.height).toBeGreaterThanOrEqual(1);
-      expect(contentLoads).toHaveLength(120);
+      expect(contentLoads).toEqual([...startupLoads, "edge/119"]);
       expect(installs).toBe(0);
       expect(mutations).toEqual([]);
     } finally {
@@ -319,6 +323,7 @@ test("RENDER Agent access after scrolling distinguishes a row press from its exa
   );
   try {
     const tree = await openAgentAccess(setup);
+    const initialLoads = contentLoads;
     await focusLive(setup, "current-exposure-browser");
     await press(setup, "ARROW_RIGHT");
     await waitForTreeState(
@@ -345,7 +350,7 @@ test("RENDER Agent access after scrolling distinguishes a row press from its exa
     expect(setup.renderer.root.findDescendantById("agent-access-pane")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeUndefined();
     expect(rows(tree)).toHaveLength(241);
-    expect(contentLoads).toBe(0);
+    expect(contentLoads).toBe(initialLoads);
     expect(installs).toBe(0);
     const disclosure = live(setup, `${rowId(finalPathKey)}-disclosure`);
     expect(disclosure).toBeInstanceOf(ButtonRenderable);
@@ -356,7 +361,7 @@ test("RENDER Agent access after scrolling distinguishes a row press from its exa
     expect(selected(setup, finalPathKey)).toBe(true);
     expect(setup.renderer.root.findDescendantById("agent-access-pane")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("skill-inspector")).toBeUndefined();
-    expect(contentLoads).toBe(0);
+    expect(contentLoads).toBe(initialLoads);
     expect(installs).toBe(0);
   } finally {
     setup.renderer.destroy();

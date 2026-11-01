@@ -14,8 +14,9 @@ export type ReadInstalledResource = InstalledResourceResult;
 
 export const destinations = ["workspace", "global", "project", "local"] as const;
 export type Destination = (typeof destinations)[number];
-export type WorkspaceSection = "skills" | "collections" | "sources" | "updates";
-export type SkillsView = "current-exposure" | "all-installed-skills" | "unassigned" | "problems";
+export type WorkspaceSection = "skills" | "collections" | "sources" | "updates" | "agent";
+export type MainPage = WorkspaceSection | "settings";
+export type SkillsView = "all-installed-skills" | "unassigned" | "problems";
 export type ConfigSection = "sources" | "config-sources" | "collections" | "integrations";
 export type Section = WorkspaceSection | ConfigSection;
 export type NavigationContext = Destination;
@@ -78,6 +79,13 @@ export interface CommandRecord {
   readonly shortcut?: string;
   readonly verb: string;
   readonly destination: string;
+  /** The actual object acted on, independent of the screen opened. */
+  readonly object?: string;
+  /** Human-readable mutation/check scope, including checked counts where applicable. */
+  readonly scopeText?: string;
+  /** Screen or task opened by this command. */
+  readonly opens?: string;
+  readonly group?: "current" | "member" | "batch" | "navigation";
   readonly scope: "lifecycle" | "modal" | "widget" | "route" | "shell" | "page" | "task";
   /** Hide an inline alias when its authoritative task command is already discoverable. */
   readonly palette?: boolean;
@@ -123,7 +131,7 @@ export const readerOwnsFocus = (focus: FocusOwner): boolean =>
   focus.startsWith("command:skill-") ||
   focus.startsWith("command:skill.");
 export type NarrowLevel = "list" | "work-area" | "detail" | "task";
-export type CollectionTab = "entries" | "relations";
+export type CollectionTab = "members" | "description" | "settings";
 export type Overlay =
   | "filter"
   | "help"
@@ -142,7 +150,6 @@ export interface ReaderState {
   readonly match: number;
   readonly scroll: number;
   readonly detailsScroll: number;
-  readonly detailsManagementOpen?: boolean;
   readonly detailsDescriptionOpen?: boolean;
   readonly detailsMetadataOpen?: boolean;
   readonly focus?: FocusOwner;
@@ -225,7 +232,7 @@ export type RouteHandoff =
 
 export const validSections = (destination: Destination): readonly Section[] =>
   destination === "workspace"
-    ? ["skills", "collections", "sources", "updates"]
+    ? ["skills", "collections", "sources", "updates", "agent"]
     : destination === "local"
       ? ["sources", "config-sources", "collections"]
       : ["sources", "config-sources", "collections", "integrations"];

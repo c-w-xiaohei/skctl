@@ -3,6 +3,7 @@ import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { skillAddressKey } from "@skctl/core";
 import { App } from "../src/app";
+import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import {
   readerProjection,
@@ -62,53 +63,39 @@ test("current Skill reads directly and exposes Collection and update commands", 
 });
 
 for (const returnBy of ["escape", "button"] as const) {
-  test(`Source inventory retains its filter and selected Skill through Reader and ${returnBy} returns to the Source`, async () => {
+  test(`Source inventory retains its selected Skill through Reader and ${returnBy} returns to the Sources list`, async () => {
     const setup = await testRender(
       () => <App core={directSourceCore(sourceFilteredReaderProjection())} exit={() => {}} />,
       { width: 120, height: 40 },
     );
     try {
       await setup.flush();
-      await enterLive(setup, "shell-section-tab-sources");
+      await openMainPage(setup, "sources");
       const sources = (await focusLive(setup, "source-browser")) as SelectRenderable;
       sources.setSelectedIndex(sources.options.findIndex((option) => option.value === "team-main"));
       await setup.flush();
-      await enterLive(setup, "source-command-skills");
+      await enterLive(setup, "source-browser");
       await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
+        () => !!setup.renderer.root.findDescendantById("source-installed-skills"),
       );
-      const browser = (await focusLive(setup, "installed-skill-browser")) as SelectRenderable;
-      expect(browser.options.map((option) => JSON.parse(option.value)[0])).toEqual([
-        "team-main",
-        "team-main",
-        "team-main",
-      ]);
-      await enterInstalledAddress(setup, sourceFilteredAddress);
+      const rowId = `source-installed-skills-row-${encodeURIComponent(skillAddressKey(sourceFilteredAddress))}`;
+      const row = setup.renderer.root.findDescendantById(rowId)!;
+      expect(row).toBeDefined();
+      const other = `source-installed-skills-row-${encodeURIComponent(skillAddressKey({ source: "other", path: "review" }))}`;
+      expect(setup.renderer.root.findDescendantById(other)).toBeUndefined();
+      await setup.mockMouse.click(row.screenX + 1, row.screenY);
+      await parsedEnter(setup);
       await waitForReaderBody(setup, sourceFilteredAddress.path);
       await parsedEscape(setup);
       await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+        () => !!setup.renderer.root.findDescendantById("source-installed-skills"),
       );
-      const restored = setup.renderer.root.findDescendantById(
-        "installed-skill-browser",
-      ) as SelectRenderable;
-      expect(restored.getSelectedOption()?.value).toBe(skillAddressKey(sourceFilteredAddress));
-      expect(restored.options).toHaveLength(3);
-      expect(!!setup.renderer.root.findDescendantById("clear-source-filter")).toBe(true);
+      expect(setup.renderer.root.findDescendantById(rowId)).toBeDefined();
       if (returnBy === "escape") await parsedEscape(setup);
       else await enterLive(setup, "route-back");
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "source-command-skills",
-      );
-      expect(!!setup.renderer.root.findDescendantById("clear-source-filter")).toBe(false);
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
       await parsedEnter(setup);
-      await setup.waitFor(
-        () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
-      );
-      expect(
-        (setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable)
-          .options,
-      ).toHaveLength(3);
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById(rowId));
     } finally {
       setup.renderer.destroy();
     }

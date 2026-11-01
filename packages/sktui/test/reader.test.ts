@@ -11,16 +11,16 @@ test("Reader restores per-Skill Details disclosure state without replacing cache
   owner.select(address);
   owner.patch({
     tab: "details",
-    detailsManagementOpen: true,
+    detailsMetadataOpen: true,
     detailsDescriptionOpen: true,
     text: "installed prose",
   });
   const saved = owner.current()!;
   owner.select({ ...address, path: "other" });
-  expect(owner.current()?.detailsManagementOpen).not.toBe(true);
+  expect(owner.current()?.detailsMetadataOpen).not.toBe(true);
   owner.restore({ ...saved, text: "not authoritative" });
   expect(owner.current()).toMatchObject({
-    detailsManagementOpen: true,
+    detailsMetadataOpen: true,
     detailsDescriptionOpen: true,
     text: "installed prose",
     tab: "details",

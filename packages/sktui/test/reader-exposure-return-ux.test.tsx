@@ -14,6 +14,7 @@ import { readerAddress, readerContent, readerProjection } from "./installed-read
 import {
   enterInstalledAddress,
   enterLive,
+  focusLive,
   live,
   openAllInstalledSkills,
   openReaderTab,
@@ -104,6 +105,16 @@ test("Reader action and selector relationship return from the exposure Tree to t
     await parsedEnter(setup);
     await setup.flush();
     setup.mockInput.pressArrow("right");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-reload");
+    for (const id of [
+      "reader-details-action-skill-open-collection-use",
+      "reader-details-action-skill-rebind",
+      "reader-details-action-skill-uninstall",
+    ]) {
+      setup.mockInput.pressArrow("down");
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
+    }
+    setup.mockInput.pressArrow("down");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "reader-description-toggle",
     );
@@ -114,38 +125,31 @@ test("Reader action and selector relationship return from the exposure Tree to t
     await setup.flush();
     await setup.mockMouse.scroll(initialDetails.screenX + 1, initialDetails.screenY + 1, "down");
     await setup.waitFor(() => initialDetails.scrollTop > 0);
-    for (const id of [
-      "reader-description-toggle",
-      "reader-details-relationship-source",
-      "reader-details-relationship-config",
-      "reader-details-relationship-selectors",
-      "reader-details-metadata",
-      "reader-details-manage",
-    ]) {
-      setup.mockInput.pressArrow("right");
-      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
-    }
-    await parsedEnter(setup);
+    await focusLive(setup, "reader-reload");
     await setup.flush();
     const listeners = [
       setup.renderer.listenerCount("frame"),
       setup.renderer.listenerCount("selection"),
     ];
     for (const [key, path] of [
-      ["ARROW_DOWN", ["reader-reload", "reader-details-action-skill-open-collection-use"]],
+      ["ARROW_DOWN", ["reader-details-action-skill-open-collection-use"]],
       [
         "ARROW_UP",
         [
-          "reader-reload",
-          "reader-details-manage",
-          "reader-details-metadata",
+          "reader-details-action-skill-rebind",
+          "reader-details-action-skill-uninstall",
+          "reader-description-toggle",
+          "reader-details-relationship-source",
+          "reader-details-relationship-config",
           "reader-details-relationship-selectors",
         ],
       ],
     ] as const) {
+      if (key === "ARROW_UP")
+        await focusLive(setup, "reader-details-action-skill-open-collection-use");
       const initiatingId = path.at(-1)!;
       for (const id of path) {
-        setup.mockInput.pressKey(key);
+        setup.mockInput.pressKey(key === "ARROW_UP" ? "ARROW_DOWN" : key);
         await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
       }
       await setup.flush();

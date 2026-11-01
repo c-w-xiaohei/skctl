@@ -35,10 +35,17 @@ export const paletteSearchCommand: CommandRecord = {
 };
 
 function commandGroup(record: CommandRecord): { label: string; order: number } {
-  if (record.scope === "task") return { label: "Task", order: 1 };
-  if (record.scope === "route") return { label: "Go to", order: 2 };
-  if (record.scope === "shell" || record.scope === "lifecycle") return { label: "App", order: 3 };
-  return { label: "This page", order: 0 };
+  switch (record.group) {
+    case "current":
+      return { label: "Current", order: 0 };
+    case "member":
+      return { label: "Member", order: 1 };
+    case "batch":
+      return { label: "Batch", order: 2 };
+    case "navigation":
+      return { label: "Navigation", order: 3 };
+  }
+  return { label: "Other", order: 4 };
 }
 
 interface CommandPaletteProps {
@@ -138,7 +145,7 @@ function CommandPaletteContents(props: Omit<CommandPaletteProps, "open">) {
   const actions = createMemo(() =>
     props.actions
       .filter((record) =>
-        `${record.verb} ${record.destination}`
+        `${record.verb} ${record.destination} ${record.object ?? ""} ${record.scopeText ?? ""} ${record.opens ?? ""}`
           .toLocaleLowerCase()
           .includes(query().trim().toLocaleLowerCase()),
       )
@@ -215,7 +222,7 @@ function CommandPaletteContents(props: Omit<CommandPaletteProps, "open">) {
         />
       </box>
       <text height={1} flexShrink={0} fg={tokens().colors.mutedForeground}>
-        {`   ${row("Action", "Scope", "Key")}`}
+        {`   ${row("Action", "Group", "Key")}`}
       </text>
       <DataList
         id="palette-choices"
@@ -272,7 +279,16 @@ function CommandPaletteContents(props: Omit<CommandPaletteProps, "open">) {
           }
         >
           {selected()
-            ? `Target: ${selected()!.destination || "Current page"}`
+            ? [
+                selected()!.object && `Object: ${selected()!.object}`,
+                selected()!.scopeText && `Scope: ${selected()!.scopeText}`,
+                selected()!.opens && `Opens: ${selected()!.opens}`,
+                !selected()!.opens &&
+                  selected()!.destination &&
+                  `Description: ${selected()!.destination}`,
+              ]
+                .filter(Boolean)
+                .join("\n")
             : "No matching commands"}
         </text>
         <text
