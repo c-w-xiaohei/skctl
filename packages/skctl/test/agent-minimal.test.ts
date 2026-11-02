@@ -59,6 +59,27 @@ test("content reads preserve bytes without metadata, wrapping, or added newlines
     expect(await command(argv, content)).toEqual({ code: 0, stdout: text, stderr: "" });
   }
 });
+test("batch loading escapes Skill content and returns no partial output on failure", async () => {
+  const content = {
+    loadSkill: async (_environment: api.CoreOptions, { selector }: { selector: string }) => {
+      if (selector === "team:missing") throw new Error("missing");
+      return { selector, text: `text <tag> & ${selector}` };
+    },
+  } as unknown as Partial<typeof api>;
+  expect(await command(["load", "team:a", "team:b"], content)).toEqual({
+    code: 0,
+    stdout:
+      '<skill selector="team:a">\ntext &lt;tag&gt; &amp; team:a\n</skill>\n' +
+      '<skill selector="team:b">\ntext &lt;tag&gt; &amp; team:b\n</skill>\n',
+    stderr: "",
+  });
+  const failed = await command(["load", "team:a", "team:missing"], content);
+  expect(failed.code).toBe(1);
+  expect(failed.stdout).toBe("");
+  const invalid = await command(["load", "team:a", "bad"], content);
+  expect(invalid.code).toBe(1);
+  expect(invalid.stdout).toBe("");
+});
 test("unavailable browse provides fallback instructions for system injection", async () => {
   const catalog = {
     browseCatalog: async () => ({

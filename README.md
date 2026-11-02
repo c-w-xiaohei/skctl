@@ -64,6 +64,11 @@ frontend-perf-analysis` reveals its custom instructions and member descriptions;
 `skctl agent load <selector>` still loads a selected Skill. See
 [PRODUCT.md](PRODUCT.md#organize-discovery-around-tasks) for the authoring model.
 
+`skctl agent load <selector> <selector> ...` loads several Skills in order. A
+single selector returns the original `SKILL.md` unchanged; multiple selectors
+return XML-escaped content in selector-labeled `<skill>` elements. If any Skill
+cannot be loaded, the command fails without returning a partial batch.
+
 To inspect a selected Skill's resources without loading their contents, use
 `skctl agent ls <selector> [directory]` (`list` is equivalent). Paths are relative
 to the Skill Root. `-a` includes hidden entries, `-R` lists recursively, and `-1`

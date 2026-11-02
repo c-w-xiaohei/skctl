@@ -16,6 +16,7 @@ test("root catalog carries discovery and resource instructions for direct system
     "run <selector>",
   ])
     expect(output).toContain(`skctl agent ${command}`);
+  expect(output).toContain("Load one or more: skctl agent load <selector> [selector...]");
   expect(output).toContain(
     '<managed_skill_catalog scope="root"><collection><id>team</id><name>team</name><description>Engineering workflows</description></collection></managed_skill_catalog>',
   );

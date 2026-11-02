@@ -40,7 +40,7 @@ export function renderAgentCatalog(
           "Before planning or answering, browse relevant Collections and load matching Skills; skip unrelated branches. Use exact displayed addresses.",
           "Reuse content in context, including across References; reread only if missing (e.g. after compaction) or stale.",
           "- Enter: skctl agent browse <collection-id>",
-          "- Load: skctl agent load <selector>",
+          "- Load one or more: skctl agent load <selector> [selector...]",
           "Resources, as needed (paths relative to Skill Root):",
           "- List: skctl agent ls <selector> [directory]",
           "- Read: skctl agent read <selector> <root-relative-path>",

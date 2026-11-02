@@ -92,6 +92,27 @@ test("agent load returns exact installed text even when frontmatter cannot be pa
     await rm(root, { recursive: true, force: true });
   }
 });
+test("agent load accepts multiple selectors and identifies each Skill", async () => {
+  const previousState = process.env.SKCTL_STATE_DIR;
+  const { root, global } = await fixture();
+  try {
+    const result = await command(root, global, ["load", "gingiris:router", "category:specialist"]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe(
+      '<skill selector="gingiris:router">\n---\nname: router\ndescription: router skill\n---\n</skill>\n' +
+        '<skill selector="category:specialist">\n---\nname: specialist\ndescription: specialist skill\n---\n</skill>\n',
+    );
+    const failure = await command(root, global, ["load", "gingiris:router", "hidden:private"]);
+    expect(failure.code).toBe(1);
+    expect(failure.stdout).toBe("");
+    expect(failure.stderr).toContain("hidden:private");
+  } finally {
+    if (previousState === undefined) delete process.env.SKCTL_STATE_DIR;
+    else process.env.SKCTL_STATE_DIR = previousState;
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test("agent browse returns only Use roots before progressively disclosing collection contents", async () => {
   const previousState = process.env.SKCTL_STATE_DIR;
   const { root, global } = await fixture();
