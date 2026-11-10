@@ -4,6 +4,7 @@ import { SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
@@ -78,8 +79,7 @@ test.each([
 ])(
   "navigation slots do not move across loading, focus, Reader, overlays and checks at %ix%i",
   async (width, height) => {
-    await mkdir("/tmp/opencode", { recursive: true });
-    const cache = await mkdtemp("/tmp/opencode/navigation-geometry-");
+    const cache = await mkdtemp(join(tmpdir(), "navigation-geometry-"));
     const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
     process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
     const projection = readerProjection();
@@ -255,8 +255,7 @@ test.each([
 test.each([144, 80])(
   "object Reader has an explicit inventory landing and Back restores the retained page view at %i columns",
   async (width) => {
-    await mkdir("/tmp/opencode", { recursive: true });
-    const cache = await mkdtemp("/tmp/opencode/navigation-reader-");
+    const cache = await mkdtemp(join(tmpdir(), "navigation-reader-"));
     const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
     process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
     const setup = await testRender(

@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { ScrollBoxRenderable, TextRenderable } from "@opentui/core";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
@@ -13,8 +15,7 @@ import {
   parsedEscape,
 } from "./reader-test-controls";
 async function mount(width = 100, height = 30) {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const cache = await mkdtemp("/tmp/opencode/navigation-guidance-");
+  const cache = await mkdtemp(join(tmpdir(), "navigation-guidance-"));
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const setup = await testRender(

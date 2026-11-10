@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { runProcess } from "../../src/runtime/process";
 import {
   compareSource,
@@ -10,8 +11,7 @@ import {
 } from "../../src/source/service";
 
 test("business discovery, comparison and preparation share exact versions without leaking repository lifetime", async () => {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const root = await mkdtemp("/tmp/opencode/skctl-service-");
+  const root = await mkdtemp(join(tmpdir(), "skctl-service-"));
   const work = join(root, "work"),
     bare = join(root, "remote.git"),
     trace = join(root, "trace");
@@ -114,8 +114,7 @@ test("business discovery, comparison and preparation share exact versions withou
 });
 
 test("Local source content changes immediately and malformed candidate diagnostics remain visible", async () => {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const root = await mkdtemp("/tmp/opencode/skctl-local-service-");
+  const root = await mkdtemp(join(tmpdir(), "skctl-local-service-"));
   await mkdir(join(root, "guide"));
   await writeFile(join(root, "guide", "SKILL.md"), "broken");
   const context: SourceContext = {

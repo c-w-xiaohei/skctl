@@ -17,7 +17,7 @@ content to disclose. skctl and its terminal workbench, sktui, share the mark.
 | `avatar.png`                                | White mark on blue, 512 × 512, for repository or organization avatars |
 | `icon-16.png`, `icon-32.png`, `icon-48.png` | Compact transparent blue marks at their named pixel sizes             |
 | `favicon.ico`                               | Browser icon containing the transparent 16, 32 and 48 px marks        |
-| `source/generated-mark.png`                 | Original image returned by gptx                                       |
+| `source/generated-mark.png`                 | Original generated image                                              |
 | `source/generation-brief.md`                | Approved direction, visual rules and generation prompt                |
 | `source/export-metadata.json`               | Generation parameters, crop coordinates and file digests              |
 
@@ -64,7 +64,8 @@ the middle card's offset. The logo carries no shadow, gradient or enclosing bord
 
 ## Source and processing
 
-The image was generated on 2026-10-19 using gptx v0.2.7 and `gpt-image-2`, high
+The image was generated on 2026-10-19 with an image generation service and
+`gpt-image-2`, high
 quality, PNG and a transparent-background request. The generation inputs were
 the saved brief and the project's `DESIGN.md`. The request specified 1024 × 1024;
 the service returned a 1254 × 1254 PNG with a real alpha channel.

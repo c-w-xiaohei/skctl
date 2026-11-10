@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly image="node:22.23.2-bookworm"
 readonly owner_label="io.skctl.resource-run=skctl"
-readonly lock_file="/tmp/opencode/skctl-resource-run.lock"
+readonly lock_file="${TMPDIR:-/tmp}/skctl-resource-run.lock"
 readonly workspace="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly uid="$(id -u)"
 readonly gid="$(id -g)"

@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { StateCoordinator } from "../../src/storage/state";
 import { runProcess } from "../../src/runtime/process";
 
 async function fixture() {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const root = await mkdtemp("/tmp/opencode/skctl-publication-");
+  const root = await mkdtemp(join(tmpdir(), "skctl-publication-"));
   const state = join(root, "state"),
     project = join(root, "skctl.jsonc"),
     global = join(root, "config.jsonc");

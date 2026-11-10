@@ -2,14 +2,14 @@ import * as api from "../../src/index";
 import { expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { parse } from "jsonc-parser";
 import { StateCoordinator } from "../../src/storage/state";
 import { bindingDigest } from "../../src/source/identity";
 import * as v from "valibot";
 
 async function fixture() {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const root = await mkdtemp("/tmp/opencode/skctl-identity-");
+  const root = await mkdtemp(join(tmpdir(), "skctl-identity-"));
   const global = join(root, "global", "config.jsonc");
   const project = join(root, "skctl.jsonc");
   const local = join(root, "skctl.local.jsonc");

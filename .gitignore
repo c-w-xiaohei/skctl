@@ -8,18 +8,21 @@ dist/
 out/
 *.bun-build
 
-# Local agent workflow artifacts
+# Local agent tooling installed with `npx skills`
+/.agents/
+/.claude/
+/skills-lock.json
+
+# Local workflow artifacts
 /.impeccable/critique/
 /.opencode/workflows/runs/
 /.superpowers/sdd/
 
-# Existing design and task evidence are not workspace source inputs.
+# Working documents kept outside the repository
+PRODUCT.md
 CONTEXT.md
+TECH.md
 DESIGN.md
-/docs/*
-!/docs/skctl-use-cases-and-positioning.md
-!/docs/integrations.md
-!/docs/adr/
-/docs/adr/*
-!/docs/adr/0006-business-aware-source-acquisition.md
+/docs/
+
 tmp/

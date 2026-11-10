@@ -8,7 +8,9 @@ import {
 } from "@opentui/core";
 import { KeyCodes } from "@opentui/core/testing";
 import { testRender } from "@opentui/solid";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
@@ -50,8 +52,7 @@ async function renderApp(
   height: number,
   reads: readonly unknown[],
 ) {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const cache = await mkdtemp("/tmp/opencode/update-table-app-");
+  const cache = await mkdtemp(join(tmpdir(), "update-table-app-"));
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   let setup: Setup | undefined;

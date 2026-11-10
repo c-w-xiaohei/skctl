@@ -8,7 +8,9 @@ import {
   TextRenderable,
 } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   CoreOptions,
   OperationOptions,
@@ -60,8 +62,7 @@ async function mount(
   } = {},
 ) {
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
-  await mkdir("/tmp/opencode", { recursive: true });
-  const cache = await mkdtemp("/tmp/opencode/updates-return-");
+  const cache = await mkdtemp(join(tmpdir(), "updates-return-"));
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const base = workspaceProjection({ includeContribution: false });
   const sources = options.otherSource

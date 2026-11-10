@@ -12,6 +12,7 @@ import { ButtonRenderable } from "@tuiparts/core/button";
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { Button } from "../src/ui/button";
 import { Input } from "../src/ui/input";
 import { theme } from "../src/ui/theme";
@@ -239,8 +240,7 @@ test.each([
   "production Reader relationships and disclosures remain recognizable at %ix%i",
   async (width, height) => {
     palette("dark");
-    await mkdir("/tmp/opencode", { recursive: true });
-    const cache = await mkdtemp("/tmp/opencode/operate-controls-");
+    const cache = await mkdtemp(join(tmpdir(), "operate-controls-"));
     const previous = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
     process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
     const setup = await testRender(

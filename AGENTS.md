@@ -2,13 +2,10 @@
 
 ## 文档
 
-按任务阅读，不在这里重复规范：
-
-- [PRODUCT.md](PRODUCT.md)：已确认的用户、用途与产品约束。
-- [CONTEXT.md](CONTEXT.md)：产品与领域模型。
-- [TECH.md](TECH.md)：技术架构、模块边界与安全保证。
-- [DESIGN.md](DESIGN.md)：TUI 组件与交互规范（Impeccable / CDD）。
 - [README.md](README.md)：命令与开发入口。
+- [resource-run.md](scripts/resource-run.md)：受限 Docker 验证与构建。
+
+产品、领域、架构与 TUI 规范文档保留在本地工作区，不纳入仓库。
 
 ## 工作原则
 

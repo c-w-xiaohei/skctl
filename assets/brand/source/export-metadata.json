@@ -1,11 +1,10 @@
 {
   "date": "2026-10-19",
   "generator": {
-    "cli": "gptx v0.2.7",
+    "cli": "image generation service",
     "model": "gpt-image-2",
     "quality": "high",
     "requestedSize": "1024x1024",
-    "job": "job_20261019T063143_8803215bd48a65d1",
     "returnedSize": [1254, 1254]
   },
   "source": {

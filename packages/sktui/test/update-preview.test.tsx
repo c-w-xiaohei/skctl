@@ -4,6 +4,7 @@ import { DiffRenderable, ScrollBoxRenderable, SelectRenderable } from "@opentui/
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { WorkspaceView, UpdatePreview } from "@skctl/core";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
@@ -51,8 +52,7 @@ async function mount(
   hook?: typeof import("@skctl/core").previewUpdate,
 ) {
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
-  await mkdir("/tmp/opencode", { recursive: true });
-  const cache = await mkdtemp("/tmp/opencode/update-preview-");
+  const cache = await mkdtemp(join(tmpdir(), "update-preview-"));
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const base = workspaceProjection({ includeContribution: false });
   const projection: WorkspaceView = {

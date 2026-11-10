@@ -2,11 +2,11 @@ import * as api from "../../src/index";
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { runProcess } from "../../src/runtime/process";
 
 async function fixture() {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const root = await mkdtemp("/tmp/opencode/skctl-operations-"),
+  const root = await mkdtemp(join(tmpdir(), "skctl-operations-")),
     global = join(root, "global.jsonc");
   const previous = {
     state: process.env.SKCTL_STATE_DIR,

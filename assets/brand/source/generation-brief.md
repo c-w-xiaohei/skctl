@@ -48,7 +48,7 @@ bevels, glow, three-dimensional objects, or additional decoration.
 
 ## Delivery
 
-Generate raster candidates with gptx. Inspect the actual PNG and its alpha channel.
+Generate raster candidates with the image generation service. Inspect the actual PNG and its alpha channel.
 Select one candidate, preserve its original pixels, then crop and resize for the
 README and repository avatar. Color exports preserve the selected alpha mask.
 These exports are raster assets; editable vector artwork is a separate future step.

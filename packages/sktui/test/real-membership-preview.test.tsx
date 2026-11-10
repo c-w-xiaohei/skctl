@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import * as api from "@skctl/core";
 import { App } from "../src/app";
 import { testEffects } from "./direct-source.fixture";
@@ -10,8 +11,7 @@ import { enterLive, focusLive } from "./reader-test-controls";
 import { openMainPage } from "./main-page-controls";
 for (const entry of ["single", "checked", "stale-address"] as const) {
   test(`real Core ${entry} Membership preview resolves member origin to declaration owner without writes`, async () => {
-    await mkdir("/tmp/opencode", { recursive: true });
-    const root = await mkdtemp("/tmp/opencode/real-membership-preview-");
+    const root = await mkdtemp(join(tmpdir(), "real-membership-preview-"));
     const priorState = process.env.SKCTL_STATE_DIR;
     const priorCache = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
     process.env.SKCTL_STATE_DIR = join(root, "state");
@@ -228,8 +228,7 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
   });
 }
 test("real Core batch preview and confirm accept NFC-equivalent names and write the canonical name", async () => {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const root = await mkdtemp("/tmp/opencode/real-membership-nfc-");
+  const root = await mkdtemp(join(tmpdir(), "real-membership-nfc-"));
   const priorState = process.env.SKCTL_STATE_DIR;
   process.env.SKCTL_STATE_DIR = join(root, "state");
   try {

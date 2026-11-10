@@ -11,6 +11,7 @@ import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { App } from "../src/app";
 import {
   InstalledSkillPreviewFailureOverlay,
@@ -75,8 +76,7 @@ async function capture(setup: ReaderSetup, name: string) {
   );
 }
 async function mount(width: number, height = 24, adoptedConfig = false, agentCatalog = false) {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const cache = await mkdtemp("/tmp/opencode/button-separation-");
+  const cache = await mkdtemp(join(tmpdir(), "button-separation-"));
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const base = collectionsSourcesProjection();

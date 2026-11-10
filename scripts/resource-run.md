@@ -30,7 +30,7 @@ The timeout defaults to 120 seconds and can be set from 1 to 300. The runner
 requires the local `node:22.23.2-bookworm` image and host Docker; it never pulls
 an image or falls back to host execution. It binds the checkout read-write for
 expected build outputs and the host Bun executable read-only. Jobs are
-serialized with `/tmp/opencode/skctl-resource-run.lock`. On timeout,
+serialized through a lock file under `${TMPDIR:-/tmp}`. On timeout,
 cancellation, or exit, it stops, verifies stopped state, then removes only its
 uniquely named/labelled container. If cleanup cannot be confirmed, it exits
 nonzero and reports the container identity.

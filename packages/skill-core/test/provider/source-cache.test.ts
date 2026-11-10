@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { runProcess } from "../../src/runtime/process";
 import { withRepository, reclaimSources } from "../../src/source/service/remote/cache";
 import { discoverSource, withPreparedSkills } from "../../src/source/service";
 import { withFileLock } from "../../src/storage/file-lock";
 
 async function fixture() {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const root = await mkdtemp("/tmp/opencode/skctl-source-cache-");
+  const root = await mkdtemp(join(tmpdir(), "skctl-source-cache-"));
   const work = join(root, "work"),
     bare = join(root, "remote.git"),
     cache = join(root, "cache"),

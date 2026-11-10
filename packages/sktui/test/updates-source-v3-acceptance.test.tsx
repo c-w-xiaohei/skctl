@@ -10,7 +10,9 @@ import {
 } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { ButtonRenderable } from "@tuiparts/core/button";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
 import { collectionFilterPathKey } from "../src/collections/collection-filter-tree";
@@ -34,8 +36,7 @@ async function renderApp(
   core: ReturnType<typeof directSourceCore>,
   size = { width: 80, height: 24 },
 ) {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const cache = await mkdtemp("/tmp/opencode/source-updates-acceptance-");
+  const cache = await mkdtemp(join(tmpdir(), "source-updates-acceptance-"));
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   let setup: Setup | undefined;

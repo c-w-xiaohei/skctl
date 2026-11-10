@@ -22,6 +22,7 @@ import { readerContent, readerProjection } from "./installed-reader.fixture";
 import * as core from "@skctl/core";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { parse } from "jsonc-parser";
 import {
   createOverlaySession,
@@ -2126,8 +2127,7 @@ for (const scenario of [
 }
 
 async function realFixture() {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const root = await mkdtemp("/tmp/opencode/sktui-identity-");
+  const root = await mkdtemp(join(tmpdir(), "sktui-identity-"));
   const global = join(root, "global", "config.jsonc");
   const project = join(root, "skctl.jsonc");
   const previous = process.env.SKCTL_STATE_DIR;

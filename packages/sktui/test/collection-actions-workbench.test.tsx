@@ -11,6 +11,7 @@ import { testRender } from "@opentui/solid";
 import { SkctlError, type WorkspaceView, type SkillAddress } from "@skctl/core";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
 import { collectionRelationRows } from "../src/collections-page";
@@ -82,8 +83,7 @@ async function mount(
   input: WorkspaceView = projection(),
   configuration: Partial<import("../src/session").TuiCore> = {},
 ) {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const cache = await mkdtemp("/tmp/opencode/collection-actions-");
+  const cache = await mkdtemp(join(tmpdir(), "collection-actions-"));
   const previous = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const reads: SkillAddress[] = [],

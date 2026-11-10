@@ -61,8 +61,8 @@ own description. Add an optional `instructions` string to a Collection in JSONC:
 
 `skctl agent browse` shows the entry description. `skctl agent browse
 frontend-perf-analysis` reveals its custom instructions and member descriptions;
-`skctl agent load <selector>` still loads a selected Skill. See
-[PRODUCT.md](PRODUCT.md#organize-discovery-around-tasks) for the authoring model.
+`skctl agent load <selector>` still loads a selected Skill. Collections can
+carry their own instructions for the entries they disclose.
 
 `skctl agent load <selector> <selector> ...` loads several Skills in order. A
 single selector returns the original `SKILL.md` unchanged; multiple selectors
@@ -189,9 +189,8 @@ Real-host tests cover trusted JSON/inline hooks, startup, resume, fork, compacti
 subagent context and complete large-catalog delivery. Existing hooks on 0.118.0
 require explicit removal before reconnecting with guidance. Real OpenCode 2.0.32
 tests cover global/project loading, catalog refresh, compaction, moved session cwd,
-CLI failure and removal. See the
-[integration guide](docs/integrations.md) for paths, custom host executables,
-removal, migration and verification limits.
+CLI failure and removal. Run `skctl integration --help` for managed entry paths,
+custom host executables, removal and migration.
 
 ## Configuration paths
 
@@ -211,7 +210,7 @@ Configuration files can declare `"$schema": "https://skctl.dev/schema.json"`.
 
 Agent entry files belong to Codex or OpenCode and are managed by `skctl integration`.
 Their scopes are `global` and `project`; `local` applies only to skctl content
-configuration. See [host file locations](docs/integrations.md#files-and-scope).
+configuration. Run `skctl integration --help` for the exact host file locations.
 
 Installed state now uses format v4. Close older `skctl`/`sktui` processes before
 using this version with the same state directory. Older formats remain readable
@@ -328,7 +327,3 @@ bun run test:tui
 
 Run `bun run dev:tui` for interactive development from source. Run
 `bun run pack:plugin` first when testing OpenCode connection from source.
-
-Product requirements are in [PRODUCT.md](PRODUCT.md), domain terms in
-[CONTEXT.md](CONTEXT.md), architecture in [TECH.md](TECH.md), and TUI standards
-in [DESIGN.md](DESIGN.md).

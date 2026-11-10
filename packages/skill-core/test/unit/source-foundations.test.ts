@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { runProcess } from "../../src/runtime/process";
 import { withFileLock } from "../../src/storage/file-lock";
 
 const fixture = async () => {
-  await mkdir("/tmp/opencode", { recursive: true });
-  return mkdtemp("/tmp/opencode/skctl-foundations-");
+  return mkdtemp(join(tmpdir(), "skctl-foundations-"));
 };
 
 test("file lock serializes independent callers and permits same-task reentry", async () => {

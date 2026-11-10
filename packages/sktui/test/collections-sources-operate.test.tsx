@@ -11,6 +11,7 @@ import type { WorkspaceView, SkillAddress } from "@skctl/core";
 import { testRender } from "@opentui/solid";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
@@ -28,8 +29,7 @@ async function mount(
   height: number,
   projection: WorkspaceView = collectionsSourcesProjection(),
 ) {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const cache = await mkdtemp("/tmp/opencode/collections-sources-");
+  const cache = await mkdtemp(join(tmpdir(), "collections-sources-"));
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const reads: SkillAddress[] = [];

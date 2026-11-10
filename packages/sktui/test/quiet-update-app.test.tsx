@@ -13,6 +13,7 @@ import { ButtonRenderable } from "@tuiparts/core/button";
 import { SkctlError, type WorkspaceView } from "@skctl/core";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
 import { UpdatesPage } from "../src/updates/page";
@@ -61,8 +62,7 @@ async function mount(
   count = 3,
   updateFailure?: SkctlError,
 ) {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const cache = await mkdtemp("/tmp/opencode/quiet-update-app-");
+  const cache = await mkdtemp(join(tmpdir(), "quiet-update-app-"));
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   const projection = fixture(count);
@@ -247,8 +247,7 @@ test.each([
 ])(
   "background checking is visible in the footer without opening Updates at %ix%i",
   async (width, height) => {
-    await mkdir("/tmp/opencode", { recursive: true });
-    const cache = await mkdtemp("/tmp/opencode/footer-checking-");
+    const cache = await mkdtemp(join(tmpdir(), "footer-checking-"));
     const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
     process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
     let signal: AbortSignal | undefined;

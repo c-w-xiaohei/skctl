@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { discoverSkills } from "../../src/source/discover";
 import { installSkills } from "../../src/installed/install";
 import { loadInstalledSkill } from "../../src/content/operations";
@@ -9,8 +10,7 @@ import { runProcess } from "../../src/runtime/process";
 import { checkUpdate, previewUpdate, updateSkills } from "../../src/installed/update";
 
 test("actual install uses shared acquisition, publishes complete immutable content and remains offline after remote collection", async () => {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const root = await mkdtemp("/tmp/opencode/skctl-installation-");
+  const root = await mkdtemp(join(tmpdir(), "skctl-installation-"));
   const work = join(root, "work"),
     bare = join(root, "remote.git"),
     project = join(root, "project"),

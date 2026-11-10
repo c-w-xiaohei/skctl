@@ -3,7 +3,9 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection, readerResources } from "./installed-reader.fixture";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   enterLive,
   focusLive,
@@ -14,8 +16,7 @@ import {
   parsedEnter,
 } from "./reader-test-controls";
 async function mount(width: number, height = 30) {
-  await mkdir("/tmp/opencode", { recursive: true });
-  const cache = await mkdtemp("/tmp/opencode/keyboard-guidance-");
+  const cache = await mkdtemp(join(tmpdir(), "keyboard-guidance-"));
   const prior = process.env.SKTUI_UPDATE_SCHEDULE_DIR;
   process.env.SKTUI_UPDATE_SCHEDULE_DIR = cache;
   let loads = 0;

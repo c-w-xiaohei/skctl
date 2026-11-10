@@ -79,7 +79,7 @@ describe("packaged release orchestration", () => {
   });
 
   test("evidence-only invocation rebuilds and records the supplied manifest", () => {
-    const evidenceDir = "/tmp/opencode/skctl-evidence-options";
+    const evidenceDir = join(tmpdir(), "skctl-evidence-options");
     const manifest = join(evidenceDir, "worktree-manifest.json");
     const options = parseSmokeOptions(["--evidence-dir", evidenceDir, "--manifest", manifest]);
     expect(options).toMatchObject({
