@@ -144,6 +144,17 @@ export function Tree(props: TreeProps) {
   };
   const handleKey = (key: NavKey): DispatchResult => {
     if (!inputAllowed() || !ownsPhysicalFocus()) return "declined";
+    if (
+      key.name === "tab" &&
+      props.activationMode === "activate" &&
+      !key.shift &&
+      !key.ctrl &&
+      !key.alt &&
+      !key.meta
+    ) {
+      if (props.selectedKey && rowMap().has(props.selectedKey)) props.onActivate(props.selectedKey);
+      return "consumed";
+    }
     if (key.name === "character" && key.char === " ") return "consumed";
     const navigation = [
       "up",

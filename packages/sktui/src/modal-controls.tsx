@@ -152,13 +152,19 @@ export function useModalControl(
       for (let ancestor = target.parent; ancestor; ancestor = ancestor.parent)
         if (ancestor instanceof ScrollBoxRenderable) ancestor.scrollChildIntoView(target.id);
     };
+    const cancelReveal = () => renderer.off("frame", reveal);
     const focused = () => {
-      renderer.off("frame", reveal);
+      cancelReveal();
+      let ancestor = target.parent;
+      while (ancestor && !(ancestor instanceof ScrollBoxRenderable)) ancestor = ancestor.parent;
+      if (!ancestor) return;
       renderer.once("frame", reveal);
       renderer.requestRender();
     };
-    if (target instanceof InputRenderable || target instanceof SelectRenderable)
+    if (target instanceof InputRenderable || target instanceof SelectRenderable) {
       target.on("focused", focused);
+      target.on("blurred", cancelReveal);
+    }
     queueMicrotask(() => {
       if (target.isDestroyed) return;
       unregister = registry?.register(id, target, order, isFocusable);
@@ -166,7 +172,8 @@ export function useModalControl(
     onCleanup(() => {
       unregister?.();
       target.off("focused", focused);
-      renderer.off("frame", reveal);
+      target.off("blurred", cancelReveal);
+      cancelReveal();
     });
   };
 }

@@ -6,12 +6,12 @@ import { selectScrollOffset, setSelectScrollOffset } from "../src/select-scroll"
 import { directSourceCore, openReaderFromInspector } from "./direct-source.fixture";
 import {
   openAllInstalledSkills,
+  openWorkspaceProblems,
   focusLive,
-  openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
   readerTab,
-  selectedReaderTab,
   waitForReaderBody,
 } from "./reader-test-controls";
 import {
@@ -31,15 +31,10 @@ async function openReaderRaw(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === scrollbox);
 }
 async function openInstalledSkills(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills"),
-  );
   await openAllInstalledSkills(setup);
 }
 async function openProblems(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-view-tab-problems"));
-  const tab = setup.renderer.root.findDescendantById("skills-view-tab-problems")!;
-  await setup.mockMouse.click(tab.screenX, tab.screenY);
+  await openWorkspaceProblems(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("problems-browser"));
   await focusLive(setup, "problems-browser");
 }
@@ -130,8 +125,8 @@ test.serial(
     try {
       await openInstalledSkills(setup);
       await openReaderFromInspector(setup);
-      await openReaderTab(setup, 2);
-      expect(selectedReaderTab(setup)).toBe(2);
+      await openInstallation(setup);
+      expect(!!setup.renderer.root.findDescendantById("reader-details")).toBe(true);
       await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
@@ -273,8 +268,9 @@ test("RENDER an unregistered physical focus event does not request a new desired
     const readerTabs = readerTab(setup, 0);
     readerTabs.focus();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === readerTabs);
-    const readerFind = setup.renderer.root.findDescendantById("reader-find")!;
-    setup.renderer.emit(CliRenderEvents.FOCUSED_RENDERABLE, readerFind, readerTabs);
+    const body = setup.renderer.root.findDescendantById("reader-scrollbox")!;
+    expect(!!body).toBe(true);
+    setup.renderer.emit(CliRenderEvents.FOCUSED_RENDERABLE, body, readerTabs);
     await setup.renderOnce();
     expect(setup.renderer.currentFocusedRenderable === readerTabs).toBe(true);
     setup.renderer.off(CliRenderEvents.FOCUSED_RENDERABLE, observe);

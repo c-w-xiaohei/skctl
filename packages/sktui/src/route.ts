@@ -22,6 +22,7 @@ import type { UpdatesState } from "./updates/state";
 import type { UpdateScopeEntry } from "./updates/scope";
 
 export type RouteSublocation =
+  | { readonly kind: "problems" }
   | { readonly kind: "updates"; readonly entry: UpdateScopeEntry; readonly source?: string }
   | { readonly kind: "problem"; readonly key: string };
 
@@ -66,6 +67,7 @@ export interface NavigationFrame {
   readonly surface: NavigationSurface;
   readonly region: NavigationRegion;
   readonly focus: FocusOwner;
+  readonly expanded?: boolean;
   readonly handoff?: RouteHandoff;
   readonly sublocation?: RouteSublocation;
   readonly workspace: WorkspaceSnapshot;
@@ -173,6 +175,7 @@ const handoffKey = (handoff: RouteHandoff | undefined): string | undefined => {
 
 const sublocationKey = (location: RouteSublocation | undefined): string | undefined => {
   if (!location) return undefined;
+  if (location.kind === "problems") return "problems";
   if (location.kind === "problem") return JSON.stringify([location.kind, location.key]);
   const entry = location.entry;
   return JSON.stringify([
@@ -201,16 +204,14 @@ export function createRoute(
   requestFocus: (owner: FocusOwner) => void = () => {},
   dismissOverlay: () => void = () => {},
   reader: Accessor<ReaderState | undefined> = () => undefined,
-  restoreReader: (
-    address: { readonly source: string; readonly path: string },
-    surface?: "details",
-  ) => void = () => {},
+  restoreReader: (address: { readonly source: string; readonly path: string }) => void = () => {},
   landWorkspaceSkill: (selection: SkillAddress | undefined) => void = (selection) =>
     pages.workspace.land("skills", selection),
   restoreReaderState: (state: ReaderState | undefined) => void = () => {},
   updatesState: Accessor<UpdatesState | undefined> = () => undefined,
   restoreUpdatesState: (state: UpdatesState) => void = () => {},
 ) {
+  const [expanded, setExpanded] = createSignal(false);
   const objectFor = (context: NavigationContext, section: RouteTarget["section"]) => {
     if (context === "workspace")
       return section === "skills"
@@ -240,7 +241,9 @@ export function createRoute(
     const key = pages.workspace.diagnosticDetail();
     return section === "skills" && surface === "inspector" && key
       ? { kind: "problem", key }
-      : undefined;
+      : section === "skills" && pages.workspace.skillsView() === "problems"
+        ? { kind: "problems" }
+        : undefined;
   };
   const capture = (
     context: NavigationContext,
@@ -266,6 +269,7 @@ export function createRoute(
     surface,
     region,
     focus,
+    expanded: expanded(),
     ...(handoff ? { handoff: structuredClone(handoff) } : {}),
     sublocation: sublocation ? structuredClone(sublocation) : undefined,
     workspace: structuredClone(pages.workspace.snapshot()),
@@ -276,7 +280,10 @@ export function createRoute(
     },
     ...(pages.collections ? { collections: structuredClone(pages.collections.snapshot()) } : {}),
     narrowLevel: pages.workspace.narrowLevel(),
-    ...(context === "workspace" && section === "skills" && pages.workspace.readerOpen() && reader()
+    ...(context === "workspace" &&
+    (section === "skills" || section === "agent") &&
+    pages.workspace.readerOpen() &&
+    reader()
       ? { reader: structuredClone(reader()!) }
       : {}),
     ...(context === "workspace" && section === "updates" && updatesState()
@@ -299,9 +306,11 @@ export function createRoute(
   const land = (target: RouteTarget) => {
     if (target.destination === "workspace" && target.section === "skills")
       landWorkspaceSkill(target.selection);
-    else if (target.destination === "workspace")
+    else if (target.destination === "workspace") {
       pages.workspace.land(target.section, target.selection);
-    else pages.config.land(target.destination, target.section, target.selection);
+      if (target.section === "collections" && target.selection !== undefined)
+        pages.collections?.select(target.selection);
+    } else pages.config.land(target.destination, target.section, target.selection);
   };
   const sameObject = (
     left: string | SkillAddress | undefined,
@@ -375,6 +384,8 @@ export function createRoute(
     };
     const surface = surfaceFor(target);
     batch(() => {
+      if (target.destination !== active.context || target.section !== active.section)
+        setExpanded(false);
       landTarget();
       dismissOverlay();
       const current = capture(
@@ -401,14 +412,15 @@ export function createRoute(
   };
   const restore = (frame: NavigationFrame, stack: readonly NavigationFrame[]) => {
     batch(() => {
+      setExpanded(frame.expanded === true);
       pages.workspace.restore(frame.workspace);
       pages.config.restore("global", frame.config.global);
       pages.config.restore("project", frame.config.project);
       pages.config.restore("local", frame.config.local);
       if (frame.collections && pages.collections) pages.collections.restore(frame.collections);
       if (frame.reader?.address) {
-        restoreReader(frame.reader.address, frame.reader.tab === "details" ? "details" : undefined);
-        if (frame.reader.tab === "details") pages.workspace.openReader();
+        restoreReader(frame.reader.address);
+        if (frame.reader.installationOpen) pages.workspace.openReader();
         restoreReaderState(frame.reader);
       }
       if (frame.updatesState) restoreUpdatesState(frame.updatesState);
@@ -532,10 +544,17 @@ export function createRoute(
     surface: "browser",
     region: "content",
     focus: "browser",
+    narrowLevel: "list",
     workspace: { ...frame.workspace, readerOpen: false, selectedSkill: undefined },
     reader: undefined,
     recovery: "unavailable",
+    expanded: false,
   });
+
+  const mainPages = new Map<
+    MainPage,
+    { frame: NavigationFrame; stack: readonly NavigationFrame[] }
+  >();
 
   // Shell navigation chooses a workspace, not a predecessor in a drilldown.
   // Keep durable browser state, but leave all transient detail surfaces behind.
@@ -578,6 +597,8 @@ export function createRoute(
 
   return {
     snapshot,
+    expanded,
+    setExpanded,
     canReturn: () => snapshot().stack.length > 0,
     syncCurrent,
     transition(target: RouteTarget, landing: () => void) {
@@ -597,6 +618,14 @@ export function createRoute(
       apply(target, [...snapshot().stack, snapshot().current], landing);
     },
     revalidate(projection: WorkspaceView) {
+      if (!available(snapshot().current, projection)) setExpanded(false);
+      for (const [page, saved] of mainPages)
+        mainPages.set(page, {
+          frame: available(saved.frame, projection) ? saved.frame : recover(saved.frame),
+          stack: saved.stack.map((frame) =>
+            available(frame, projection) ? frame : recover(frame),
+          ),
+        });
       setSnapshot((current) => {
         const nextCurrent = available(current.current, projection)
           ? current.current
@@ -611,6 +640,72 @@ export function createRoute(
             : revise(current, { ...current, current: nextCurrent, stack: nextStack });
         return result;
       });
+    },
+    switchPage(page: MainPage) {
+      const active = snapshot().current;
+      if (page === active.page) return;
+      mainPages.set(active.page, {
+        frame: capture(
+          active.context,
+          active.section,
+          undefined,
+          active.handoff,
+          active.surface,
+          active.region,
+          active.focus,
+        ),
+        stack: snapshot().stack,
+      });
+      const entry = mainPages.get(page);
+      if (!entry) {
+        openRoot(
+          page === "settings" ? "global" : "workspace",
+          page === "settings" ? "sources" : page,
+          "local-nav",
+        );
+        return;
+      }
+      const saved = entry.frame;
+      // Page owners keep their current data. Restore only the navigation fields
+      // shared by several pages, never an old copy of selections or task results.
+      const workspace = pages.workspace.snapshot();
+      const config = {
+        global: pages.config.snapshot("global"),
+        project: pages.config.snapshot("project"),
+        local: pages.config.snapshot("local"),
+      };
+      if (saved.context !== "workspace")
+        config[saved.context] = {
+          ...config[saved.context],
+          section: saved.section as ConfigSection,
+          browserLevel: saved.config[saved.context].browserLevel,
+          configSourceSurface: saved.config[saved.context].configSourceSurface,
+        };
+      restore(
+        {
+          ...saved,
+          workspace: {
+            ...workspace,
+            section:
+              saved.context === "workspace"
+                ? (saved.section as WorkspaceSection)
+                : workspace.section,
+            selectedSkill: saved.workspace.selectedSkill,
+            readerOpen: saved.workspace.readerOpen,
+            sourceFilter: saved.workspace.sourceFilter,
+            diagnosticDetail: saved.workspace.diagnosticDetail,
+            sourceUpdatesSource: saved.workspace.sourceUpdatesSource,
+          },
+          config,
+          collections: pages.collections
+            ? {
+                ...pages.collections.snapshot(),
+                inspector: page === "collections" ? saved.collections?.inspector : undefined,
+              }
+            : undefined,
+        },
+        entry.stack,
+      );
     },
     switchContext(destination: Destination, focus: FocusOwner = "browser") {
       const current = snapshot();
@@ -678,7 +773,12 @@ export function createRoute(
       const prior = snapshot();
       const frame = prior.stack.at(-1);
       if (!frame) return;
-      restore(frame, prior.stack.slice(0, -1));
+      restore(
+        frame.context === prior.current.context && frame.section === prior.current.section
+          ? { ...frame, expanded: expanded() }
+          : frame,
+        prior.stack.slice(0, -1),
+      );
     },
   };
 }

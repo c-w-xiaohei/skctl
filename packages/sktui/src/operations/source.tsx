@@ -72,8 +72,10 @@ export function SourceSelectionOverlay(props: {
         controls={controls}
         header={
           <>
-            <text>{`Find Skills · ${props.review.observation.source}`}</text>
-            {props.collection && <text>{`For Collection: ${props.collection}`}</text>}
+            <text
+              height={1}
+              wrapMode="none"
+            >{`Find Skills: ${props.review.observation.source}`}</text>
           </>
         }
         footer={
@@ -127,15 +129,12 @@ export function SourceSelectionOverlay(props: {
           value={props.query}
           onInput={props.onQuery}
         />
-        <text>{`${props.selected.length} selected · Space check · Tab switch controls`}</text>
-        {props.review.observation.exactRevision && (
-          <text>{`Revision: ${props.review.observation.exactRevision}`}</text>
-        )}
         <DataList
           id="source-operation-selection"
           ref={registerCandidates}
           focused={true}
-          height={Math.max(1, Math.min(candidates().length * 2, terminal().height - 12))}
+          height={Math.max(1, Math.min(candidates().length * 2, terminal().height - 7))}
+          flexShrink={0}
           options={choices()}
           showDescription
           onSelect={(_index, option) => {
@@ -143,6 +142,12 @@ export function SourceSelectionOverlay(props: {
             if (candidate?.selectable && !props.pending) props.onToggle(candidate.path);
           }}
         />
+        <text wrapMode="word">{`Source: ${props.review.observation.source}`}</text>
+        {props.collection && <text wrapMode="word">{`For Collection: ${props.collection}`}</text>}
+        <text>{`${props.selected.length} selected`}</text>
+        {props.review.observation.exactRevision && (
+          <text wrapMode="word">{`Revision: ${props.review.observation.exactRevision}`}</text>
+        )}
         {!candidates().length && (
           <text wrapMode="word">
             {props.query.trim()
@@ -151,7 +156,6 @@ export function SourceSelectionOverlay(props: {
           </text>
         )}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <text>Install Skills now; organize Collections when ready.</text>
       </ModalBody>
     </ModalShell>
   );
@@ -223,7 +227,6 @@ export function SourceObservationOverlay(props: {
         {failed() && props.title === "Discovering Skills" && (
           <text>Source remains registered. Retry discovery when ready.</text>
         )}
-        <text>{props.onBack ? "Escape Back · Cancel ends this task" : "Escape Cancel"}</text>
       </ModalBody>
     </ModalShell>
   );
@@ -242,7 +245,7 @@ export function SourceRemovalOverlay(props: {
 }) {
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, props.onCancel);
-  const blocked = !props.review.impact.allowed;
+  const blocked = () => !props.review.impact.allowed;
   return (
     <ModalShell
       onMouseDown={(event) => {
@@ -250,11 +253,44 @@ export function SourceRemovalOverlay(props: {
         event.preventDefault();
       }}
     >
-      <ModalBody controls={controls}>
-        <text>{blocked ? "Remove Source: impact review" : "Remove Source"}</text>
+      <ModalBody
+        controls={controls}
+        header={
+          <text height={1} wrapMode="none">
+            {blocked() ? "Remove Source: impact review" : "Remove Source"}
+          </text>
+        }
+        footer={
+          <box flexDirection="row" gap={1} flexShrink={0}>
+            <ModalCommand
+              id="source-removal-choice"
+              controls={controls}
+              record={modalCommand("source-removal.cancel", "Cancel", "Keep this Source")}
+              initialFocus
+              execute={props.onCancel}
+            />
+            {!blocked() && (
+              <ModalCommand
+                id="source-removal-confirm"
+                intent="primary"
+                controls={controls}
+                record={modalCommand(
+                  "source-removal.confirm",
+                  props.pending ? "Removing..." : "Remove Source",
+                  "Remove the direct declaration",
+                  !props.pending,
+                  true,
+                  props.pending ? "Wait for the current operation to settle" : undefined,
+                )}
+                execute={props.onConfirm}
+              />
+            )}
+          </box>
+        }
+      >
         <text>{`Source: ${props.review.intent.source}`}</text>
         <text>{`Config: ${props.review.intent.owner.level} (${props.review.intent.owner.file})`}</text>
-        {blocked ? (
+        {blocked() ? (
           <>
             <text>Removal is blocked by installed Skills:</text>
             {props.review.impact.installed.map((address) => (
@@ -266,14 +302,7 @@ export function SourceRemovalOverlay(props: {
         )}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
         <box flexDirection="column" gap={1} flexShrink={0}>
-          <ModalCommand
-            id="source-removal-choice"
-            controls={controls}
-            record={modalCommand("source-removal.cancel", "Cancel", "Keep this Source")}
-            initialFocus
-            execute={props.onCancel}
-          />
-          {blocked ? (
+          {blocked() &&
             props.review.impact.repairs.flatMap((repair, index) =>
               repair.actions.map((action) => (
                 <ModalCommand
@@ -287,26 +316,8 @@ export function SourceRemovalOverlay(props: {
                   execute={() => props.onRepair(action, repair.address)}
                 />
               )),
-            )
-          ) : (
-            <ModalCommand
-              id="source-removal-confirm"
-              intent="primary"
-              controls={controls}
-              record={modalCommand(
-                "source-removal.confirm",
-                props.pending ? "Removing..." : "Remove Source",
-                "Remove the direct declaration",
-                !props.pending,
-                true,
-                props.pending ? "Wait for the current operation to settle" : undefined,
-              )}
-              execute={props.onConfirm}
-            />
-          )}
+            )}
         </box>
-        <text>↑↓ move between controls · Enter select · Esc close</text>
-        <text>Cancel is selected by default</text>
       </ModalBody>
     </ModalShell>
   );

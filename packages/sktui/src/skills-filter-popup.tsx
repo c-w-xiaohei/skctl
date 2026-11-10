@@ -20,7 +20,6 @@ import {
   problemFilterValues,
   problemRows,
 } from "./workspace/state";
-import { unassignedSkills } from "./collections/state";
 import { hasModalKeyModifier, useModalControl, useModalControls } from "./modal-controls";
 import { ModalCommand } from "./operations";
 import { Input } from "./ui/input";
@@ -44,6 +43,7 @@ export function SkillsFilterPopup(props: {
   workspace: WorkspaceState;
   projection: Accessor<WorkspaceView | undefined>;
   onClose: () => void;
+  onClearSourceFilter: () => void;
 }) {
   const state = props.workspace;
   const renderer = useRenderer();
@@ -77,18 +77,13 @@ export function SkillsFilterPopup(props: {
   const matchingSkills = (filters: Readonly<Record<string, string>>) => {
     const projection = props.projection();
     return projection
-      ? filterSkills(
-          state.skillsView() === "unassigned"
-            ? unassignedSkills(projection)
-            : projection.installedSkills,
-          {
-            query: state.query(),
-            source: state.sourceFilter(),
-            filters,
-            agentStatus: projection.effective.agent.status,
-            collectionViews: collectionViews(),
-          },
-        )
+      ? filterSkills(projection.installedSkills, {
+          query: state.query(),
+          source: state.sourceFilter(),
+          filters,
+          agentStatus: projection.effective.agent.status,
+          collectionViews: collectionViews(),
+        })
       : [];
   };
   const diagnosticRows = createMemo(() => {
@@ -138,8 +133,9 @@ export function SkillsFilterPopup(props: {
   const selectedIndex = createMemo(() => Math.max(0, choices().indexOf(cursor())));
   const appliedMessage = createMemo(() => {
     const applied = state.filters()[dimension()];
-    const hidden =
-      applied && !choices().includes(applied) ? `Applied: ${applied} (hidden by search).` : "";
+    const hidden = applied
+      ? `Applied: ${applied}${!choices().includes(applied) ? " (hidden by search)" : ""}.`
+      : "";
     const empty = search() && choices().length === 1 ? "No matching values." : "";
     return [hidden, empty].filter(Boolean).join(" ") || undefined;
   });
@@ -264,6 +260,30 @@ export function SkillsFilterPopup(props: {
                   fg={tokens().colors.mutedForeground}
                 >{`Skill search: ${state.query()}`}</text>
               </Show>
+              <Show when={state.sourceFilter()}>
+                <box height={1} flexDirection="row" gap={1}>
+                  <text
+                    flexGrow={1}
+                    minWidth={0}
+                    wrapMode="none"
+                    fg={tokens().colors.mutedForeground}
+                  >{`Source: ${state.sourceFilter()}`}</text>
+                  <ModalCommand
+                    id="skills-filter-reset-source"
+                    order={35}
+                    record={{
+                      id: "source-filter.clear",
+                      verb: "Reset Source",
+                      destination: state.sourceFilter() ?? "Source context",
+                      scope: "modal",
+                      keys: ["enter"],
+                      enabled: true,
+                      danger: false,
+                    }}
+                    execute={props.onClearSourceFilter}
+                  />
+                </box>
+              </Show>
             </box>
           }
           actions={
@@ -319,7 +339,7 @@ export function SkillsFilterPopup(props: {
                 height={dimensions().length}
                 showDescription={false}
                 options={dimensions().map((value) => ({
-                  name: state.filters()[value] ? `${value} · ${state.filters()[value]}` : value,
+                  name: state.filters()[value] ? `${value}: ${state.filters()[value]}` : value,
                   description: "Choose filter dimension",
                   value,
                 }))}

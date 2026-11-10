@@ -102,6 +102,7 @@ for (const fault of [
       await setup.flush();
       await openMainPage(setup, "collections");
       await enterLive(setup, "collection-browser");
+      await enterLive(setup, "collection-more");
       await setup.flush();
       const remove = setup.renderer.root.findDescendantById("collection-current-membership.remove");
       if (fault === "missing" || fault === "contributed") {

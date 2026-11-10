@@ -67,38 +67,53 @@ function screenshotWorkspace() {
   };
 }
 
-test.each([120, 144])("main page navigation keeps its position at %i columns", async (width) => {
-  const setup = await testRender(
-    () => <App core={directSourceCore(screenshotWorkspace())} exit={() => {}} />,
-    { width, height: 32 },
-  );
-  try {
-    let geometry: number[] | undefined;
-    for (const page of [
-      "skills",
-      "collections",
-      "sources",
-      "agent",
-      "settings",
-      "skills",
-    ] as const) {
-      await openMainPage(setup, page);
-      await setup.flush();
-      const nav = setup.renderer.root.findDescendantById("section-nav")!;
-      const current = [nav.screenX, nav.screenY, nav.width, nav.height];
-      if (geometry) expect(current).toEqual(geometry);
-      else geometry = current;
-      expect(!!setup.renderer.root.findDescendantById("shell-section-tab-skills")).toBe(true);
-      await mkdir("out/layout-clarity", { recursive: true });
-      await writeFile(`out/layout-clarity/page-${page}-${width}.txt`, setup.captureCharFrame());
+test.each([43, 80, 100, 120, 144])(
+  "main page navigation keeps its position at %i columns",
+  async (width) => {
+    const setup = await testRender(
+      () => <App core={directSourceCore(screenshotWorkspace())} exit={() => {}} />,
+      { width, height: width === 43 ? 13 : 24 },
+    );
+    try {
+      let geometry: number[] | undefined;
+      for (const page of [
+        "skills",
+        "collections",
+        "sources",
+        "updates",
+        "agent",
+        "settings",
+        "skills",
+      ] as const) {
+        await openMainPage(setup, page);
+        await setup.flush();
+        const nav = setup.renderer.root.findDescendantById("section-nav")!;
+        const current = [nav.screenX, nav.screenY, nav.width, nav.height];
+        if (geometry) expect(current).toEqual(geometry);
+        else geometry = current;
+        const controls =
+          width < 100
+            ? ["shell-pages-select"]
+            : ["skills", "collections", "sources", "updates", "agent", "settings"].map(
+                (name) => `shell-section-tab-${name}`,
+              );
+        for (const id of controls) {
+          const control = setup.renderer.root.findDescendantById(id)!;
+          expect(control.visible).toBe(true);
+          expect(control.screenX).toBeGreaterThanOrEqual(nav.screenX);
+          expect(control.screenX + control.width).toBeLessThanOrEqual(nav.screenX + nav.width);
+        }
+        await mkdir("out/layout-clarity", { recursive: true });
+        await writeFile(`out/layout-clarity/page-${page}-${width}.txt`, setup.captureCharFrame());
+      }
+      expect(
+        setup.renderer.root.findDescendantById("collection-filter-tree-row-inventory-unassigned"),
+      ).toBeUndefined();
+    } finally {
+      setup.renderer.destroy();
     }
-    expect(
-      setup.renderer.root.findDescendantById("collection-filter-tree-row-inventory-unassigned"),
-    ).toBeUndefined();
-  } finally {
-    setup.renderer.destroy();
-  }
-});
+  },
+);
 
 for (const width of [144, 120, 100, 80, 43]) {
   test(`Skills names, search and reader fit at ${width} columns`, async () => {
@@ -153,9 +168,10 @@ test("repository Collection keeps member names readable and actions together", a
     await mkdir("out/layout-clarity", { recursive: true });
     await writeFile("out/layout-clarity/collection-144.txt", setup.captureCharFrame());
     const add = setup.renderer.root.findDescendantById("collection-add")!;
-    const details = setup.renderer.root.findDescendantById("collection-current-details")!;
+    const details = setup.renderer.root.findDescendantById("collection-more")!;
     expect(add.screenY).toBe(details.screenY);
     expect(setup.captureCharFrame()).toContain("component-driven-development");
+    await enterLive(setup, "collection-more");
     await enterLive(setup, "collection-current-details");
     expect(setup.captureCharFrame()).toContain("dev-kit");
     await parsedEscape(setup);
@@ -175,13 +191,9 @@ test("normal-height inventory and Reader separate identity, actions and navigati
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-tools"));
     await setup.flush();
     const node = (id: string) => setup.renderer.root.findDescendantById(id)!;
-    expect(node("install-skills").screenY - node("skills-query").screenY).toBe(1);
-    expect(
-      node("reader-collection-actions").screenY - node("reader-identity-row").screenY,
-    ).toBeGreaterThanOrEqual(2);
-    expect(
-      node("reader-tools").screenY - node("reader-collection-actions").screenY,
-    ).toBeGreaterThanOrEqual(2);
+    expect(node("skills-query").screenY - node("skills-browser-more").screenY).toBe(1);
+    expect(node("reader-collection-actions").screenY - node("reader-identity-row").screenY).toBe(1);
+    expect(node("reader-tools").screenY - node("reader-collection-actions").screenY).toBe(1);
     await writeFile("out/layout-clarity/spacing-144.txt", setup.captureCharFrame());
   } finally {
     setup.renderer.destroy();
@@ -229,7 +241,7 @@ test("Collection filter shows only collection rows with aligned names", async ()
   );
   try {
     await openMainPage(setup, "skills");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-filter-tree"));
+    await openSkillsCollections(setup);
     await setup.flush();
     const tree = setup.renderer.root.findDescendantById("collection-filter-tree")!;
     const children = (node: typeof tree): (typeof tree)[] =>
@@ -243,3 +255,4 @@ test("Collection filter shows only collection rows with aligned names", async ()
     setup.renderer.destroy();
   }
 });
+import { openSkillsCollections } from "./reader-test-controls";

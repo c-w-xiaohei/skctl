@@ -2,16 +2,16 @@ import { expect, test } from "bun:test";
 import { createComputed, createRoot } from "solid-js";
 import { createWorkspaceState } from "../src/workspace/state";
 
-test("pages retain their independent Skills view instead of becoming a view", () => {
+test("pages retain the Skills membership filter", () => {
   const state = createWorkspaceState();
-  state.selectSkillsView("unassigned");
+  state.setFilter("Membership", "Not in a Collection");
   state.selectSection("collections");
   expect(state.section()).toBe("collections");
-  expect(state.skillsView()).toBe("unassigned");
+  expect(state.filters().Membership).toBe("Not in a Collection");
   state.selectSection("sources");
   state.selectSection("updates");
   state.selectSection("skills");
-  expect(state.skillsView()).toBe("unassigned");
+  expect(state.filters().Membership).toBe("Not in a Collection");
 });
 
 test("selecting a Skills view is an explicit page landing, not a filter-owned page override", () => {

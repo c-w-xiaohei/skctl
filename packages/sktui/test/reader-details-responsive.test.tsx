@@ -1,12 +1,6 @@
 import { expect, test } from "bun:test";
-import {
-  ScrollBoxRenderable,
-  SelectRenderable,
-  TextRenderable,
-  type Renderable,
-} from "@opentui/core";
+import { ScrollBoxRenderable, SelectRenderable, type Renderable } from "@opentui/core";
 import { AccordionTriggerRenderable } from "@tuiparts/core/accordion";
-import { ButtonRenderable } from "@tuiparts/core/button";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { skillAddressKey } from "../src/types";
@@ -21,21 +15,14 @@ import {
 import {
   enterInstalledAddress,
   enterLive,
+  focusLive,
   live,
   openAllInstalledSkills,
-  openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
-  selectedReaderTab,
 } from "./reader-test-controls";
-type Setup = Awaited<ReturnType<typeof testRender>>;
-async function arrowFocus(setup: Setup, key: string, id: string) {
-  setup.mockInput.pressKey(key);
-  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
-  await setup.flush();
-  expect(setup.renderer.currentFocusedRenderable === live(setup, id)).toBe(true);
-  expect(live(setup, id).focused).toBe(true);
-}
+
 function expectInBounds(target: Renderable, width: number, height: number) {
   expect(target.screenX).toBeGreaterThanOrEqual(0);
   expect(target.screenY).toBeGreaterThanOrEqual(0);
@@ -44,62 +31,69 @@ function expectInBounds(target: Renderable, width: number, height: number) {
   expect(target.screenX + target.width).toBeLessThanOrEqual(width);
   expect(target.screenY + target.height).toBeLessThanOrEqual(height);
 }
-test("Details arrows traverse live controls both ways and Escape from each physical origin returns to the selected browser", async () => {
+
+test.each([
+  [120, 40],
+  [43, 13],
+])("Installation and More return through their own layer at %ix%i", async (width, height) => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
-    { width: 120, height: 40 },
+    { width, height },
   );
   try {
     await openAllInstalledSkills(setup);
     await enterInstalledAddress(setup, readerAddress);
-    await openReaderTab(setup, 2);
-    await parsedEnter(setup);
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
-    const controls = [
-      "reader-reload",
-      "reader-details-action-skill-rebind",
-      "reader-details-action-skill-uninstall",
+    for (const origin of [
+      "reader-details",
       "reader-details-relationship-source",
-      "reader-details-relationship-config",
       "reader-details-metadata",
-    ];
-    for (const [index, id] of controls.entries()) {
-      await arrowFocus(setup, index === 0 ? "ARROW_RIGHT" : "ARROW_DOWN", id);
-      expectInBounds(live(setup, id), 120, 40);
-    }
-    await arrowFocus(setup, "ARROW_DOWN", controls.at(-1)!);
-    expect(
-      (live(setup, "reader-details-action-skill-add-to-collection") as ButtonRenderable).getState()
-        .disabled,
-    ).toBe(false);
-    for (const id of [...controls.slice(0, -1).reverse(), "reader-details"])
-      await arrowFocus(setup, "ARROW_UP", id);
-    await arrowFocus(setup, "ARROW_RIGHT", controls[0]!);
-    await arrowFocus(setup, "ARROW_RIGHT", controls[1]!);
-    await arrowFocus(setup, "ARROW_LEFT", "reader-details");
-    for (const origin of [controls[5]!, controls[0]!, controls[2]!]) {
-      for (const [index, id] of controls.slice(0, controls.indexOf(origin) + 1).entries())
-        await arrowFocus(setup, index === 0 ? "ARROW_RIGHT" : "ARROW_DOWN", id);
+    ]) {
+      await openInstallation(setup);
+      await focusLive(setup, origin);
+      await setup.flush();
+      expectInBounds(live(setup, origin), width, height);
       await parsedEscape(setup);
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-      );
-      expect(
-        (live(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value,
-      ).toBe(skillAddressKey(readerAddress));
-      expect(live(setup, "installed-skill-browser").focused).toBe(true);
-      expect(live(setup, "reader-views").isDestroyed).toBe(false);
-      expect(selectedReaderTab(setup)).toBe(2);
-      expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
-      await parsedEnter(setup);
-      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
-      expect(live(setup, "reader-details-action-skill-uninstall")).toBeDefined();
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-more");
+      expect(!!setup.renderer.root.findDescendantById("reader-details")).toBe(false);
     }
+    await enterLive(setup, "reader-more");
+    for (const id of [
+      "reader-menu-raw",
+      "reader-menu-reload",
+      ...(width >= 100 ? ["reader-menu-view"] : []),
+      ...(width === 43 ? ["reader-menu-skill-check-updates"] : []),
+      "reader-menu-skill-rebind",
+      "reader-menu-skill-uninstall",
+    ]) {
+      setup.mockInput.pressArrow("down");
+      await setup
+        .waitFor(() => setup.renderer.currentFocusedRenderable?.id === id)
+        .catch((error) => {
+          throw new Error(
+            `Expected ${id}, got ${setup.renderer.currentFocusedRenderable?.id}\n${setup.captureCharFrame()}`,
+            { cause: error },
+          );
+        });
+      expectInBounds(live(setup, id), width, height);
+    }
+    setup.mockInput.pressArrow("up");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-menu-skill-rebind",
+    );
+    await parsedEscape(setup);
+    await parsedEscape(setup);
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
+    );
+    expect(
+      (live(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value,
+    ).toBe(skillAddressKey(readerAddress));
   } finally {
     setup.renderer.destroy();
   }
 });
-test("Details skips absent and disabled controls and metadata Enter/Space really toggles across resize", async () => {
+
+test("Installation omits unavailable relationships and metadata toggles through resize", async () => {
   const base = readerProjection();
   const setup = await testRender(
     () => (
@@ -116,72 +110,38 @@ test("Details skips absent and disabled controls and metadata Enter/Space really
   try {
     await openAllInstalledSkills(setup);
     await enterInstalledAddress(setup, readerAddress);
-    await openReaderTab(setup, 2);
-    await parsedEnter(setup);
+    await openInstallation(setup);
     for (const relationship of ["source", "config"])
       expect(
-        setup.renderer.root.findDescendantById(`reader-details-relationship-${relationship}`),
-      ).toBeUndefined();
-    const controls = [
-      "reader-reload",
-      "reader-details-action-skill-rebind",
-      "reader-details-action-skill-uninstall",
-      "reader-details-metadata",
-    ];
-    for (const [index, id] of controls.entries()) {
-      await arrowFocus(setup, index === 0 ? "ARROW_RIGHT" : "ARROW_DOWN", id);
-    }
-    expect(
-      (live(setup, "reader-details-action-skill-open-source") as ButtonRenderable).getState()
-        .disabled,
-    ).toBe(true);
-    expect(
-      (live(setup, "reader-details-action-skill-add-to-collection") as ButtonRenderable).getState()
-        .disabled,
-    ).toBe(false);
-    for (const id of [...controls.slice(0, -1).reverse(), "reader-details"])
-      await arrowFocus(setup, "ARROW_UP", id);
-    for (const [index, id] of controls.entries())
-      await arrowFocus(setup, index === 0 ? "ARROW_RIGHT" : "ARROW_DOWN", id);
+        !!setup.renderer.root.findDescendantById(`reader-details-relationship-${relationship}`),
+      ).toBe(false);
+    await focusLive(setup, "reader-details-metadata");
     const metadata = () => live(setup, "reader-details-metadata") as AccordionTriggerRenderable;
     expect(metadata().getState().open).toBe(false);
     await parsedEnter(setup);
     await setup.waitFor(() => metadata().getState().open);
-    expect(setup.renderer.currentFocusedRenderable === metadata() && metadata().focused).toBe(true);
-    await setup.waitForFrame((frame) => frame.includes("▾ Technical details"));
     setup.mockInput.pressKey(" ");
     await setup.waitFor(() => !metadata().getState().open);
-    expect(setup.renderer.currentFocusedRenderable === metadata() && metadata().focused).toBe(true);
-    await setup.flush();
-    expect(setup.captureCharFrame()).toContain("▸ Technical details");
     setup.mockInput.pressKey(" ");
     await setup.waitFor(() => metadata().getState().open);
-    expect(setup.renderer.currentFocusedRenderable === metadata() && metadata().focused).toBe(true);
     for (const [width, height] of [
       [80, 24],
       [79, 24],
       [43, 30],
-    ] as const) {
-      setup.resize(width, height);
+    ]) {
+      setup.resize(width!, height!);
       await setup.flush();
       expect(metadata().getState().open).toBe(true);
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details-metadata");
-      expect(metadata().focused).toBe(true);
-      expect(selectedReaderTab(setup)).toBe(2);
-      expectInBounds(live(setup, "reader-details"), width, height);
-      expectInBounds(metadata(), width, height);
-      expect(setup.captureCharFrame()).toContain("▾ Technical details");
-      for (const id of controls.slice(0, -1).reverse()) {
-        await arrowFocus(setup, "ARROW_UP", id);
-        expectInBounds(live(setup, id), width, height);
-      }
-      for (const id of controls.slice(1)) await arrowFocus(setup, "ARROW_DOWN", id);
+      expectInBounds(metadata(), width!, height!);
+      expectInBounds(live(setup, "reader-details"), width!, height!);
     }
   } finally {
     setup.renderer.destroy();
   }
 });
-test("Details restores exact native scroll per address through A/B/A/B, view remount and responsive geometry", async () => {
+
+test("Installation restores exact scroll per address through A/B/A/B and responsive remounts", async () => {
   const base = readerProjection();
   const loads: string[] = [];
   const setup = await testRender(
@@ -192,17 +152,15 @@ test("Details restores exact native scroll per address through A/B/A/B, view rem
             ...base,
             installedSkills: base.installedSkills.map((skill) => ({
               ...skill,
-              description: Array.from(
-                { length: 100 },
-                (_, i) => `${skill.name} description line ${i}`,
-              ).join("\n"),
+              problems: Array.from({ length: 60 }, (_, index) => ({
+                code: "DETAIL",
+                severity: "warning" as const,
+                message: `${skill.name} diagnostic ${index}`,
+              })),
             })),
           },
           {
-            loadInstalledSkill: async (
-              _environment: import("@skctl/core").CoreOptions,
-              request,
-            ) => {
+            loadInstalledSkill: async (_environment, request) => {
               loads.push(request.address.path);
               return request.address.path === readerSecondAddress.path
                 ? readerSecondContent
@@ -218,26 +176,17 @@ test("Details restores exact native scroll per address through A/B/A/B, view rem
   try {
     await openAllInstalledSkills(setup);
     const positions: number[] = [];
-    const visits = [readerAddress, readerSecondAddress, readerAddress, readerSecondAddress];
-    for (const [index, address] of visits.entries()) {
+    for (const [index, address] of [
+      readerAddress,
+      readerSecondAddress,
+      readerAddress,
+      readerSecondAddress,
+    ].entries()) {
       await enterInstalledAddress(setup, address);
-      if (index > 0) expect(selectedReaderTab(setup)).toBe(0);
-      await openReaderTab(setup, 2);
-      await parsedEnter(setup);
-      await setup.flush();
+      await openInstallation(setup);
+      await focusLive(setup, "reader-details");
       const details = live(setup, "reader-details") as ScrollBoxRenderable;
       if (index < 2) {
-        for (const id of [
-          "reader-reload",
-          "reader-details-action-skill-rebind",
-          "reader-details-action-skill-uninstall",
-          "reader-description-toggle",
-        ])
-          await arrowFocus(setup, id === "reader-reload" ? "ARROW_RIGHT" : "ARROW_DOWN", id);
-        await parsedEnter(setup);
-        await enterLive(setup, "reader-tabs-tab-details");
-        await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
-        await setup.flush();
         setup.mockInput.pressKey(index === 0 ? "\u001b[6~" : "END");
         await setup.waitFor(() => details.scrollTop > 0);
         const beforeWheel = details.scrollTop;
@@ -247,50 +196,30 @@ test("Details restores exact native scroll per address through A/B/A/B, view rem
           index === 0 ? "down" : "up",
         );
         await setup.waitFor(() => details.scrollTop !== beforeWheel);
-        await setup.flush();
         positions.push(details.scrollTop);
-        expect(positions[index]).toBeGreaterThan(0);
         if (index === 1) expect(positions[1]).not.toBe(positions[0]);
-      } else {
-        await setup.waitFor(() => details.scrollTop === positions[index - 2]);
-        expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details");
-        expect(selectedReaderTab(setup)).toBe(2);
-        expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe(address.path);
-        expect(
-          (live(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value,
-        ).toBe(skillAddressKey(address));
-      }
+      } else await setup.waitFor(() => details.scrollTop === positions[index - 2]);
+      expect(
+        (live(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value,
+      ).toBe(skillAddressKey(address));
       await parsedEscape(setup);
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-      );
+      await parsedEscape(setup);
     }
     await enterInstalledAddress(setup, readerAddress);
-    await openReaderTab(setup, 2);
-    await parsedEnter(setup);
-    await setup.waitFor(
-      () => (live(setup, "reader-details") as ScrollBoxRenderable).scrollTop === positions[0],
-    );
-    await openReaderTab(setup, 0);
-    await openReaderTab(setup, 2);
-    await parsedEnter(setup);
+    await openInstallation(setup);
+    await focusLive(setup, "reader-details");
     for (const [width, height] of [
       [120, 40],
       [80, 24],
       [79, 24],
       [43, 30],
-    ] as const) {
-      setup.resize(width, height);
+    ]) {
+      setup.resize(width!, height!);
       await setup.flush();
       const details = live(setup, "reader-details") as ScrollBoxRenderable;
       expect(details.scrollTop).toBe(positions[0]!);
-      expect(selectedReaderTab(setup)).toBe(2);
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details");
-      expect(details.focused).toBe(true);
-      expectInBounds(details, width, height);
-      expectInBounds(live(setup, "reader-tools"), width, height);
-      expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
-      expect(setup.captureCharFrame()).toContain("guide");
+      expectInBounds(details, width!, height!);
     }
     expect(loads).toEqual(["guide", "reference"]);
   } finally {

@@ -1,16 +1,19 @@
 /** @jsxImportSource @opentui/solid */
 import { Show, untrack, type JSXElement } from "solid-js";
+import { useTerminalSize } from "./terminal-size";
 import type { LayoutMode } from "../types";
 import { useTheme } from "./use-theme";
 
 const routeBackWidth = 11;
-export const stackedNavigationBelow = 80;
 export const compactControlsBelow = 100;
+export const footerActivityWidth = (columns: number) =>
+  columns < 64 ? 14 : Math.min(36, Math.floor(columns / 3));
 
 export interface RouteShellSlots {
   readonly scopeControls: JSXElement | (() => JSXElement);
   readonly activity: JSXElement | (() => JSXElement);
   readonly back: JSXElement | (() => JSXElement);
+  readonly breadcrumbs: JSXElement | (() => JSXElement);
   readonly pageNavigation: JSXElement | (() => JSXElement);
   readonly content: JSXElement | (() => JSXElement);
   readonly commandStatus: JSXElement | (() => JSXElement);
@@ -19,7 +22,6 @@ export interface RouteShellSlots {
 export interface RouteShellProps {
   readonly mode: LayoutMode;
   readonly columns: number;
-  readonly compactObject?: boolean;
   readonly slots: RouteShellSlots;
 }
 
@@ -31,7 +33,8 @@ function Slot(props: { readonly value: JSXElement | (() => JSXElement) }) {
 /** Fixed chrome slots. Commands and activity may change, never the navigation geometry. */
 export function RouteShell(props: RouteShellProps) {
   const tokens = useTheme();
-  const stacked = () => props.columns < stackedNavigationBelow;
+  const terminal = useTerminalSize();
+  const compact = () => terminal().height < 24;
   return (
     <Show
       when={props.mode !== "too-small"}
@@ -53,69 +56,44 @@ export function RouteShell(props: RouteShellProps) {
       >
         <box
           id="global-bar"
-          height={props.compactObject ? 1 : stacked() ? 3 : 2}
+          height={compact() ? 1 : 2}
           flexDirection="column"
           flexShrink={0}
           paddingX={1}
-          border={props.compactObject ? [] : ["bottom"]}
+          border={compact() ? [] : ["bottom"]}
           borderColor={tokens().colors.border}
         >
-          <box
-            flexDirection={stacked() && !props.compactObject ? "column" : "row"}
-            height={stacked() && !props.compactObject ? 2 : 1}
-          >
-            <Show when={!props.compactObject}>
-              <box
-                id="section-nav"
-                flexGrow={stacked() ? 0 : 1}
-                flexBasis={stacked() ? undefined : 0}
-                flexShrink={1}
-                minWidth={0}
-                height={1}
-                width={stacked() ? "100%" : "auto"}
-              >
-                <Slot value={props.slots.pageNavigation} />
-              </box>
-            </Show>
-            <box
-              id="shell-controls"
-              flexDirection="row"
-              gap={1}
-              height={1}
-              width={stacked() ? "100%" : "auto"}
-              flexShrink={0}
-            >
-              <box id="workarea-navigation-pane" width={routeBackWidth} height={1} flexShrink={0}>
-                <box
-                  id="route-back-slot"
-                  width={routeBackWidth}
-                  flexShrink={0}
-                  height={1}
-                  overflow="hidden"
-                >
-                  <Slot value={props.slots.back} />
-                </box>
-              </box>
+          <box flexDirection="row" height={1} gap={1}>
+            <box id="section-nav" flexGrow={1} flexBasis={0} flexShrink={1} minWidth={0} height={1}>
+              <Slot value={props.slots.pageNavigation} />
+            </box>
+            <box id="shell-controls" flexDirection="row" gap={1} height={1} flexShrink={0}>
               <box id="shell-context-panel" flexDirection="row" gap={1} flexShrink={0} height={1}>
                 <Slot value={props.slots.scopeControls} />
               </box>
-              <box
-                id="shell-activity"
-                width={
-                  stacked()
-                    ? "auto"
-                    : props.columns < compactControlsBelow
-                      ? 9
-                      : Math.min(36, 18 + Math.max(0, props.columns - 132))
-                }
-                flexGrow={stacked() ? 1 : 0}
-                flexBasis={stacked() ? 0 : undefined}
-                flexShrink={0}
-                minWidth={0}
-                height={1}
-              >
-                <Slot value={props.slots.activity} />
-              </box>
+            </box>
+          </box>
+        </box>
+        <box id="workspace-navigation" height={1} flexShrink={0} paddingX={1}>
+          <box id="workarea-navigation-pane" flexDirection="row" width="100%" height={1} gap={1}>
+            <box
+              id="route-breadcrumbs"
+              flexGrow={1}
+              flexBasis={0}
+              minWidth={0}
+              height={1}
+              overflow="hidden"
+            >
+              <Slot value={props.slots.breadcrumbs} />
+            </box>
+            <box
+              id="route-back-slot"
+              width={routeBackWidth}
+              flexShrink={0}
+              height={1}
+              overflow="hidden"
+            >
+              <Slot value={props.slots.back} />
             </box>
           </box>
         </box>
@@ -136,8 +114,21 @@ export function RouteShell(props: RouteShellProps) {
           flexShrink={0}
           paddingX={1}
           backgroundColor={tokens().colors.surface}
+          flexDirection="row"
+          gap={1}
         >
-          <Slot value={props.slots.commandStatus} />
+          <box flexGrow={1} flexBasis={0} minWidth={0} height={1} overflow="hidden">
+            <Slot value={props.slots.commandStatus} />
+          </box>
+          <box
+            id="shell-activity"
+            width={footerActivityWidth(props.columns)}
+            height={1}
+            flexShrink={0}
+            overflow="hidden"
+          >
+            <Slot value={props.slots.activity} />
+          </box>
         </box>
       </box>
     </Show>

@@ -5,7 +5,8 @@ import { ButtonRenderable } from "@tuiparts/core/button";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { live, parsedEscape } from "./reader-test-controls";
+import { openMainPage } from "./main-page-controls";
+import { live, parsedEscape, focusLive } from "./reader-test-controls";
 import { openAgentAccess, press, rowId, selected, waitForBody } from "./agent-access-test-controls";
 const owner = { level: "project" as const, file: "/project.jsonc", pointer: "/collections/root" };
 function projection(childSkillCount = 0) {
@@ -75,6 +76,93 @@ const childPathKey = JSON.stringify([
 ]);
 const skillRowKey = (pathKey: string, entry: string) =>
   JSON.stringify([pathKey, "skill", entry, "team-main", "guide"]);
+test.each([43, 120])(
+  "Agent Collection preview restores its scroll after selection and page changes at %i columns",
+  async (width) => {
+    const base = projection();
+    const fixture = {
+      ...base,
+      effective: {
+        ...base.effective,
+        collectionsView: base.effective.collectionsView.map((item) => ({
+          ...item,
+          description: Array.from(
+            { length: 60 },
+            (_, index) => `${item.id} description line ${index}`,
+          ).join("\n"),
+        })),
+      },
+    };
+    const setup = await testRender(() => <App core={directSourceCore(fixture)} exit={() => {}} />, {
+      width,
+      height: 24,
+    });
+    try {
+      await openAgentAccess(setup);
+      await focusLive(setup, "current-exposure-browser");
+      await press(setup, "ARROW_RIGHT");
+      await press(setup, "RETURN");
+      const body = (await focusLive(setup, "agent-node-description")) as ScrollBoxRenderable;
+      await press(setup, "\u001b[6~");
+      const offset = body.scrollTop;
+      expect(offset).toBeGreaterThan(0);
+      await parsedEscape(setup);
+      await focusLive(setup, "current-exposure-browser");
+      await press(setup, "ARROW_DOWN");
+      await press(setup, "RETURN");
+      await setup.flush();
+      expect((live(setup, "agent-node-description") as ScrollBoxRenderable).scrollTop).toBe(0);
+      await parsedEscape(setup);
+      await focusLive(setup, "current-exposure-browser");
+      await press(setup, "ARROW_UP");
+      await press(setup, "RETURN");
+      await setup.waitFor(
+        () => (live(setup, "agent-node-description") as ScrollBoxRenderable).scrollTop === offset,
+      );
+      await openMainPage(setup, "skills");
+      await openMainPage(setup, "agent");
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "agent-node-description",
+      );
+      await setup.waitFor(
+        () => (live(setup, "agent-node-description") as ScrollBoxRenderable).scrollTop === offset,
+      );
+      expect(selected(setup, rootPathKey)).toBe(true);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
+test.each(["RETURN", "TAB"])(
+  "Agent Catalog %s enters the selected Collection preview and Back restores its tree",
+  async (key) => {
+    const setup = await testRender(() => <App core={readingCore(1)} exit={() => {}} />, {
+      width: 43,
+      height: 13,
+    });
+    try {
+      const tree = await openAgentAccess(setup);
+      await focusLive(setup, tree.id);
+      const root = live(setup, rowId(rootPathKey));
+      expect(selected(setup, rootPathKey)).toBe(true);
+      await press(setup, key);
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "agent-node-description",
+      );
+      expect(setup.captureCharFrame()).toContain("Root description");
+      expect(setup.captureCharFrame()).toContain("Open Collection");
+      expect(root.isDestroyed).toBe(false);
+      const body = live(setup, "agent-node-description");
+      expect(body.height).toBeGreaterThanOrEqual(6);
+      await parsedEscape(setup);
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === tree.id);
+      expect(selected(setup, rootPathKey)).toBe(true);
+      expect(rows(tree)).toHaveLength(1);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 test("Agent selection never shows another Skill body before activation", async () => {
   const base = projection();
   const effective = base.effective;
@@ -163,7 +251,7 @@ test("RENDER Agent access opens with folded Use roots and Right reveals one laye
     expect(rows(tree).map((row) => row.id)).toEqual([rowId(rootPathKey)]);
     expect(selected(setup, rootPathKey)).toBe(true);
     expect(setup.captureCharFrame()).toContain("Root description");
-    expect(setup.captureCharFrame()).toContain("Enter expand");
+    expect(setup.captureCharFrame()).toContain("Enter preview");
     await press(setup, "ARROW_RIGHT");
     expect(rows(tree).map((row) => row.id)).toEqual([
       rowId(rootPathKey),
@@ -198,7 +286,7 @@ test("RENDER Agent access disclosure has three real Button cells and never opens
     setup.renderer.destroy();
   }
 });
-test("RENDER Agent access name click only selects and Collection Enter toggles in place", async () => {
+test("Agent name click only selects, Right expands and Enter enters the same object", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
     { width: 80, height: 24 },
@@ -207,11 +295,17 @@ test("RENDER Agent access name click only selects and Collection Enter toggles i
     const tree = await openAgentAccess(setup);
     await clickPart(setup, rootPathKey, "name");
     expect(rows(tree)).toHaveLength(1);
-    await press(setup, "RETURN");
+    await press(setup, "ARROW_RIGHT");
     expect(rows(tree)).toHaveLength(3);
     expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
-    expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeUndefined();
+    expect(!!setup.renderer.root.findDescendantById("collection-detail-pane")).toBe(false);
     await press(setup, "RETURN");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "agent-node-description",
+    );
+    await parsedEscape(setup);
+    expect(rows(tree)).toHaveLength(3);
+    await press(setup, "ARROW_LEFT");
     expect(rows(tree)).toHaveLength(1);
   } finally {
     setup.renderer.destroy();

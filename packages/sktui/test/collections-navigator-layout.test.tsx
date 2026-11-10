@@ -195,16 +195,11 @@ test.each([
       const pane = setup.renderer.root.findDescendantById("collections-list-pane")!;
       const search = setup.renderer.root.findDescendantById("collections-query")!;
       const filter = setup.renderer.root.findDescendantById("collections-filter")!;
-      const toolbar = setup.renderer.root.findDescendantById("collections-tree-controls-pane")!;
+      const more = setup.renderer.root.findDescendantById("collections-browser-more")!;
       const tree = setup.renderer.root.findDescendantById(
         "collection-browser",
       ) as ScrollBoxRenderable;
-      const buttons = [
-        filter,
-        setup.renderer.root.findDescendantById("collection-action-new-collection")!,
-        setup.renderer.root.findDescendantById("collections-expand-all")!,
-        setup.renderer.root.findDescendantById("collections-collapse-all")!,
-      ];
+      const buttons = [filter, more];
       if (process.env.PAGE_INTERACTION_CAPTURE_DIR) {
         await mkdir(process.env.PAGE_INTERACTION_CAPTURE_DIR, { recursive: true });
         await writeFile(
@@ -223,9 +218,9 @@ test.each([
         );
       }
       expect(search.screenY).toBe(filter.screenY);
-      expect(toolbar.screenY).toBe(search.screenY + 2);
-      expect(tree.screenY).toBe(toolbar.screenY + 1);
-      expect(tree.height).toBeGreaterThanOrEqual(pane.height - 5);
+      expect(search.screenY).toBe(more.screenY + 1);
+      expect(tree.screenY).toBe(search.screenY + 1 + (height >= 24 ? 1 : 0));
+      expect(tree.screenY + tree.height).toBe(pane.screenY + pane.height - (height >= 24 ? 1 : 0));
       for (const button of buttons) {
         expect(button).toBeInstanceOf(ButtonRenderable);
         expect(button.screenX).toBeGreaterThanOrEqual(pane.screenX + 1);
@@ -239,20 +234,6 @@ test.each([
         searchControls.screenX + searchControls.width,
       );
       expect(filter.screenY).toBe(search.screenY);
-      const utilityButtons = buttons.slice(1);
-      for (const button of utilityButtons) {
-        expect(button.screenY - (filter.screenY + filter.height)).toBeGreaterThanOrEqual(1);
-        expect(button.screenY).toBe(toolbar.screenY);
-        expect(button.screenX + button.width).toBeLessThanOrEqual(toolbar.screenX + toolbar.width);
-      }
-      for (let index = 1; index < utilityButtons.length; index++)
-        expect(
-          utilityButtons[index]!.screenX -
-            (utilityButtons[index - 1]!.screenX + utilityButtons[index - 1]!.width),
-        ).toBeGreaterThanOrEqual(1);
-      expect(setup.renderer.root.findDescendantById("collections-expand-all")).toBeDefined();
-      expect(setup.renderer.root.findDescendantById("collections-collapse-all")).toBeDefined();
-      expect(setup.captureCharFrame()).toContain("Expand");
       setup.mockInput.pressKey("p", { ctrl: true });
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("palette-choices"));
       const choices = setup.renderer.root.findDescendantById("palette-choices") as SelectRenderable;
@@ -315,7 +296,7 @@ test("Collections navigator preserves deep path, expanded state, query/filter an
     if (expandedRows.status !== "available") throw new Error("Expected Collection tree");
     const deepIndex = expandedRows.rows.findIndex((row) => row.key === path);
     expect(deepIndex).toBeGreaterThanOrEqual(0);
-    await enterLive(setup, "collections-expand-all");
+    await collectionBrowserCommand(setup, "collections.expand-all");
     await setup.flush();
     const deepName = setup.renderer.root.findDescendantById(
       `collection-browser-row-${encodeURIComponent(path)}-name`,
@@ -340,21 +321,7 @@ test("Collections navigator preserves deep path, expanded state, query/filter an
     expect(selectedScroll).toBeGreaterThan(0);
     await parsedEnter(setup);
     await setup.flush();
-    await setup.waitFor(
-      () =>
-        (
-          setup.renderer.root.findDescendantById("collection-detail-pane") as
-            | BoxRenderable
-            | undefined
-        )?.title?.includes("reference-3") === true,
-    );
-    expect(
-      (
-        setup.renderer.root.findDescendantById("collection-detail-pane") as
-          | BoxRenderable
-          | undefined
-      )?.title,
-    ).toContain("reference-3");
+    await setup.waitForFrame((frame) => frame.includes("reference-3"));
     expect(setup.captureCharFrame()).toContain("reference-3");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("route-back"));
     await enterLive(setup, "route-back");
@@ -407,7 +374,7 @@ test("Collections navigator preserves deep path, expanded state, query/filter an
       ),
     ).toBeDefined();
     expect(setup.renderer.root.findDescendantById("collections-query")).toBeDefined();
-    expect(setup.renderer.root.findDescendantById("collections-expand-all")).toBeDefined();
+    expect(setup.renderer.root.findDescendantById("collections-browser-more")).toBeDefined();
     expect(selectedTreeRow(setup, path)).toBe(true);
     expect(restoredFilteredTree.scrollTop).toBe(filteredScroll);
   } catch (error) {
@@ -417,3 +384,4 @@ test("Collections navigator preserves deep path, expanded state, query/filter an
     mounted.dispose();
   }
 });
+import { collectionBrowserCommand } from "./reader-test-controls";

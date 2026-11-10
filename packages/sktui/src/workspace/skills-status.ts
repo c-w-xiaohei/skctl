@@ -35,7 +35,7 @@ export function skillsStatus(
   if (installedSkills.length && !effective.sources.length)
     return {
       title: "Your installed Skills are still here",
-      message: `${installedSkills.length} Skills installed · no Sources configured. Restore your Source declarations to manage these installations.`,
+      message: `${installedSkills.length} Skills installed. No Sources configured. Restore your Source declarations to manage these installations.`,
       action: "configuration" as const,
     };
   const previous = workspace.diagnostics.find((item) => item.code === "PREVIOUS_DATA_FOUND");
@@ -57,7 +57,7 @@ export function skillsStatus(
   if (!installedSkills.length && effective.sources.length)
     return {
       title: "Choose Skills to install",
-      message: `${effective.sources.length} Sources registered · no Skills installed. Discover the Skills available from your Sources.`,
+      message: `${effective.sources.length} Sources registered. No Skills installed. Discover the Skills available from your Sources.`,
       action: "browse-sources" as const,
     };
   if (!agentAccess) return undefined;

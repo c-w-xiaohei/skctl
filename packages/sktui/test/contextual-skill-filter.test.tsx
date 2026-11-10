@@ -69,6 +69,7 @@ test.each([120, 60])(
         values.options.findIndex((option) => option.value === "team-main"),
       );
       expect(setup.renderer.root.findDescendantById("skills-filter-overlay")).toBeDefined();
+      expect(setup.captureCharFrame()).toContain("Applied: team-main");
       await parsedEscape(setup);
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "open-skills-filter",
@@ -80,7 +81,7 @@ test.each([120, 60])(
       ) as SelectRenderable;
       expect(results.options).toHaveLength(1);
       expect(results.getSelectedOption()?.value).toBe(JSON.stringify(["team-main", "guide"]));
-      expect(setup.captureCharFrame()).toContain("Source: team-main");
+      expect(setup.captureCharFrame()).toContain("Filter (1)");
     } finally {
       setup.renderer.destroy();
     }

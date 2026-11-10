@@ -17,8 +17,6 @@ const initialReader = (address: ReaderAddress): ReaderState => ({
   address,
   tab: "skill",
   raw: false,
-  find: "",
-  match: 0,
   scroll: 0,
   detailsScroll: 0,
   resources: [],
@@ -176,7 +174,7 @@ export function createReaderOwner(
   return {
     current,
     cached: (address: ReaderAddress) => snapshot().cache[skillAddressKey(address)],
-    select: (address: ReaderAddress, surface?: "details") => {
+    select: (address: ReaderAddress) => {
       const previous = state();
       const key = skillAddressKey(address);
       const reader = previous.cache[key] ?? initialReader(address);
@@ -185,7 +183,7 @@ export function createReaderOwner(
         activeKey: key,
         cache: {
           ...previous.cache,
-          [key]: surface === "details" ? { ...reader, tab: "details", focus: "reader" } : reader,
+          [key]: reader,
         },
       });
     },
@@ -202,15 +200,17 @@ export function createReaderOwner(
       const restored: ReaderState = {
         ...reader,
         tab: saved.tab,
+        installationOpen: saved.installationOpen,
         raw: saved.raw,
-        find: saved.find,
-        match: saved.match,
         scroll: saved.scroll,
         detailsScroll: saved.detailsScroll,
         detailsDescriptionOpen: saved.detailsDescriptionOpen,
         detailsMetadataOpen: saved.detailsMetadataOpen,
         focus: saved.focus,
         selectedResource: saved.selectedResource,
+        resourceDirectory: saved.resourceDirectory,
+        resourceScrolls: saved.resourceScrolls,
+        resourceListScrolls: saved.resourceListScrolls,
         resourceLevel:
           saved.resourceLevel === "content" &&
           reader.resource !== undefined &&

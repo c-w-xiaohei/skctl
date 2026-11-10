@@ -176,12 +176,14 @@ test("wide Collections retain the browser beside root details without a Back fra
     await enterLive(setup, "collection-browser");
     expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeDefined();
     expect(setup.renderer.root.findDescendantById("route-back")).toBeUndefined();
+    await enterLive(setup, "collection-more");
+    await setup.flush();
     const ownership = setup.renderer.root.findDescendantById("collection-current-details")!;
     expect(ownership).toBeDefined();
     await setup.mockMouse.click(ownership.screenX + 1, ownership.screenY);
     await setup.flush();
     expect(setup.renderer.root.findDescendantById("collection-browser")).toBeDefined();
-    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(true);
+    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(false);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
     );

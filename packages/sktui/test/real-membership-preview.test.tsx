@@ -167,6 +167,7 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
           });
           config = await readFile(join(root, "skctl.jsonc"));
         }
+        await enterLive(setup, "collection-more");
         await enterLive(setup, "collection-current-membership.remove");
       } else {
         await focusLive(setup, "collection-relationships");
@@ -201,9 +202,7 @@ for (const entry of ["single", "checked", "stale-address"] as const) {
       await setup.flush();
       expect(setup.renderer.root.findDescendantById("collection-review-confirm")).toBeUndefined();
       if (entry !== "checked") {
-        expect(setup.renderer.currentFocusedRenderable?.id).toBe(
-          "collection-current-membership.remove",
-        );
+        expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-more");
         expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(
           false,
         );

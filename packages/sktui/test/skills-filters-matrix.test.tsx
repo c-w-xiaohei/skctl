@@ -214,7 +214,7 @@ test("RENDER Skills filter keyboard flow searches native stages and applies Coll
     await setup.renderOnce();
     await chooseByKeyboard(setup, "Collection", "documentation");
     await setup.waitForFrame(
-      (frame) => frame.includes("Skills (1 of 3)") && frame.includes("Collection: documentation"),
+      (frame) => frame.includes("Skills (1 of 3)") && frame.includes("Filter (1)"),
     );
     expect(
       (
@@ -276,7 +276,7 @@ test("RENDER Skills filter mouse selects the exact mounted Collection value", as
     await clickFilterOption(setup, "skills-filter-values", "documentation");
     await parsedEscape(setup);
     await setup.waitForFrame(
-      (frame) => frame.includes("Skills (1 of 3)") && frame.includes("Collection: documentation"),
+      (frame) => frame.includes("Skills (1 of 3)") && frame.includes("Filter (1)"),
     );
     expect(
       (
@@ -300,7 +300,7 @@ test("RENDER Skills filter mouse does not infer a Collection value from row posi
     await clickFilterOption(setup, "skills-filter-values", "engineering");
     await parsedEscape(setup);
     await setup.waitForFrame(
-      (frame) => frame.includes("Skills (2 of 3)") && frame.includes("Collection: engineering"),
+      (frame) => frame.includes("Skills (2 of 3)") && frame.includes("Filter (1)"),
     );
     expect(!!setup.renderer.root.findDescendantById("skills-filter-values")).toBe(false);
   } finally {
@@ -326,8 +326,7 @@ test("RENDER Skills filter physically distinguishes every semantic dimension", a
       await chooseByKeyboard(setup, dimension, value);
       await setup.waitForFrame(
         (frame) =>
-          frame.includes(`Skills (${count.replace("/", " of ")})`) &&
-          frame.includes(`${dimension}: `),
+          frame.includes(`Skills (${count.replace("/", " of ")})`) && frame.includes("Filter (1)"),
       );
       expect(
         (

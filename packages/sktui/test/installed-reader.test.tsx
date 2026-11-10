@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-  InputRenderable,
   BoxRenderable,
   MarkdownRenderable,
   ScrollBoxRenderable,
@@ -24,7 +23,7 @@ import {
   enterLive,
   focusLive,
   openAllInstalledSkills,
-  openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
   waitForReaderBody,
@@ -57,19 +56,9 @@ async function mount(width = 120, height = 40) {
   await waitForReaderBody(setup, "needle in prose");
   return { setup, loads };
 }
-async function find(setup: Setup, query: string) {
-  await enterLive(setup, "reader-find-open");
-  await focusLive(setup, "reader-find");
-  await setup.mockInput.typeText(query);
-  await parsedEnter(setup);
-  await setup.flush();
-}
-async function rawMatch(setup: Setup) {
-  await find(setup, "needle");
-  await setup.waitForFrame((frame) => frame.includes("1/3"));
-  await enterLive(setup, "reader-find-next");
-  expect(setup.captureCharFrame()).toContain("2/3");
-  await enterLive(setup, "open-match-raw");
+async function toggleRaw(setup: Setup) {
+  await enterLive(setup, "reader-more");
+  await enterLive(setup, "reader-menu-raw");
   await setup.flush();
 }
 async function inventory(setup: Setup) {
@@ -120,8 +109,8 @@ test("Installed inventory keeps names primary, exposes problems in Details, and 
       await setup.waitFor(() => browser.getSelectedIndex() === index);
     }
     await parsedEnter(setup);
-    await openReaderTab(setup, 2);
-    await setup.waitForFrame((frame) => frame.includes("team-main/entry-11"));
+    await openInstallation(setup);
+    await setup.waitForFrame((frame) => frame.includes("Path: entry-11"));
     expect(setup.captureCharFrame()).toContain("missing");
     expect(setup.captureCharFrame()).toContain("Source missing");
   } finally {
@@ -159,9 +148,9 @@ test.each([120, 79])(
     try {
       await openAllInstalledSkills(setup);
       await parsedEnter(setup);
-      await openReaderTab(setup, 2);
+      await openInstallation(setup);
       await setup.waitForFrame(
-        (frame) => frame.includes("team-main/guide") && frame.includes("Source missing"),
+        (frame) => frame.includes("Path: guide") && frame.includes("Source missing"),
       );
       expect(setup.captureCharFrame()).toContain("broken-guide");
       expect(setup.captureCharFrame()).toContain("missing");
@@ -171,7 +160,7 @@ test.each([120, 79])(
   },
 );
 
-test("Reader mounts native Markdown once while Find edits structural content", async () => {
+test("Reader retains native Markdown while More opens and closes", async () => {
   const { setup, loads } = await mount();
   try {
     const scrollbox = setup.renderer.root.findDescendantById(
@@ -179,12 +168,12 @@ test("Reader mounts native Markdown once while Find edits structural content", a
     ) as ScrollBoxRenderable;
     const markdown = scrollbox.getChildren().find((child) => child instanceof MarkdownRenderable);
     expect(!!markdown).toBe(true);
-    await find(setup, "needle");
+    await enterLive(setup, "reader-more");
+    await parsedEscape(setup);
     expect(
       scrollbox.getChildren().find((child) => child instanceof MarkdownRenderable) === markdown,
     ).toBe(true);
     expect(loads).toEqual(["guide"]);
-    expect(setup.captureCharFrame()).toContain("1/3");
     expect(setup.captureCharFrame()).not.toContain("title: Guide");
   } finally {
     setup.renderer.destroy();
@@ -210,10 +199,10 @@ test.each([120, 80, 79, 43])(
   },
 );
 
-test("Find reveals the selected raw match and supports native scrolling", async () => {
+test("Markdown source includes the complete file and supports native scrolling", async () => {
   const { setup } = await mount(120, 24);
   try {
-    await rawMatch(setup);
+    await toggleRaw(setup);
     const body = (await focusLive(setup, "reader-scrollbox")) as ScrollBoxRenderable;
     await setup.flush();
     expect(body.scrollHeight).toBeGreaterThan(body.height);
@@ -230,33 +219,28 @@ test("Find reveals the selected raw match and supports native scrolling", async 
   }
 });
 
-test("Reader Find owns slash characters", async () => {
+test("Reader More closes without changing its installed payload", async () => {
   const { setup } = await mount();
   try {
-    await find(setup, "https://example.com");
-    expect((setup.renderer.root.findDescendantById("reader-find") as InputRenderable).value).toBe(
-      "https://example.com",
-    );
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-scrollbox");
+    await enterLive(setup, "reader-more");
+    await parsedEscape(setup);
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-more");
+    await waitForReaderBody(setup, "needle in prose");
   } finally {
     setup.renderer.destroy();
   }
 });
 
-test("Reader retains per-Skill Find, raw mode and match across A B A without reading twice", async () => {
+test("Reader retains per-Skill raw mode across A B A without reading twice", async () => {
   const { setup, loads } = await mount();
   try {
-    await rawMatch(setup);
+    await toggleRaw(setup);
     await inventory(setup);
     await enterInstalledAddress(setup, readerSecondAddress);
     await waitForReaderBody(setup, "other needle");
     await inventory(setup);
     await enterInstalledAddress(setup, readerAddress);
-    await enterLive(setup, "reader-find-open");
-    await setup.waitForFrame((frame) => frame.includes("2/3"));
-    expect((setup.renderer.root.findDescendantById("reader-find") as InputRenderable).value).toBe(
-      "needle",
-    );
+    await setup.waitForFrame((frame) => frame.includes("title: Guide"));
     expect(!!setup.renderer.root.findDescendantById("reader-line-15")).toBe(true);
     expect(loads).toEqual(["guide", "reference"]);
   } finally {
@@ -267,11 +251,12 @@ test("Reader retains per-Skill Find, raw mode and match across A B A without rea
 test("Reader remembers zero after scrolling raw content and Details back to the top", async () => {
   const { setup } = await mount(120, 24);
   try {
-    await rawMatch(setup);
-    for (const tab of [0, 2] as const) {
-      await openReaderTab(setup, tab);
-      if (tab === 2) await enterLive(setup, "reader-details-metadata");
-      const id = tab === 0 ? "reader-scrollbox" : "reader-details";
+    await toggleRaw(setup);
+    for (const id of ["reader-scrollbox", "reader-details"]) {
+      if (id === "reader-details") {
+        await openInstallation(setup);
+        await enterLive(setup, "reader-details-metadata");
+      }
       const body = (await focusLive(setup, id)) as ScrollBoxRenderable;
       await setup.flush();
       body.scrollTo(7);
@@ -282,8 +267,9 @@ test("Reader remembers zero after scrolling raw content and Details back to the 
       await setup.mockMouse.scroll(body.screenX, body.screenY, "up");
       await setup.flush();
       await parsedEscape(setup);
+      if (id === "reader-details") await inventory(setup);
       await enterInstalledAddress(setup, readerAddress);
-      await openReaderTab(setup, tab);
+      if (id === "reader-details") await openInstallation(setup);
       await setup.flush();
       expect((setup.renderer.root.findDescendantById(id) as ScrollBoxRenderable).scrollTop).toBe(0);
     }
@@ -295,7 +281,7 @@ test("Reader remembers zero after scrolling raw content and Details back to the 
 test("Reader state survives a Scope round-trip and repeated responsive changes", async () => {
   const { setup, loads } = await mount();
   try {
-    await rawMatch(setup);
+    await toggleRaw(setup);
     await openMainPage(setup, "settings");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("shell-scope-select"));
     for (const destination of ["global", "project", "global"]) {
@@ -309,15 +295,11 @@ test("Reader state survives a Scope round-trip and repeated responsive changes",
     }
     await openAllInstalledSkills(setup);
     await parsedEnter(setup);
-    await enterLive(setup, "reader-find-open");
     expect(!!setup.renderer.root.findDescendantById("reader-line-15")).toBe(true);
     for (const width of [120, 79, 43, 80, 120]) {
       setup.resize(width, 40);
       await setup.flush();
-      expect((setup.renderer.root.findDescendantById("reader-find") as InputRenderable).value).toBe(
-        "needle",
-      );
-      expect(setup.captureCharFrame()).toContain("2/3");
+      expect(setup.renderer.root.findDescendantById("reader-line-0")).toBeDefined();
       expect(
         (setup.renderer.root.findDescendantById("reader-identity") as TextRenderable).plainText,
       ).toBe("guide");
@@ -335,12 +317,14 @@ test("Reader state survives a Scope round-trip and repeated responsive changes",
   }
 });
 
-test("Reader Details Escape restores the current inventory row", async () => {
+test("Installation Escape restores Content before returning to the current inventory row", async () => {
   const { setup } = await mount();
   try {
-    await openReaderTab(setup, 2);
+    await openInstallation(setup);
     await focusLive(setup, "reader-details");
     await parsedEscape(setup);
+    expect(setup.renderer.root.findDescendantById("reader-details")).toBeUndefined();
+    await inventory(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
@@ -387,9 +371,7 @@ test("Source workspace returns from Reader to the exact installed Skill and Sour
     expect(restoredRow).toBeInstanceOf(BoxRenderable);
     expect(restoredRow.backgroundColor.a).toBeGreaterThan(0);
     expect((restoredRow.getChildren()[0]!.getChildren()[0] as TextRenderable).plainText).toBe("› ");
-    expect(
-      (setup.renderer.root.findDescendantById("source-details-pane") as BoxRenderable).title,
-    ).toBe(readerSecondAddress.source);
+    expect(setup.captureCharFrame()).toContain(readerSecondAddress.source);
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "source-browser");
   } catch (error) {

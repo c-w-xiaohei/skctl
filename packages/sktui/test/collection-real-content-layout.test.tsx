@@ -165,16 +165,13 @@ test("real Collection copy stays inside the terminal and single ownership stays 
       }
       await writeFile(`out/collection-overflow/${width}-members.txt`, setup.captureCharFrame());
     }
-    const ownership = setup.renderer.root.findDescendantById("collection-current-details");
-    if (ownership) {
-      await setup.mockMouse.click(ownership.screenX + 1, ownership.screenY);
-      await setup.flush();
-    }
+    await enterLive(setup, "collection-more");
+    await enterLive(setup, "collection-current-details");
     await writeFile("out/collection-overflow/origin.txt", setup.captureCharFrame());
-    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(true);
+    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(false);
     expect(
       setup.renderer.root.findDescendantById("collection-inspector-surface")!.height,
-    ).toBeLessThanOrEqual(14);
+    ).toBeGreaterThanOrEqual(6);
     expect(setup.renderer.root.findDescendantById("membership.open-owner")).toBeInstanceOf(
       BoxRenderable,
     );
@@ -184,7 +181,7 @@ test("real Collection copy stays inside the terminal and single ownership stays 
       for (const id of ["membership.open-owner"]) {
         const action = setup.renderer.root.findDescendantById(id)!;
         expect(action.screenX + action.width, `${width}: ${id}`).toBeLessThanOrEqual(width - 2);
-        expect(action.screenY + action.height, `${width}: ${id}`).toBeLessThanOrEqual(11);
+        expect(action.screenY + action.height, `${width}: ${id}`).toBeLessThanOrEqual(12);
         expect(action.height).toBe(1);
       }
       const body = setup.renderer.root.findDescendantById(

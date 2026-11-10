@@ -300,7 +300,7 @@ export const resolveEscape = (facts: NavFacts): NavDecision => {
     (facts.focus === "inspector" || facts.focus === "collection-relationships")
   )
     return events({ type: "narrow.show-work-area" }, { type: "focus.request", focus: "browser" });
-  if (facts.focus === "skills-views") return browserLanding(facts);
+  if (facts.focus === "agent-views") return browserLanding(facts);
   if (facts.focus === "agent-preview") return browserLanding(facts);
   if (
     !facts.readerActive &&

@@ -1,4 +1,6 @@
 import type { ConfigDeclarationOwner } from "@skctl/core";
+import { Show } from "solid-js";
+import { useTerminalSize } from "../ui/terminal-size";
 import type { InstalledSkillReview } from "../session";
 import { createModalControlRegistry, useModalControlTraversal } from "../modal-controls";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
@@ -25,19 +27,29 @@ export function InstalledSkillPreviewOverlay(props: {
   useModalControlTraversal(controls, props.onCancel);
   return (
     <ModalShell>
-      <ModalBody>
-        <text>{`${rebind ? "Rebind" : "Uninstall"} Skill preview`}</text>
-        <text>{`Installed Skill: ${props.request.address.source}/${props.request.address.path}`}</text>
-        {rebind && <text>{`Replacement: ${props.request.owner}/${props.request.ownerPath}`}</text>}
+      <ModalBody
+        controls={controls}
+        header={
+          <text
+            height={1}
+            wrapMode="none"
+          >{`${rebind ? "Rebind" : "Uninstall"} Skill preview`}</text>
+        }
+        footer={
+          <ModalCommand
+            id="installed-skill-preview-progress"
+            controls={controls}
+            record={modalCommand("installed.preview.cancel", "Cancel", "Return to previous view")}
+            initialFocus
+            execute={props.onCancel}
+          />
+        }
+      >
+        <text wrapMode="word">{`Installed Skill: ${props.request.address.source}/${props.request.address.path}`}</text>
+        {rebind && (
+          <text wrapMode="word">{`Replacement: ${props.request.owner}/${props.request.ownerPath}`}</text>
+        )}
         <text>{props.cancelling ? "Cancelling preview" : "Reviewing impact"}</text>
-        <ModalCommand
-          id="installed-skill-preview-progress"
-          controls={controls}
-          record={modalCommand("installed.preview.cancel", "Cancel", "Return to previous view")}
-          initialFocus
-          execute={props.onCancel}
-        />
-        <text>Escape Cancel</text>
       </ModalBody>
     </ModalShell>
   );
@@ -56,35 +68,47 @@ export function InstalledSkillPreviewFailureOverlay(props: {
   useModalControlTraversal(controls, props.onCancel);
   return (
     <ModalShell>
-      <ModalBody>
-        <text>{`${rebind ? "Rebind" : "Uninstall"} Skill preview failed`}</text>
-        <text>{`Installed Skill: ${props.request.address.source}/${props.request.address.path}`}</text>
-        {rebind && <text>{`Replacement: ${props.request.owner}/${props.request.ownerPath}`}</text>}
-        {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
+      <ModalBody
+        controls={controls}
+        header={
+          <text
+            height={1}
+            wrapMode="none"
+          >{`${rebind ? "Rebind" : "Uninstall"} Skill preview failed`}</text>
+        }
+        footer={
+          <box flexDirection="row" gap={1} flexShrink={0}>
+            <ModalCommand
+              id="installed-skill-preview-failure-cancel"
+              controls={controls}
+              record={modalCommand("installed.preview.cancel", "Cancel", "Return to previous view")}
+              initialFocus
+              execute={props.onCancel}
+            />
+            <ModalCommand
+              id="installed-skill-preview-failure-retry"
+              controls={controls}
+              record={modalCommand(
+                "installed.preview.retry",
+                props.pending ? "Cancelling" : "Retry",
+                "Repeat this exact preview",
+                !props.pending,
+                false,
+                props.pending ? "Wait for preview settlement" : undefined,
+              )}
+              execute={props.onRetry}
+            />
+          </box>
+        }
+      >
+        <text wrapMode="word">{`Installed Skill: ${props.request.address.source}/${props.request.address.path}`}</text>
+        {rebind && (
+          <text wrapMode="word">{`Replacement: ${props.request.owner}/${props.request.ownerPath}`}</text>
+        )}
+        {props.error && (
+          <text wrapMode="word">{`${props.error.code}: ${props.error.message}`}</text>
+        )}
         {props.cancelling && <text>Cancelling preview</text>}
-        <box flexDirection="column" gap={1} flexShrink={0}>
-          <ModalCommand
-            id="installed-skill-preview-failure-cancel"
-            controls={controls}
-            record={modalCommand("installed.preview.cancel", "Cancel", "Return to previous view")}
-            initialFocus
-            execute={props.onCancel}
-          />
-          <ModalCommand
-            id="installed-skill-preview-failure-retry"
-            controls={controls}
-            record={modalCommand(
-              "installed.preview.retry",
-              props.pending ? "Cancelling" : "Retry",
-              "Repeat this exact preview",
-              !props.pending,
-              false,
-              props.pending ? "Wait for preview settlement" : undefined,
-            )}
-            execute={props.onRetry}
-          />
-        </box>
-        <text>Cancel is selected by default</text>
       </ModalBody>
     </ModalShell>
   );
@@ -99,6 +123,9 @@ export function InstalledSkillReviewOverlay(props: {
   readonly onResolveMembership: (owner: ConfigDeclarationOwner) => void;
   readonly onPreviewAgain?: () => void;
 }) {
+  const terminal = useTerminalSize();
+  const targetLabel = () =>
+    `Installed Skill: ${props.review.address.source}/${props.review.address.path}`;
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, props.onCancel);
   const uninstall = () => props.review.kind === "uninstall";
@@ -138,8 +165,12 @@ export function InstalledSkillReviewOverlay(props: {
         controls={controls}
         header={
           <>
-            <text>{uninstall() ? "Uninstall Skill" : "Rebind Skill"}</text>
-            <text>{`Installed Skill: ${props.review.address.source}/${props.review.address.path}`}</text>
+            <text height={1} wrapMode="none">
+              {uninstall() ? "Uninstall Skill" : "Rebind Skill"}
+            </text>
+            <text height={1} wrapMode="none">
+              {targetLabel()}
+            </text>
           </>
         }
         footer={
@@ -197,6 +228,11 @@ export function InstalledSkillReviewOverlay(props: {
           </box>
         }
       >
+        <Show when={Bun.stringWidth(targetLabel()) > terminal().width - 6}>
+          <text id="installed-review-target" wrapMode="word">
+            {targetLabel()}
+          </text>
+        </Show>
         {lines().map((line) => (
           <text>{line}</text>
         ))}
@@ -215,11 +251,9 @@ export function InstalledSkillReviewOverlay(props: {
               execute={() => props.onResolveMembership(owner)}
             />
           ))}
-        <text>
-          {props.pending
-            ? "Stop is a request; the operation may already have been applied."
-            : "Cancel is selected by default"}
-        </text>
+        {props.pending && (
+          <text>Stop is a request; the operation may already have been applied.</text>
+        )}
       </ModalBody>
     </ModalShell>
   );

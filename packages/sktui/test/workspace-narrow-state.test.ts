@@ -190,26 +190,26 @@ test("ordinary workspace page changes retain their independent Skills view", () 
 
 test("Agent catalog is a page without replacing the Skills view", () => {
   const workspace = createWorkspaceState();
-  workspace.selectSkillsView("unassigned");
+  workspace.setFilter("Membership", "Not in a Collection");
   workspace.selectSection("agent");
-  expect(workspace.skillsView()).toBe("unassigned");
+  expect(workspace.filters().Membership).toBe("Not in a Collection");
   expect(workspace.section()).toBe("agent");
 });
 
 test("workspace page landing retains the selected Skills view", () => {
   const workspace = createWorkspaceState();
-  workspace.selectSkillsView("unassigned");
+  workspace.setFilter("Membership", "Not in a Collection");
   workspace.selectSection("skills");
-  expect(workspace.skillsView()).toBe("unassigned");
+  expect(workspace.filters().Membership).toBe("Not in a Collection");
   expect(workspace.section()).toBe("skills");
 
   workspace.selectSection("collections");
-  expect(workspace.skillsView()).toBe("unassigned");
+  expect(workspace.filters().Membership).toBe("Not in a Collection");
   expect(workspace.section()).toBe("collections");
 
   workspace.land("skills", "team-main/reference");
   expect(workspace.snapshot()).toMatchObject({
-    skillsView: "unassigned",
+    filters: { Membership: "Not in a Collection" },
     section: "skills",
   });
 });

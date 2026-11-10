@@ -18,7 +18,7 @@ import {
   focusLive,
   live,
   openAllInstalledSkills,
-  openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
@@ -104,9 +104,9 @@ test("populated Agent access offers catalog selection and Agent connections dire
     await enterLive(setup, "agent-access-connect");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Harness integrations"));
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-hosts"));
     await enterLive(setup, "route-back");
-    await setup.waitForFrame((frame) => frame.includes("Prepared in the Agent catalog"));
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
   } finally {
     setup.renderer.destroy();
   }
@@ -145,10 +145,12 @@ test("RENDER Agent access Reference full text is adjacent and scrollable; global
     const description = live(setup, "agent-node-description") as ScrollBoxRenderable;
     const pane = setup.renderer.root.findDescendantById("agent-access-pane")!;
     expect(tree.screenY).toBeGreaterThanOrEqual(pane.screenY + 1);
-    expect(tree.screenY + tree.height).toBeLessThanOrEqual(pane.screenY + pane.height - 1);
+    expect(tree.screenY + tree.height).toBeLessThanOrEqual(pane.screenY + pane.height);
     const preview = live(setup, "agent-node-pane");
     expect(description.screenY).toBeGreaterThan(preview.screenY);
-    expect(description.screenY + description.height).toBeLessThan(preview.screenY + preview.height);
+    expect(description.screenY + description.height).toBeLessThanOrEqual(
+      preview.screenY + preview.height,
+    );
     await setup.flush();
     expect(setup.captureCharFrame()).toContain("Reference description owned by reading, not child");
     await press(setup, "\u001b[6~");
@@ -170,7 +172,7 @@ test("RENDER Agent access Reference full text is adjacent and scrollable; global
     setup.renderer.destroy();
   }
 });
-test("RENDER Agent access Reference Enter stays in the tree and optional Details opens its target Collection", async () => {
+test("Agent Reference Enter enters its preview and Open Collection follows its exact target", async () => {
   let contentLoads = 0;
   const setup = await testRender(
     () => (
@@ -190,15 +192,15 @@ test("RENDER Agent access Reference Enter stays in the tree and optional Details
     const tree = await openAgentAccess(setup);
     const startupLoads = contentLoads;
     await focusLive(setup, "current-exposure-browser");
-    await press(setup, "RETURN");
+    await press(setup, "ARROW_RIGHT");
     expect(tree.content.getChildren()).toHaveLength(2);
     await press(setup, "ARROW_DOWN");
     expect(selected(setup, referencePathKey)).toBe(true);
-    // This Reference points to an empty Collection: Enter must not invent children or navigate.
+    // Enter shows this empty Reference's object without inventing children.
     await press(setup, "RETURN");
     expect(tree.content.getChildren()).toHaveLength(2);
-    expect(setup.renderer.currentFocusedRenderable).toBe(tree);
-    expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeUndefined();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("agent-node-description");
+    expect(!!setup.renderer.root.findDescendantById("collection-detail-pane")).toBe(false);
     await enterLive(setup, "agent-access-collection-details");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
     await setup.flush();
@@ -252,7 +254,7 @@ test("RENDER Collection instructions follow the selected target and remain reada
     expect((live(setup, "agent-node-instructions") as TextRenderable).plainText).toBe(
       "Root guidance only.",
     );
-    expect(setup.captureCharFrame()).toContain("Instructions · disclosed on entry");
+    expect(setup.captureCharFrame()).toContain("Instructions");
     await focusLive(setup, "current-exposure-browser");
     await press(setup, "ARROW_RIGHT");
     await press(setup, "ARROW_DOWN");
@@ -487,8 +489,9 @@ test("RENDER Agent access Reader Details targets current B while global batch Ac
     await selectTreeName(setup, skillKey("reference"));
     await press(setup, "RETURN");
     await waitForBody(setup, "Body reference");
-    await openReaderTab(setup, 2);
-    await enterLive(setup, "reader-details-action-skill-uninstall");
+    await openInstallation(setup);
+    await enterLive(setup, "reader-more");
+    await enterLive(setup, "reader-menu-skill-uninstall");
     await setup.waitFor(() => previews.length === 1);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("installed-skill-review-cancel"),

@@ -79,6 +79,7 @@ export function SectionTabs<Value extends string>(props: {
     // Native Tabs adds a List ancestor. Apply known scroll geometry before the
     // next frame so its nested triggers do not remain clipped for one key turn.
     if (viewport && !viewport.isDestroyed) viewport.scrollChildIntoView(`${props.id}-tab-${value}`);
+    if (viewport && viewport.viewport.width >= rowWidth()) return;
     if (revealQueued) return;
     revealQueued = true;
     queueMicrotask(() => {
@@ -321,9 +322,9 @@ export function SectionTabs<Value extends string>(props: {
                   height={1}
                   flexShrink={0}
                   backgroundColor={
-                    focusedValue() === value
+                    props.value === value
                       ? tokens().colors.primary
-                      : props.value === value
+                      : focusedValue() === value
                         ? tokens().colors.surface
                         : "transparent"
                   }
@@ -350,10 +351,14 @@ export function SectionTabs<Value extends string>(props: {
                   }}
                 >
                   <text
-                    content={tabText(option(), props.compact)}
+                    content={
+                      focusedValue() === value
+                        ? `›${tabText(option(), props.compact).slice(1)}`
+                        : tabText(option(), props.compact)
+                    }
                     selectable={false}
                     fg={
-                      focusedValue() === value
+                      props.value === value
                         ? tokens().colors.primaryForeground
                         : tokens().colors.foreground
                     }

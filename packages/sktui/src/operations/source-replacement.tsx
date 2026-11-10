@@ -32,9 +32,29 @@ export function SourceReplacementOverlay(props: {
     <ModalShell>
       <ModalBody
         controls={controls}
-        header={<text>{`Replace Source: ${props.oldSource} → ${props.newSource ?? "?"}`}</text>}
+        header={
+          <text height={1} wrapMode="none">
+            {`Replace Source: ${props.oldSource} → ${props.newSource ?? "?"}`}
+          </text>
+        }
         footer={
           <box flexDirection="row" flexWrap="wrap" gap={1}>
+            <ModalCommand
+              id="replacement-preview"
+              controls={controls}
+              order={30}
+              record={modalCommand(
+                "replacement.preview",
+                "Preview rebind",
+                "Prove same identity",
+                !!props.selectedAddress &&
+                  !!props.targetPath?.trim() &&
+                  !!props.registered &&
+                  !props.uncertain &&
+                  !props.pending,
+              )}
+              execute={() => props.onPreview(props.selectedAddress!, props.targetPath!.trim())}
+            />
             <ModalCommand
               id="replacement-close"
               controls={controls}
@@ -57,6 +77,7 @@ export function SourceReplacementOverlay(props: {
           </box>
         }
       >
+        <text wrapMode="word">{`Old Source: ${props.oldSource}\nReplacement: ${props.newSource ?? "?"}`}</text>
         <text wrapMode="word">
           Old Source and installed Skills remain until explicitly removed. Registration and
           completed changes are not rolled back.
@@ -94,22 +115,6 @@ export function SourceReplacementOverlay(props: {
           ref={useModalControl("replacement-path", controls, 20)}
           value={props.targetPath ?? ""}
           onInput={(path) => props.onDraft(props.selectedAddress, path)}
-        />
-        <ModalCommand
-          id="replacement-preview"
-          controls={controls}
-          order={30}
-          record={modalCommand(
-            "replacement.preview",
-            "Preview rebind",
-            "Prove same identity",
-            !!props.selectedAddress &&
-              !!props.targetPath?.trim() &&
-              !!props.registered &&
-              !props.uncertain &&
-              !props.pending,
-          )}
-          execute={() => props.onPreview(props.selectedAddress!, props.targetPath!.trim())}
         />
         <ModalCommand
           id="replacement-acquire"

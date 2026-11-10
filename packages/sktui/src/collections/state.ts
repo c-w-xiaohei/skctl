@@ -115,16 +115,6 @@ export const collectionMemberKey = (member: {
   readonly address: { readonly source: string; readonly path: string };
 }): string => JSON.stringify([member.name, member.address.source, member.address.path]);
 
-const directOrDerived = (path: MemberOriginPath) =>
-  path.kind === "direct" || path.kind === "repository-derived";
-
-export const unassignedSkills = (projection: WorkspaceView) =>
-  projection.installedSkills.filter((skill) =>
-    skill.collections.every((collection) =>
-      collection.paths.every((path) => !directOrDerived(path)),
-    ),
-  );
-
 const collectionFacts = (projection: WorkspaceView, collection: string) => {
   const skills = new Set<string>();
   let selectors = 0;
@@ -328,8 +318,7 @@ export function createCollectionsState() {
       update((current) => ({
         ...current,
         inspector:
-          current.inspector?.kind === "membership" &&
-          current.inspector.collection === collection &&
+          current.inspector?.collection === collection &&
           tab !== (current.tabs[collection] ?? "members")
             ? undefined
             : current.inspector,

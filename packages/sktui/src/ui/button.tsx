@@ -7,6 +7,7 @@ import { useTheme } from "./use-theme";
 export interface ButtonProps extends Omit<ButtonPrimitive.Props, "children"> {
   intent?: "neutral" | "primary" | "danger" | "quiet" | "menu";
   label: string;
+  wrapLabel?: boolean;
   shortcutHint?: string;
   size?: "compact" | "comfortable";
   /** Composite controls may omit the marker without changing padding or native focus. */
@@ -17,6 +18,7 @@ export function Button(props: ButtonProps) {
     "disabled",
     "intent",
     "label",
+    "wrapLabel",
     "shortcutHint",
     "size",
     "showFocusIndicator",
@@ -61,6 +63,7 @@ export function Button(props: ButtonProps) {
                           : tokens().colors.control
           }
           flexDirection="row"
+          width={recipe.wrapLabel ? "100%" : undefined}
           paddingRight={
             recipe.size === "comfortable"
               ? tokens().density.comfortablePaddingX
@@ -77,7 +80,13 @@ export function Button(props: ButtonProps) {
           >
             {state.focused && recipe.showFocusIndicator !== false ? "›" : " "}
           </text>
-          <text content={recipe.label} wrapMode="none" fg={foreground(state)} />
+          <text
+            content={recipe.label}
+            wrapMode={recipe.wrapLabel ? "word" : "none"}
+            flexGrow={recipe.wrapLabel ? 1 : 0}
+            minWidth={0}
+            fg={foreground(state)}
+          />
           <Show when={recipe.shortcutHint}>
             <text
               marginLeft={2}

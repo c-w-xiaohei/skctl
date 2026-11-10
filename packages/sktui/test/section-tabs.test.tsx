@@ -32,11 +32,13 @@ test("narrow section navigation reveals the complete active tab without clipping
     { width: 43, height: 13 },
   );
   await setup.renderOnce();
+  const viewport = setup.renderer.root.findDescendantById("sections-viewport")!;
   setup.renderer.root.findDescendantById("sections-tab-sources")!.focus();
   for (const next of ["configs", "collections", "integrations"]) {
     setup.mockInput.pressArrow("right");
     await setup.waitFor(() => value() === next);
     await setup.renderOnce();
+    expect(setup.renderer.root.findDescendantById("sections-viewport") === viewport).toBe(true);
     const tab = setup.renderer.root.findDescendantById(`sections-tab-${next}`)!;
     expect(tab.screenX).toBeGreaterThanOrEqual(0);
     expect(tab.screenX + tab.width).toBeLessThanOrEqual(43);
@@ -100,6 +102,15 @@ test("focusing an inactive native tab releases the previous roving stop before i
   setup!.mockInput.pressEnter();
   await setup!.waitFor(() => value() === "sources");
   expect(first.focused).toBe(false);
+});
+
+test("a fully visible tab strip does not queue a frame to reveal its focused tab", async () => {
+  await renderTabs();
+  await setup!.flush();
+  const before = setup!.renderer.listenerCount("frame");
+  setup!.renderer.root.findDescendantById("workspace-section-browser-tab-sources")!.focus();
+  await Promise.resolve();
+  expect(setup!.renderer.listenerCount("frame")).toBe(before);
 });
 
 test("painted tab states have a real separating cell that cannot activate the next tab", async () => {

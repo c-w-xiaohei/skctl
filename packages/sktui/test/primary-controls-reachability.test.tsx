@@ -102,9 +102,8 @@ for (const width of [140, 80, 60]) {
       await expectFocus(setup, "skills-filter-dimensions", "Filter Enter opens dimensions");
       await press(setup, "escape");
       await expectFocus(setup, "open-skills-filter", "Filter Escape restores initiating control");
-      await tabTo(setup, "skills-view-tab-all-installed-skills");
-      await press(setup, "enter");
-      await expectFocus(setup, "installed-skill-browser", "scope Enter returns Browser");
+      await tabTo(setup, "installed-skill-browser");
+      await expectFocus(setup, "installed-skill-browser", "Tab returns to the inventory");
     } finally {
       setup.renderer.destroy();
     }
@@ -134,12 +133,9 @@ for (const width of [140, 80, 60]) {
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
       );
       await tabTo(setup, "collection-current-membership.open-skill");
-      await press(setup, "right");
-      await expectFocus(
-        setup,
-        "collection-current-details",
-        "Right reaches current member Ownership",
-      );
+      await tabTo(setup, "collection-more");
+      await press(setup, "enter");
+      await expectFocus(setup, "collection-current-details", "More exposes member Details");
       await press(setup, "enter");
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),

@@ -1,7 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { Renderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
@@ -51,9 +50,7 @@ test("scope choices navigate only on activation and cancellation restores the tr
   setup!.mockInput.pressArrow("down");
   await setup!.waitFor(() => reopened.getSelectedOption()?.value === "project");
   await parsedEnter(setup!);
-  await setup!.waitFor(
-    () => !!setup!.renderer.root.findDescendantById("settings-section-tab-sources"),
-  );
+  await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("settings-categories"));
   expect(setup!.captureCharFrame()).toContain("Scope: Project");
   expect(setup!.renderer.root.findDescendantById("shell-scope-select")).toBeInstanceOf(Renderable);
   await focusLive(setup!, "shell-scope-select");
@@ -62,7 +59,7 @@ test("scope choices navigate only on activation and cancellation restores the tr
   );
 });
 
-test("top-bar scope and Actions remain inside the terminal at all supported widths", async () => {
+test("Settings Scope follows workspace navigation and Actions remains inside the terminal", async () => {
   await mount();
   await focusLive(setup!, "shell-section-tab-settings");
   await parsedEnter(setup!);
@@ -73,12 +70,13 @@ test("top-bar scope and Actions remain inside the terminal at all supported widt
     await setup!.renderOnce();
     expect(scope.screenX + scope.width).toBeLessThanOrEqual(width);
     expect(actions.screenX + actions.width).toBeLessThanOrEqual(width);
-    expect(scope.screenY).toBeLessThan(3);
+    const navigation = setup!.renderer.root.findDescendantById("workspace-navigation")!;
+    expect(scope.screenY).toBe(navigation.screenY + navigation.height);
     expect(setup!.renderer.root.findDescendantById("shell-scope-select")).toBe(scope);
   }
 });
 
-test("a page-tab pointer entry after choosing Scope cannot reactivate the Scope trigger", async () => {
+test("a category pointer entry after choosing Scope cannot reactivate the Scope trigger", async () => {
   await mount(120, 40);
   await focusLive(setup!, "shell-section-tab-settings");
   await parsedEnter(setup!);
@@ -89,24 +87,19 @@ test("a page-tab pointer entry after choosing Scope cannot reactivate the Scope 
   await setup!.flush();
   await setup!.mockMouse.click(choices.screenX + 5, choices.screenY + 1);
   await parsedEnter(setup!);
-  await setup!.waitFor(
-    () => !!setup!.renderer.root.findDescendantById("settings-section-tab-sources"),
-  );
-  expect(setup!.renderer.root.findDescendantById("settings-section-tab-sources")).toBeInstanceOf(
-    TabsTabRenderable,
-  );
-  const collections = setup!.renderer.root.findDescendantById(
-    "settings-section-tab-collections",
-  ) as TabsTabRenderable;
-  expect(collections.getState().available).toBe(true);
-  await setup!.mockMouse.click(collections.screenX + 2, collections.screenY);
+  await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById("settings-categories"));
+  const categories = setup!.renderer.root.findDescendantById(
+    "settings-categories",
+  ) as SelectRenderable;
+  const index = categories.options.findIndex((option) => option.value === "collections");
+  expect(index).toBeGreaterThanOrEqual(0);
+  await setup!.mockMouse.click(categories.screenX + 2, categories.screenY + index);
   await setup!.renderOnce();
   expect(setup!.renderer.root.findDescendantById("scope-choices")).toBeUndefined();
   expect(setup!.renderer.currentFocusedRenderable?.id).not.toBe("shell-scope-select");
   await parsedEnter(setup!);
   await setup!.waitFor(() => {
-    const tab = setup!.renderer.root.findDescendantById("settings-section-tab-collections");
-    return tab instanceof TabsTabRenderable && tab.getState().selected;
+    return !!setup!.renderer.root.findDescendantById("config-collection-browser");
   });
   expect(setup!.renderer.root.findDescendantById("scope-choices")).toBeUndefined();
 });

@@ -9,7 +9,7 @@ import {
   type WorkspaceSection,
 } from "../types";
 import { filterSkills } from "../skills-filter";
-import { exposurePathKey, unassignedSkills, type ExposurePath } from "../collections/state";
+import { exposurePathKey, type ExposurePath } from "../collections/state";
 import { deriveAgentAccessTree, isAgentAccessPathValid } from "../collections/agent-access-tree";
 import type { ConfigDeclarationOwner, Diagnostic } from "@skctl/core";
 import type { SkillAddress } from "@skctl/core";
@@ -195,7 +195,7 @@ export const problemRows = (projection: WorkspaceView): readonly ProblemRow[] =>
       problem.suggestion,
     ]
       .filter(Boolean)
-      .join(" · ");
+      .join(". ");
     return {
       subject,
       message: problem.message,
@@ -591,14 +591,8 @@ export function createWorkspaceState(
             filters: state.filters,
             source: state.sourceFilter,
           };
-          const currentSkills =
-            state.skillsView === "unassigned" ? unassignedSkills(current) : current.installedSkills;
-          const previousSkills =
-            state.skillsView === "unassigned"
-              ? previous
-                ? unassignedSkills(previous)
-                : []
-              : (previous?.installedSkills ?? []);
+          const currentSkills = current.installedSkills;
+          const previousSkills = previous?.installedSkills ?? [];
           const values = filterSkills(currentSkills, {
             ...options,
             agentStatus: current.effective.agent.status,

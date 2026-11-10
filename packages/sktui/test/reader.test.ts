@@ -2,15 +2,45 @@ import { expect, test } from "bun:test";
 import { SkctlError } from "@skctl/core";
 import { createReaderOwner, type ReaderAddress } from "../src/reader/state";
 import type { TuiCore } from "../src/session";
-import { findLiteralMatches, rawOffsetForMarkdownMatch } from "../src/types";
 import { directSourceCore, testEffects, workspaceProjection } from "./direct-source.fixture";
 import { deferred, installedContent, observeReader, pendingReader } from "./reader-owner.fixture";
 const address = { source: "team-main", path: "guide" };
+test("Reader restores resource navigation for its exact address without restoring stale bytes", () => {
+  const { owner } = pendingReader();
+  owner.select(address);
+  owner.patch({
+    tab: "resources",
+    resourceDirectory: "docs",
+    resourceScrolls: { "docs/guide.md": 15 },
+    selectedResource: "docs/guide.md",
+    resourceLevel: "content",
+    resource: { kind: "text", path: "docs/guide.md", text: "current", format: "text" },
+  });
+  const saved = owner.current()!;
+  owner.patch({ resourceDirectory: "", resourceScrolls: {}, resourceLevel: "list" });
+  owner.select({ ...address, source: "other" });
+  expect(owner.current()?.resourceScrolls).toBeUndefined();
+  owner.restore({
+    ...saved,
+    resource: { kind: "text", path: "docs/guide.md", text: "stale", format: "text" },
+  });
+  expect(owner.current()).toMatchObject({
+    resourceDirectory: "docs",
+    resourceScrolls: { "docs/guide.md": 15 },
+    resourceLevel: "content",
+    resource: { text: "current" },
+  });
+  owner.invalidate(address);
+  owner.restore(saved);
+  expect(owner.current()?.resourceLevel).toBe("list");
+  expect(owner.current()?.resource).toBeUndefined();
+  owner.dispose();
+});
 test("Reader restores per-Skill Details disclosure state without replacing cached bytes", () => {
   const { owner } = pendingReader();
   owner.select(address);
   owner.patch({
-    tab: "details",
+    installationOpen: true,
     detailsMetadataOpen: true,
     detailsDescriptionOpen: true,
     text: "installed prose",
@@ -23,21 +53,8 @@ test("Reader restores per-Skill Details disclosure state without replacing cache
     detailsMetadataOpen: true,
     detailsDescriptionOpen: true,
     text: "installed prose",
-    tab: "details",
+    installationOpen: true,
   });
-});
-test("READ-012 finds literal case-sensitive non-overlapping matches with source positions", () => {
-  expect(findLiteralMatches("one one\r\nOne\n😀one", "one")).toEqual([
-    { offset: 0, line: 0, column: 0 },
-    { offset: 4, line: 0, column: 4 },
-    { offset: 15, line: 2, column: 2 },
-  ]);
-  expect(findLiteralMatches("aaaa", "aa")).toEqual([
-    { offset: 0, line: 0, column: 0 },
-    { offset: 2, line: 0, column: 2 },
-  ]);
-  expect(findLiteralMatches("one", "")).toEqual([]);
-  expect(rawOffsetForMarkdownMatch("---\ntitle: Demo\n---\n# Demo", "# Demo", 0)).toBe(20);
 });
 test("STATE-014/015 replaces only the Reader lane and suppresses stale content failures", async () => {
   let firstAbort = 0;
@@ -69,14 +86,19 @@ test("STATE-014/015 replaces only the Reader lane and suppresses stale content f
   owner.dispose();
   observed.dispose();
 });
-test("Reader selection does not load and Details selection only changes the selected cache view", () => {
+test("Reader selection does not load and installation information belongs to the selected cache view", () => {
   const { owner, loads, lists, reads } = pendingReader();
-  owner.select(address, "details");
-  expect(owner.current()).toMatchObject({ address, tab: "details", focus: "reader" });
-  owner.patch({ find: "retained", text: "installed" });
+  owner.select(address);
+  owner.patch({ installationOpen: true });
+  expect(owner.current()).toMatchObject({ address, tab: "skill", installationOpen: true });
+  owner.patch({ raw: true, text: "installed" });
   owner.select({ ...address, path: "other" });
   owner.select(address);
-  expect(owner.current()).toMatchObject({ tab: "details", find: "retained", text: "installed" });
+  expect(owner.current()).toMatchObject({
+    installationOpen: true,
+    raw: true,
+    text: "installed",
+  });
   expect(loads).toEqual([]);
   expect(lists).toEqual([]);
   expect(reads).toEqual([]);
@@ -486,7 +508,7 @@ test("B failure and explicit retry retain B identity and never reuse A content",
 test("explicit installed refresh retires in-flight content and reloads without resetting reading preferences", async () => {
   const { owner, calls } = pendingContentReads();
   owner.select(address);
-  owner.patch({ tab: "details", raw: true, find: "needle", scroll: 12, detailsScroll: 7 });
+  owner.patch({ installationOpen: true, raw: true, scroll: 12, detailsScroll: 7 });
   const oldRead = owner.load(address);
   owner.invalidate(address);
   calls[0]!.resolve(installedContent(address, "before refresh"));
@@ -499,9 +521,8 @@ test("explicit installed refresh retires in-flight content and reloads without r
   expect(owner.current()).toMatchObject({
     address,
     text: "after refresh",
-    tab: "details",
+    installationOpen: true,
     raw: true,
-    find: "needle",
     scroll: 12,
     detailsScroll: 7,
   });

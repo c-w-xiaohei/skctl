@@ -155,11 +155,11 @@ test.each([
         await setup.renderOnce();
       }
       expect(setup.renderer.currentFocusedRenderable?.id).toBe(firstAction);
-      if (height > 18) setup.mockInput.pressArrow("right");
+      if (height > 18 && width >= 72) setup.mockInput.pressArrow("right");
       setup.mockInput.pressArrow("right");
       await setup.renderOnce();
       const action = setup.renderer.root.findDescendantById(
-        height <= 18 ? "updates-feedback-details" : "updates-check",
+        height <= 18 ? "updates-feedback-details" : width < 72 ? "updates-more" : "updates-check",
       )!;
       expect(setup.renderer.currentFocusedRenderable === action).toBe(true);
       const pane = setup.renderer.root.findDescendantById("updates-page")!;

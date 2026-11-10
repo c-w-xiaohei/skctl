@@ -12,17 +12,22 @@ import {
   focusLive,
   live,
   openAllInstalledSkills,
-  openReaderTab,
+  parsedEscape,
   parsedEnter,
   selectedReaderTab,
 } from "./reader-test-controls";
 
 const firstAddress = { source: "team-main", path: "guide" };
+async function openInstallation(setup: Awaited<ReturnType<typeof testRender>>) {
+  if (setup.renderer.root.findDescendantById("reader-details")) return;
+  await enterLive(setup, "reader-more");
+  await enterLive(setup, "reader-installation-open");
+}
 
 test("Reader cache keeps technical disclosure per address through selection and semantic restore", () => {
   const owner = createReaderOwner(directSourceCore(readerProjection()));
   owner.select(firstAddress);
-  owner.patch({ tab: "details", detailsMetadataOpen: true, detailsDescriptionOpen: true });
+  owner.patch({ installationOpen: true, detailsMetadataOpen: true, detailsDescriptionOpen: true });
   const saved = owner.current()!;
 
   owner.select(readerSecondAddress);
@@ -32,7 +37,7 @@ test("Reader cache keeps technical disclosure per address through selection and 
 
   expect(owner.current()).toMatchObject({
     address: firstAddress,
-    tab: "details",
+    installationOpen: true,
     detailsMetadataOpen: true,
     detailsDescriptionOpen: true,
   });
@@ -60,7 +65,7 @@ test("production App restores expanded technical details on exact relationship B
   try {
     await openAllInstalledSkills(setup);
     await parsedEnter(setup);
-    await openReaderTab(setup, 2);
+    await openInstallation(setup);
     await setup.flush();
     await focusLive(setup, "reader-details-metadata");
     await parsedEnter(setup);
@@ -73,8 +78,7 @@ test("production App restores expanded technical details on exact relationship B
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-pane"));
     await enterLive(setup, "route-back");
 
-    expect(selectedReaderTab(setup)).toBe(2);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details-relationship-source");
+    expect(live(setup, "reader-details")).toBeDefined();
     expect(
       (live(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value,
     ).toBe(JSON.stringify([firstAddress.source, firstAddress.path]));
@@ -91,7 +95,7 @@ test("production App restores expanded technical details on exact relationship B
     );
     expect(setup.captureCharFrame()).toContain("reference");
     expect(selectedReaderTab(setup)).toBe(0);
-    await openReaderTab(setup, 2);
+    await openInstallation(setup);
     await setup.flush();
     expect(
       (live(setup, "reader-details-metadata") as AccordionTriggerRenderable).getState().open,
@@ -104,8 +108,7 @@ test("production App restores expanded technical details on exact relationship B
         (live(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value ===
         JSON.stringify([firstAddress.source, firstAddress.path]),
     );
-    expect(selectedReaderTab(setup)).toBe(0);
-    await openReaderTab(setup, 2);
+    await openInstallation(setup);
     await setup.flush();
     expect(
       (live(setup, "reader-details-metadata") as AccordionTriggerRenderable).getState().open,
@@ -124,7 +127,7 @@ test("compact Reader keeps technical disclosure across resize and details reentr
   try {
     await openAllInstalledSkills(setup);
     await parsedEnter(setup);
-    await openReaderTab(setup, 2);
+    await openInstallation(setup);
     await setup.flush();
     await focusLive(setup, "reader-details-metadata");
     await parsedEnter(setup);
@@ -154,19 +157,19 @@ test("compact Reader keeps technical disclosure across resize and details reentr
       (live(setup, "reader-details-metadata") as AccordionTriggerRenderable).getState().open,
     ).toBe(true);
 
-    await openReaderTab(setup, 0);
+    await parsedEscape(setup);
     await setup.flush();
     expect(selectedReaderTab(setup)).toBe(0);
     expect(live(setup, "reader-scrollbox")).toBeInstanceOf(ScrollBoxRenderable);
-    await openReaderTab(setup, 2);
+    await openInstallation(setup);
     await setup.flush();
     await focusLive(setup, "reader-details-metadata");
     await setup.flush();
     expect(
       (live(setup, "reader-details-metadata") as AccordionTriggerRenderable).getState().open,
     ).toBe(true);
-    await focusLive(setup, "reader-tabs-tab-details");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-tabs-tab-details");
+    await focusLive(setup, "reader-more");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-more");
     expect(live(setup, "reader-details-metadata")).toBeDefined();
   } finally {
     setup.renderer.destroy();

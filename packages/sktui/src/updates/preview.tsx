@@ -45,6 +45,7 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
   const [error, setError] = createSignal(props.unavailableReason);
   const [loading, setLoading] = createSignal(!props.unavailableReason);
   const [index, setIndex] = createSignal(0);
+  const [width, setWidth] = createSignal(0);
   const controller = new AbortController();
   let live = true;
   let root: Renderable | undefined;
@@ -59,7 +60,7 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
     const value = preview();
     return value?.status === "ready" && value.removed;
   };
-  const wide = () => terminal().width >= 100;
+  const wide = () => width() >= 100;
   const close = () => {
     if (!live || controller.signal.aborted) return;
     controller.abort();
@@ -68,7 +69,7 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
   const backRecord = (): CommandRecord => ({
     id: `${props.prefix}.preview-back`,
     verb: "Back to updates",
-    destination: `${props.request.source} · same Skill, filter and checked set`,
+    destination: `Return to ${props.request.source} with the same Skill, filter and checked set`,
     keys: ["enter"],
     scope: "page",
     enabled: true,
@@ -151,10 +152,10 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
   const fileNote = (file: UpdateFileChange) => {
     if (file.content.kind === "unavailable")
       return file.content.reason === "binary"
-        ? "Binary or non-UTF-8 file · text diff unavailable"
+        ? "Binary or non-UTF-8 file. Text diff unavailable."
         : file.content.reason === "too-large"
-          ? "File exceeds 1 MiB · text diff unavailable"
-          : "4 MiB preview limit reached · text diff unavailable";
+          ? "File exceeds 1 MiB. Text diff unavailable."
+          : "4 MiB preview limit reached. Text diff unavailable.";
     if (file.content.before === file.content.after)
       return file.status === "added"
         ? "Empty file added"
@@ -170,8 +171,10 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
       flexGrow={1}
       minHeight={0}
       focusable
+      onSizeChange={() => setWidth(root?.width ?? 0)}
       ref={(target) => {
         root = target;
+        setWidth(target.width);
         bind("pane", target);
         queueMicrotask(() => {
           if (live && !target.isDestroyed) target.focus();
@@ -197,7 +200,7 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
           wrapMode="none"
           fg={theme().colors.mutedForeground}
         >
-          {props.request.source}/{props.request.path || "."} · Changes
+          Changes: {props.request.source}/{props.request.path || "."}
         </text>
       </box>
       <Show when={loading()}>
@@ -218,8 +221,8 @@ export function SkillUpdatePreview(props: SkillUpdatePreviewProps) {
       </Show>
       <Show when={preview()?.status === "ready"}>
         <text height={1} flexShrink={0} wrapMode="none" fg={theme().colors.mutedForeground}>
-          Installed → {props.request.exactRevision?.slice(0, 12)} · {files().length} file
-          {files().length === 1 ? "" : "s"}
+          Installed → {props.request.exactRevision?.slice(0, 12)} ({files().length} file
+          {files().length === 1 ? "" : "s"})
         </text>
         <Show
           when={files().length}

@@ -3,7 +3,8 @@
 import { Dialog as DialogPrimitive } from "@tuiparts/solid/dialog";
 import type { DialogPopupRenderable } from "@tuiparts/core/dialog";
 import type { Renderable } from "@opentui/core";
-import { useRenderer, useTerminalDimensions } from "@opentui/solid";
+import { useRenderer } from "@opentui/solid";
+import { useTerminalSize } from "./terminal-size";
 import { children, createSignal, onCleanup, splitProps } from "solid-js";
 import { tint } from "./theme";
 import { useTheme } from "./use-theme";
@@ -14,7 +15,13 @@ export interface DialogContentProps extends DialogPrimitive.Popup.Props {
   anchor?: () => Renderable | undefined;
 }
 export function Dialog(props: DialogProps) {
-  return <DialogPrimitive.Root {...props} />;
+  // The primitive destroys its own root on cleanup. Let Solid reconcile this
+  // host, rather than attempt to remove that already-detached native root.
+  return (
+    <box flexShrink={0}>
+      <DialogPrimitive.Root {...props} />
+    </box>
+  );
 }
 export function DialogTrigger(props: DialogPrimitive.Trigger.Props) {
   const tokens = useTheme();
@@ -33,7 +40,7 @@ export function DialogContent(props: DialogContentProps) {
   // the child tree once so resizing does not recreate controls or their drafts.
   const content = children(() => recipe.children);
   const tokens = useTheme();
-  const terminal = useTerminalDimensions();
+  const terminal = useTerminalSize();
   const renderer = useRenderer();
   let target: DialogPopupRenderable | undefined;
   const [position, setPosition] = createSignal(

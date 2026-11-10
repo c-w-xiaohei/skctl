@@ -101,13 +101,13 @@ test("dispatcher leaves Backspace and Alt+Left unbound outside a widget", () => 
 test("Tab traverses only the declared mounted zones and reverses at each boundary", () => {
   const shell = {
     workspaceShell: true,
-    tabOrder: ["top-nav", "skills-views", "work-area"] as const,
+    tabOrder: ["top-nav", "agent-views", "work-area"] as const,
   };
   expect(resolve(facts({ ...shell, focus: "top-nav" }), key("tab"))).toEqual({
     kind: "events",
-    events: [{ type: "focus.request", focus: "skills-views" }],
+    events: [{ type: "focus.request", focus: "agent-views" }],
   });
-  expect(resolve(facts({ ...shell, focus: "skills-views" }), key("tab"))).toEqual({
+  expect(resolve(facts({ ...shell, focus: "agent-views" }), key("tab"))).toEqual({
     kind: "events",
     events: [{ type: "focus.request", focus: "work-area" }],
   });
@@ -121,9 +121,9 @@ test("Tab traverses only the declared mounted zones and reverses at each boundar
   });
   expect(resolve(facts({ ...shell, focus: "work-area" }), key("tab", { shift: true }))).toEqual({
     kind: "events",
-    events: [{ type: "focus.request", focus: "skills-views" }],
+    events: [{ type: "focus.request", focus: "agent-views" }],
   });
-  expect(resolve(facts({ ...shell, focus: "skills-views" }), key("tab", { shift: true }))).toEqual({
+  expect(resolve(facts({ ...shell, focus: "agent-views" }), key("tab", { shift: true }))).toEqual({
     kind: "events",
     events: [{ type: "focus.request", focus: "top-nav" }],
   });
@@ -348,11 +348,9 @@ test("Tab includes the reader surface region only when the reader is active", ()
 test("Reader Skill controls traverse their typed order and return to surrounding regions at boundaries", () => {
   const controls = [
     "reader",
-    "input",
-    "reader-raw",
-    "reader-find-previous",
-    "reader-find-next",
-    "open-match-raw",
+    "reader-tabs",
+    "command:reader.more",
+    "command:reader.add-to-collection",
   ] as const;
   for (let index = 0; index < controls.length; index++) {
     const current = facts({
@@ -382,17 +380,17 @@ test("Reader Skill controls traverse their typed order and return to surrounding
   }
 });
 
-test("Raw match handoff keeps the Raw owner and Escape returns through the frame", () => {
+test("Reader menu command traversal returns through the frame on Escape", () => {
   const raw = facts({
-    focus: "reader-raw",
+    focus: "command:reader.more",
     readerActive: true,
     readerTab: "skill",
     canReturn: true,
-    tabOrder: ["reader-raw", "reader-find-previous"],
+    tabOrder: ["command:reader.more", "reader-tabs"],
   });
   expect(resolve(raw, key("tab"))).toEqual({
     kind: "events",
-    events: [{ type: "focus.request", focus: "reader-find-previous" }],
+    events: [{ type: "focus.request", focus: "reader-tabs" }],
   });
   expect(resolve(raw, key("escape"))).toEqual({
     kind: "events",
@@ -515,7 +513,6 @@ test("reader-tabs enter active content before Skills filter navigation", () => {
   for (const [tab, focus] of [
     ["skill", "reader"],
     ["resources", "reader-resource-list"],
-    ["details", "reader"],
   ] as const) {
     const active = facts({
       focus: "reader-tabs",
@@ -599,7 +596,7 @@ test("Details content reaches its first exact command owner before metadata", ()
       facts({
         focus: "reader",
         readerActive: true,
-        readerTab: "details",
+        readerTab: "skill",
         tabOrder: ["reader", "command:skill-add-to-collection", "details-metadata"],
       }),
       key("tab"),
@@ -614,7 +611,7 @@ test("Details traversal uses exact commands, skips absent relationships, and rev
   const withRelationships = facts({
     focus: "command:skill-add-to-collection",
     readerActive: true,
-    readerTab: "details",
+    readerTab: "skill",
     tabOrder: [
       "reader",
       "command:skill-add-to-collection",

@@ -1,3 +1,4 @@
+import { usePageView } from "./page-navigation";
 import {
   InputRenderable,
   Renderable,
@@ -7,7 +8,7 @@ import {
   type BaseRenderable,
 } from "@opentui/core";
 import { batch, createEffect, createMemo, createSignal, onCleanup, Show, untrack } from "solid-js";
-import { useRenderer, useTerminalDimensions } from "@opentui/solid";
+import { useRenderer } from "@opentui/solid";
 import type { CollectionView } from "@skctl/core";
 import {
   collectionFilterDimensions,
@@ -21,6 +22,8 @@ import { Input } from "./ui/input";
 import { useTheme } from "./ui/use-theme";
 import { DataList } from "./ui/data-list";
 import { Pane } from "./ui/pane";
+import { ObjectMenu } from "./object-menu";
+import { useTerminalSize } from "./ui/terminal-size";
 import type { FocusRegistry, FocusTarget } from "./focus";
 import { CollectionDetail } from "./collections/collection-detail";
 import type { CollectionsPageProps } from "./collections/page-props";
@@ -43,25 +46,11 @@ export {
 } from "./collections/relationship-model";
 
 export function CollectionsPage(props: CollectionsPageProps) {
+  const view = usePageView();
   const renderer = useRenderer();
-  const terminal = useTerminalDimensions();
+  const terminal = useTerminalSize();
   const tokens = useTheme();
   const [collectionToolbarWidth, setCollectionToolbarWidth] = createSignal(0);
-  const collectionButtonWidth = (label: string) => label.length + 2 * tokens().density.paddingX;
-  const utilityCaptions = () => {
-    const compact = ["New", "Expand", "Collapse"];
-    const full = ["New Collection", "Expand all", "Collapse all"];
-    const captions: (string | undefined)[] = [...compact];
-    let used = compact.reduce((width, label) => width + collectionButtonWidth(label), 2);
-    full.forEach((label, index) => {
-      const additional = collectionButtonWidth(label) - collectionButtonWidth(compact[index]!);
-      if (used + additional <= collectionToolbarWidth()) {
-        captions[index] = undefined;
-        used += additional;
-      }
-    });
-    return captions;
-  };
   const commandsIn = (pane: string) => {
     const commands: Renderable[] = [];
     const visit = (target: BaseRenderable) => {
@@ -398,7 +387,7 @@ export function CollectionsPage(props: CollectionsPageProps) {
       </box>
     );
   };
-  const detail = (collection: CollectionView | undefined) => {
+  const detail = (collection: (() => CollectionView) | undefined) => {
     if (!collection)
       return (
         <Show
@@ -423,7 +412,7 @@ export function CollectionsPage(props: CollectionsPageProps) {
         >
           <Pane
             id="collection-detail-pane"
-            borderTitle={selectedNavigatorRow()?.collection ?? "Unavailable Collection"}
+            title={selectedNavigatorRow()?.collection ?? "Unavailable Collection"}
           >
             <box id="collection-tree-issue-pane" flexGrow={1} minHeight={0}>
               <NavigatorIssue />
@@ -434,7 +423,7 @@ export function CollectionsPage(props: CollectionsPageProps) {
     return (
       <CollectionDetail
         {...props}
-        collection={collection}
+        collection={collection()}
         issue={selectedNavigatorRow()?.issue}
         cycle={selectedNavigatorRow()?.cycle}
         bind={bind}
@@ -446,12 +435,7 @@ export function CollectionsPage(props: CollectionsPageProps) {
   const BrowserList = () => (
     <Pane
       id="collections-list-pane"
-      borderTitle={
-        props.projection()?.effective.status === "complete"
-          ? `Collections (${collections().length})`
-          : "Collections"
-      }
-      borderBottomTitle={
+      description={
         selectedNavigatorRow()?.issue
           ? selectedNavigatorRow()?.cycle
             ? "Reference cycle. Enter to view contents."
@@ -460,10 +444,61 @@ export function CollectionsPage(props: CollectionsPageProps) {
       }
       width="100%"
     >
+      <box id="collections-heading-pane" height={1} flexShrink={0} flexDirection="row" gap={1}>
+        <text flexGrow={1} minWidth={0} wrapMode="none">
+          <strong>{`Collections (${collections().length})`}</strong>
+        </text>
+        <ObjectMenu
+          id="collections-browser-more"
+          intent="menu"
+          viewControl={false}
+          focusRegistry={props.focusRegistry}
+          registerCommand={props.registerCommand}
+          commands={[
+            ...(props.actions ?? [])
+              .filter((record) => record.id === "new-collection")
+              .map((record) => ({ record, execute: () => props.onAction?.(record.id) })),
+            {
+              record: {
+                id: "collections.expand-all",
+                verb: "Expand all",
+                destination: "All Collection Reference branches",
+                scope: "page",
+                keys: ["enter"],
+                enabled: effective().some((collection) => collection.references.length > 0),
+                danger: false,
+              },
+              execute: expandAll,
+            },
+            {
+              record: {
+                id: "collections.collapse-all",
+                verb: "Collapse all",
+                destination: "All Collection Reference branches",
+                scope: "page",
+                keys: ["enter"],
+                enabled: Object.values(props.collections.expandedPaths()).some(Boolean),
+                danger: false,
+              },
+              execute: collapseAll,
+            },
+          ]}
+        />
+      </box>
       <Show when={effective().length > 0}>
-        <box flexDirection="column" height={3} gap={1} flexShrink={0}>
+        <box
+          flexDirection="column"
+          height={1}
+          flexShrink={0}
+          marginBottom={terminal().height >= 24 ? 1 : 0}
+        >
           <box
             id="collections-search-controls-pane"
+            ref={(target: BoxRenderable) => {
+              collectionToolbar = target;
+              setCollectionToolbarWidth(target.width);
+            }}
+            onSizeChange={() => setCollectionToolbarWidth(collectionToolbar?.width ?? 0)}
             flexDirection="row"
             gap={1}
             height={1}
@@ -523,52 +558,6 @@ export function CollectionsPage(props: CollectionsPageProps) {
                 collectionToolbarWidth() < 46 ? "Clear" : undefined,
               )}
             </Show>
-          </box>
-          <box
-            id="collections-tree-controls-pane"
-            flexDirection="row"
-            gap={1}
-            height={1}
-            flexShrink={0}
-            ref={(target: BoxRenderable) => {
-              collectionToolbar = target;
-              setCollectionToolbarWidth(target.width);
-            }}
-            onSizeChange={() => {
-              setCollectionToolbarWidth(collectionToolbar?.width ?? 0);
-            }}
-          >
-            {managedAction("new-collection", undefined, undefined, utilityCaptions()[0])}
-            {commandZone(
-              "collections-expand-all",
-              {
-                id: "collections.expand-all",
-                keys: ["enter", "return"],
-                verb: "Expand all",
-                destination: "All Collection Reference branches",
-                scope: "page",
-                enabled: effective().some((collection) => collection.references.length > 0),
-                danger: false,
-              },
-              expandAll,
-              false,
-              utilityCaptions()[1],
-            )}
-            {commandZone(
-              "collections-collapse-all",
-              {
-                id: "collections.collapse-all",
-                keys: ["enter", "return"],
-                verb: "Collapse all",
-                destination: "All Collection Reference branches",
-                scope: "page",
-                enabled: Object.values(props.collections.expandedPaths()).some(Boolean),
-                danger: false,
-              },
-              collapseAll,
-              false,
-              utilityCaptions()[2],
-            )}
           </box>
         </box>
       </Show>
@@ -657,11 +646,8 @@ export function CollectionsPage(props: CollectionsPageProps) {
       fallback={
         <box width="100%" minWidth={0} flexDirection="row" flexGrow={1} minHeight={0} gap={1}>
           <box
-            width={
-              props.mode === "wide"
-                ? Math.min(38, Math.max(36, Math.floor(terminal().width * 0.28)))
-                : "100%"
-            }
+            visible={!(view?.available() && view.expanded())}
+            width={props.mode === "wide" ? (props.browserWidth ?? 38) : "100%"}
             flexShrink={0}
             minHeight={0}
           >
@@ -676,7 +662,7 @@ export function CollectionsPage(props: CollectionsPageProps) {
               overflow="hidden"
               flexDirection="column"
             >
-              <Show when={selected()} keyed fallback={detail(undefined)}>
+              <Show when={selected()} fallback={detail(undefined)}>
                 {(collection) => detail(collection)}
               </Show>
             </box>
@@ -693,7 +679,7 @@ export function CollectionsPage(props: CollectionsPageProps) {
   );
   const content = (
     <Show when={props.surface === "detail"} fallback={<CollectionList />}>
-      <Show when={selected()} keyed fallback={detail(undefined)}>
+      <Show when={selected()} fallback={detail(undefined)}>
         {(collection) => detail(collection)}
       </Show>
     </Show>

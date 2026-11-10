@@ -1,12 +1,14 @@
-import {
-  ScrollBoxRenderable,
-  SelectRenderable,
-  type BaseRenderable,
-  type Renderable,
-} from "@opentui/core";
+import { createMemo, createSignal, For, Show, onCleanup, untrack, type JSX } from "solid-js";
+import { ObjectMenu } from "./object-menu";
+import { usePageView } from "./page-navigation";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
-import { createMemo, createSignal, onCleanup, Show } from "solid-js";
-import type { ConfigLevelView, WorkspaceView } from "@skctl/core";
+import { ScrollBoxRenderable, type Renderable } from "@opentui/core";
+import type {
+  ConfigDeclarationOwner,
+  ConfigLevelView,
+  SourceBindingView,
+  WorkspaceView,
+} from "@skctl/core";
 import type { ActionRecord } from "./actions";
 import type {
   CommandExecution,
@@ -19,14 +21,11 @@ import type {
   RouteHandoff,
 } from "./types";
 import type { ConfigReadonly } from "./config/state";
-import type { ConfigDeclarationOwner, SourceBindingView } from "@skctl/core";
-import type { FocusRegistry, FocusTarget } from "./focus";
-import type { NavKey } from "./navigation";
+import type { FocusRegistry } from "./focus";
 import { CommandControl } from "./command-control";
 import { usePageReturn } from "./page-navigation";
 import { DataList } from "./ui/data-list";
 import { Pane } from "./ui/pane";
-import { useTheme } from "./ui/use-theme";
 import { MetadataGrid, type MetadataField } from "./ui/metadata-grid";
 
 type ConfigActionId =
@@ -40,45 +39,34 @@ type ConfigActionId =
   | "check-updates"
   | "add-skills"
   | "remove-source";
-
 type ConfigSource = ConfigLevelView["direct"]["configSources"][number];
-
-type DetailFact = readonly [label: string, value: string];
-const factsText = (facts: readonly DetailFact[]) =>
-  facts.map(([label, value]) => `${label}  ${value}`).join("\n");
-const bindingFacts = (
-  binding: ConfigSource["binding"] | Pick<SourceBindingView, "kind" | "origin" | "root" | "ref">,
-): readonly DetailFact[] => [
-  ["Binding kind", binding.kind],
-  "path" in binding ? ["Local path", binding.path] : ["Canonical Origin", binding.origin],
-  ["Source Root", binding.root],
-  ...("ref" in binding && binding.ref !== undefined ? [["Tracked ref", binding.ref] as const] : []),
-];
-const configSourceDetails = (source: ConfigSource) => ({
-  binding: bindingFacts(source.binding),
-  adoption: [
-    ["Adoption", source.adoption.status],
-    ...(source.adoption.status === "adopted"
-      ? [["Applied commit", source.adoption.commit] as const]
-      : []),
-  ] satisfies DetailFact[],
-});
+const field = (label: string, value: string): MetadataField => ({ label, value, wrap: "word" });
+const categories = [
+  { name: "Sources", value: "sources" },
+  { name: "Config Sources", value: "config-sources" },
+  { name: "Collections", value: "collections" },
+  { name: "Interface", value: "interface" },
+] as const;
 
 export function ConfigPage(props: {
   readonly config: ConfigReadonly;
   readonly overlay?: () => boolean;
   readonly mode?: LayoutMode;
+  readonly browserWidth?: number;
+  readonly interface?: boolean;
+  readonly interfaceContent?: () => JSX.Element;
+  readonly onCategory?: (section: ConfigSection | "interface") => void;
+  readonly onCategories?: () => void;
   readonly registerCommand?: CommandRegistration;
   readonly executeCommand?: CommandExecution;
   readonly handoff?: RouteHandoff;
+  readonly relationshipReturn?: boolean;
   readonly projection: () => WorkspaceView | undefined;
   readonly focusRegistry?: FocusRegistry;
   readonly destination: Exclude<Destination, "workspace">;
   readonly actions: readonly ActionRecord[];
   readonly onSelect: (source: string) => void;
   readonly onAction: (id: ConfigActionId) => void;
-  readonly onOpenConfigSourceInspector?: () => void;
-  readonly onBackConfigSourceInspector?: () => void;
   readonly onCollectionOwner?: (collection: string, owner: ConfigDeclarationOwner) => void;
   readonly onContribution: (
     value:
@@ -96,1078 +84,589 @@ export function ConfigPage(props: {
 }) {
   const renderer = useRenderer();
   const terminal = useTerminalDimensions();
-  const tokens = useTheme();
-  const [pageRoot, setPageRoot] = createSignal<Renderable>();
-  const compactSourceLayout = () =>
-    terminal().height <= 18 &&
-    props.mode !== "wide" &&
-    (section() === "sources" || section() === "config-sources");
-  let workScroll: ScrollBoxRenderable | undefined;
-  const revealWorkCommand = (target: Renderable) => {
-    queueMicrotask(() => {
-      const scroll = workScroll;
-      if (!scroll || scroll.isDestroyed || target.isDestroyed) return;
-      const top = scroll.screenY;
-      const bottom = top + scroll.height;
-      if (target.screenY < top)
-        scroll.scrollTop = Math.max(0, scroll.scrollTop - (top - target.screenY));
-      else if (target.screenY + target.height > bottom)
-        scroll.scrollTop += target.screenY + target.height - bottom;
-      renderer.requestRender();
+  const [root, setRoot] = createSignal<Renderable>();
+  const [category, setCategory] = createSignal<ConfigSection | "interface">(
+    props.config.section(props.destination),
+  );
+  const config = () => props.projection()?.configs.find((item) => item.level === props.destination);
+  const section = createMemo(() => props.config.section(props.destination));
+  const level = () => props.config.snapshot(props.destination).browserLevel;
+  const view = usePageView();
+  const wide = () => props.mode === "wide" && !view?.expanded();
+  const title = () => categories.find((item) => item.value === section())?.name ?? "Settings";
+  const selected = createMemo(() => props.config.selection(props.destination));
+  const scrollKey = () => JSON.stringify([section(), selected()]);
+  const DeclarationBody = (body: { children: JSX.Element }) => {
+    const destination = untrack(() => props.destination);
+    const key = untrack(scrollKey);
+    const offset = untrack(() => props.config.snapshot(destination).scrolls[key] ?? 0);
+    let target: ScrollBoxRenderable | undefined;
+    let restored = false;
+    let frames = 0;
+    const observe = () => {
+      if (!target || target.isDestroyed || props.destination !== destination || scrollKey() !== key)
+        return;
+      if (!restored) {
+        target.scrollTo(offset);
+        restored = target.scrollTop === offset || ++frames >= 3;
+        if (!restored) renderer.requestRender();
+      } else if (!props.overlay?.()) props.config.setScroll(destination, key, target.scrollTop);
+    };
+    renderer.on("frame", observe);
+    onCleanup(() => {
+      renderer.off("frame", observe);
     });
+    return (
+      <scrollbox
+        id="config-declaration-body"
+        ref={(value) => {
+          target = value;
+          bind("work-area", value);
+        }}
+        flexGrow={1}
+        minHeight={0}
+      >
+        {body.children}
+      </scrollbox>
+    );
   };
-  const revealBrowser = (target: SelectRenderable) => {
-    const onFocus = () => revealWorkCommand(target);
-    target.on("focused", onFocus);
-    target.once("destroyed", () => target.off("focused", onFocus));
-  };
-  const config = (): ConfigLevelView | undefined =>
-    props.projection()?.configs.find((item) => item.level === props.destination);
-  const section = () => props.config.section(props.destination);
-  const value = () => config();
-  const sourceItems = () => [
-    ...(value()?.direct.sources ?? []),
-    ...(value()?.contributed.sources ?? []),
+  const sources = () => [
+    ...(config()?.direct.sources ?? []),
+    ...(config()?.contributed.sources ?? []),
   ];
-  const selectedSourceId = () => selection() ?? sourceItems()[0]?.id;
-  const selectedSource = () => sourceItems().find((item) => item.id === selectedSourceId());
+  const source = () => sources().find((item) => item.id === selected());
+  const configSource = () =>
+    config()?.direct.configSources.find((item) => item.owner.pointer === selected());
+  const collection = () => config()?.direct.collections.find((item) => item.id === selected());
+  const use = () => config()?.direct.collectionUse.find((item) => item.collection === selected());
+  const collectionOwner = () =>
+    !use() &&
+    props
+      .projection()
+      ?.configs.flatMap((item) => item.direct.collectionUse)
+      .find((item) => item.collection === selected())?.owner;
   const fileProblem = () => {
-    const file = value()?.file;
+    const file = config()?.file;
     return file && file.status !== "valid" && file.status !== "missing" ? file : undefined;
   };
-  const selection = () => props.config.selection(props.destination, section() as ConfigSection);
-  const backConfigSource = () => {
-    if (props.onBackConfigSourceInspector) props.onBackConfigSourceInspector();
-    else props.config.backConfigSourceSurface(props.destination);
+  const rows = createMemo(() => {
+    if (section() === "sources")
+      return sources().map((item) => ({ name: item.id, description: item.origin, value: item.id }));
+    if (section() === "config-sources")
+      return (config()?.direct.configSources ?? []).map((item) => ({
+        name: item.id,
+        description: item.owner.file,
+        value: item.owner.pointer,
+      }));
+    return [
+      ...(config()?.direct.collections ?? []).map((item) => ({
+        name: item.id,
+        description: item.owner.file,
+        value: item.id,
+      })),
+      ...(config()?.contributed.collections ?? []).map((id) => ({
+        name: id,
+        description: "Contributed Collection",
+        value: id,
+      })),
+    ];
+  });
+  const browserId = () =>
+    section() === "sources"
+      ? "config-source-browser"
+      : section() === "config-sources"
+        ? "config-config-source-browser"
+        : "config-collection-browser";
+  const focus = (id: string) =>
+    queueMicrotask(() => {
+      if (!renderer.isDestroyed && !props.overlay?.())
+        renderer.root.findDescendantById(id)?.focus();
+    });
+  const back = () => {
+    if (!props.interface && !wide() && level() === "object") {
+      props.config.showDeclarations(props.destination);
+      focus(browserId());
+    } else {
+      props.onCategories?.();
+      props.config.showCategories(props.destination);
+      focus("settings-categories");
+    }
   };
-  const handoffText = () => {
-    const handoff = props.handoff;
-    if (!handoff || handoff.kind === "agent-producer" || handoff.owner.level !== props.destination)
-      return undefined;
-    const owner = `${handoff.owner.file} ${handoff.owner.pointer}`;
-    const configSourceOwner = handoff.owner.contribution?.configSource ?? handoff.owner;
-    const configSource = () =>
-      props
-        .projection()
-        ?.configs.find((config) => config.level === configSourceOwner.level)
-        ?.direct.configSources.find(
-          (item) =>
-            item.owner.file === configSourceOwner.file &&
-            item.owner.pointer === configSourceOwner.pointer,
-        );
-    const configSourceFacts = () => {
-      const source = configSource();
-      if (!source) return "Config Source  Unavailable";
-      const facts = configSourceDetails(source);
-      return `Config Source  ${source.id}\n${factsText(facts.adoption.slice(-1))}\n${factsText(facts.binding)}`;
-    };
-    if (handoff.kind === "source-declaration")
-      return `Source declaration  ${handoff.source.id}\nOwner  ${owner}\n${factsText(bindingFacts({ ...handoff.source, ref: handoff.source.ref || undefined }))}`;
-    if (handoff.kind === "source-contribution")
-      return `Config Source host  ${owner}\nContributed Source  ${handoff.source.id}\nContributed declaration  ${handoff.source.contribution?.declaration.pointer ?? "Unavailable"}\n${configSourceFacts()}`;
-    if (handoff.kind === "collection-membership")
-      return `Collection handoff  ${handoff.address.source}/${handoff.address.path}\nCollection  ${handoff.collection}\nOwner  ${owner}`;
-    if (handoff.kind === "agent-membership")
-      return handoff.owner.contribution
-        ? `Agent Membership handoff  ${handoff.collection}:${handoff.entry}\nConfig Source host  ${handoff.owner.contribution.configSource.file} ${handoff.owner.contribution.configSource.pointer}\nContributed declaration  ${handoff.owner.contribution.declaration.pointer ?? "Unavailable"}\n${configSourceFacts()}`
-        : `Agent Membership handoff  ${handoff.collection}:${handoff.entry}\nOwner  ${owner}`;
-    if (handoff.kind === "agent-link")
-      return handoff.owner.contribution
-        ? `Agent Link handoff  ${handoff.collection}->${handoff.linkedCollection}\nConfig Source host  ${handoff.owner.contribution.configSource.file} ${handoff.owner.contribution.configSource.pointer}\nContributed declaration  ${handoff.owner.contribution.declaration.pointer ?? "Unavailable"}\n${configSourceFacts()}`
-        : `Agent Link handoff  ${handoff.collection}->${handoff.linkedCollection}\nOwner  ${owner}`;
-    if (handoff.kind === "agent-use")
-      return `Agent Collection Use handoff  ${handoff.collection}\nOwner  ${owner}`;
-    if (handoff.kind === "uninstall-membership")
-      return `Uninstall Membership handoff  ${handoff.address.source}/${handoff.address.path}\nCollection  ${handoff.collection ?? "Unavailable"}${handoff.entry ? `\nEntry  ${handoff.entry}` : ""}\nOwner  ${owner}\nEdit this exact Membership owner to resolve the blocker.`;
-    return undefined;
-  };
-  const bindings = new Map<string, () => void>();
-  const bind = (
-    owner: Parameters<FocusRegistry["register"]>[0],
-    target: FocusTarget & Pick<BaseRenderable, "once" | "off">,
-  ) => {
-    bindings.get(owner)?.();
-    if (!props.focusRegistry) return;
-    const dispose = props.focusRegistry.register(owner, target);
-    const disposeMode = props.focusRegistry.registerModeHandler(target, (key) =>
-      handleModeKey(owner, target, key),
-    );
-    const release = () => {
-      disposeMode();
-      dispose();
-    };
-    target.once("destroyed", release);
-    bindings.set(owner, () => {
-      target.off("destroyed", release);
-      release();
+  const backRecord = (): CommandRecord => ({
+    id: "config.back",
+    keys: ["enter", "return"],
+    scope: "page",
+    enabled: true,
+    danger: false,
+    verb:
+      !props.interface && !wide() && level() === "object"
+        ? `Back to ${title()}`
+        : "Back to categories",
+    destination: "Settings",
+  });
+  const sharedReturn = usePageReturn(() =>
+    !(view?.available() && view.expanded()) &&
+    !props.relationshipReturn &&
+    (level() !== "categories" || props.interface)
+      ? { record: backRecord(), anchor: root, execute: back }
+      : undefined,
+  );
+  const enter = () => {
+    props.config.openObject(props.destination);
+    if (section() === "config-sources") {
+      props.config.openConfigSourceInspector(props.destination);
+    }
+    queueMicrotask(() => {
+      const primary = renderer.root.findDescendantById(
+        `config-command-${section() === "sources" ? "check-updates" : section() === "config-sources" ? "config-observe" : "set-collection-use"}`,
+      );
+      const first = primary?.focusable ? primary : objectCommands()[0];
+      if (!renderer.isDestroyed && !props.overlay?.())
+        (first ?? renderer.root.findDescendantById("config-declaration-body"))?.focus();
     });
   };
-  onCleanup(() => bindings.forEach((dispose) => dispose()));
-  const selectedConfigSource = () =>
-    value()?.direct.configSources.find((item) => item.owner.pointer === selection()) ??
-    (compactSourceLayout() ? value()?.direct.configSources[0] : undefined);
-  const selectedConfigSourceDetails = createMemo(() => {
-    const source = selectedConfigSource();
-    return source ? { source, ...configSourceDetails(source) } : undefined;
-  });
-  const sharedReturn = usePageReturn(() => {
-    if (fileProblem() || !props.projection()) return undefined;
-    // Owner/selection changes invalidate the previous layer's registered instance.
-    void selection();
-    const sourceInspector =
-      section() === "config-sources" &&
-      props.config.configSourceSurface(props.destination) === "inspector" &&
-      !!selectedConfigSource();
-    if (!sourceInspector) return undefined;
-    const record: CommandRecord = {
-      id: "config.source.back",
-      verb: "Back to Config Sources",
-      destination: "Config Sources",
-      scope: "page",
-      keys: ["enter", "return"],
-      enabled: true,
-      danger: false,
+  const commandTargets = new Set<Renderable>();
+  const objectCommands = () =>
+    [...commandTargets]
+      .filter((target) => {
+        if (target.isDestroyed || !target.parent || !target.focusable) return false;
+        for (let parent: Renderable | null = target.parent; parent; parent = parent.parent)
+          if (parent.id === "config-object-pane") return true;
+        return false;
+      })
+      .sort((left, right) => left.screenY - right.screenY || left.screenX - right.screenX);
+  const chooseCategory = (value: ConfigSection | "interface") => {
+    setCategory(value);
+    props.onCategory?.(value);
+    if (value !== "interface") {
+      props.config.showDeclarations(props.destination);
+      focus(browserId());
+    }
+  };
+  const bind = (owner: FocusOwner, target: Renderable, browser = false) => {
+    const revealNow = () => {
+      if (target.isDestroyed) return;
+      for (let parent = target.parent; parent; parent = parent.parent)
+        if (parent instanceof ScrollBoxRenderable) {
+          parent.scrollChildIntoView(target.id);
+          const bottom = parent.viewport.y + parent.viewport.height;
+          if (target.y + target.height >= bottom)
+            parent.scrollBy(target.y + target.height - bottom + 1);
+        }
     };
-    return {
-      record,
-      anchor: pageRoot,
-      execute: backConfigSource,
+    const reveal = () => {
+      revealNow();
+      renderer.off("frame", revealNow);
+      renderer.once("frame", revealNow);
+      renderer.requestRender();
     };
-  });
-  const selectedCollection = () =>
-    value()?.direct.collections.find((item) => item.id === selection());
-  const selectedCollectionId = () => {
-    const id = selection();
-    return id &&
-      (value()?.direct.collections.some((item) => item.id === id) ||
-        value()?.contributed.collections.includes(id))
-      ? id
+    target.on("focused", reveal);
+    const release = props.focusRegistry?.register(owner, target);
+    const mode = browser
+      ? props.focusRegistry?.registerModeHandler(target, (key) => {
+          if (key.name !== "tab" || key.shift || key.ctrl || key.alt || key.meta) return "declined";
+          enter();
+          return "consumed";
+        })
       : undefined;
+    target.once("destroyed", () => {
+      target.off("focused", reveal);
+      renderer.off("frame", revealNow);
+      release?.();
+      mode?.();
+    });
   };
-  const selectedCollectionUse = () =>
-    value()?.direct.collectionUse.find((item) => item.collection === selection());
-  const collectionOwner = () => {
-    const id = selectedCollectionId();
-    if (!id || selectedCollectionUse()) return undefined;
-    return props
-      .projection()
-      ?.configs.flatMap((config) => config.direct.collectionUse)
-      .find((item) => item.collection === id)?.owner;
-  };
-  const action = (id: ConfigActionId) => props.actions.find((item) => item.id === id);
-  const command = (
-    id: string,
-    record: CommandRecord,
-    execute: () => void,
-    reveal?: (target: Renderable) => void,
-  ) => (
+  const command = (id: string, record: CommandRecord, execute: () => void) => (
     <CommandControl
       id={id}
       record={record}
       keyboard={!props.executeCommand}
+      execute={() => (props.executeCommand ? props.executeCommand(record.id) : execute())}
+      showDisabledReason={false}
       register={(target) => {
-        if (reveal) {
-          const onFocus = () => reveal(target);
-          target.on("focused", onFocus);
-          target.once("destroyed", () => target.off("focused", onFocus));
-        }
         const owner = `command:${record.id}` as const;
         bind(owner, target);
-        return props.registerCommand?.(record, owner, id, execute);
+        commandTargets.add(target);
+        const mode = props.focusRegistry?.registerModeHandler(target, (key) => {
+          if (key.ctrl || key.alt || key.meta || !["up", "down"].includes(key.name))
+            return "declined";
+          const targets = objectCommands();
+          const index = targets.indexOf(target);
+          if (index < 0) return "declined";
+          targets[
+            Math.max(0, Math.min(targets.length - 1, index + (key.name === "down" ? 1 : -1)))
+          ]?.focus();
+          return "consumed";
+        });
+        const release = props.registerCommand?.(record, owner, id, execute);
+        return () => {
+          commandTargets.delete(target);
+          mode?.();
+          release?.();
+        };
       }}
-      execute={() => (props.executeCommand ? props.executeCommand(record.id) : execute())}
     />
   );
-  const actionCommand = (
-    id: ConfigActionId,
-    label?: string,
-    reveal?: (target: Renderable) => void,
-  ) => {
-    const record = action(id);
+  const action = (id: ConfigActionId, label?: string) => {
+    const record = props.actions.find((item) => item.id === id);
     return record
-      ? command(
-          `config-command-${id}`,
-          label ? { ...record, verb: label } : record,
-          () => props.onAction(id),
-          reveal,
+      ? command(`config-command-${id}`, label ? { ...record, verb: label } : record, () =>
+          props.onAction(id),
         )
       : null;
-  };
-  const configSourceUpdate = (reveal?: (target: Renderable) => void) =>
-    actionCommand("config-observe", "Check / review Config update…", reveal);
-  const SourceActions = (options: { readonly compact?: boolean }) => {
-    const reveal = () => (options.compact ? revealWorkCommand : undefined);
-    return (
-      <>
-        <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
-          {actionCommand("check-updates", "Check updates", reveal())}
-          {actionCommand("add-skills", "Find and install…", reveal())}
-          <Show when={options.compact}>{actionCommand("add-source", "Add Source…", reveal())}</Show>
-        </box>
-        <box flexDirection="row" flexWrap="wrap" gap={1} minWidth={0} flexShrink={0}>
-          {actionCommand("remove-source", "Remove Source declaration…", reveal())}
-        </box>
-      </>
-    );
   };
   const localCommand = (id: string, verb: string, destination: string, execute: () => void) =>
     command(
       `config-command-${id}`,
       {
         id,
-        keys: ["enter", "return"],
         verb,
         destination,
+        keys: ["enter", "return"],
         scope: "page",
         enabled: true,
         danger: false,
       },
       execute,
-      compactSourceLayout() ? revealWorkCommand : undefined,
     );
-  const mounted = (owner: FocusOwner) => {
-    const target = props.focusRegistry?.target(owner);
-    return target &&
-      !("isDestroyed" in target && target.isDestroyed) &&
-      !("parent" in target && !target.parent)
-      ? target
-      : undefined;
-  };
-  const enabledCommand = (id: string): FocusOwner | undefined => {
-    const owner = `command:${id}` as const;
-    const target = mounted(owner);
-    return target && "focusable" in target && target.focusable ? owner : undefined;
-  };
-  const controls = (): FocusOwner[] => {
-    const ids =
-      section() === "sources"
-        ? ["check-updates", "add-skills", "remove-source", "add-source"]
-        : section() === "config-sources"
-          ? [
-              "config-observe",
-              "config-forget",
-              "config-remove",
-              ...(!sharedReturn ? ["config.source.back"] : []),
-              "add-config-source",
-            ]
-          : section() === "collections"
-            ? ["set-collection-use", "config.collection.open-owner", "new-collection"]
-            : [];
-    return ids.flatMap((id) => {
-      const owner = enabledCommand(id);
-      return owner ? [owner] : [];
-    });
-  };
-  const enterPrimary = () => {
-    const destination = props.destination;
-    const currentSection = section();
-    queueMicrotask(() => {
-      if (
-        renderer.isDestroyed ||
-        props.overlay?.() ||
-        props.destination !== destination ||
-        section() !== currentSection
-      )
-        return;
-      const selectedAction = controls().find(
-        (owner) =>
-          !["command:add-source", "command:add-config-source", "command:new-collection"].includes(
-            owner,
-          ) &&
-          !owner.endsWith(".back") &&
-          !props.actions.find((record) => `command:${record.id}` === owner)?.danger,
-      );
-      const empty =
-        section() === "sources"
-          ? sourceItems().length === 0
-          : section() === "config-sources"
-            ? !value()?.direct.configSources.length
-            : section() === "collections"
-              ? !value()?.direct.collections.length && !value()?.contributed.collections.length
-              : true;
-      const owner =
-        selectedAction ??
-        (empty ? controls()[0] : undefined) ??
-        (mounted("config-source-contributions") &&
-        selectedConfigSource() &&
-        selectedConfigSource()!.contributed.sources.length +
-          selectedConfigSource()!.contributed.collections.length >
-          0
-          ? "config-source-contributions"
-          : mounted("details-metadata")
-            ? "details-metadata"
-            : "work-area");
-      props.focusRegistry?.applyFocus(owner);
-    });
-  };
-  const enterConfigSource = () => {
-    if (props.onOpenConfigSourceInspector) props.onOpenConfigSourceInspector();
-    else props.config.openConfigSourceInspector(props.destination);
-    enterPrimary();
-  };
-  const enterContributions = () => {
-    const target = mounted("config-source-contributions");
-    return target instanceof SelectRenderable && target.options.length > 0
-      ? props.focusRegistry?.applyFocus("config-source-contributions") === true
-      : false;
-  };
-  const handleModeKey = (owner: FocusOwner, target: FocusTarget, key: NavKey) => {
-    if (
-      props.overlay?.() ||
-      key.ctrl ||
-      key.shift ||
-      key.alt ||
-      key.meta ||
-      key.option ||
-      key.super ||
-      key.hyper
-    )
-      return "declined" as const;
-    if (owner === "browser" && target instanceof SelectRenderable) {
-      if (key.name === "right") {
-        const option = target.options[target.getSelectedIndex()];
-        if (!option) return "consumed" as const;
-        props.onSelect(option.value);
-        if (section() === "config-sources") enterConfigSource();
-        else enterPrimary();
-        return "consumed" as const;
-      }
-      if (key.name === "up" && target.getSelectedIndex() === 0) {
-        const toolbarId =
-          section() === "sources"
-            ? "add-source"
-            : section() === "config-sources"
-              ? "add-config-source"
-              : section() === "collections"
-                ? "new-collection"
-                : undefined;
-        const toolbar = toolbarId && enabledCommand(toolbarId);
-        if (toolbar) props.focusRegistry?.applyFocus(toolbar);
-        return "consumed" as const;
-      }
-      return "declined" as const;
-    }
-    if (
-      owner === "config-source-contributions" &&
-      key.name === "right" &&
-      target instanceof SelectRenderable
-    ) {
-      openContribution(target.options[target.getSelectedIndex()]?.value);
-      return "consumed" as const;
-    }
-    if (
-      (owner === "config-source-contributions" || owner === "inspector") &&
-      target instanceof SelectRenderable &&
-      key.name === "down" &&
-      target.getSelectedIndex() === target.options.length - 1
-    ) {
-      enterPrimary();
-      return "consumed" as const;
-    }
-    if (owner === "details-metadata" && (key.name === "right" || key.name === "enter")) {
-      enterPrimary();
-      return "consumed" as const;
-    }
-    if (owner === "work-area" && (key.name === "right" || key.name === "enter")) {
-      enterPrimary();
-      return "consumed" as const;
-    }
-    if (!owner.startsWith("command:")) return "declined" as const;
-    if (key.name === "right") {
-      if (section() === "config-sources") {
-        if (props.config.configSourceSurface(props.destination) === "list") {
-          enterConfigSource();
-          queueMicrotask(enterContributions);
-        } else enterContributions();
-      } else if (!props.focusRegistry?.applyFocus("details-metadata"))
-        props.focusRegistry?.applyFocus("work-area");
-      return "consumed" as const;
-    }
-    if (key.name !== "up" && key.name !== "down") return "declined" as const;
-    const toolbarId =
-      section() === "sources"
-        ? "add-source"
-        : section() === "config-sources"
-          ? "add-config-source"
-          : section() === "collections"
-            ? "new-collection"
-            : undefined;
-    if (owner === `command:${toolbarId}` && key.name === "down" && mounted("browser")) {
-      props.focusRegistry?.applyFocus("browser");
-      return "consumed" as const;
-    }
-    const sequence = controls();
-    const index = sequence.indexOf(owner);
-    if (index >= 0)
-      props.focusRegistry?.applyFocus(
-        sequence[
-          Math.max(0, Math.min(sequence.length - 1, index + (key.name === "down" ? 1 : -1)))
-        ]!,
-      );
-    return "consumed" as const;
-  };
-  const openContribution = (value: string | undefined) => {
-    const current = selectedConfigSource();
-    if (!current || !value) return;
-    const [kind, index] = value.split(":");
-    if (kind === "source") {
-      const source = current.contributed.sources[Number(index)];
-      if (source) props.onContribution({ kind: "source", source, owner: current.owner });
-    } else {
-      const collection = current.contributed.collections[Number(index)];
-      if (collection)
-        props.onContribution({
-          kind: "collection",
-          collection: collection.id,
-          owner: collection.owner,
-        });
-    }
-  };
-  const sectionIntro = () => {
-    if (section() === "sources")
-      return "Sources declared at this level. Skills are discovered and installed from Sources.";
-    if (section() === "config-sources")
-      return "Config Sources are reusable Configs adopted at this level; they contribute read-only Sources and Collections.";
-    if (section() === "collections")
-      return "Collections group Skills for reuse; select a Collection to manage its Use.";
-    return "Configuration declarations at this level.";
-  };
-  const selectedDetails = createMemo<
-    | {
-        readonly text?: string;
-        readonly fields: readonly MetadataField[];
-      }
-    | undefined
-  >(() => {
-    const field = (label: string, text: string): MetadataField => ({
-      label,
-      value: text || ".",
+  const add = () =>
+    section() === "sources"
+      ? action("add-source", "Add Source…")
+      : section() === "config-sources"
+        ? action("add-config-source", "Add Config Source…")
+        : action("new-collection", "New Collection…");
+  const bindingFields = (
+    binding: ConfigSource["binding"] | Pick<SourceBindingView, "kind" | "origin" | "root" | "ref">,
+  ): MetadataField[] => [
+    field("Kind", binding.kind),
+    {
+      label: "path" in binding ? "Local path" : "Origin",
+      value: "path" in binding ? binding.path : binding.origin,
       wrap: "word",
-    });
-    const bindingField = ([label, text]: DetailFact) =>
-      field(
-        label === "Binding kind"
-          ? "Kind"
-          : label === "Canonical Origin"
-            ? "Origin"
-            : label === "Source Root"
-              ? "Root"
-              : label,
-        text,
-      );
+    },
+    field("Root", binding.root || "."),
+    ...("ref" in binding && binding.ref ? [field("Tracked ref", binding.ref)] : []),
+  ];
+  const ownerFields = (owner: ConfigDeclarationOwner): MetadataField[] => [
+    { label: "Owner", value: `${owner.level} ${owner.file}`, wrap: "word" },
+    { label: "Declaration", value: owner.pointer, wrap: "word" },
+  ];
+  const fields = createMemo<MetadataField[]>(() => {
     if (section() === "sources") {
-      const source = selectedSource();
-      if (!source) return undefined;
-      const direct = value()?.direct.sources.find((item) => item.id === source.id);
-      const owner = source.contribution?.configSource ?? direct?.ref.owner;
-      const trackedRef = typeof source.ref === "string" ? source.ref : direct?.trackedRef;
-      const binding = bindingFacts({ ...source, ref: trackedRef ?? "None" });
-      return {
-        text: `Selected Source  ${source.id}\n${factsText(binding)}\nProvenance  ${source.contribution ? "Config Source" : "Direct"}${owner ? `\n${source.contribution ? "Config Source owner" : "Owner"}  ${owner.level} ${owner.file} ${owner.pointer}` : ""}`,
-        fields: [
-          field("Source", source.id),
-          ...binding.map(bindingField),
-          field(
-            "Editable",
-            source.contribution
-              ? "No · contributed by a Config Source"
-              : "Yes · direct declaration",
-          ),
-          ...(owner
-            ? [field("Owner", `${owner.level} ${owner.file}`), field("Declaration", owner.pointer)]
-            : []),
-        ],
-      };
+      const item = source();
+      if (!item) return [];
+      const direct = config()?.direct.sources.find((source) => source.id === item.id);
+      const owner = item.contribution?.configSource ?? direct?.ref.owner;
+      return [
+        field("Source", item.id),
+        ...bindingFields({
+          ...item,
+          ref: typeof item.ref === "string" ? item.ref : direct?.trackedRef,
+        }),
+        field(
+          "Editable",
+          item.contribution ? "No, contributed by a Config Source" : "Yes, direct declaration",
+        ),
+        ...(owner ? ownerFields(owner) : []),
+      ];
     }
     if (section() === "config-sources") {
-      const facts = selectedConfigSourceDetails();
-      if (!facts) return undefined;
-      const { source } = facts;
-      return {
-        text:
-          source.owner.pointer === selection() && props.handoff?.kind !== "source-contribution"
-            ? `Selected > ${source.id}\nConfig Source  ${source.id}\nOwner  ${source.owner.file} ${source.owner.pointer}\n${factsText(facts.binding)}\n${factsText(facts.adoption.slice(-1))}`
-            : undefined,
-        fields: [
-          field("Config Source", source.id),
-          ...facts.binding.map(bindingField),
-          ...facts.adoption.map(([label, value]) => field(label, value)),
-          field("Owner", source.owner.file),
-          field("Declaration", source.owner.pointer),
-        ],
-      };
+      const item = configSource();
+      if (!item) return [];
+      return [
+        field("Config Source", item.id),
+        ...bindingFields(item.binding),
+        field("Adoption", item.adoption.status),
+        ...(item.adoption.status === "adopted"
+          ? [field("Applied commit", item.adoption.commit)]
+          : []),
+        ...ownerFields(item.owner),
+      ];
     }
-    const collection = section() === "collections" ? selectedCollection() : undefined;
-    return collection
-      ? {
-          text: `Selected Collection  ${collection.id}\nOwner  ${collection.owner.file} ${collection.owner.pointer}`,
-          fields: [],
-        }
-      : undefined;
+    const item = collection();
+    return item ? [field("Collection", item.id), ...ownerFields(item.owner)] : [];
   });
-  const metadata = () => handoffText() ?? selectedDetails()?.text;
-  const Metadata = () => (
-    <Show
-      when={
-        !props.handoff && selectedDetails()?.fields.length ? selectedDetails()?.fields : undefined
-      }
-      fallback={
-        <text selectable wrapMode="word">
-          {metadata()}
-        </text>
-      }
-    >
-      {(fields) => <MetadataGrid fields={fields()} />}
-    </Show>
-  );
-  const splitMetadata = () => props.mode === "wide" && !!metadata() && !fileProblem();
-  const paneTitle = () =>
-    section() === "config-sources"
-      ? "Config Sources"
-      : section() === "sources"
-        ? "Sources"
-        : section() === "collections"
-          ? "Collections"
-          : "Config";
-  const surface = (
-    <box id="config-page-pane" ref={setPageRoot} flexDirection="row" flexGrow={1} minHeight={0}>
-      <Pane
-        id="config-work-area"
-        title={terminal().height < 20 ? undefined : paneTitle()}
-        borderTitle={terminal().height < 20 ? paneTitle() : undefined}
-        width={splitMetadata() ? "43%" : "100%"}
+  const handoffText = () => {
+    const handoff = props.handoff;
+    if (!handoff || handoff.kind === "agent-producer" || handoff.owner.level !== props.destination)
+      return undefined;
+    const owner = handoff.owner;
+    const identity =
+      "source" in handoff
+        ? handoff.source.id
+        : "collection" in handoff
+          ? handoff.collection
+          : undefined;
+    return `${handoff.kind}\n${identity ?? ""}\nOwner  ${owner.file} ${owner.pointer}${owner.contribution ? `\nConfig Source host  ${owner.contribution.configSource.file} ${owner.contribution.configSource.pointer}\nContributed declaration  ${owner.contribution.declaration.pointer ?? "Unavailable"}` : ""}${"address" in handoff ? `\nSkill  ${handoff.address.source}/${handoff.address.path}` : ""}${"entry" in handoff && handoff.entry ? `\nEntry  ${handoff.entry}` : ""}`;
+  };
+  const contributions = () => {
+    const current = configSource();
+    return current
+      ? [
+          ...current.contributed.sources.map((source) => ({
+            name: `Source  ${source.id}`,
+            description: "Contributed read-only Source",
+            open: () => props.onContribution({ kind: "source", source, owner: current.owner }),
+          })),
+          ...current.contributed.collections.map((collection) => ({
+            name: `Collection  ${collection.id}`,
+            description: "Contributed read-only Collection",
+            open: () =>
+              props.onContribution({
+                kind: "collection",
+                collection: collection.id,
+                owner: collection.owner,
+              }),
+          })),
+        ]
+      : [];
+  };
+  return (
+    <box id="config-page-pane" ref={setRoot} flexDirection="row" gap={1} flexGrow={1} minHeight={0}>
+      <Show
+        when={
+          !(view?.available() && view.expanded()) &&
+          (wide() || (!props.interface && level() !== "object"))
+        }
       >
-        <Show
-          when={fileProblem()}
-          fallback={
-            <Show when={props.projection()} fallback={<text>Loading Config…</text>}>
-              <Show
-                when={
-                  compactSourceLayout() &&
-                  (section() === "sources" ? !!selectedSource() : !!selectedConfigSource())
-                }
-              >
-                <text height={1} flexShrink={0} wrapMode="none">
-                  {section() === "sources"
-                    ? `Selected Source  ${selectedSourceId() ?? "None"} · ${selectedSource()?.kind ?? "Source"} · Actions ↓`
-                    : `Selected Config Source  ${selectedConfigSource()?.id ?? "None"} · ${selectedConfigSource()?.binding.kind ?? "binding unavailable"} · Actions ↓`}
-                </text>
-              </Show>
-              <scrollbox
-                ref={(target: ScrollBoxRenderable) => {
-                  workScroll = target;
-                  bind("work-area", target);
-                }}
-                flexGrow={1}
-                minHeight={0}
-              >
-                <Show when={!compactSourceLayout()}>
-                  <text wrapMode="word" fg={tokens().colors.mutedForeground}>
-                    {sectionIntro()}
-                  </text>
-                </Show>
-                <Show when={!compactSourceLayout()}>
-                  <box flexDirection="column" gap={1} marginTop={1} marginBottom={1}>
-                    <Show
-                      when={
-                        !compactSourceLayout() &&
-                        section() === "sources" &&
-                        (value()?.direct.sources.length ?? 0) +
-                          (value()?.contributed.sources.length ?? 0) >
-                          0
-                      }
-                    >
-                      {actionCommand("add-source", "Add Source…")}
-                    </Show>
-                    <Show
-                      when={
-                        section() === "config-sources" && !!value()?.direct.configSources.length
-                      }
-                    >
-                      {actionCommand(
-                        "add-config-source",
-                        "Add Config Source…",
-                        compactSourceLayout() ? revealWorkCommand : undefined,
-                      )}
-                    </Show>
-                    <Show
-                      when={
-                        section() === "collections" &&
-                        (value()?.direct.collections.length ?? 0) +
-                          (value()?.contributed.collections.length ?? 0) >
-                          0
-                      }
-                    >
-                      {actionCommand("new-collection", "New Collection…")}
-                    </Show>
-                  </box>
-                </Show>
-                <Show when={!splitMetadata() && metadata()}>
-                  <Show when={!compactSourceLayout()}>
-                    <box flexDirection="column" marginTop={1} marginBottom={1}>
-                      <Metadata />
-                    </box>
-                  </Show>
-                </Show>
-                <Show when={section() === "sources"} fallback={null}>
-                  <>
-                    <Show
-                      when={
-                        (value()?.direct.sources.length ?? 0) +
-                          (value()?.contributed.sources.length ?? 0) >
-                        0
-                      }
-                      fallback={null}
-                    >
-                      <DataList
-                        id="config-source-browser"
-                        ref={(item: SelectRenderable | undefined) => {
-                          if (!item) return;
-                          revealBrowser(item);
-                          bind("browser", item);
-                        }}
-                        height={
-                          compactSourceLayout() ? 1 : Math.max(3, Math.min(8, sourceItems().length))
-                        }
-                        minHeight={compactSourceLayout() ? 1 : 3}
-                        flexShrink={0}
-                        options={[
-                          ...(value()?.direct.sources ?? []).map((item) => ({
-                            name: `${item.id} · ${item.kind}`,
-                            description: `${item.origin} · ${item.root} · Direct`,
-                            value: item.id,
-                          })),
-                          ...(value()?.contributed.sources ?? []).map((item) => ({
-                            name: `${item.id} · ${item.kind}`,
-                            description: `${item.origin} · ${item.root} · Config Source`,
-                            value: item.id,
-                          })),
-                        ]}
-                        selectedIndex={
-                          selection()
-                            ? sourceItems().findIndex((item) => item.id === selection())
-                            : compactSourceLayout() && sourceItems().length > 0
-                              ? 0
-                              : undefined
-                        }
-                        showDescription={false}
-                        showSelectionIndicator
-                        showScrollIndicator
-                        onChange={(index) => {
-                          props.onSelect(sourceItems()[index]!.id);
-                        }}
-                        onSelect={(index) => {
-                          props.onSelect(sourceItems()[index]!.id);
-                          enterPrimary();
-                        }}
-                      />
-                    </Show>
-                    <Show
-                      when={!value()?.direct.sources.length && !value()?.contributed.sources.length}
-                      fallback={null}
-                    >
-                      <box flexDirection="column">
-                        <text>No Sources yet</text>
-                        <text>Add a Source at this level, then Discover and Install Skills.</text>
-                        {actionCommand(
-                          "add-source",
-                          undefined,
-                          compactSourceLayout() ? revealWorkCommand : undefined,
-                        )}
-                      </box>
-                    </Show>
-                  </>
-                </Show>
-                <Show when={section() === "config-sources"} fallback={null}>
-                  <>
-                    <Show when={(value()?.direct.configSources.length ?? 0) > 0} fallback={null}>
-                      <DataList
-                        id="config-config-source-browser"
-                        ref={(item: SelectRenderable | undefined) => {
-                          if (!item) return;
-                          revealBrowser(item);
-                          bind("browser", item);
-                        }}
-                        height={
-                          compactSourceLayout()
-                            ? 1
-                            : Math.max(3, Math.min(8, value()?.direct.configSources.length ?? 0))
-                        }
-                        minHeight={compactSourceLayout() ? 1 : 3}
-                        flexShrink={0}
-                        options={(value()?.direct.configSources ?? []).map((item) => ({
-                          name: `${item.id} · ${item.binding.kind}`,
-                          description: `${item.owner.file} ${item.owner.pointer}`,
-                          value: item.owner.pointer,
-                        }))}
-                        selectedIndex={
-                          selection()
-                            ? (value()?.direct.configSources ?? []).findIndex(
-                                (item) => item.owner.pointer === selection(),
-                              )
-                            : compactSourceLayout() && value()?.direct.configSources.length
-                              ? 0
-                              : undefined
-                        }
-                        showDescription={false}
-                        showSelectionIndicator
-                        showScrollIndicator
-                        onChange={(index) => {
-                          const item = value()?.direct.configSources[index];
-                          if (item) props.onSelect(item.owner.pointer);
-                        }}
-                        onSelect={(index) => {
-                          const item = value()?.direct.configSources[index];
-                          if (item) {
-                            props.onSelect(item.owner.pointer);
-                            enterConfigSource();
-                          }
-                        }}
-                      />
-                    </Show>
-                    <Show when={!value()?.direct.configSources.length} fallback={null}>
-                      <box flexDirection="column">
-                        <text>No Config Sources yet</text>
-                        <text>Register a reusable Config Source for this level.</text>
-                        {actionCommand(
-                          "add-config-source",
-                          undefined,
-                          compactSourceLayout() ? revealWorkCommand : undefined,
-                        )}
-                      </box>
-                    </Show>
-                    <Show
-                      when={
-                        selectedConfigSource() &&
-                        props.config.configSourceSurface(props.destination) === "inspector"
-                      }
-                      fallback={null}
-                    >
-                      {selectedConfigSource() ? (
-                        <box id="config-source-inspector" flexDirection="column" gap={1}>
-                          <box
-                            id="config-source-update-actions"
-                            flexDirection="row"
-                            flexWrap="wrap"
-                            gap={1}
-                            minWidth={0}
-                            flexShrink={0}
-                          >
-                            {configSourceUpdate(
-                              compactSourceLayout() ? revealWorkCommand : undefined,
-                            )}
-                          </box>
-                          <box
-                            id="config-source-danger-actions"
-                            flexDirection="row"
-                            flexWrap="wrap"
-                            gap={1}
-                            minWidth={0}
-                            flexShrink={0}
-                          >
-                            {actionCommand(
-                              "config-forget",
-                              undefined,
-                              compactSourceLayout() ? revealWorkCommand : undefined,
-                            )}
-                            {actionCommand(
-                              "config-remove",
-                              undefined,
-                              compactSourceLayout() ? revealWorkCommand : undefined,
-                            )}
-                          </box>
-                          <text>{`Config Source  ${selectedConfigSource()!.id}`}</text>
-                          <text>{`Owner  ${selectedConfigSource()!.owner.file} ${selectedConfigSource()!.owner.pointer}`}</text>
-                          <text>{`Binding kind  ${selectedConfigSource()!.binding.kind}`}</text>
-                          {selectedConfigSourceDetails()!
-                            .binding.slice(1)
-                            .flatMap(([label, text]) =>
-                              `${label}  ${text}`.split("\n").map((line) => <text>{line}</text>),
-                            )}
-                          <text>
-                            {factsText(selectedConfigSourceDetails()!.adoption.slice(-1))}
-                          </text>
-                          <text>{`Contributed Sources  ${selectedConfigSource()!.contributed.sources.length}`}</text>
-                          <text>{`Contributed Collections  ${selectedConfigSource()!.contributed.collections.length}`}</text>
-                          <Show when={!sharedReturn}>
-                            {localCommand(
-                              "config.source.back",
-                              "Back to Config Sources",
-                              "Config Sources",
-                              backConfigSource,
-                            )}
-                          </Show>
-                          <DataList
-                            id="config-source-contributions"
-                            ref={(item: SelectRenderable) => {
-                              revealBrowser(item);
-                              bind("config-source-contributions", item);
-                            }}
-                            height={compactSourceLayout() ? 2 : 8}
-                            flexShrink={0}
-                            options={[
-                              ...selectedConfigSource()!.contributed.sources.map(
-                                (source, index) => ({
-                                  name: `Source  ${source.id}`,
-                                  description: "Contributed read-only Source",
-                                  value: `source:${index}`,
-                                }),
-                              ),
-                              ...selectedConfigSource()!.contributed.collections.map(
-                                (collection, index) => ({
-                                  name: `Collection  ${collection.id}`,
-                                  description: "Contributed read-only Collection",
-                                  value: `collection:${index}`,
-                                }),
-                              ),
-                            ]}
-                            showDescription={false}
-                            showSelectionIndicator
-                            showScrollIndicator
-                            onSelect={(_index, option) => openContribution(option?.value)}
-                          />
-                        </box>
-                      ) : null}
-                    </Show>
-                  </>
-                </Show>
-                <Show when={compactSourceLayout() && section() === "sources" && !!selectedSource()}>
-                  <box flexDirection="column" gap={1}>
-                    <SourceActions compact />
-                  </box>
-                </Show>
-                <Show
-                  when={
-                    compactSourceLayout() &&
-                    section() === "config-sources" &&
-                    !!selectedConfigSource() &&
-                    props.config.configSourceSurface(props.destination) === "list"
-                  }
-                >
-                  <box flexDirection="column" gap={1}>
-                    {actionCommand("add-config-source", "Add Config Source…", revealWorkCommand)}
-                    {configSourceUpdate(revealWorkCommand)}
-                  </box>
-                </Show>
-                <Show when={compactSourceLayout() && section() === "sources" && !!selectedSource()}>
-                  <box flexDirection="column">
-                    <Metadata />
-                  </box>
-                </Show>
-                <Show
-                  when={
-                    compactSourceLayout() &&
-                    section() === "config-sources" &&
-                    !!selectedConfigSource()
-                  }
-                >
-                  <box flexDirection="column">
-                    <Metadata />
-                  </box>
-                </Show>
-                <Show when={section() === "collections"} fallback={null}>
-                  <>
-                    <Show
-                      when={
-                        (value()?.direct.collections.length ?? 0) +
-                          (value()?.contributed.collections.length ?? 0) >
-                        0
-                      }
-                      fallback={null}
-                    >
-                      <DataList
-                        id="config-collection-browser"
-                        ref={(item: SelectRenderable) => {
-                          revealBrowser(item);
-                          bind("browser", item);
-                        }}
-                        height={Math.max(
-                          3,
-                          Math.min(
-                            8,
-                            (value()?.direct.collections.length ?? 0) +
-                              (value()?.contributed.collections.length ?? 0),
-                          ),
-                        )}
-                        minHeight={3}
-                        flexShrink={0}
-                        options={[
-                          ...(value()?.direct.collections ?? []).map((item) => ({
-                            name: `${item.id} (${item.owner.level})`,
-                            description: `${item.owner.file} ${item.owner.pointer}`,
-                            value: item.id,
-                          })),
-                          ...(value()?.contributed.collections ?? []).map((item) => ({
-                            name: `${item} (Config Source)`,
-                            description: "Contributed Collection",
-                            value: item,
-                          })),
-                        ]}
-                        selectedIndex={
-                          selection()
-                            ? [
-                                ...(value()?.direct.collections ?? []).map((item) => item.id),
-                                ...(value()?.contributed.collections ?? []),
-                              ].indexOf(selection()!)
-                            : undefined
-                        }
-                        showDescription={false}
-                        showSelectionIndicator
-                        showScrollIndicator
-                        onChange={(index) => {
-                          const collections = [
-                            ...(value()?.direct.collections ?? []).map((item) => item.id),
-                            ...(value()?.contributed.collections ?? []),
-                          ];
-                          const collection = collections[index];
-                          if (collection) props.onSelect(collection);
-                        }}
-                        onSelect={(index) => {
-                          const collections = [
-                            ...(value()?.direct.collections ?? []).map((item) => item.id),
-                            ...(value()?.contributed.collections ?? []),
-                          ];
-                          const collection = collections[index];
-                          if (collection) {
-                            props.onSelect(collection);
-                            enterPrimary();
-                          }
-                        }}
-                      />
-                    </Show>
-                    <Show when={!!selectedCollectionId()} fallback={null}>
-                      <box
-                        id="config-collection-commands"
-                        flexDirection="row"
-                        flexWrap="wrap"
-                        gap={1}
-                        minWidth={0}
-                        flexShrink={0}
-                      >
-                        {!!(selectedCollection() || selectedCollectionUse()) &&
-                          actionCommand("set-collection-use")}
-                        {!!collectionOwner() &&
-                          localCommand(
-                            "config.collection.open-owner",
-                            "Open Collection Use owner",
-                            `${collectionOwner()!.level} ${collectionOwner()!.file} ${collectionOwner()!.pointer}`,
-                            () => {
-                              const owner = collectionOwner();
-                              const id = selection();
-                              if (owner && id) props.onCollectionOwner?.(id, owner);
-                            },
-                          )}
-                      </box>
-                    </Show>
-                    <Show
-                      when={
-                        !value()?.direct.collections.length &&
-                        !value()?.contributed.collections.length
-                      }
-                      fallback={null}
-                    >
-                      <box flexDirection="column">
-                        <text>No Collections yet</text>
-                        <text>Collections group Skills for reuse and agent disclosure.</text>
-                        {actionCommand("new-collection")}
-                      </box>
-                    </Show>
-                  </>
-                </Show>
-              </scrollbox>
-            </Show>
-          }
-        >
-          {(file) => (
-            <scrollbox
-              id="config-file-problem"
-              ref={(target) => bind("work-area", target)}
-              flexGrow={1}
-              minHeight={0}
-              paddingTop={1}
-            >
-              <text>Read-only Config</text>
-              <text>{`File  ${file().file}`}</text>
-              <text>{`Status  ${file().status}`}</text>
-              <text>{`Code  ${file().problem?.code ?? "Unavailable"}`}</text>
-              <text>{`Message  ${file().problem?.message ?? "Configuration cannot be read"}`}</text>
-              <Show when={file().problem?.location?.pointer} fallback={null}>
-                {(pointer) => <text>{`Pointer  ${pointer()}`}</text>}
-              </Show>
-              <Show when={file().problem?.suggestion} fallback={null}>
-                {(suggestion) => <text>{`Suggestion  ${suggestion()}`}</text>}
-              </Show>
-              <text>Mutations disabled: repair this Config before editing it.</text>
-            </scrollbox>
-          )}
-        </Show>
-        <Show when={!compactSourceLayout() && !splitMetadata() && !fileProblem() && !!metadata()}>
-          <box
-            flexDirection="column"
-            gap={1}
-            flexShrink={0}
-            border={["top"]}
-            borderColor={tokens().colors.border}
+        <box width={wide() ? (props.browserWidth ?? 38) : "100%"} flexShrink={0} minHeight={0}>
+          <Pane
+            id="config-browser-pane"
+            title={level() === "categories" || props.interface ? "Settings" : title()}
           >
-            <Show when={section() === "sources"}>
-              <SourceActions />
-            </Show>
             <Show
-              when={
-                section() === "config-sources" &&
-                props.config.configSourceSurface(props.destination) === "list"
+              when={level() === "categories" || props.interface}
+              fallback={
+                <>
+                  <box height={1} flexShrink={0}>
+                    {localCommand("config.categories", "Categories", "Settings", () => {
+                      props.config.showCategories(props.destination);
+                      focus("settings-categories");
+                    })}
+                  </box>
+                  <Show
+                    when={!fileProblem() && props.projection()}
+                    fallback={
+                      <Show when={!props.projection()}>
+                        <text>Loading Config…</text>
+                      </Show>
+                    }
+                  >
+                    <box height={1} flexShrink={0} marginBottom={terminal().height >= 24 ? 1 : 0}>
+                      {add()}
+                    </box>
+                    <DataList
+                      id={browserId()}
+                      ref={(target) => bind("browser", target, true)}
+                      flexGrow={1}
+                      minHeight={0}
+                      options={rows()}
+                      selectedIndex={Math.max(
+                        0,
+                        rows().findIndex((row) => row.value === selected()),
+                      )}
+                      showDescription={false}
+                      onChange={(index) => {
+                        const row = rows()[index];
+                        if (row) props.onSelect(row.value);
+                      }}
+                      onSelect={(index) => {
+                        const row = rows()[index];
+                        if (row) props.onSelect(row.value);
+                        enter();
+                      }}
+                    />
+                    <Show when={!rows().length}>
+                      <text>No {title()} yet</text>
+                    </Show>
+                  </Show>
+                  <Show when={fileProblem()}>
+                    <text>Read-only Config</text>
+                    {localCommand("config.problem", "View problem", "Config file", enter)}
+                  </Show>
+                </>
               }
             >
-              <text fg={tokens().colors.mutedForeground}>UPDATE THIS CONFIG SOURCE</text>
-              {configSourceUpdate()}
+              <DataList
+                id="settings-categories"
+                marginTop={terminal().height >= 24 ? 1 : 0}
+                flexGrow={1}
+                options={categories.map((item) => ({ ...item, description: "" }))}
+                selectedIndex={categories.findIndex((item) => item.value === category())}
+                showDescription={false}
+                ref={(target) => bind("browser", target)}
+                onChange={(index) => setCategory(categories[index]!.value)}
+                onSelect={(index) => chooseCategory(categories[index]!.value)}
+              />
             </Show>
-          </box>
-        </Show>
-      </Pane>
-      <Show when={splitMetadata()}>
-        <Pane id="config-metadata-pane" title="Declaration details" width="57%">
-          <scrollbox
-            id="config-declaration-metadata"
-            flexGrow={1}
-            minHeight={0}
-            ref={(target) => bind("details-metadata", target)}
-          >
-            <Metadata />
-            <text fg={tokens().colors.mutedForeground} wrapMode="word" marginTop={1}>
-              Changes apply to the owning Config. Contributions from Config Sources remain read-only
-              here.
-            </text>
-          </scrollbox>
-          <Show when={section() === "sources"}>
-            <box
-              flexDirection="column"
-              gap={1}
-              flexShrink={0}
-              border={["top"]}
-              borderColor={tokens().colors.border}
-            >
-              <SourceActions />
-            </box>
-          </Show>
+          </Pane>
+        </box>
+      </Show>
+      <Show
+        when={
+          wide() ||
+          (view?.available() && view.expanded()) ||
+          props.interface ||
+          level() === "object"
+        }
+      >
+        <box flexGrow={1} flexBasis={0} minWidth={0} minHeight={0}>
           <Show
-            when={
-              section() === "config-sources" &&
-              props.config.configSourceSurface(props.destination) === "list"
+            when={props.interface}
+            fallback={
+              <Pane
+                id="config-object-pane"
+                title={
+                  selected()
+                    ? (rows().find((row) => row.value === selected())?.name ?? title())
+                    : title()
+                }
+              >
+                <Show when={!sharedReturn && level() !== "categories"}>
+                  {command("config-back", backRecord(), back)}
+                </Show>
+                <Show when={!fileProblem() && !!props.projection()}>
+                  <box
+                    id="config-object-actions"
+                    marginBottom={terminal().height >= 24 ? 1 : 0}
+                    height={1}
+                    flexShrink={0}
+                    flexDirection="row"
+                    gap={1}
+                  >
+                    <Show when={section() === "config-sources" && configSource()}>
+                      {action("config-observe", "Review update…")}
+                    </Show>
+                    <Show when={section() === "sources" && source()}>
+                      {action("check-updates", "Check updates")}
+                    </Show>
+                    <Show when={section() === "collections" && (collection() || use())}>
+                      {action("set-collection-use")}
+                    </Show>
+                    <ObjectMenu
+                      id="config-more"
+                      target={`${props.destination}:${scrollKey()}`}
+                      focusRegistry={props.focusRegistry}
+                      registerCommand={props.registerCommand}
+                    />
+                  </box>
+                </Show>
+                <Show when={`${props.destination}:${scrollKey()}`} keyed>
+                  {(_identity) => (
+                    <DeclarationBody>
+                      <Show when={props.projection()} fallback={<text>Loading Config…</text>}>
+                        <Show
+                          when={fileProblem()}
+                          fallback={
+                            <>
+                              <Show when={handoffText()}>
+                                {(text) => <text wrapMode="word">{text()}</text>}
+                              </Show>
+                              <MetadataGrid fields={fields()} />
+                              <Show when={!fields().length}>
+                                <text>Select a declaration from {title()}.</text>
+                              </Show>
+                              <Show when={section() === "sources" && source()}>
+                                {action("add-skills", "Find and install…")}
+                                {action("remove-source", "Remove Source declaration…")}
+                              </Show>
+                              <Show when={section() === "config-sources" && configSource()}>
+                                <box id="config-source-inspector" flexDirection="column" gap={1}>
+                                  {action("config-forget")}
+                                  {action("config-remove")}
+                                  <text>{`Contributed Sources  ${configSource()!.contributed.sources.length}`}</text>
+                                  <text>{`Contributed Collections  ${configSource()!.contributed.collections.length}`}</text>
+                                  <Show when={contributions().length}>
+                                    <box
+                                      id="config-contributions-pane"
+                                      flexDirection="column"
+                                      flexShrink={0}
+                                    >
+                                      <DataList
+                                        id="config-source-contributions"
+                                        height={Math.min(
+                                          8,
+                                          Math.max(2, terminal().height - 7),
+                                          Math.max(2, contributions().length),
+                                        )}
+                                        ref={(target) =>
+                                          bind("config-source-contributions", target)
+                                        }
+                                        showDescription={false}
+                                        options={contributions().map((item, index) => ({
+                                          name: item.name,
+                                          description: item.description,
+                                          value: String(index),
+                                        }))}
+                                        onSelect={(index) => contributions()[index]?.open()}
+                                      />
+                                    </box>
+                                  </Show>
+                                </box>
+                              </Show>
+                              <Show when={section() === "collections" && collectionOwner()}>
+                                {(owner) =>
+                                  localCommand(
+                                    "config.collection.open-owner",
+                                    "Open Collection Use owner",
+                                    `${owner().file} ${owner().pointer}`,
+                                    () => {
+                                      if (selected())
+                                        props.onCollectionOwner?.(selected()!, owner());
+                                    },
+                                  )
+                                }
+                              </Show>
+                              <For
+                                each={props.actions.filter(
+                                  (item) => !item.enabled && item.disabledReason,
+                                )}
+                              >
+                                {(item) => (
+                                  <Show
+                                    when={
+                                      section() === "sources"
+                                        ? item.id === "remove-source"
+                                        : section() === "config-sources"
+                                          ? item.id === "config-remove"
+                                          : item.id === "set-collection-use"
+                                    }
+                                  >
+                                    <text wrapMode="word">{item.disabledReason}</text>
+                                  </Show>
+                                )}
+                              </For>
+                            </>
+                          }
+                        >
+                          {(file) => (
+                            <box id="config-file-problem" flexDirection="column">
+                              <text>Read-only Config</text>
+                              <text>{`File  ${file().file}`}</text>
+                              <text>{`Status  ${file().status}`}</text>
+                              <text>{`Code  ${file().problem?.code ?? "Unavailable"}`}</text>
+                              <text>{`Message  ${file().problem?.message ?? "Configuration cannot be read"}`}</text>
+                              <Show when={file().problem?.location?.pointer}>
+                                {(pointer) => <text>{`Pointer  ${pointer()}`}</text>}
+                              </Show>
+                              <Show when={file().problem?.suggestion}>
+                                {(suggestion) => <text>{`Suggestion  ${suggestion()}`}</text>}
+                              </Show>
+                              <text>Mutations disabled: repair this Config before editing it.</text>
+                            </box>
+                          )}
+                        </Show>
+                      </Show>
+                    </DeclarationBody>
+                  )}
+                </Show>
+              </Pane>
             }
           >
-            <box
-              flexDirection="column"
-              flexShrink={0}
-              border={["top"]}
-              borderColor={tokens().colors.border}
-            >
-              <text fg={tokens().colors.mutedForeground}>UPDATE THIS CONFIG SOURCE</text>
-              {configSourceUpdate()}
-            </box>
+            {props.interfaceContent?.()}
           </Show>
-        </Pane>
+        </box>
       </Show>
     </box>
   );
-  return surface;
 }

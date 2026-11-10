@@ -21,16 +21,17 @@ import {
   createCollectionsState,
   currentExposureRows,
   exposureHierarchy,
-  unassignedSkills,
 } from "../src/collections/state";
 import { filterProblemRows, problemRowKey, problemRows } from "../src/workspace/state";
 import { selectScrollOffset, setSelectScrollOffset } from "../src/select-scroll";
 import { skillAddressKey } from "../src/types";
+import { filterSkills } from "../src/skills-filter";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import {
   enterLive,
+  openWorkspaceProblems,
   focusLive,
-  openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
@@ -52,8 +53,8 @@ async function openSkillView(
   setup: Awaited<ReturnType<typeof testRender>>,
   view: "current-exposure" | "problems",
 ) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById(`skills-view-tab-${view}`));
-  await enterLive(setup, `skills-view-tab-${view}`);
+  if (view === "problems") await openWorkspaceProblems(setup);
+  else await openMainPage(setup, "agent");
   await setup.waitFor(
     () =>
       !!setup.renderer.root.findDescendantById(
@@ -1001,9 +1002,10 @@ test("RENDER Problems uses native search and filters, routes subjects, and keeps
     setup.mockInput.pressArrow("up");
     await setup.renderOnce();
     await parsedEnter(setup);
-    await openReaderTab(setup, 2);
+    await openInstallation(setup);
     await setup.flush();
-    expect(setup.captureCharFrame()).toContain("team/guide");
+    expect(setup.captureCharFrame()).toContain("Source: team");
+    expect(setup.captureCharFrame()).toContain("Path: guide");
     expect(setup.captureCharFrame()).not.toContain("wrong-owner.jsonc");
   } finally {
     setup.renderer.destroy();
@@ -1052,11 +1054,14 @@ test("RENDER narrow Problems handoff reads the exact installed subject and Escap
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
     expect(setup.renderer.root.findDescendantById("skill-inspector-open-reader")).toBeUndefined();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
-    await openReaderTab(setup, 2);
-    await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
+    await openInstallation(setup);
+    await setup.waitForFrame(
+      (frame) => frame.includes("Source: team-main") && frame.includes("Path: guide"),
+    );
     expect(loads.length).toBeGreaterThanOrEqual(startupLoads.length);
     expect(loads).toContain("guide");
     expect(loads.every((path) => path === "guide")).toBe(true);
+    await parsedEscape(setup);
     await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
   } finally {
@@ -1148,7 +1153,6 @@ test("RENDER invalid Config diagnostic detail preserves exact row selection and 
         () =>
           !!setup.renderer.root.findDescendantById("problems-browser") &&
           !setup.renderer.root.findDescendantById("workspace-diagnostic-detail") &&
-          !setup.renderer.root.findDescendantById("route-back") &&
           setup.renderer.currentFocusedRenderable?.id === "problems-browser",
       );
       const restored = setup.renderer.root.findDescendantById(
@@ -1162,7 +1166,7 @@ test("RENDER invalid Config diagnostic detail preserves exact row selection and 
       expect(current.getSelectedOption()?.value).toBe(selected);
       expect(selectScrollOffset(current)).toBe(4);
       expect(setup.renderer.root.findDescendantById("workspace-diagnostic-detail")).toBeUndefined();
-      expect(setup.renderer.root.findDescendantById("route-back")).toBeUndefined();
+      expect(setup.renderer.root.findDescendantById("route-back")).toBeDefined();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("problems-browser");
       expect(setup.renderer.currentFocusedRenderable === current).toBe(true);
       expect(setup.renderer.currentFocusedRenderable === restored).toBe(true);
@@ -1206,7 +1210,7 @@ test("RENDER unavailable Agent access routes to authoritative Problems without i
       setup.renderer.root.findDescendantById("current-exposure-enable-managed-opencode"),
     ).toBeUndefined();
     await openMainPage(setup, "skills");
-    await enterLive(setup, "skills-view-tab-problems");
+    await openWorkspaceProblems(setup);
     await focusLive(setup, "problems-browser");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "problems-browser");
     const diagnostics = setup.renderer.root.findDescendantById(
@@ -1231,7 +1235,7 @@ test("RENDER unavailable Agent access routes to authoritative Problems without i
     setup.renderer.destroy();
   }
 });
-test("RENDER empty Agent Collection Enter stays in the tree and explicit Details returns to its command", async () => {
+test("RENDER empty Agent Collection Enter opens its preview and Open Collection returns to its command", async () => {
   const base = workspaceProjection();
   if (base.effective.status !== "complete") throw new Error("expected complete fixture");
   const owner = {
@@ -1282,7 +1286,7 @@ test("RENDER empty Agent Collection Enter stays in the tree and explicit Details
       "current-exposure-browser",
     ) as ScrollBoxRenderable;
     await parsedEnter(setup);
-    expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("agent-node-description");
     expect(tree.content.getChildren()).toHaveLength(1);
     expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeUndefined();
     await enterLive(setup, "agent-access-collection-details");
@@ -1296,7 +1300,7 @@ test("RENDER empty Agent Collection Enter stays in the tree and explicit Details
       () => setup.renderer.currentFocusedRenderable?.id === "agent-access-collection-details",
     );
     expect(setup.renderer.currentFocusedRenderable?.focused).toBe(true);
-    expect(setup.captureCharFrame()).toContain("Agent access");
+    expect(setup.captureCharFrame()).toContain("Open Collection");
     expect(setup.renderer.root.findDescendantById("collection-browser")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("current-exposure-browser")).toBeInstanceOf(
       ScrollBoxRenderable,
@@ -1311,8 +1315,7 @@ test("RENDER empty Agent Collection Enter stays in the tree and explicit Details
     setup.renderer.destroy();
   }
 });
-test("EXPOSURE Unassigned ignores via-Link-only paths but keeps direct and repository-derived memberships assigned", () => {
-  const base = workspaceProjection();
+test("Membership filter ignores via-Link-only paths but keeps direct and repository-derived memberships assigned", () => {
   const skill = (
     source: string,
     path: string,
@@ -1345,9 +1348,9 @@ test("EXPOSURE Unassigned ignores via-Link-only paths but keeps direct and repos
       path: "derived",
     },
   ]);
-  expect(unassignedSkills({ ...base, installedSkills: [viaLink, direct, derived] })).toEqual([
-    viaLink,
-  ]);
+  expect(
+    filterSkills([viaLink, direct, derived], { filters: { Membership: "Not in a Collection" } }),
+  ).toEqual([viaLink]);
 });
 test("COLLECTION Relations unify Use, Reference, and Link with owners, effects, and provenance", () => {
   const owner = {
@@ -1611,6 +1614,7 @@ test("RENDER Collection producer Open Source navigates to its owning Source", as
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
     expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeDefined();
+    await enterLive(setup, "collection-more");
     await enterLive(setup, "collection-current-details");
     await setup.renderOnce();
     await setup.waitForFrame((frame) => frame.includes("Target  team-main/reference"));

@@ -94,3 +94,28 @@ test("discovery visibility is declared by the command rather than an App ID excl
     }
   });
 });
+
+test("a visible shell command stays discoverable and executes its mounted target", () => {
+  createRoot((dispose) => {
+    try {
+      let calls = 0;
+      const command = { ...record("workspace.problems"), scope: "shell" as const };
+      const registry = createCommandRegistry(() => [
+        { record: command, execute: () => (calls += 100) },
+      ]);
+      const unregister = registry.register(
+        command,
+        "command:workspace.problems",
+        "workspace-problems",
+        () => calls++,
+      );
+      expect(registry.execute(command.id)).toBe(true);
+      expect(calls).toBe(1);
+      unregister();
+      expect(registry.execute(command.id)).toBe(true);
+      expect(calls).toBe(101);
+    } finally {
+      dispose();
+    }
+  });
+});

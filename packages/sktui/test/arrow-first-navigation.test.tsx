@@ -26,6 +26,8 @@ import {
 } from "./installed-reader.fixture";
 import {
   focusLive,
+  enterLive,
+  openInstallation,
   openAllInstalledSkills,
   parsedEscape,
   parsedEnter as rawParsedEnter,
@@ -103,20 +105,13 @@ test("arrow-first browser selection reads directly, cycles Reader views, and ret
     await checkpoint(setup, "resource-browser", "Enter populated Resources");
     await parsedArrow(setup, "up");
     await checkpoint(setup, "reader-tabs-tab-resources", "Resources Up to tabs");
+    await openInstallation(setup);
+    await focusLive(setup, "reader-details");
     await parsedArrow(setup, "right");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "reader-tabs-tab-details",
-    );
-    await parsedEnter(setup);
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
-    await parsedArrow(setup, "right");
-    const control = setup.renderer.currentFocusedRenderable;
-    expect(control?.id).not.toBe("reader-details");
-    expect(control?.id).not.toBe("reader-action-skill-check-updates");
-    // Details arrows stay in its local controls; the persistent Update action
-    // does not intercept content navigation.
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details");
+    // Body arrows do not execute relationships or the persistent Update action.
     await parsedArrow(setup, "left");
-    await checkpoint(setup, "reader-details", "Details Left returns to body");
+    await checkpoint(setup, "reader-more", "Installation Left returns to More");
     await parsedEscape(setup);
     await setup.waitFor(() => {
       const restored = setup.renderer.root.findDescendantById("installed-skill-browser");
@@ -187,9 +182,12 @@ test("update workbench arrows preserve selection and Escape leaves without apply
     await setup.renderOnce();
     await setup.waitForFrame((frame) => frame.includes("Update selected 1"));
     expect(updates).toEqual([]);
-    await parsedEscape(setup);
-    await setup.waitForFrame((frame) => frame.includes("Ctrl+U Update all"));
-    expect(setup.renderer.root.findDescendantById("source-updates-browser")).toBe(selection);
+    await enterLive(setup, "source-updates-clear");
+    await setup.waitForFrame((frame) => frame.includes("Update all"));
+    expect(setup.renderer.root.findDescendantById("source-updates-browser") === selection).toBe(
+      true,
+    );
+    await focusLive(setup, "source-updates-browser");
     await parsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-browser"));
     await parsedEscape(setup);

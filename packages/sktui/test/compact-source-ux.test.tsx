@@ -18,7 +18,7 @@ function assertInsidePane(
   pane: { screenY: number; height: number },
 ) {
   expect(target.screenY).toBeGreaterThan(pane.screenY);
-  expect(target.screenY + target.height).toBeLessThan(pane.screenY + pane.height);
+  expect(target.screenY + target.height).toBeLessThanOrEqual(pane.screenY + pane.height);
 }
 
 test("RENDER compact Sources keeps native rows, source identity, and every detail action inside the pane", async () => {

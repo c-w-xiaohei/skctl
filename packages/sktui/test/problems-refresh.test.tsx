@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
 import { SelectRenderable, TextRenderable } from "@opentui/core";
-import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection, readerSecondContent } from "./installed-reader.fixture";
 import type { WorkspaceView } from "@skctl/core";
-import { enterLive, live, waitForReaderBody } from "./reader-test-controls";
+import { enterLive, live, waitForReaderBody, openWorkspaceProblems } from "./reader-test-controls";
 const diagnostic = (
   address: {
     readonly source: string;
@@ -20,8 +19,7 @@ const diagnostic = (
   subject: { kind: "installed-skill" as const, address },
 });
 async function openProblems(setup: Awaited<ReturnType<typeof testRender>>) {
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-view-tab-problems"));
-  await enterLive(setup, "skills-view-tab-problems");
+  await openWorkspaceProblems(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("problems-browser"));
 }
 function problemProjection(base: WorkspaceView, refreshed: "reorder" | "fallback" | "empty") {
@@ -188,9 +186,7 @@ test("RENDER Problems routes Source declaration diagnostics to the owning Config
     expect(problem.description.trimEnd()).toBe("Source is unavailable");
     await enterLive(setup, "problems-browser");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-source-browser"));
-    expect(
-      (live(setup, "settings-section-tab-sources") as TabsTabRenderable).getState().selected,
-    ).toBe(true);
+    expect(!!setup.renderer.root.findDescendantById("config-command-config.categories")).toBe(true);
     const source = (live(setup, "config-source-browser") as SelectRenderable).getSelectedOption()!;
     expect(source.value).toBe("team-main");
   } finally {

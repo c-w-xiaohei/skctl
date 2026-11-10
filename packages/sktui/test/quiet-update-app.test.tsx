@@ -23,11 +23,8 @@ import {
   enterLive,
   focusLive,
   openAllInstalledSkills,
-  openReaderTab,
-  openReaderSettings,
   parsedEnter,
   parsedEscape,
-  selectedReaderTab,
 } from "./reader-test-controls";
 const revision = "d".repeat(40);
 function fixture(count = 3) {
@@ -236,9 +233,9 @@ async function capture(setup: Setup, name: string) {
   await writeFile(join(root, `${name}.txt`), setup.captureCharFrame());
   await writeFile(join(root, `${name}.json`), JSON.stringify(setup.captureSpans(), null, 2));
 }
-function expectHeaderActivitySpacing(setup: Setup, width: number) {
+function expectFooterActivitySpacing(setup: Setup, width: number) {
   const status = setup.renderer.root.findDescendantById("process-status")!;
-  const adjacent = setup.renderer.root.findDescendantById("shell-more-actions")!;
+  const adjacent = setup.renderer.root.findDescendantById("navigation-guidance")!;
   expect(status.screenX - (adjacent.screenX + adjacent.width)).toBeGreaterThanOrEqual(1);
   expect(status.screenX + status.width).toBeLessThanOrEqual(width - 1);
 }
@@ -248,7 +245,7 @@ test.each([
   [80, 24],
   [43, 13],
 ])(
-  "background checking is visible in the top navigation without opening Updates at %ix%i",
+  "background checking is visible in the footer without opening Updates at %ix%i",
   async (width, height) => {
     await mkdir("/tmp/opencode", { recursive: true });
     const cache = await mkdtemp("/tmp/opencode/footer-checking-");
@@ -278,21 +275,18 @@ test.each([
       const status = setup.renderer.root.findDescendantById("process-status") as TextRenderable;
       await setup.waitFor(() => status.plainText.includes("Checking"));
       await setup.flush();
-      expectHeaderActivitySpacing(setup, width);
+      expectFooterActivitySpacing(setup, width);
       expect(setup.renderer.root.findDescendantById("updates-browser")).toBeUndefined();
       expect(setup.renderer.root.findDescendantById("command-status")!.height).toBe(1);
       const header = setup.renderer.root.findDescendantById("global-bar")!;
       const footer = setup.renderer.root.findDescendantById("command-status")!;
-      expect(status.screenY).toBeLessThan(header.screenY + header.height - 1);
+      expect(status.screenY).toBeGreaterThanOrEqual(header.screenY + header.height);
       expect(status.screenX + status.width).toBeLessThanOrEqual(width - 1);
-      expect(footer.findDescendantById("process-status")).toBeUndefined();
+      expect(footer.findDescendantById("process-status") === status).toBe(true);
       for (const id of ["shell-more-actions"]) {
         const control = setup.renderer.root.findDescendantById(id)!;
         expect(control.screenX + control.width).toBeLessThanOrEqual(width - 1);
-        expect(
-          status.screenX + status.width <= control.screenX ||
-            status.screenX >= control.screenX + control.width,
-        ).toBe(true);
+        expect(status.screenY >= control.screenY + control.height).toBe(true);
       }
       expect(signal?.aborted).toBe(false);
       expect(checks).toBe(1);
@@ -342,12 +336,16 @@ test.each([
       const footer = setup.renderer.root.findDescendantById("command-status")!;
       expect(footer.height).toBe(1);
       expect(footer.screenY).toBe(height - 1);
-      for (const id of ["updates-update-source", "updates-check"]) {
+      if (width === 43) await enterLive(setup, "updates-more");
+      for (const id of width === 43
+        ? ["updates-more-updates.update-source", "updates-more-updates.check"]
+        : ["updates-update-source", "updates-check"]) {
         const action = setup.renderer.root.findDescendantById(id)!;
         expect(action).toBeInstanceOf(ButtonRenderable);
-        expect(action.screenY).toBe(primary.screenY);
+        if (width !== 43) expect(action.screenY).toBe(primary.screenY);
         expect(action.screenX + action.width).toBeLessThanOrEqual(width - 1);
       }
+      if (width === 43) await parsedEscape(setup);
       expect(
         setup.renderer.root.findDescendantById("updates-browser-row-team-main:cell-source"),
       ).toBeInstanceOf(TextRenderable);
@@ -507,12 +505,12 @@ test.each([
       const beforeChecks = checks.length;
       await chooseAction(setup, "updates.feedback-recover");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
-      await setup.waitFor(() => selectedReaderTab(setup) === 2);
-      expect(selectedReaderTab(setup)).toBe(2);
       expect(loaded).toEqual([{ source: "team-main", path: "skill-0" }]);
       expect(calls).toEqual([]);
       expect(checks).toHaveLength(beforeChecks);
       expect(acquisitions).toEqual([]);
+      await parsedEscape(setup);
+      await setup.waitFor(() => !setup.renderer.root.findDescendantById("reader-details"));
       await parsedEscape(setup);
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "updates-browser");
     } finally {
@@ -597,7 +595,7 @@ test.each([
   [80, 24],
   [43, 13],
 ])(
-  "top navigation keeps the existing update visible when browsing another page at %ix%i",
+  "footer keeps the existing update visible when browsing another page at %ix%i",
   async (width, height) => {
     const mounted = await mount(width, height, true);
     try {
@@ -623,15 +621,15 @@ test.each([
       await setup.waitFor(() => status()?.plainText.includes("Updating"));
       await setup.flush();
       expect(chromeGeometry()).toEqual(chrome);
-      expectHeaderActivitySpacing(setup, width);
+      expectFooterActivitySpacing(setup, width);
       const header = setup.renderer.root.findDescendantById("global-bar")!;
       expect(status().screenX + status().width).toBeLessThanOrEqual(width - 1);
-      expect(status().screenY).toBeLessThan(header.screenY + header.height - 1);
+      expect(status().screenY).toBeGreaterThanOrEqual(header.screenY + header.height);
       expect(
         setup.renderer.root
           .findDescendantById("command-status")!
           .findDescendantById("process-status"),
-      ).toBeUndefined();
+      ).toBeDefined();
       await openMainPage(setup, "sources");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
       await setup.flush();
@@ -650,15 +648,12 @@ test.each([
           setup.resize(nextWidth, nextHeight);
           await setup.flush();
           const bar = setup.renderer.root.findDescendantById("global-bar")!;
-          expect(status().screenY).toBeLessThan(bar.screenY + bar.height - 1);
+          expect(status().screenY).toBeGreaterThanOrEqual(bar.screenY + bar.height);
           expect(status().plainText).toContain("Updating");
-          expectHeaderActivitySpacing(setup, nextWidth);
+          expectFooterActivitySpacing(setup, nextWidth);
           for (const id of ["shell-more-actions"]) {
             const control = setup.renderer.root.findDescendantById(id)!;
-            expect(
-              status().screenX + status().width <= control.screenX ||
-                status().screenX >= control.screenX + control.width,
-            ).toBe(true);
+            expect(status().screenY >= control.screenY + control.height).toBe(true);
           }
           expect(mounted.signal()?.aborted).toBe(false);
           expect(calls).toHaveLength(1);
@@ -671,12 +666,11 @@ test.each([
       await setup.flush();
       expect(chromeGeometry()).toEqual(chrome);
       expect(status().screenX + status().width).toBeLessThanOrEqual(width - 1);
-      expectHeaderActivitySpacing(setup, width);
+      expectFooterActivitySpacing(setup, width);
       for (const id of ["shell-more-actions"]) {
         const control = setup.renderer.root.findDescendantById(id)!;
         expect(
-          status().screenX + status().width <= control.screenX ||
-            status().screenX >= control.screenX + control.width,
+          status().screenY >= control.screenY + control.height,
           JSON.stringify({
             id,
             status: { x: status().screenX, width: status().width },
@@ -687,7 +681,7 @@ test.each([
       }
       expect(
         (setup.renderer.root.findDescendantById("navigation-guidance") as TextRenderable).plainText,
-      ).toContain("Ctrl+P Actions");
+      ).toContain(width < 64 ? "^P Actions" : "Ctrl+P Actions");
       expect(setup.renderer.root.findDescendantById("source-browser")).toBeDefined();
       await capture(setup, `top-updated-spaced-${width}x${height}`);
     } finally {
@@ -743,7 +737,7 @@ test("quiet App preserves hidden selection, isolates text entry and keeps arrows
     await mounted.dispose();
   }
 });
-test("quiet App Tab reaches actions without walking to list boundaries; Esc only clears selection", async () => {
+test("quiet App Tab reaches actions without walking to list boundaries; Esc preserves selection", async () => {
   const mounted = await mount();
   try {
     const { setup, calls } = mounted;
@@ -751,7 +745,9 @@ test("quiet App Tab reaches actions without walking to list boundaries; Esc only
     await setup.mockInput.typeText(" ");
     await setup.renderOnce();
     await parsedEscape(setup);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("updates-browser");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-pages-select");
+    await focusLive(setup, "updates-browser");
+    expect(setup.captureCharFrame()).toContain("Update selected");
     expect(calls).toEqual([]);
     let reached = false;
     for (let index = 0; index < 8; index++) {
@@ -901,15 +897,15 @@ test.each([
       expect(checks).toHaveLength(beforeChecks);
       expect(loaded).toEqual([{ source: "team-main", path: "skill-0" }]);
       expect(acquisitions).toEqual([]);
-      await openReaderTab(setup, 2);
-      await openReaderSettings(setup);
       const add = setup.renderer.root.findDescendantById(
         "reader-details-action-skill-add-to-collection",
       )!;
       expect(add).toBeInstanceOf(ButtonRenderable);
       add.focus();
       await setup.flush();
-      expect(add.screenY).toBeGreaterThan(update.screenY);
+      expect(add.screenY).toBe(
+        setup.renderer.root.findDescendantById("reader-action-skill-check-updates")!.screenY,
+      );
       // Checking opens review without mutation; only explicit submission updates the current Skill.
       await enterLive(setup, "reader-action-skill-check-updates");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-update-all"));
@@ -1000,7 +996,7 @@ test.each([
           !setup.renderer.root.findDescendantById("source-browser"),
       );
       expect(mounted.signal()?.aborted).toBe(false);
-      await focusLive(setup, "settings-section-tab-sources");
+      await focusLive(setup, "settings-categories");
       await chooseAction(setup, "updates.task.stop");
       await setup.waitFor(() => mounted.signal()?.aborted === true);
       const status = setup.renderer.root.findDescendantById("process-status") as TextRenderable;
@@ -1036,14 +1032,14 @@ test.each([
   [80, 24],
   [43, 13],
 ])(
-  "shared Actions opens Source details without a page-local options menu at %ix%i",
+  "shared Actions opens Source details without first opening More at %ix%i",
   async (width, height) => {
     const mounted = await mount(width, height);
     try {
       const { setup, checks, calls } = mounted;
       await enterLive(setup, "updates-browser");
       await capture(setup, `source-actions-before-${width}x${height}`);
-      expect(!!setup.renderer.root.findDescendantById("source-updates-more")).toBe(false);
+      expect(!!setup.renderer.root.findDescendantById("source-updates-more-dialog")).toBe(false);
       const before = checks.length;
       await chooseAction(setup, "source-updates.source-details");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-pane"));
@@ -1159,7 +1155,7 @@ test.each([
       await setup.renderOnce();
       await chooseAction(setup, "navigate.settings");
       await setup.waitFor(() => !setup.renderer.root.findDescendantById("updates-browser"));
-      await focusLive(setup, "settings-section-tab-sources");
+      await focusLive(setup, "settings-categories");
       setup.mockInput.pressKey("p", { ctrl: true });
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
       const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
@@ -1252,7 +1248,9 @@ test("Source scan orders updates before current and unchecked results without co
     expect(setup.renderer.root.findDescendantById("updates-summary")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("updates-query")).toBeUndefined();
     const actions = setup.renderer.root.findDescendantById("updates-actions-pane")!;
-    expect(actions.screenY).toBeGreaterThan(cell("unchecked", "source").screenY);
+    expect(actions.screenY + actions.height).toBeLessThanOrEqual(
+      cell("unchecked", "source").screenY,
+    );
     const primary = setup.renderer.root.findDescendantById("updates-update-all")!;
     await capture(setup, "mixed-source-scan-120x24");
     await setup.mockMouse.click(primary.screenX + 1, primary.screenY);
@@ -1335,7 +1333,7 @@ test("slash opens filtering in the command area; typing owns Ctrl+U and Esc rest
     const source = setup.renderer.root.findDescendantById(
       "updates-browser-row-team-main:cell-source",
     )!;
-    expect(input.screenY).toBeGreaterThan(source.screenY);
+    expect(input.screenY + input.height).toBeLessThanOrEqual(source.screenY);
     setup.mockInput.pressKey("u", { ctrl: true });
     await setup.renderOnce();
     expect(calls).toEqual([]);

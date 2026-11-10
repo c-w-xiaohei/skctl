@@ -6,7 +6,7 @@ import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import { openAllInstalledSkills, parsedEnter, waitForReaderBody } from "./reader-test-controls";
 
-test("RENDER search results show aligned Skill and Match columns on one line", async () => {
+test("search results retain the matching text on the Skill row without a redundant heading", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
     { width: 110, height: 36 },
@@ -26,10 +26,9 @@ test("RENDER search results show aligned Skill and Match columns on one line", a
     });
     expect(query.width).toBeGreaterThan(0);
 
-    await setup.waitForFrame((frame) => frame.includes("Match") && frame.includes("distinct"));
+    await setup.waitForFrame((frame) => frame.includes("distinct"));
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Skill");
-    expect(frame).toContain("Match");
     expect(frame).toContain("reference");
     const row = frame.split("\n").find((line) => line.includes("▶ reference"));
     expect(row).toContain("distin");
@@ -53,7 +52,7 @@ test.each([100, 140])(
         setup.mockInput.pressKey(char);
         await setup.renderOnce();
       }
-      await setup.waitForFrame((frame) => frame.includes("Match") && frame.includes("team-m"));
+      await setup.waitForFrame((frame) => frame.includes("team-m"));
       const browser = setup.renderer.root.findDescendantById(
         "installed-skill-browser",
       ) as SelectRenderable;

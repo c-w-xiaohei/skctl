@@ -8,25 +8,25 @@ const beta = { source: "main", path: "beta" };
 test("Reader state derives the active reader from its structural cache through A-B-A", () => {
   const { owner } = pendingReader();
   owner.select(alpha);
-  owner.patch({ find: "alpha", scroll: 3 });
+  owner.patch({ raw: true, scroll: 3 });
   const alphaReader = owner.current();
   owner.select(beta);
-  owner.patch({ find: "beta", scroll: 9 });
+  owner.patch({ raw: false, scroll: 9 });
   const betaReader = owner.current();
-  expect(betaReader).toMatchObject({ address: beta, find: "beta", scroll: 9 });
+  expect(betaReader).toMatchObject({ address: beta, raw: false, scroll: 9 });
   expect(owner.cached(alpha)).toBe(alphaReader);
   expect(owner.cached({ source: "main", path: "unvisited" })).toBeUndefined();
 
   owner.select(alpha);
   expect(owner.current()).toBe(owner.cached(alpha));
   expect(owner.current()).toBe(alphaReader);
-  expect(owner.current()).toMatchObject({ address: alpha, find: "alpha", scroll: 3 });
+  expect(owner.current()).toMatchObject({ address: alpha, raw: true, scroll: 3 });
   expect(owner.cached(beta)).toBe(betaReader);
-  expect(owner.cached(beta)).toMatchObject({ address: beta, find: "beta", scroll: 9 });
+  expect(owner.cached(beta)).toMatchObject({ address: beta, raw: false, scroll: 9 });
 
   owner.select(beta);
   expect(owner.current()).toBe(betaReader);
-  expect(owner.current()).toMatchObject({ address: beta, find: "beta", scroll: 9 });
+  expect(owner.current()).toMatchObject({ address: beta, raw: false, scroll: 9 });
   expect(owner.cached(alpha)).toBe(alphaReader);
   expect(owner.cached({ source: "main", path: "unvisited" })).toBeUndefined();
 });
@@ -141,8 +141,6 @@ test("installed-content invalidation preserves reading state and rejects both ol
   owner.patch({
     tab: "resources",
     raw: true,
-    find: "needle",
-    match: 2,
     scroll: 17,
     detailsScroll: 9,
     text: "old installed",
@@ -159,8 +157,6 @@ test("installed-content invalidation preserves reading state and rejects both ol
   expect(invalidated).toMatchObject({
     tab: "resources",
     raw: true,
-    find: "needle",
-    match: 2,
     scroll: 17,
     detailsScroll: 9,
     selectedResource: "notes.md",
@@ -198,7 +194,6 @@ test("installed-content invalidation preserves reading state and rejects both ol
     tab: "resources",
     scroll: 17,
     detailsScroll: 9,
-    find: "needle",
     raw: true,
   });
   owner.dispose();
@@ -208,8 +203,6 @@ const capturedReader = (address = alpha): ReaderState => ({
   address,
   tab: "resources",
   raw: true,
-  find: "saved query",
-  match: 2,
   scroll: 15,
   detailsScroll: 8,
   focus: "reader-resource-content",
@@ -238,8 +231,6 @@ test("route restoration cannot resurrect invalidated installed payloads from an 
     address: alpha,
     tab: "resources",
     raw: true,
-    find: "saved query",
-    match: 2,
     scroll: 15,
     detailsScroll: 8,
     focus: "reader-resource-content",
@@ -329,8 +320,6 @@ test("route restoration without a cache saves preferences but creates only reloa
     address: saved.address,
     tab: "resources",
     raw: true,
-    find: "saved query",
-    match: 2,
     scroll: 15,
     detailsScroll: 8,
     focus: "reader-resource-content",

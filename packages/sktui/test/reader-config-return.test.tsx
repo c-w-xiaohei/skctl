@@ -5,6 +5,7 @@ import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
+import { openSettingsCategory } from "./settings-test-controls";
 import { ConfigPage } from "../src/config-page";
 import { createConfigState } from "../src/config/state";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
@@ -16,10 +17,49 @@ import {
   focusLive,
   openAllInstalledSkills,
   openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
 } from "./reader-test-controls";
 type Setup = Awaited<ReturnType<typeof testRender>>;
+test.each([
+  [100, 24],
+  [80, 24],
+  [43, 13],
+])("pending resource stays reachable after resizing to %ix%i", async (width, height) => {
+  let finish!: (value: { kind: "text"; path: string; format: "text"; text: string }) => void;
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(readerProjection(), {
+          loadInstalledSkill: async () => readerContent,
+          listInstalledResources: async () => readerResources,
+          readInstalledResource: async () =>
+            new Promise((resolve) => {
+              finish = resolve;
+            }),
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 40 },
+  );
+  try {
+    await openResourceContent(setup);
+    await focusLive(setup, "resource-content");
+    setup.resize(width, height);
+    await setup.flush();
+    const content = setup.renderer.root.findDescendantById("resource-content");
+    expect(!!content).toBe(true);
+    expect(content!.screenX + content!.width).toBeLessThanOrEqual(width);
+    expect(content!.height).toBeGreaterThan(0);
+    expect(content!.screenY + content!.height).toBeLessThanOrEqual(height - 1);
+    finish({ kind: "text", path: "docs/guide.md", format: "text", text: "Completed resource" });
+    await setup.waitForFrame((frame) => frame.includes("Completed resource"));
+  } finally {
+    setup.renderer.destroy();
+  }
+});
 async function tabToSharedReturn(setup: Setup) {
   let reached = false;
   for (let index = 0; index < 12; index++) {
@@ -109,9 +149,7 @@ async function chooseProject(setup: Setup) {
   expect(project).toBeGreaterThanOrEqual(0);
   choices.setSelectedIndex(project);
   await parsedEnter(setup);
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("settings-section-tab-sources"),
-  );
+  await setup.flush();
 }
 async function openProjectIntegrations(setup: Setup) {
   await openMainPage(setup, "agent");
@@ -121,7 +159,7 @@ async function openProjectIntegrations(setup: Setup) {
 }
 async function openProjectConfigSource(setup: Setup) {
   await chooseProject(setup);
-  await enterLive(setup, "settings-section-tab-config-sources");
+  await openSettingsCategory(setup, "config-sources");
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("config-config-source-browser"),
   );
@@ -155,23 +193,9 @@ test("RENDER Reader resource uses shared Back without a route predecessor and pr
     expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(true);
     expect(!!setup.renderer.root.findDescendantById("reader-resource-back")).toBe(false);
     await expectSharedReturn(setup, "Back to Resources");
-    for (const [width, height] of [
-      [144, 40],
-      [100, 24],
-      [80, 24],
-      [43, 13],
-    ] as const) {
-      setup.resize(width, height);
-      await setup.flush();
-      const path = setup.renderer.root.findDescendantById("reader-resource-path")!;
-      const content = setup.renderer.root.findDescendantById("resource-content")!;
-      expect(path.screenX + path.width).toBeLessThanOrEqual(width);
-      expect(content.height).toBeGreaterThan(0);
-      expect(content.screenY + content.height).toBeLessThanOrEqual(height - 1);
-    }
-    setup.resize(120, 40);
-    await setup.flush();
     await focusLive(setup, "resource-content");
+    // Pending-read cancellation is isolated from the completed-content resize
+    // journeys in reader-resources; settle the transport only after Back.
     await tabToSharedReturn(setup);
     setup.mockInput.pressKey("p", { ctrl: true });
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("palette-choices"));
@@ -230,6 +254,7 @@ test("RENDER Integrations keeps host entries reachable across resize and returns
   );
   try {
     await openProjectIntegrations(setup);
+    await enterLive(setup, "integration-hosts");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("integration-entries"));
     for (const [width, height] of [
       [144, 40],
@@ -250,7 +275,7 @@ test("RENDER Integrations keeps host entries reachable across resize and returns
     setup.resize(80, 30);
     await setup.flush();
     await chooseProject(setup);
-    await enterLive(setup, "settings-section-tab-config-sources");
+    await openSettingsCategory(setup, "config-sources");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("config-config-source-browser"),
     );
@@ -271,13 +296,11 @@ test("RENDER Config Source inspector returns through the shared header to its se
       false,
     );
     await expectSharedReturn(setup, "Back to Config Sources");
-    const normal = setup.renderer.root.findDescendantById("config-source-update-actions")!;
-    const danger = setup.renderer.root.findDescendantById("config-source-danger-actions")!;
-    expect(danger.screenY).toBeGreaterThan(normal.screenY);
+    const body = setup.renderer.root.findDescendantById("config-declaration-body")!;
     for (const id of ["config-command-config-forget", "config-command-config-remove"]) {
       const control = setup.renderer.root.findDescendantById(id)!;
-      expect(control.screenX).toBeGreaterThanOrEqual(danger.screenX);
-      expect(control.screenX + control.width).toBeLessThanOrEqual(danger.screenX + danger.width);
+      expect(control.screenX).toBeGreaterThanOrEqual(body.screenX);
+      expect(control.screenX + control.width).toBeLessThanOrEqual(body.screenX + body.width);
     }
     await enterLive(setup, "route-back");
     await setup.waitFor(() => !setup.renderer.root.findDescendantById("config-source-inspector"));
@@ -302,7 +325,7 @@ test("RENDER compact Collection tree keeps its path readable while shared Back r
   );
   try {
     await openAllInstalledSkills(setup);
-    await enterLive(setup, "open-collection-browser");
+    await openSkillsCollections(setup);
     // This Tree is retained while hidden. Node presence is not activation:
     // its native frame measures the viewport, enables/registers the region,
     // then App's pending collection-tree focus can land automatically.
@@ -334,7 +357,7 @@ test("RENDER compact Collection tree keeps its path readable while shared Back r
     expect(tree.viewport.width).toBeGreaterThanOrEqual(pane.width - 8);
     expect(tree.viewport.height).toBeGreaterThan(0);
     await expectSharedReturn(setup, "Back to Skills");
-    expect(setup.captureCharFrame()).toContain("All installed");
+    expect(setup.captureCharFrame()).toContain("Collections");
     expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
     await tabToSharedReturn(setup);
     await parsedEnter(setup);
@@ -368,7 +391,7 @@ test("RENDER standalone Config keeps explicit nested Back controls without a pag
   );
   try {
     await setup.renderOnce();
-    await enterLive(setup, "config-command-config.source.back");
+    await enterLive(setup, "config-back");
     expect(config.configSourceSurface("project")).toBe("list");
     expect(config.selection("project", "config-sources")).toBe("/configSources/shared");
   } finally {
@@ -390,7 +413,7 @@ test("RENDER Reader management groups stay inside the actual pane and keep dange
   try {
     await openAllInstalledSkills(setup);
     await parsedEnter(setup);
-    await openReaderTab(setup, 2);
+    await openInstallation(setup);
     for (const [width, height] of [
       [144, 40],
       [100, 24],
@@ -399,17 +422,20 @@ test("RENDER Reader management groups stay inside the actual pane and keep dange
     ] as const) {
       setup.resize(width, height);
       await setup.flush();
-      const normal = setup.renderer.root.findDescendantById("reader-settings-actions")!;
-      const danger = setup.renderer.root.findDescendantById("reader-danger-actions")!;
-      expect(danger.screenY).toBeGreaterThanOrEqual(normal.screenY + normal.height);
-      for (const id of ["reader-reload", "reader-details-action-skill-uninstall"]) {
+      await enterLive(setup, "reader-more");
+      const normal = setup.renderer.root.findDescendantById("reader-menu-reload")!;
+      const danger = setup.renderer.root.findDescendantById("reader-menu-skill-uninstall")!;
+      expect(danger.screenY).toBeGreaterThan(normal.screenY + normal.height);
+      for (const id of ["reader-menu-reload", "reader-menu-skill-uninstall"]) {
         const control = setup.renderer.root.findDescendantById(id)!;
-        const group = id === "reader-reload" ? normal : danger;
-        expect(control.screenX).toBeGreaterThanOrEqual(group.screenX);
-        expect(control.screenX + control.width).toBeLessThanOrEqual(group.screenX + group.width);
+        expect(control.screenX).toBeGreaterThanOrEqual(0);
+        expect(control.screenX + control.width).toBeLessThanOrEqual(width);
+        expect(control.screenY + control.height).toBeLessThanOrEqual(height);
       }
+      await parsedEscape(setup);
     }
   } finally {
     setup.renderer.destroy();
   }
 });
+import { openSkillsCollections } from "./reader-test-controls";

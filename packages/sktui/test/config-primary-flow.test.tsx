@@ -144,37 +144,30 @@ async function openProject(setup: Setup) {
   await expectFocus(setup, "shell-scope-select", "openProject committed Project scope");
   for (
     let step = 0;
-    step < 12 && setup.renderer.currentFocusedRenderable?.id !== "settings-section-tab-sources";
+    step < 12 && setup.renderer.currentFocusedRenderable?.id !== "settings-categories";
     step++
   )
     await press(setup, "TAB");
-  await expectFocus(setup, "settings-section-tab-sources", "openProject after Down to Sections");
+  await expectFocus(setup, "settings-categories", "openProject categories");
   await press(setup, "ENTER");
   await expectFocus(setup, "config-source-browser", "openProject after Enter on Sources");
   expect(setup.renderer.currentFocusedRenderable!.height).toBeGreaterThan(0);
 }
 
 async function openSection(setup: Setup, index: number) {
+  if (!setup.renderer.root.findDescendantById("settings-categories")) {
+    await press(setup, "ESCAPE");
+  }
   for (
     let step = 0;
-    step < 12 && setup.renderer.currentFocusedRenderable?.id !== "settings-section-tab-sources";
+    step < 12 && setup.renderer.currentFocusedRenderable?.id !== "settings-categories";
     step++
   )
     await press(setup, "TAB");
-  await expectFocus(
-    setup,
-    "settings-section-tab-sources",
-    `openSection(${index}) subsection navigation`,
-  );
-  const sections = ["sources", "config-sources", "collections"];
-  for (let step = 0; step < index; step++) {
-    await press(setup, "ARROW_RIGHT");
-    await expectFocus(
-      setup,
-      `settings-section-tab-${sections[step + 1]}`,
-      `openSection(${index}) after Right ${step + 1}`,
-    );
-  }
+  await expectFocus(setup, "settings-categories", `openSection(${index}) subsection navigation`);
+  const list = setup.renderer.currentFocusedRenderable as SelectRenderable;
+  while (list.getSelectedIndex() !== index)
+    await press(setup, list.getSelectedIndex() < index ? "ARROW_DOWN" : "ARROW_UP");
   await press(setup, "ENTER");
 }
 
@@ -190,21 +183,17 @@ for (const width of [120, 80, 60]) {
       const source = sourceBrowser.options[sourceBrowser.getSelectedIndex()]?.value;
       await press(setup, "ENTER");
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("config-command-check-updates");
-      expect(sourceBrowser.options[sourceBrowser.getSelectedIndex()]?.value).toBe(source);
-      await press(setup, "ARROW_RIGHT");
-      const metadata = setup.renderer.currentFocusedRenderable;
-      expect(metadata?.parent).toBeDefined();
-      expect(metadata?.id).not.toBe("config-command-check-updates");
-      await press(setup, "ARROW_RIGHT");
-      await expectFocus(
-        setup,
-        "config-command-check-updates",
-        "metadata Right returns to Source actions",
-      );
+      expect(setup.captureCharFrame()).toContain(source!);
+      await press(setup, "ARROW_DOWN");
+      await expectFocus(setup, "config-command-add-skills", "next Source action");
       await press(setup, "ARROW_UP");
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("config-command-check-updates");
       await press(setup, "ESCAPE");
-      await expectFocus(setup, "config-source-browser", "source inspector Escape");
+      await expectFocus(
+        setup,
+        width < 100 ? "config-source-browser" : "settings-categories",
+        "source Back",
+      );
       await openSection(setup, 2);
       await expectFocus(setup, "config-collection-browser", "collections section Enter");
       expect(setup.renderer.currentFocusedRenderable!.height).toBeGreaterThan(0);
@@ -256,15 +245,12 @@ test("RENDER integrations opens host selection and preserves selected host entri
     await openProject(setup);
     for (
       let step = 0;
-      step < 12 && setup.renderer.currentFocusedRenderable?.id !== "shell-pages-select";
+      step < 12 && setup.renderer.currentFocusedRenderable?.id !== "shell-section-tab-settings";
       step++
     )
       await press(setup, "TAB");
-    await expectFocus(setup, "shell-pages-select", "Agent page navigation");
-    await press(setup, "ENTER");
-    await expectFocus(setup, "shell-pages-choices", "Agent page chooser");
-    await press(setup, "ARROW_UP");
-    await press(setup, "ENTER");
+    await expectFocus(setup, "shell-section-tab-settings", "Agent page navigation");
+    await press(setup, "ARROW_LEFT");
     for (
       let step = 0;
       step < 12 && setup.renderer.currentFocusedRenderable?.id !== "agent-view-tab-catalog";
@@ -288,7 +274,9 @@ test("RENDER integrations opens host selection and preserves selected host entri
     await setup.flush();
     await press(setup, "ARROW_RIGHT");
     await press(setup, "ARROW_RIGHT");
-    await expectFocus(setup, "integration-refresh", "Inspect action");
+    await expectFocus(setup, "integration-more", "More actions");
+    await press(setup, "ENTER");
+    await expectFocus(setup, "integration-more-integration.refresh", "Inspect action");
     await press(setup, "ENTER");
     await press(setup, "TAB");
     await expectFocus(setup, "integration-entries", "return to entries");
@@ -300,7 +288,7 @@ test("RENDER integrations opens host selection and preserves selected host entri
   }
 });
 
-test("RENDER Config Source inspector exposes one update entrance and a Right path to contributions", async () => {
+test("RENDER Config Source exposes one update entrance and Tab reaches contributions", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
     { width: 80, height: 30 },
@@ -311,10 +299,15 @@ test("RENDER Config Source inspector exposes one update entrance and a Right pat
     await expectFocus(setup, "config-config-source-browser", "config sources section Enter");
     await press(setup, "ENTER");
     await expectFocus(setup, "config-command-config-observe", "config source Enter");
-    expect(setup.renderer.root.findDescendantById("config-command-config-adopt")).toBeUndefined();
-    expect(setup.captureCharFrame()).toContain("Check / review Config update");
-    await press(setup, "ARROW_RIGHT");
-    await expectFocus(setup, "config-source-contributions", "config source Right");
+    expect(!!setup.renderer.root.findDescendantById("config-command-config-adopt")).toBe(false);
+    expect(setup.captureCharFrame()).toContain("Review update");
+    for (
+      let step = 0;
+      step < 10 && setup.renderer.currentFocusedRenderable?.id !== "config-source-contributions";
+      step++
+    )
+      await press(setup, "TAB");
+    await expectFocus(setup, "config-source-contributions", "config source contributions");
     expect((setup.renderer.currentFocusedRenderable as SelectRenderable).options).toHaveLength(1);
     await press(setup, "ESCAPE");
     await expectFocus(setup, "config-config-source-browser", "contributions Escape");

@@ -506,7 +506,7 @@ export async function openReaderFromInspector(setup: Awaited<ReturnType<typeof t
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-views"));
     const current = setup.renderer.root.findDescendantById("reader-scrollbox");
     if (current) await focusLive(setup, "reader-scrollbox");
-    else await focusLive(setup, "reader-tabs");
+    else await focusLive(setup, "reader-tabs-tab-resources");
   }
   await setup.waitFor(() => {
     const readerTargets = [
@@ -514,7 +514,8 @@ export async function openReaderFromInspector(setup: Awaited<ReturnType<typeof t
       "resource-browser",
       "reader-details",
       "reader-resources-status",
-      "reader-tabs",
+      "reader-tabs-tab-skill",
+      "reader-tabs-tab-resources",
     ];
     return readerTargets.some((id) => !!setup.renderer.root.findDescendantById(id));
   });
@@ -523,7 +524,8 @@ export async function openReaderFromInspector(setup: Awaited<ReturnType<typeof t
     "resource-browser",
     "reader-details",
     "reader-resources-status",
-    "reader-tabs",
+    "reader-tabs-tab-skill",
+    "reader-tabs-tab-resources",
   ].find((id) => !!setup.renderer.root.findDescendantById(id));
   if (target) await focusLive(setup, target);
   await settleReaderHighlighting(setup.renderer.root);

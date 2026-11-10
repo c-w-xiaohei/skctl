@@ -5,9 +5,19 @@ import { App } from "../src/app";
 import { collectionFilterPathKey } from "../src/collections/collection-filter-tree";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
-import { parsedEnter, parsedEscape } from "./reader-test-controls";
+import {
+  parsedEnter,
+  parsedEscape,
+  filterUncollectedSkills,
+  openAllInstalledSkills,
+} from "./reader-test-controls";
 import { SkctlError, type CollectionRenameImpact, type RebindImpact } from "@skctl/core";
-import { ScrollBoxRenderable, SelectRenderable, TextRenderable } from "@opentui/core";
+import {
+  ScrollBoxRenderable,
+  SelectRenderable,
+  TextRenderable,
+  type BaseRenderable,
+} from "@opentui/core";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
 import * as core from "@skctl/core";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -80,39 +90,22 @@ test("Actions navigation lists the six semantic pages and opens the selected pag
   }
 });
 
-test("main-page navigation retains the Unassigned Skills view and checked selection", async () => {
+test("main-page navigation retains the membership filter and checked selection", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
     { width: 120, height: 30 },
   );
   try {
-    await clickVisible(setup, "skills-view-tab-unassigned");
-    await setup.waitFor(
-      () =>
-        (
-          setup.renderer.root.findDescendantById(
-            "skills-view-tab-unassigned",
-          ) as import("@tuiparts/core/tabs").TabsTabRenderable
-        ).getState().selected,
-    );
+    await openAllInstalledSkills(setup);
+    await filterUncollectedSkills(setup);
     await clickVisible(setup, "installed-skill-browser");
     await setup.mockInput.typeText(" ");
     await setup.flush();
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("workspace-batch-add-to-collection"),
-    );
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-selected"));
     await clickVisible(setup, "shell-section-tab-collections");
     await clickVisible(setup, "shell-section-tab-skills");
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("workspace-batch-add-to-collection"),
-    );
-    expect(
-      (
-        setup.renderer.root.findDescendantById(
-          "skills-view-tab-unassigned",
-        ) as import("@tuiparts/core/tabs").TabsTabRenderable
-      ).getState().selected,
-    ).toBe(true);
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-selected"));
+    expect(setup.captureCharFrame()).toContain("Filter (1)");
   } finally {
     setup.renderer.destroy();
   }
@@ -177,14 +170,17 @@ test("Settings subsection arrows keep their own focus and Enter opens the select
   try {
     await clickVisible(setup, "shell-section-tab-settings");
     step = "config sources";
-    await clickVisible(setup, "settings-section-tab-config-sources");
+    await clickVisible(setup, "settings-categories");
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "settings-section-tab-config-sources",
+      () => setup.renderer.currentFocusedRenderable?.id === "settings-categories",
     );
-    setup.mockInput.pressArrow("right");
+    setup.mockInput.pressArrow("down");
+    setup.mockInput.pressArrow("down");
     step = "collections";
     await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "settings-section-tab-collections",
+      () =>
+        (setup.renderer.currentFocusedRenderable as SelectRenderable).getSelectedOption()?.value ===
+        "collections",
     );
     await parsedEnter(setup);
     step = "browser";
@@ -291,13 +287,14 @@ test("compact Reader shows current keyboard guidance at 43x30 and retains seven 
     const identity = setup.renderer.root.findDescendantById("reader-identity") as TextRenderable;
     expect(identity.width).toBeGreaterThanOrEqual(12);
     expect(identity.plainText).toBe("guide");
-    const check = setup.renderer.root.findDescendantById("reader-action-skill-check-updates")!;
+    const more = setup.renderer.root.findDescendantById("reader-more")!;
     const add = setup.renderer.root.findDescendantById(
       "reader-details-action-skill-add-to-collection",
     )!;
-    expect(check.height).toBeGreaterThan(0);
+    expect(more.height).toBeGreaterThan(0);
     expect(add.height).toBeGreaterThan(0);
-    expect(add.screenY).toBeGreaterThan(check.screenY);
+    expect(add.screenY).toBe(more.screenY);
+    expect(add.screenX + add.width).toBeLessThan(more.screenX);
     const status = setup.renderer.root.findDescendantById("command-status");
     expect(status?.height).toBe(1);
     const hint = setup.renderer.root.findDescendantById("interaction-guidance") as TextRenderable;
@@ -360,9 +357,7 @@ test("43x13 Source Settings keeps every management button inside the pane and me
         pane.screenX + pane.width - 1,
       );
       expect(control.screenY, id).toBeGreaterThan(pane.screenY);
-      expect(control.screenY + control.height, id).toBeLessThanOrEqual(
-        pane.screenY + pane.height - 1,
-      );
+      expect(control.screenY + control.height, id).toBeLessThanOrEqual(pane.screenY + pane.height);
     }
     const metadata = setup.renderer.root.findDescendantById(
       "source-metadata",
@@ -1221,11 +1216,11 @@ function renameImpact(): CollectionRenameImpact {
   };
 }
 
-async function previewTeamRename(setup: Setup) {
+async function previewTeamRename(setup: Setup, target = "new-team") {
   await openTeamSettings(setup);
   await clickLabel(setup, "Rename");
   await clickVisible(setup, "collection-rename-target");
-  await setup.mockInput.typeText("new-team");
+  await setup.mockInput.typeText(target);
   await clickVisible(setup, "collection-rename-preview");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-review-confirm"));
 }
@@ -1271,6 +1266,67 @@ test("uncertain rename can close and resume after the original Collection disapp
     await clickVisible(setup, "rename-outcome-inspect");
     await setup.waitForFrame((frame) => frame.includes("does not prove"));
     expect(applies).toBe(1);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("long rename outcome preserves the full target and fixed close across task sizes", async () => {
+  const target = "team/" + "很长的目录/".repeat(20);
+  const requests: string[] = [];
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(collectionsSourcesProjection(), {
+          previewCollectionRename: async (_environment, request) => {
+            requests.push(request.target);
+            return { value: { ...renameImpact(), target: request.target }, diagnostics: [] };
+          },
+          renameCollection: async () => {
+            throw new Error("publication unknown");
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 30 },
+  );
+  try {
+    await previewTeamRename(setup, target);
+    await clickVisible(setup, "collection-review-confirm");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("rename-outcome-close"));
+    for (const [width, height] of [
+      [120, 30],
+      [100, 24],
+      [80, 23],
+      [43, 13],
+    ]) {
+      setup.resize(width!, height!);
+      await setup.flush();
+      const close = setup.renderer.root.findDescendantById("rename-outcome-close")!;
+      const nodes = (node: BaseRenderable): BaseRenderable[] => [
+        node,
+        ...node.getChildren().flatMap(nodes),
+      ];
+      const body = nodes(setup.renderer.root).find(
+        (node) =>
+          node instanceof ScrollBoxRenderable &&
+          nodes(node).some(
+            (child) => child instanceof TextRenderable && child.plainText.includes(target),
+          ),
+      ) as ScrollBoxRenderable;
+      expect(!!body).toBe(true);
+      expect(body.viewport.height).toBeGreaterThanOrEqual(6);
+      expect(!!body.findDescendantById(close.id)).toBe(false);
+      const y = close.screenY;
+      body.scrollBy(20);
+      await setup.flush();
+      expect(close.screenY).toBe(y);
+      expect(close.screenY + close.height).toBeLessThanOrEqual(height! - 1);
+    }
+    expect(requests).toEqual([target]);
+    await clickVisible(setup, "rename-outcome-close");
+    await setup.waitFor(() => !setup.renderer.root.findDescendantById("rename-outcome-close"));
   } finally {
     setup.renderer.destroy();
   }
@@ -2122,7 +2178,7 @@ test("App Collection rename persists writable Use and Reference through real Cor
     await setup.flush();
     await clickVisible(setup, "shell-section-tab-collections");
     await setup.waitForFrame((frame) => frame.includes("team"));
-    await clickVisible(setup, "collections-expand-all");
+    await collectionBrowserCommand(setup, "collections.expand-all");
     const key = collectionFilterPathKey({
       segments: [
         { collection: "parent" },
@@ -2230,3 +2286,4 @@ test("App replacement rebind persists actual Core membership and installed owner
     await f.dispose();
   }
 });
+import { collectionBrowserCommand } from "./reader-test-controls";

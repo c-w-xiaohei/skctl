@@ -1,17 +1,16 @@
 import { expect, test } from "bun:test";
 import { InputRenderable } from "@opentui/core";
-import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerAddress, readerContent, readerProjection } from "./installed-reader.fixture";
 import {
   enterInstalledAddress,
+  enterLive,
   focusLive,
   live,
   openAllInstalledSkills,
   openReaderTab,
-  parsedEnter,
   selectedReaderTab,
   waitForReaderBody,
 } from "./reader-test-controls";
@@ -29,7 +28,6 @@ test.each([
     try {
       await openAllInstalledSkills(setup);
       await setup.flush();
-      expect(setup.renderer.root.findDescendantById("skills-local-views")?.height).toBe(1);
       const ids = [setup.renderer.currentFocusedRenderable!.id];
       const pressTab = async (shift = false) => {
         setup.mockInput.pressKey("TAB", { shift });
@@ -51,7 +49,6 @@ test.each([
       for (const region of [
         "section-nav",
         "shell-context-panel",
-        "skills-local-views",
         "skills-list-pane",
         ...(width >= 100 ? ["reader-pane"] : []),
       ]) {
@@ -63,10 +60,9 @@ test.each([
       }
       expect(setup.renderer.currentFocusedRenderable?.id).toBe(ids[0]);
       for (let index = ids.length - 1; index >= 0; index--) {
-        // Returning to the inventory dismisses the Reader's contextual Back.
-        // Only the currently mounted panels participate in the reverse cycle.
-        if (ids[index] === "route-back" && !setup.renderer.root.findDescendantById("route-back"))
-          continue;
+        // Reader Back and ancestors disappear when inventory becomes current.
+        // Only currently mounted regions participate in the reverse cycle.
+        if (!setup.renderer.root.findDescendantById(ids[index]!)) continue;
         expect(await pressTab(true)).toBe(ids[index]);
       }
     } finally {
@@ -74,7 +70,7 @@ test.each([
     }
   },
 );
-test("Reader pointer tabs retain monochrome cues and Find/Raw tools own reversible arrows, not editing input", async () => {
+test("Reader pointer tabs retain monochrome cues, More arrows move without executing, and search owns text editing", async () => {
   const setup = await testRender(
     () => (
       <App
@@ -90,35 +86,36 @@ test("Reader pointer tabs retain monochrome cues and Find/Raw tools own reversib
     await openAllInstalledSkills(setup);
     await enterInstalledAddress(setup, readerAddress);
     await waitForReaderBody(setup, "needle in prose");
-    const details = setup.renderer.root.findDescendantById("reader-tabs-tab-details")!;
-    await setup.mockMouse.click(details.screenX + 1, details.screenY);
-    await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
-    expect(live(setup, "reader-details-summary").height).toBeGreaterThan(0);
-    const detailsPaint = setup.captureSpans().lines[details.screenY]!.spans;
-    expect(selectedReaderTab(setup)).toBe(2);
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-tabs-tab-details");
-    setup.mockInput.pressArrow("left");
+    const resources = live(setup, "reader-tabs-tab-resources");
+    await setup.mockMouse.click(resources.screenX + 1, resources.screenY);
     await setup.waitForFrame((frame) => frame.includes("No supporting resources"));
-    const resourcesPaint = setup.captureSpans().lines[details.screenY]!.spans;
+    const resourcesPaint = setup.captureSpans().lines[resources.screenY]!.spans;
     expect(selectedReaderTab(setup)).toBe(1);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-tabs-tab-resources");
     await openReaderTab(setup, 0);
-    await focusLive(setup, "reader-find-open");
-    setup.mockInput.pressArrow("right");
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-raw");
-    setup.mockInput.pressArrow("left");
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-find-open");
-    await parsedEnter(setup);
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-find");
+    const contentPaint = setup.captureSpans().lines[resources.screenY]!.spans;
+    await enterLive(setup, "reader-more");
+    setup.mockInput.pressArrow("down");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-menu-raw");
+    setup.mockInput.pressArrow("up");
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "reader-installation-open",
+    );
+    expect(!!setup.renderer.root.findDescendantById("reader-details")).toBe(false);
+    await enterLive(setup, "reader-menu-raw");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-line-0"));
+    await focusLive(setup, "skills-query");
     await setup.mockInput.pressKeys(["n", "e", "ARROW_LEFT", "x", "ARROW_RIGHT", "y"]);
-    await setup.waitFor(() => (live(setup, "reader-find") as InputRenderable).value === "nxey");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-find");
+    await setup.waitFor(() => (live(setup, "skills-query") as InputRenderable).value === "nxey");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("skills-query");
     for (const [spans, name] of [
-      [detailsPaint, "Settings"],
+      [contentPaint, "Content"],
       [resourcesPaint, "Resources"],
     ] as const) {
       const focused = spans.find((span) => span.text.includes(name))!;
-      const other = spans.find((span) => span.text.includes("Content"))!;
+      const other = spans.find((span) =>
+        span.text.includes(name === "Content" ? "Resources" : "Content"),
+      )!;
       const luminance = ({ r, g, b }: typeof focused.bg) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
       expect(luminance(focused.fg)).not.toBe(luminance(focused.bg));
       expect(luminance(focused.bg)).not.toBe(luminance(other.bg));
@@ -136,10 +133,6 @@ test("slash from the installed list focuses search without changing its view", a
     await openAllInstalledSkills(setup);
     setup.mockInput.pressKey("/");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "skills-query");
-    expect(
-      (live(setup, "skills-view-tab-all-installed-skills") as TabsTabRenderable).getState()
-        .selected,
-    ).toBe(true);
     expect(live(setup, "installed-skill-browser").height).toBeGreaterThan(0);
   } finally {
     setup.renderer.destroy();

@@ -437,7 +437,7 @@ async function tabToFeedbackToolbar(
   expect(setup.renderer.currentFocusedRenderable?.id).toBe(`${prefix}-feedback-pane`);
   // This crossing must be real pane traversal, not focusLive repairing App's
   // remembered content or leaving focus in the diagnostic reader.
-  setup.mockInput.pressTab();
+  setup.mockInput.pressTab({ shift: true });
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === `${prefix}-${action}`);
 }
 async function feedbackFixture(source: boolean) {
@@ -616,7 +616,7 @@ test("FI-1 root feedback retains local Back after ordinary toolbar Tab and point
     const choices = await openActions(setup);
     expect(
       choices.options.find((option) => option.value.id === "updates.feedback-details")?.value,
-    ).toMatchObject({ verb: "Back to updates", destination: "Updates · Sources list" });
+    ).toMatchObject({ verb: "Back to updates", destination: "Sources in Updates" });
     expect(choices.options.some((option) => option.value.id === "route.back")).toBe(false);
     await parsedEscape(setup);
     await setup.waitFor(
@@ -643,7 +643,7 @@ test("FI-1 Source feedback retains local Actions return after ordinary toolbar T
     expect(index).toBeGreaterThanOrEqual(0);
     expect(choices.options[index]!.value).toMatchObject({
       verb: "Back to updates",
-      destination: "team-main · Skill updates list",
+      destination: "Skill updates for team-main",
     });
     expect(choices.options.some((option) => option.value.id === "route.back")).toBe(true);
     for (let step = 0; step < index; step++) setup.mockInput.pressArrow("down");

@@ -41,6 +41,61 @@ async function frames(setup: Setup) {
   for (let i = 0; i < 3; i++) await setup.renderOnce();
 }
 
+test("dataset switches restore independent cursors and offsets in the same table", async () => {
+  const [dataset, setDataset] = createSignal("a");
+  const [positions, setPositions] = createSignal<
+    Record<string, { current?: string; scroll: number }>
+  >({ a: { current: "a-18", scroll: 16 }, b: { scroll: 0 } });
+  const reports: { dataset: string; scroll: number }[] = [];
+  const setup = await testRender(
+    () => (
+      <DataTable
+        id="table"
+        datasetKey={dataset()}
+        rows={Array.from({ length: 30 }, (_, index) => ({
+          id: `${dataset()}-${index}`,
+          name: `${dataset()} ${index}`,
+          status: "Ready",
+          count: index,
+        }))}
+        columns={columns}
+        rowKey={(row) => row.id}
+        currentKey={positions()[dataset()]!.current}
+        onCurrentChange={(current) =>
+          setPositions((all) => ({ ...all, [dataset()]: { ...all[dataset()]!, current } }))
+        }
+        initialScrollTop={positions()[dataset()]!.scroll}
+        onScroll={(scroll) => {
+          reports.push({ dataset: dataset(), scroll });
+          setPositions((all) => ({ ...all, [dataset()]: { ...all[dataset()]!, scroll } }));
+        }}
+      />
+    ),
+    { width: 60, height: 8 },
+  );
+  try {
+    await setup.flush();
+    const body = setup.renderer.root.findDescendantById("table-body") as ScrollBoxRenderable;
+    expect(body.scrollTop).toBe(16);
+    reports.length = 0;
+    setDataset("b");
+    await setup.flush();
+    expect(setup.renderer.root.findDescendantById("table-body") === body).toBe(true);
+    expect(positions().b!.current).toBe("b-0");
+    expect(body.scrollTop).toBe(0);
+    expect(reports.every((report) => report.dataset === "b" && report.scroll === 0)).toBe(true);
+    body.scrollTo(10);
+    await setup.flush();
+    setDataset("a");
+    await setup.flush();
+    expect(positions().a!.current).toBe("a-18");
+    expect(body.scrollTop).toBe(16);
+    expect(positions().b!.scroll).toBe(10);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
 test("RENDER partial selection is distinct from full checks and toggles only the current row", async () => {
   const toggled: string[] = [];
   const setup = await testRender(

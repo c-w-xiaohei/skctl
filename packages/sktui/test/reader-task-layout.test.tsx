@@ -30,10 +30,19 @@ for (const width of [120, 43]) {
       await openAllInstalledSkills(setup);
       await enterLive(setup, "installed-skill-browser");
       await waitForReaderBody(setup, "needle", false);
+      const actions = setup.renderer.root.findDescendantById("reader-object-actions")!;
+      expect(actions.height).toBe(1);
+      if (width === 43) {
+        expect(setup.captureCharFrame()).toContain("Add to Collection");
+        expect(!!setup.renderer.root.findDescendantById("reader-action-skill-check-updates")).toBe(
+          false,
+        );
+      }
       expect(!!setup.renderer.root.findDescendantById("reader-tabs-tab-details")).toBe(false);
       const body = setup.renderer.root.findDescendantById(
         "reader-scrollbox",
       ) as ScrollBoxRenderable;
+      expect(body.viewport.height).toBeGreaterThanOrEqual(6);
       body.focus();
       setup.mockInput.pressKey("END");
       await setup.flush();
@@ -45,7 +54,7 @@ for (const width of [120, 43]) {
       const menu = setup.renderer.root.findDescendantById("reader-more-dialog")!;
       const trigger = setup.renderer.root.findDescendantById("reader-more")!;
       expect(menu.width).toBeLessThanOrEqual(32);
-      expect(menu.height).toBeLessThanOrEqual(8);
+      expect(menu.height).toBeLessThanOrEqual(9);
       expect(menu.screenY).toBe(trigger.screenY + trigger.height);
       expect(setup.captureCharFrame()).toContain("Content");
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-installation-open");

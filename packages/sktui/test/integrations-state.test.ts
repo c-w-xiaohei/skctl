@@ -112,6 +112,16 @@ test("shared-file confirmation keeps the reviewed request and is discarded when 
     });
     await root.state.confirmDisconnect();
     expect(changes).toHaveLength(6);
+    await root.state.refresh();
+    root.state.select("/project/AGENTS.md");
+    root.state.setEntered(false);
+    root.state.selectTarget({
+      environment: { harness: "codex" },
+      scope: { kind: "project", directory: "/project" },
+    });
+    await root.state.refresh();
+    expect(root.state.selected()).toBe("/project/AGENTS.override.md");
+    expect(root.state.confirmation()).toBeUndefined();
   } finally {
     root.dispose();
   }

@@ -6,16 +6,23 @@ import type { CommandRecord } from "./types";
 
 /** Local state stays with the page; App presents its active parent's return. */
 export interface PageReturn {
+  readonly layer?: "menu";
   readonly record: CommandRecord;
   readonly anchor: () => Renderable | undefined;
   readonly execute: () => void;
 }
 export interface PageNavigation {
+  readonly view?: {
+    readonly expanded: Accessor<boolean>;
+    readonly available: Accessor<boolean>;
+    readonly toggle: () => void;
+  };
   readonly registerReturn: (value: PageReturn) => () => void;
   readonly registerCommands: (value: readonly ExecutableCommand[]) => () => void;
 }
 const context = createContext<PageNavigation>();
 export const PageNavigationProvider = context.Provider;
+export const usePageView = () => useContext(context)?.view;
 
 /** Standalone pages without App navigation retain their own visible return. */
 export function usePageReturn(value: Accessor<PageReturn | undefined>): boolean {

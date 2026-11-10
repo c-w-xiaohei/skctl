@@ -1,10 +1,12 @@
 /** @jsxImportSource @opentui/solid */
+import { ObjectMenu } from "../object-menu";
 import {
   InputRenderable,
   ScrollBoxRenderable,
   TextRenderable,
   type BoxRenderable,
-  type Renderable,
+  type BaseRenderable,
+  Renderable,
 } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { batch, createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
@@ -107,7 +109,7 @@ function UpdateWorkbench(
   onCleanup(() => {
     if (restoreSearchFrame) renderer.off("frame", restoreSearchFrame);
   });
-  const compact = () => terminal().height <= 18;
+  const compact = () => terminal().height < 24;
   const active = () => props.active?.() ?? false;
   const run = () => props.run?.();
   const committedQuery = () => props.sourceView?.query ?? props.state.query();
@@ -437,15 +439,6 @@ function UpdateWorkbench(
     }
     if (!isPlainNavKey(key)) return "declined";
     if (key.name === "left" || key.name === "right") return "consumed";
-    if (key.name === "escape" && selected().length) {
-      clearSelection();
-      return "consumed";
-    }
-    if (key.name === "escape" && committedQuery()) {
-      if (props.sourceView) props.sourceView.onQuery("");
-      else props.state.setQuery("");
-      return "consumed";
-    }
     return "declined";
   };
   const reason = () =>
@@ -494,7 +487,7 @@ function UpdateWorkbench(
     const name = allSkills().find(
       (skill) => addressKey(skill.address) === addressKey(item.address!),
     )?.name;
-    return `${item.source} / ${path}${name && name !== path ? ` · ${name}` : ""}`;
+    return `${item.source} / ${path}${name && name !== path ? ` (${name})` : ""}`;
   };
   const restoreViewport = (scrollTop: number) => {
     if (restoreSearchFrame) renderer.off("frame", restoreSearchFrame);
@@ -522,7 +515,7 @@ function UpdateWorkbench(
           record: {
             id: `${prefix}.feedback-details`,
             verb: "Back to updates",
-            destination: source() ? `${source()} · Skill updates list` : "Updates · Sources list",
+            destination: source() ? `Skill updates for ${source()}` : "Sources in Updates",
             keys: ["enter"],
             shortcut: "d",
             scope: "page",
@@ -601,7 +594,7 @@ function UpdateWorkbench(
     return (
       [
         (compact() && preferredFeedback()
-          ? `${preferredFeedback()!.title} · ${feedbackTarget(preferredFeedback()!)}`
+          ? `${preferredFeedback()!.title}: ${feedbackTarget(preferredFeedback()!)}`
           : undefined) ??
           (source()
             ? props.sourceView?.filter === "all"
@@ -611,7 +604,7 @@ function UpdateWorkbench(
         !searchOpen() && committedQuery() ? `Filter: ${committedQuery()}` : undefined,
       ]
         .filter(Boolean)
-        .join(" · ") || undefined
+        .join(". ") || undefined
     );
   });
   const selectionProps = {
@@ -659,7 +652,7 @@ function UpdateWorkbench(
       command("update-all", primaryLabel(), updatePrimary, {
         shortcut: "Ctrl+U",
         reason: reason(),
-        destination: `${source() ?? scopeLabel(props.state)} · ${selected().length || targets().length} ${selected().length ? "selected" : "installed"} Skills${hiddenSelected() ? ` · ${hiddenSelected()} hidden selections included` : ""}`,
+        destination: `${selected().length || targets().length} ${selected().length ? "selected" : "installed"} Skills in ${source() ?? scopeLabel(props.state)}${hiddenSelected() ? `. Includes ${hiddenSelected()} hidden selections` : ""}`,
       }),
       command(source() ? "update-skill" : "update-source", currentLabel(), updateCurrent, {
         shortcut: "u",
@@ -670,7 +663,7 @@ function UpdateWorkbench(
             : "No current item",
         destination: source()
           ? `${source()}/${currentSkill()?.address.path ?? ""}`
-          : `${currentSource()?.source ?? "No Source"} · ${currentTargets().length} Skills`,
+          : `${currentTargets().length} Skills in ${currentSource()?.source ?? "No Source"}`,
       }),
       command(
         "check",
@@ -688,7 +681,7 @@ function UpdateWorkbench(
       ),
       command("filter", source() ? "Filter Skills" : "Filter Sources", openSearch, {
         shortcut: "/",
-        destination: "Type a filter · Enter apply · Esc cancel",
+        destination: "Type a filter. Enter applies; Esc cancels.",
       }),
       command(
         "select",
@@ -705,8 +698,8 @@ function UpdateWorkbench(
               ? undefined
               : "No selectable item",
           destination: source()
-            ? `${source()}/${currentSkill()?.address.path ?? ""} · toggle selection for the update batch`
-            : `${currentSource()?.source ?? "No Source"} · select its ${currentTargets().length} bounded Skills`,
+            ? `Toggle ${source()}/${currentSkill()?.address.path ?? ""} in the update batch`
+            : `Select ${currentTargets().length} bounded Skills in ${currentSource()?.source ?? "No Source"}`,
         },
       ),
       command("clear", "Clear selection", clearSelection, {
@@ -765,7 +758,9 @@ function UpdateWorkbench(
           "show-all",
           props.sourceView?.filter === "all" ? "Show updates only" : "Show all Skills",
           () => props.sourceView?.onFilter(props.sourceView.filter === "all" ? "updates" : "all"),
-          { destination: `${source()} · changes the view, not the update scope` },
+          {
+            destination: `Change the visible Skills in ${source()}. The update scope stays the same.`,
+          },
         ),
         command(
           "source-details",
@@ -813,6 +808,9 @@ function UpdateWorkbench(
   const action = (id: string) =>
     commands().find((command) => command.record.id === `${prefix}.${id}`)!;
   const toolbarActions = createMemo(() => {
+    if (!active() && props.checkingActive?.()) return ["stop-checking"];
+    if (run()?.phase === "settled" && run()?.results.some((result) => result.status === "not-run"))
+      return ["retry", ...(shownFeedback() ? ["feedback-recover"] : [])];
     if (detailSnapshot() || (compact() && preferredFeedback()))
       return [
         ...(!active() ? ["feedback-recover"] : []),
@@ -820,30 +818,29 @@ function UpdateWorkbench(
         ...(active() ? ["stop"] : []),
       ];
     if (active()) return ["stop"];
+    if (shortActions()) return ["update-all"];
     return [
       "update-all",
       selected().length ? "clear" : source() ? "update-skill" : "update-source",
-      ...(!selected().length || !shortActions() ? [source() ? "show-all" : "check"] : []),
+      source() ? "show-all" : "check",
     ];
   });
+  const overflowActions = () =>
+    shortActions() &&
+    !active() &&
+    !detailSnapshot() &&
+    !(compact() && preferredFeedback()) &&
+    !props.checkingActive?.() &&
+    !toolbarActions().includes("retry")
+      ? [
+          action(source() ? "update-skill" : "update-source"),
+          action(source() ? "show-all" : "check"),
+          ...(selected().length ? [action("clear")] : []),
+        ]
+      : [];
   const shortActionLabel = (id: string) => {
     if (!shortActions()) return undefined;
-    switch (id) {
-      case "update-all":
-        return `Ctrl+U ${selected().length ? `Selected ${selected().length}` : "All"}`;
-      case "update-source":
-        return "u Source";
-      case "update-skill":
-        return "u Skill";
-      case "check":
-        return "r Recheck";
-      case "clear":
-        return "Clear";
-      case "show-all":
-        return props.sourceView?.filter === "all" ? "Updates only" : "All Skills";
-      default:
-        return undefined;
-    }
+    return action(id).record.verb;
   };
   createEffect(() => {
     if (preview()) return;
@@ -857,13 +854,91 @@ function UpdateWorkbench(
       onCleanup(() => dispose?.());
     }
   });
+  const TaskControls = () => (
+    <Show
+      when={searchOpen()}
+      fallback={
+        <box
+          id={`${prefix}-actions-pane`}
+          flexDirection="row"
+          height={1}
+          flexShrink={0}
+          columnGap={1}
+          ref={(target) => {
+            actionPane = target;
+            setActionWidth(target.width);
+          }}
+          onSizeChange={() => setActionWidth(actionPane?.width ?? 0)}
+        >
+          <For each={toolbarActions()}>
+            {(id) => (
+              <UpdateAction
+                {...actionProps}
+                command={action(id)}
+                label={shortActionLabel(id)}
+                primary={id === "update-all" || id === "stop"}
+              />
+            )}
+          </For>
+          <ObjectMenu
+            id={`${prefix}-more`}
+            target={`${source() ?? "overview"}:${currentSkillKey() ?? currentSource()?.source ?? ""}`}
+            commands={overflowActions()}
+            focusRegistry={props.focusRegistry}
+            registerCommand={props.registerCommand}
+          />
+        </box>
+      }
+    >
+      <box id={`${prefix}-query-pane`} height={1} flexShrink={0} flexDirection="row">
+        <text height={1} flexShrink={0} fg={theme().colors.mutedForeground}>
+          Filter:{" "}
+        </text>
+        <Input
+          id={`${prefix}-query`}
+          value={searchDraft()}
+          onInput={setSearchDraft}
+          flexGrow={1}
+          placeholder={source() ? "Filter Skills" : "Filter Sources"}
+          ref={(target) => {
+            input = target;
+            const owner = source() ? "source-updates-query" : "updates-query";
+            bind(owner, target);
+            const disposeCommand = props.registerCommand?.(
+              {
+                id: `${prefix}.apply-filter`,
+                verb: "Apply filter",
+                destination: "Keep this filter and return to the list",
+                keys: ["enter"],
+                scope: "widget",
+                enabled: true,
+                danger: false,
+              },
+              owner,
+              target.id,
+              () => closeSearch(false),
+            );
+            onCleanup(() => disposeCommand?.());
+            const dispose = props.focusRegistry?.registerModeHandler(target, (key) => {
+              if (isPlainNavKey(key) && ["enter", "down", "escape"].includes(key.name)) {
+                closeSearch(key.name === "escape");
+                return "consumed";
+              }
+              return "declined";
+            });
+            target.once("destroyed", () => dispose?.());
+          }}
+        />
+      </box>
+    </Show>
+  );
   return (
     <Pane
       id={`${prefix}-page`}
-      borderTitle={
+      title={
         preview() ? "Skill changes" : detailSnapshot() ? "Update details" : (source() ?? "Sources")
       }
-      borderBottomTitle={preview() ? "Read-only preview" : context()}
+      description={preview() ? "Read-only preview" : context()}
     >
       <box flexDirection="column" flexGrow={1} minHeight={0}>
         <box
@@ -875,6 +950,7 @@ function UpdateWorkbench(
             workbench = target;
           }}
         >
+          <TaskControls />
           <Show when={!compact()}>
             <Show
               when={
@@ -892,7 +968,13 @@ function UpdateWorkbench(
               />
             </Show>
           </Show>
-          <box id={`${prefix}-data-pane`} visible={!detailSnapshot()} flexGrow={1} minHeight={0}>
+          <box
+            id={`${prefix}-data-pane`}
+            visible={!detailSnapshot()}
+            flexGrow={1}
+            minHeight={0}
+            marginTop={terminal().height >= 24 ? 1 : 0}
+          >
             <Show
               when={source()}
               fallback={
@@ -997,7 +1079,7 @@ function UpdateWorkbench(
                   flexShrink={0}
                   fg={theme().colors.warning}
                   wrapMode="none"
-                >{`${notice.title} · ${feedbackTarget(notice)}`}</text>
+                >{`${notice.title}: ${feedbackTarget(notice)}`}</text>
                 <scrollbox
                   id={`${prefix}-feedback-pane`}
                   flexGrow={1}
@@ -1052,76 +1134,6 @@ function UpdateWorkbench(
             <text height={1} flexShrink={0} wrapMode="none" fg={theme().colors.warning}>
               Checks cannot be saved for next startup
             </text>
-          </Show>
-          <Show
-            when={searchOpen()}
-            fallback={
-              <box
-                id={`${prefix}-actions-pane`}
-                flexDirection="row"
-                height={compact() ? 1 : 2}
-                flexShrink={0}
-                columnGap={1}
-                border={compact() ? false : ["top"]}
-                borderColor={compact() ? undefined : theme().colors.border}
-                ref={(target) => {
-                  actionPane = target;
-                  setActionWidth(target.width);
-                }}
-                onSizeChange={() => setActionWidth(actionPane?.width ?? 0)}
-              >
-                <For each={toolbarActions()}>
-                  {(id) => (
-                    <UpdateAction
-                      {...actionProps}
-                      command={action(id)}
-                      label={shortActionLabel(id)}
-                      primary={id === "update-all" || id === "stop"}
-                    />
-                  )}
-                </For>
-              </box>
-            }
-          >
-            <box id={`${prefix}-query-pane`} height={1} flexShrink={0} flexDirection="row">
-              <text height={1} flexShrink={0} fg={theme().colors.mutedForeground}>
-                Filter:{" "}
-              </text>
-              <Input
-                id={`${prefix}-query`}
-                value={searchDraft()}
-                onInput={setSearchDraft}
-                flexGrow={1}
-                placeholder={source() ? "Filter Skills" : "Filter Sources"}
-                ref={(target) => {
-                  input = target;
-                  bind(source() ? "source-updates-query" : "updates-query", target);
-                  const disposeCommand = props.registerCommand?.(
-                    {
-                      id: `${prefix}.apply-filter`,
-                      verb: "Apply filter",
-                      destination: "Keep this filter and return to the list",
-                      keys: ["enter"],
-                      scope: "widget",
-                      enabled: true,
-                      danger: false,
-                    },
-                    source() ? "source-updates-query" : "updates-query",
-                    target.id,
-                    () => closeSearch(false),
-                  );
-                  onCleanup(() => disposeCommand?.());
-                  const dispose = props.focusRegistry?.registerModeHandler(target, (key) => {
-                    if (isPlainNavKey(key) && ["enter", "down", "escape"].includes(key.name)) {
-                      closeSearch(key.name === "escape");
-                      return "consumed";
-                    }
-                    return "declined";
-                  });
-                  target.once("destroyed", () => dispose?.());
-                }}
-              />
-            </box>
           </Show>
         </box>
         <Show when={preview()} keyed>
@@ -1186,7 +1198,12 @@ function UpdateAction(props: {
           if (command && command !== "declined") return command;
           if (!isPlainNavKey(key) || !["left", "right", "up", "down"].includes(key.name))
             return "declined";
-          const controls = button.parent?.getChildren().filter((child) => child.focusable) ?? [];
+          const controls: Renderable[] = [];
+          const collect = (target: BaseRenderable) => {
+            if (target instanceof Renderable && target.focusable) controls.push(target);
+            else for (const child of target.getChildren()) collect(child);
+          };
+          for (const child of button.parent?.getChildren() ?? []) collect(child);
           const index = controls.indexOf(button);
           controls[
             Math.max(
@@ -1210,7 +1227,7 @@ function UpdateAction(props: {
 function scopeLabel(state: UpdatesState) {
   const entry = state.scope.entry;
   return entry.kind === "collection"
-    ? `Collection ${entry.collection}${state.scope.includesReferences ? " · includes References" : ""}`
+    ? `Collection ${entry.collection}${state.scope.includesReferences ? " (includes References)" : ""}`
     : entry.kind === "selected"
       ? `${entry.addresses.length} selected Skills`
       : entry.kind === "skill"

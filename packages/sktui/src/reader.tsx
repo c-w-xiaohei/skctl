@@ -15,6 +15,7 @@ import {
   For,
   onCleanup,
   Show,
+  untrack,
 } from "solid-js";
 import type {
   CommandExecution,
@@ -32,15 +33,17 @@ import type { FocusRegistry, FocusTarget } from "./focus";
 import { isPlainNavKey, type NavKey } from "./navigation";
 import { Accordion } from "@tuiparts/solid/accordion";
 import { CommandControl } from "./command-control";
-import { usePageReturn } from "./page-navigation";
+import { usePageReturn, usePageView } from "./page-navigation";
 import { DataList } from "./ui/data-list";
+import { restoreSelectState, selectScrollOffset, setSelectScrollOffset } from "./select-scroll";
 import { SectionTabs, sectionTabsWidth } from "./components/section-tabs";
 import { fitColumn } from "./ui/list-text";
 import { MetadataGrid, type MetadataField } from "./ui/metadata-grid";
 import { useTheme } from "./ui/use-theme";
 import type { ActionRecord } from "./actions";
 import { Dialog, DialogContent } from "./ui/dialog";
-import { Button, type ButtonProps } from "./ui/button";
+import { Button } from "./ui/button";
+import { CommandMenuBody } from "./command-menu-body";
 
 const readerActionLabels: Partial<Record<ActionRecord["id"], string>> = {
   "skill-add-to-collection": "Add to Collection…",
@@ -109,7 +112,6 @@ export function Reader(props: {
   readonly executeCommand?: CommandExecution;
   readonly actions: readonly import("./actions").ActionRecord[];
   readonly onPatch: (value: Partial<ReaderState>) => void;
-  readonly onCommitFind: (value: string) => void;
   readonly onReadResource: (path: string) => void;
   readonly onRetryResource: () => void;
   readonly onRetryContent?: () => void;
@@ -121,10 +123,12 @@ export function Reader(props: {
 }) {
   const renderer = useRenderer();
   const terminal = useTerminalDimensions();
+  const view = usePageView();
   const tokens = useTheme();
   const [popup, setPopup] = createSignal<"more">();
-  const [installation, setInstallation] = createSignal(false);
-  const [resourceDirectory, setResourceDirectory] = createSignal("");
+  const installation = () => props.reader().installationOpen === true;
+  const setInstallation = (installationOpen: boolean) => props.onPatch({ installationOpen });
+  const resourceDirectory = createMemo(() => props.reader().resourceDirectory ?? "");
   const listedResources = createMemo(() =>
     props
       .reader()
@@ -134,10 +138,12 @@ export function Reader(props: {
   );
   const leaveDirectory = () => {
     const directory = resourceDirectory();
-    setResourceDirectory(
-      directory.includes("/") ? directory.slice(0, directory.lastIndexOf("/")) : "",
-    );
-    props.onPatch({ selectedResource: directory });
+    props.onPatch({
+      resourceDirectory: directory.includes("/")
+        ? directory.slice(0, directory.lastIndexOf("/"))
+        : "",
+      selectedResource: directory,
+    });
     queueMicrotask(() => focusOwner("reader-resource-list"));
   };
   const closeInstallation = () => {
@@ -147,23 +153,6 @@ export function Reader(props: {
   const closePopup = () => {
     setPopup(undefined);
     queueMicrotask(() => renderer.root.findDescendantById("reader-more")?.focus());
-  };
-  const menuKey: NonNullable<ButtonProps["onKeyDown"]> = (event) => {
-    if (!["up", "down"].includes(event.name)) return;
-    const targets = [
-      "reader-installation-open",
-      "reader-menu-raw",
-      "reader-menu-reload",
-      "reader-menu-skill-check-updates",
-      "reader-menu-skill-rebind",
-      "reader-menu-skill-uninstall",
-    ]
-      .map((id) => renderer.root.findDescendantById(id))
-      .filter((node): node is Renderable => node instanceof Renderable && node.focusable);
-    const index = targets.indexOf(renderer.currentFocusedRenderable!);
-    targets[(index + (event.name === "down" ? 1 : targets.length - 1)) % targets.length]?.focus();
-    event.preventDefault();
-    event.stopPropagation();
   };
   const [paneWidth, setPaneWidth] = createSignal(0);
   const [readerRoot, setReaderRoot] = createSignal<Renderable>();
@@ -235,6 +224,31 @@ export function Reader(props: {
     );
   };
   const [scrollbox, setScrollbox] = createSignal<ScrollBoxRenderable>();
+  const [resourceScrollbox, setResourceScrollbox] = createSignal<ScrollBoxRenderable>();
+  const [resourceBrowser, setResourceBrowser] = createSignal<SelectRenderable>();
+  const saveResourceListScroll = (offset: number) =>
+    props.onPatch({
+      resourceListScrolls: { ...reader().resourceListScrolls, [resourceDirectory()]: offset },
+    });
+  const saveResourceScroll = (target: ScrollBoxRenderable) => {
+    const path = reader().selectedResource;
+    if (path)
+      props.onPatch({ resourceScrolls: { ...reader().resourceScrolls, [path]: target.scrollTop } });
+  };
+  const captureResourceScroll = () => {
+    const target = resourceScrollbox();
+    const address = readerAddress();
+    const path = reader().selectedResource;
+    queueMicrotask(() => {
+      if (
+        target &&
+        !target.isDestroyed &&
+        readerAddress() === address &&
+        reader().selectedResource === path
+      )
+        saveResourceScroll(target);
+    });
+  };
   const [detailsScrollbox, setDetailsScrollbox] = createSignal<ScrollBoxRenderable>();
   const revealDetailsFocus = () => {
     const target = renderer.currentFocusedRenderable;
@@ -260,15 +274,10 @@ export function Reader(props: {
   const reader = props.reader;
   const rawMode = createMemo(() => reader().raw);
   let address = reader().address;
-  const readerAddress = () => (reader().address ? skillAddressKey(reader().address!) : undefined);
+  const readerAddress = createMemo(() =>
+    reader().address ? skillAddressKey(reader().address!) : undefined,
+  );
   const installedSkill = () => props.skill;
-  // Existing navigation handoffs can request installation information directly.
-  createEffect(() => {
-    if (reader().tab === "details") {
-      setInstallation(true);
-      props.onPatch({ tab: "skill" });
-    }
-  });
   onCleanup(() => {
     bindings.forEach((dispose) => dispose());
     readerRestoreFrame?.();
@@ -279,8 +288,6 @@ export function Reader(props: {
     if (reader().address !== address) {
       address = reader().address;
       setPopup(undefined);
-      setInstallation(false);
-      setResourceDirectory("");
     }
   });
   const source = () => {
@@ -567,41 +574,68 @@ export function Reader(props: {
       : undefined;
   });
   const sharedReturn = usePageReturn(() =>
-    installation() && props.active !== false
+    popup()
       ? {
-          ...command(
-            "reader.installation.back",
-            "Back to reading",
-            readerIdentity(),
-            closeInstallation,
-          ),
+          ...command("reader.menu.back", "Close menu", readerIdentity(), closePopup),
+          layer: "menu",
           anchor: readerRoot,
         }
-      : reader().tab === "resources" && reader().resourceLevel !== "content" && resourceDirectory()
+      : installation() && props.active !== false
         ? {
-            ...command("reader.directory.back", "Up to parent", "Resources", leaveDirectory),
+            ...command(
+              "reader.installation.back",
+              "Back to reading",
+              readerIdentity(),
+              closeInstallation,
+            ),
             anchor: readerRoot,
           }
-        : resourceReturnKey()
+        : reader().tab === "resources" &&
+            reader().resourceLevel !== "content" &&
+            resourceDirectory()
           ? {
-              ...command(
-                "reader.resource.back",
-                "Back to Resources",
-                "Resources",
-                props.onResourceBack,
-              ),
+              ...command("reader.directory.back", "Up to parent", "Resources", leaveDirectory),
               anchor: readerRoot,
             }
-          : undefined,
+          : resourceReturnKey()
+            ? {
+                ...command(
+                  "reader.resource.back",
+                  "Back to Resources",
+                  "Resources",
+                  props.onResourceBack,
+                ),
+                anchor: readerRoot,
+              }
+            : undefined,
   );
   createEffect(() => {
-    const native = scrollbox();
+    const target = resourceBrowser();
+    const address = readerAddress();
+    const directory = resourceDirectory();
+    if (!target || target.isDestroyed) return;
+    const cancel = untrack(() =>
+      restoreSelectState(
+        renderer,
+        target,
+        listedResources().findIndex((resource) => resource.path === reader().selectedResource),
+        reader().resourceListScrolls?.[directory] ?? 0,
+        saveResourceListScroll,
+        () =>
+          !target.isDestroyed && readerAddress() === address && resourceDirectory() === directory,
+      ),
+    );
+    onCleanup(cancel);
+  });
+  createEffect(() => {
     const state = reader();
+    const resource = state.tab === "resources" && state.resourceLevel === "content";
+    const native = resource ? resourceScrollbox() : scrollbox();
     const address = state.address && skillAddressKey(state.address);
     // Content can arrive after the ScrollBox mounts. A frame is the first point at
     // which OpenTUI has measured its child height, so restoring before it clamps.
     void renderedContent();
-    if (!native || !address || state.tab !== "skill") {
+    if (!native || !address || (state.tab !== "skill" && !resource)) {
       readerRestoreFrame?.();
       readerRestoreFrame = undefined;
       readerRestoreKey = undefined;
@@ -609,13 +643,21 @@ export function Reader(props: {
       readerRestoreRevision++;
       return;
     }
-    const key = `${address}:${state.tab}:${state.raw}:${state.match}:${renderedContent()}`;
+    const key = JSON.stringify([
+      address,
+      state.tab,
+      state.raw,
+      state.selectedResource,
+      renderedContent(),
+    ]);
     if (key === readerRestoreKey && readerRestoreTarget === native) return;
     readerRestoreFrame?.();
     readerRestoreKey = key;
     readerRestoreTarget = native;
     const revision = ++readerRestoreRevision;
-    const scroll = state.scroll;
+    const scroll = resource
+      ? (state.resourceScrolls?.[state.selectedResource ?? ""] ?? 0)
+      : state.scroll;
     const restore = () =>
       queueMicrotask(() => {
         if (readerRestoreFrame !== cancel) return;
@@ -623,9 +665,10 @@ export function Reader(props: {
         const current = reader();
         if (
           revision !== readerRestoreRevision ||
-          scrollbox() !== native ||
+          (resource ? resourceScrollbox() : scrollbox()) !== native ||
           native.parent === undefined ||
-          current.tab !== "skill" ||
+          current.tab !== state.tab ||
+          current.selectedResource !== state.selectedResource ||
           !current.address ||
           skillAddressKey(current.address) !== address
         )
@@ -731,12 +774,14 @@ export function Reader(props: {
     props.onPatch({ tab });
   };
   const persistentCommands: Readonly<Record<string, string>> = {
+    "reader.installation": "reader-installation-open",
     "reader.reload": "reader-reload",
     "reader.raw": "reader-raw",
+    "workspace.toggle-view": "reader-menu-view",
   };
   // Include the shared caption padding and separating cells in the tool budget.
   const tabsWidth = sectionTabsWidth(readerViews);
-  const showUpdate = () => paneWidth() >= 24;
+  const showUpdate = () => paneWidth() >= 46;
   // Compact Button reserves one theme cell on either side of its full label.
   const identityWidth = () => Math.max(1, paneWidth());
   const reloadCommand = () =>
@@ -746,6 +791,12 @@ export function Reader(props: {
       "Reread installed instructions and resources without checking remote updates",
       () => props.onReload?.(),
     );
+  const installationCommand = () =>
+    command("reader.installation", "Installation details", readerIdentity(), () => {
+      setPopup(undefined);
+      setInstallation(true);
+      queueMicrotask(() => detailsScrollbox()?.focus());
+    });
   const rawCommand = () =>
     command(
       "reader.raw",
@@ -755,8 +806,20 @@ export function Reader(props: {
         props.onPatch({ raw: !reader().raw });
       },
     );
+  const viewCommand = () =>
+    command(
+      "workspace.toggle-view",
+      view?.expanded() ? "Restore split" : "Expand view",
+      "Current workspace",
+      () => {
+        closePopup();
+        view?.toggle();
+      },
+    );
   createEffect(() => {
     const commands = [
+      installationCommand(),
+      ...(view?.available() ? [viewCommand()] : []),
       ...(props.onReload ? [reloadCommand()] : []),
       ...(!installation() && reader().tab === "skill" ? [rawCommand()] : []),
     ];
@@ -926,6 +989,7 @@ export function Reader(props: {
       else if (key.name === "end") target.scrollTo(target.scrollHeight);
       else return "declined";
       if (reader().tab === "skill") props.onPatch({ scroll: target.scrollTop });
+      else if (owner === "reader-resource-content") saveResourceScroll(target);
       return "consumed";
     }
     return "declined";
@@ -951,14 +1015,7 @@ export function Reader(props: {
         resize();
       }}
     >
-      <box
-        id="reader-identity-row"
-        flexDirection="row"
-        height={1}
-        flexShrink={0}
-        gap={1}
-        marginBottom={terminal().height >= 24 ? 1 : 0}
-      >
+      <box id="reader-identity-row" flexDirection="row" height={1} flexShrink={0} gap={1}>
         <text
           id="reader-identity"
           width={identityWidth()}
@@ -973,7 +1030,7 @@ export function Reader(props: {
       <box
         id="reader-object-actions"
         flexDirection="row"
-        flexWrap="wrap"
+        height={1}
         gap={0}
         flexShrink={0}
         minWidth={0}
@@ -989,7 +1046,7 @@ export function Reader(props: {
                 {
                   ...action,
                   id: "reader.add-to-collection",
-                  verb: paneWidth() < 54 ? "Add to…" : "Add to Collection…",
+                  verb: "Add to Collection…",
                 },
                 () => props.onDetailsAction(action.id),
                 true,
@@ -1024,8 +1081,7 @@ export function Reader(props: {
           height={1}
           flexShrink={0}
           gap={1}
-          marginTop={terminal().height >= 24 ? 1 : 0}
-          marginBottom={terminal().height >= 20 ? 1 : 0}
+          marginBottom={terminal().height >= 24 ? 1 : 0}
         >
           <box width={tabsWidth} maxWidth="100%" minWidth={0} height={1} flexShrink={0}>
             <SectionTabs
@@ -1090,6 +1146,7 @@ export function Reader(props: {
               <DataList
                 id="resource-browser"
                 ref={(value: SelectRenderable) => {
+                  setResourceBrowser(value);
                   bind("reader-resource-list", value);
                   queueMicrotask(() => {
                     if (value.isDestroyed || renderer.root.findDescendantById(value.id) !== value)
@@ -1099,7 +1156,8 @@ export function Reader(props: {
                     const selected = listedResources().findIndex(
                       (resource) => resource.path === reader().selectedResource,
                     );
-                    if (selected >= 0) value.selectedIndex = selected;
+                    if (selected >= 0 && value.getSelectedIndex() !== selected)
+                      value.selectedIndex = selected;
                     if (
                       !readerError() &&
                       reader().resourceLevel !== "content" &&
@@ -1128,13 +1186,32 @@ export function Reader(props: {
                 wrapSelection={false}
                 showSelectionIndicator
                 showScrollIndicator
+                onMouseScroll={(event) => {
+                  const browser = resourceBrowser();
+                  const scroll = event.scroll;
+                  if (!browser || !scroll || !["up", "down"].includes(scroll.direction)) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const step =
+                    Math.max(1, Math.abs(scroll.delta)) * (scroll.direction === "down" ? 1 : -1);
+                  const offset = Math.max(
+                    0,
+                    Math.min(
+                      browser.options.length - browser.height,
+                      selectScrollOffset(browser) + step,
+                    ),
+                  );
+                  saveResourceListScroll(offset);
+                  setSelectScrollOffset(browser, offset);
+                  browser.requestRender();
+                }}
                 onChange={(index) =>
                   props.onPatch({ selectedResource: listedResources()[index]?.path })
                 }
                 onSelect={(index) => {
                   const resource = listedResources()[index];
                   if (resource?.kind === "directory") {
-                    setResourceDirectory(resource.path);
+                    props.onPatch({ resourceDirectory: resource.path });
                     props.onPatch({ selectedResource: listedResources()[0]?.path });
                   } else if (resource) props.onReadResource(resource.path);
                 }}
@@ -1154,7 +1231,12 @@ export function Reader(props: {
             <>
               <scrollbox
                 id="resource-content"
-                ref={(value: ScrollBoxRenderable) => bind("reader-resource-content", value)}
+                ref={(value: ScrollBoxRenderable) => {
+                  bind("reader-resource-content", value);
+                  setResourceScrollbox(value);
+                }}
+                onKeyDown={captureResourceScroll}
+                onMouseScroll={captureResourceScroll}
                 width="100%"
                 flexGrow={1}
                 flexShrink={1}
@@ -1204,79 +1286,53 @@ export function Reader(props: {
             id="reader-more-dialog"
             width={Math.min(30, terminal().width - 4)}
             maxWidth={30}
+            maxHeight={terminal().height - 2}
           >
-            <Show when={popup() === "more"}>
-              <box width="100%" flexDirection="column" flexShrink={0}>
-                <Button
-                  id="reader-installation-open"
-                  onKeyDown={menuKey}
-                  intent="menu"
-                  ref={(target) =>
-                    queueMicrotask(() => {
-                      if (!target.isDestroyed) target.focus();
-                    })
-                  }
-                  label="Installation details"
-                  onPress={() => {
-                    setPopup(undefined);
-                    setInstallation(true);
-                    queueMicrotask(() => detailsScrollbox()?.focus());
-                  }}
-                />
-                <Button
-                  id="reader-menu-raw"
-                  onKeyDown={menuKey}
-                  intent="menu"
-                  label={rawCommand().record.verb}
-                  onPress={() => {
+            <CommandMenuBody
+              id="reader-menu-body"
+              items={[
+                { ...installationCommand(), id: "reader-installation-open" },
+                {
+                  ...rawCommand(),
+                  id: "reader-menu-raw",
+                  execute: () => {
                     closePopup();
                     setInstallation(false);
                     props.onPatch({ tab: "skill" });
                     rawCommand().execute();
-                  }}
-                />
-                <Show when={props.onReload}>
-                  <Button
-                    id="reader-menu-reload"
-                    onKeyDown={menuKey}
-                    intent="menu"
-                    label="Reread installed files"
-                    onPress={() => {
-                      closePopup();
-                      props.onReload?.();
-                    }}
-                  />
-                </Show>
-                <For
-                  each={readerActions().filter(
+                  },
+                },
+                ...(props.onReload
+                  ? [
+                      {
+                        ...reloadCommand(),
+                        id: "reader-menu-reload",
+                        execute: () => {
+                          closePopup();
+                          props.onReload?.();
+                        },
+                      },
+                    ]
+                  : []),
+                ...(view?.available() ? [{ ...viewCommand(), id: "reader-menu-view" }] : []),
+                ...readerActions()
+                  .filter(
                     (action) =>
                       action.id === "skill-rebind" ||
                       action.id === "skill-uninstall" ||
                       (action.id === "skill-check-updates" && !showUpdate()),
-                  )}
-                >
-                  {(action) => (
-                    <box marginTop={action.danger ? 1 : 0} flexShrink={0}>
-                      <Button
-                        id={`reader-menu-${action.id}`}
-                        onKeyDown={menuKey}
-                        label={action.verb}
-                        disabled={!action.enabled}
-                        intent="menu"
-                        onPress={() => {
-                          setPopup(undefined);
-                          renderer.root.findDescendantById("reader-more")?.focus();
-                          props.onDetailsAction(action.id);
-                        }}
-                      />
-                      <Show when={!action.enabled}>
-                        <text wrapMode="word">{action.disabledReason}</text>
-                      </Show>
-                    </box>
-                  )}
-                </For>
-              </box>
-            </Show>
+                  )
+                  .map((record) => ({
+                    id: `reader-menu-${record.id}`,
+                    record,
+                    execute: () => props.onDetailsAction(record.id),
+                  })),
+              ]}
+              onExecute={(command) => {
+                setPopup(undefined);
+                command.execute();
+              }}
+            />
           </DialogContent>
         </Dialog>
       </Show>
@@ -1334,7 +1390,6 @@ export function Reader(props: {
                         detailsScrollbox()?.scrollChildIntoView("reader-details-metadata"),
                       );
                     } else {
-                      setInstallation(false);
                       renderer.root.findDescendantById("reader-more")?.focus();
                       props.onDetailsRelationship(relationship.value);
                     }
@@ -1372,6 +1427,7 @@ export function Reader(props: {
                     id="reader-details-metadata"
                     ref={(value) => {
                       if (!value) return;
+                      bind("details-metadata", value);
                       revealDisclosure(value);
                     }}
                     height={1}

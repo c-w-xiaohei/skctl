@@ -5,13 +5,13 @@ import { TabsTabRenderable } from "@tuiparts/core/tabs";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { focusLive, openAllInstalledSkills } from "./reader-test-controls";
-const skillsViews = [
-  ["all-installed-skills", "installed-skill-browser"],
-  ["unassigned", "installed-skill-browser"],
-  ["problems", "problems-browser"],
-] as const;
-test("RENDER mounted Skills local tabs navigate Installed through Problems without legacy workspace nodes", async () => {
+import {
+  focusLive,
+  openAllInstalledSkills,
+  filterUncollectedSkills,
+  openWorkspaceProblems,
+} from "./reader-test-controls";
+test("RENDER Skills inventory, membership filter and diagnostics have independent entries", async () => {
   const projection = {
     ...readerProjection(),
     installedSkills: readerProjection().installedSkills.map((skill, index) => ({
@@ -38,30 +38,12 @@ test("RENDER mounted Skills local tabs navigate Installed through Problems witho
   );
   try {
     await setup.flush();
-    let tab = await focusLive(setup, "skills-view-tab-all-installed-skills");
-    for (const [index, [, body]] of skillsViews.entries()) {
-      await setup.waitFor(() => !!setup.renderer.root.findDescendantById(body));
-      expect(tab).toBeInstanceOf(TabsTabRenderable);
-      expect((tab as TabsTabRenderable).getState().selected).toBe(true);
-      if (index === 0)
-        expect(setup.renderer.root.findDescendantById("install-skills")).toBeDefined();
-      expect(setup.renderer.root.findDescendantById("workspace-scope")).toBeUndefined();
-      expect(setup.renderer.root.findDescendantById("work-area")).toBeUndefined();
-      expect(setup.captureCharFrame()).not.toContain("Workspace Scope");
-      if (index < skillsViews.length - 1) {
-        setup.mockInput.pressArrow("right");
-        const [next] = skillsViews[index + 1]!;
-        await setup.waitFor(() => {
-          const candidate = setup.renderer.root.findDescendantById(`skills-view-tab-${next}`);
-          return (
-            candidate instanceof TabsTabRenderable &&
-            candidate.getState().selected &&
-            setup.renderer.currentFocusedRenderable === candidate
-          );
-        });
-        tab = setup.renderer.root.findDescendantById(`skills-view-tab-${next}`)!;
-      }
-    }
+    await openAllInstalledSkills(setup);
+    expect(setup.renderer.root.findDescendantById("skills-browser-more")).toBeDefined();
+    await filterUncollectedSkills(setup);
+    expect(setup.captureCharFrame()).toContain("Filter (1)");
+    await openWorkspaceProblems(setup);
+    expect(!!setup.renderer.root.findDescendantById("problems-browser")).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -123,10 +105,8 @@ test("RENDER first Space marks the focused Installed Skill without an additional
           .find((option) => option.value === firstAddress)
           ?.name.startsWith("✓ ") ?? false,
     );
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("workspace-batch-add-to-collection"),
-    );
-    expect(setup.captureCharFrame()).toContain("1 selected");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-selected"));
+    expect(setup.captureCharFrame()).toContain("Selected 1");
     expect(loads).toBe(loadsBeforeSpace);
   } finally {
     setup.renderer.destroy();

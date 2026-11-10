@@ -40,6 +40,7 @@ export function ModalBody(props: {
   readonly controls?: ReturnType<typeof createModalControlRegistry>;
 }) {
   const terminal = useTerminalDimensions();
+  const compact = () => terminal().height < 24;
   const tokens = useTheme();
   const renderer = useRenderer();
   const register = useModalControl("modal-impact-content", props.controls);
@@ -82,13 +83,13 @@ export function ModalBody(props: {
   });
   return (
     <box
-      border
+      border={compact() ? [] : true}
       borderStyle="rounded"
       borderColor={tokens().colors.border}
       backgroundColor={tokens().colors.background}
       margin={1}
       paddingX={1}
-      paddingY={props.maxHeight ? 0 : 1}
+      paddingY={compact() || props.maxHeight ? 0 : 1}
       maxWidth={props.maxWidth}
       alignSelf={props.maxWidth ? "center" : undefined}
       width={

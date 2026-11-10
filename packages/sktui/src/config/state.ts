@@ -15,11 +15,15 @@ export interface ConfigSnapshot {
   readonly section: ConfigSection;
   readonly selection: Readonly<Record<ConfigSection, string | undefined>>;
   readonly configSourceSurface: "list" | "inspector";
+  readonly browserLevel: "categories" | "declarations" | "object";
+  readonly scrolls: Readonly<Record<string, number>>;
 }
 const initial = (): ConfigSnapshot => ({
   section: "sources",
   selection: {} as Record<ConfigSection, string | undefined>,
   configSourceSurface: "list",
+  browserLevel: "categories",
+  scrolls: {},
 });
 
 const valuesFor = (
@@ -68,6 +72,30 @@ export function createConfigState() {
     });
   return {
     snapshot,
+    setScroll(destination: ConfigDestination, key: string, offset: number) {
+      if ((snapshot(destination).scrolls[key] ?? 0) === offset) return;
+      update(destination, (current) => ({
+        ...current,
+        scrolls: { ...current.scrolls, [key]: offset },
+      }));
+    },
+    showCategories(destination: ConfigDestination) {
+      update(destination, (current) => ({
+        ...current,
+        browserLevel: "categories",
+        configSourceSurface: "list",
+      }));
+    },
+    showDeclarations(destination: ConfigDestination) {
+      update(destination, (current) => ({
+        ...current,
+        browserLevel: "declarations",
+        configSourceSurface: "list",
+      }));
+    },
+    openObject(destination: ConfigDestination) {
+      update(destination, (current) => ({ ...current, browserLevel: "object" }));
+    },
     restore(destination: ConfigDestination, next: ConfigSnapshot) {
       setSnapshots((current) => ({ ...current, [destination]: structuredClone(next) }));
     },
@@ -86,6 +114,7 @@ export function createConfigState() {
           ...current,
           section,
           configSourceSurface: "list",
+          browserLevel: current.section === section ? current.browserLevel : "declarations",
         }));
     },
     land(destination: ConfigDestination, section: ConfigSection, selection?: string) {
@@ -95,12 +124,17 @@ export function createConfigState() {
           section,
           selection: { ...current.selection, [section]: selection },
           configSourceSurface: "list",
+          browserLevel: "object",
         }));
     },
     configSourceSurface: (destination: ConfigDestination) =>
       snapshot(destination).configSourceSurface,
     openConfigSourceInspector(destination: ConfigDestination) {
-      update(destination, (current) => ({ ...current, configSourceSurface: "inspector" }));
+      update(destination, (current) => ({
+        ...current,
+        configSourceSurface: "inspector",
+        browserLevel: "object",
+      }));
     },
     backConfigSourceSurface(destination: ConfigDestination) {
       update(destination, (current) => ({ ...current, configSourceSurface: "list" }));
@@ -138,6 +172,10 @@ export type ConfigState = ReturnType<typeof createConfigState>;
 export type ConfigReadonly = Pick<
   ConfigState,
   | "snapshot"
+  | "setScroll"
+  | "showCategories"
+  | "showDeclarations"
+  | "openObject"
   | "section"
   | "selection"
   | "configSourceSurface"

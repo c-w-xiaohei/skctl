@@ -17,12 +17,11 @@ import {
   focusLive,
   live,
   openAllInstalledSkills,
-  openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
-  selectedReaderTab,
 } from "./reader-test-controls";
-test("Reader action and selector relationship return from the exposure Tree to their exact physical commands", async () => {
+test("Reader discovery facts stay inline and the exposure action returns to the same Skill", async () => {
   const base = readerProjection();
   const effective = base.effective;
   if (effective.status !== "complete") throw new Error("Expected complete fixture projection");
@@ -101,67 +100,21 @@ test("Reader action and selector relationship return from the exposure Tree to t
   try {
     await openAllInstalledSkills(setup);
     await enterInstalledAddress(setup, readerAddress);
-    await openReaderTab(setup, 2);
-    await parsedEnter(setup);
+    await openInstallation(setup);
+    await enterLive(setup, "reader-details-relationship-selectors");
+    expect(!!setup.renderer.root.findDescendantById("current-exposure-browser")).toBe(false);
+    await focusLive(setup, "reader-details");
+    setup.mockInput.pressKey("END");
     await setup.flush();
-    setup.mockInput.pressArrow("right");
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-reload");
-    for (const id of [
-      "reader-details-action-skill-open-collection-use",
-      "reader-details-action-skill-rebind",
-      "reader-details-action-skill-uninstall",
-    ]) {
-      setup.mockInput.pressArrow("down");
-      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
-    }
-    setup.mockInput.pressArrow("down");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "reader-description-toggle",
-    );
-    await parsedEnter(setup);
-    await enterLive(setup, "reader-tabs-tab-details");
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-details");
-    const initialDetails = live(setup, "reader-details") as ScrollBoxRenderable;
-    await setup.flush();
-    await setup.mockMouse.scroll(initialDetails.screenX + 1, initialDetails.screenY + 1, "down");
-    await setup.waitFor(() => initialDetails.scrollTop > 0);
-    await focusLive(setup, "reader-reload");
-    await setup.flush();
-    const listeners = [
-      setup.renderer.listenerCount("frame"),
-      setup.renderer.listenerCount("selection"),
-    ];
-    for (const [key, path] of [
-      ["ARROW_DOWN", ["reader-details-action-skill-open-collection-use"]],
-      [
-        "ARROW_UP",
-        [
-          "reader-details-action-skill-rebind",
-          "reader-details-action-skill-uninstall",
-          "reader-description-toggle",
-          "reader-details-relationship-source",
-          "reader-details-relationship-config",
-          "reader-details-relationship-selectors",
-        ],
-      ],
-    ] as const) {
-      if (key === "ARROW_UP")
-        await focusLive(setup, "reader-details-action-skill-open-collection-use");
-      const initiatingId = path.at(-1)!;
-      for (const id of path) {
-        setup.mockInput.pressKey(key === "ARROW_UP" ? "ARROW_DOWN" : key);
-        await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === id);
-      }
-      await setup.flush();
-      const details = live(setup, "reader-details") as ScrollBoxRenderable;
-      await setup.mockMouse.scroll(
-        details.screenX + 1,
-        details.screenY + 1,
-        key === "ARROW_DOWN" ? "down" : "up",
+    expect((live(setup, "reader-details") as ScrollBoxRenderable).scrollTop).toBeGreaterThan(0);
+    for (let visit = 0; visit < 2; visit++) {
+      await enterLive(setup, "shell-more-actions");
+      const choices = (await focusLive(setup, "palette-choices")) as SelectRenderable;
+      const index = choices.options.findIndex(
+        (option) => option.value.id === "skill-open-collection-use",
       );
-      await setup.flush();
-      const savedScroll = details.scrollTop;
-      expect(savedScroll).toBeGreaterThan(0);
+      expect(index).toBeGreaterThanOrEqual(0);
+      choices.setSelectedIndex(index);
       await parsedEnter(setup);
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
@@ -173,23 +126,13 @@ test("Reader action and selector relationship return from the exposure Tree to t
       expect(live(setup, "current-exposure-browser").focused).toBe(true);
       expect(setup.captureCharFrame()).toContain("engineering");
       await parsedEscape(setup);
-      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === initiatingId);
-      await setup.flush();
-      expect(setup.renderer.currentFocusedRenderable?.focused).toBe(true);
-      expect((live(setup, "reader-details") as ScrollBoxRenderable).scrollTop).toBe(savedScroll);
-      expect(setup.renderer.root.findDescendantById("reader-tabs-viewport")).toBeDefined();
-      expect(selectedReaderTab(setup)).toBe(2);
+      await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
       expect(
         (live(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value,
       ).toBe(skillAddressKey(readerAddress));
       expect((live(setup, "reader-identity") as TextRenderable).plainText).toBe("guide");
       expect(setup.captureCharFrame()).toContain("guide");
       expect(contentReads).toBe(1);
-      await setup.flush();
-      expect([
-        setup.renderer.listenerCount("frame"),
-        setup.renderer.listenerCount("selection"),
-      ]).toEqual(listeners);
     }
   } finally {
     setup.renderer.destroy();

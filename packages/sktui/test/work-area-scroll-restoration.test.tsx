@@ -1,11 +1,18 @@
 import { expect, test } from "bun:test";
-import { ScrollBoxRenderable, TextRenderable } from "@opentui/core";
+import { ScrollBoxRenderable, TextRenderable, type Renderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import type { WorkspaceView } from "@skctl/core";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEscape } from "./reader-test-controls";
+
+function textIn(node: Renderable): string {
+  return [
+    node instanceof TextRenderable ? node.plainText : "",
+    ...node.getChildren().map(textIn),
+  ].join(" ");
+}
 
 function exposureProjection(): WorkspaceView {
   const base = workspaceProjection();
@@ -73,8 +80,8 @@ test("RENDER Current Exposure restores its native path, offset, and browser focu
       setup.mockInput.pressArrow("down");
       await setup.flush();
     }
-    const title = (setup.renderer.root.findDescendantById("agent-node-title") as TextRenderable)
-      .plainText;
+    const description = textIn(setup.renderer.root.findDescendantById("agent-node-description")!);
+    expect(description).toContain("Child");
     const scroll = browser.scrollTop;
     await enterLive(setup, "agent-access-collection-details");
     await setup.waitFor(
@@ -88,9 +95,9 @@ test("RENDER Current Exposure restores its native path, offset, and browser focu
       "current-exposure-browser",
     ) as ScrollBoxRenderable;
     expect(restored.scrollTop).toBe(scroll);
-    expect(
-      (setup.renderer.root.findDescendantById("agent-node-title") as TextRenderable).plainText,
-    ).toBe(title);
+    expect(textIn(setup.renderer.root.findDescendantById("agent-node-description")!)).toBe(
+      description,
+    );
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("agent-access-collection-details");
   } finally {
     setup.renderer.destroy();

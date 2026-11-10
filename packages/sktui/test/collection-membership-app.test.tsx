@@ -12,7 +12,7 @@ import { openMainPage } from "./main-page-controls";
 import { CollectionsPage } from "../src/collections-page";
 import { createCollectionsState } from "../src/collections/state";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
+import { enterLive, focusLive, parsedEnter, openAllInstalledSkills } from "./reader-test-controls";
 const result = <T,>(value: T): OperationResult<T> => ({
   value,
   diagnostics: [],
@@ -23,11 +23,6 @@ function deferred<T>() {
     resolve = next;
   });
   return { promise, resolve };
-}
-async function openAllInstalledSkills(setup: Awaited<ReturnType<typeof testRender>>) {
-  await openMainPage(setup, "skills");
-  await enterLive(setup, "skills-view-tab-all-installed-skills");
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
 }
 const collectionOwner = {
   level: "project" as const,
@@ -266,29 +261,57 @@ test("Collection addition keeps its draft and explains a blocked Core preview", 
   }
 });
 
-test("Source acquisition exposes a visible task Cancel at 43x13", async () => {
-  const setup = await testRender(
-    () => <App core={directSourceCore(membershipProjection())} exit={() => {}} />,
-    { width: 43, height: 13 },
-  );
-  try {
-    await openMainPage(setup, "collections");
-    await enterLive(setup, "collection-browser");
-    await enterLive(setup, "collection-add");
-    await enterLive(setup, "collection-action-add-membership");
-    await enterLive(setup, "installed-skill-acquire");
-    await setup.waitForFrame((frame) => frame.includes("Cancel"));
-    for (const id of ["acquire-source-add", "acquire-source-back", "acquire-source-cancel"]) {
-      const control = setup.renderer.root.findDescendantById(id)!;
-      expect(control.screenY + control.height).toBeLessThanOrEqual(13);
+test.each(["team", "team/" + "长目录/".repeat(20)])(
+  "Source acquisition keeps candidates and Cancel visible at 43x13 for %s",
+  async (collection) => {
+    const projection = membershipProjection();
+    if (projection.effective.status !== "complete") throw new Error("Complete fixture required");
+    const owner = { ...collectionOwner, pointer: `/collections/${collection}` };
+    const workspace: WorkspaceView = {
+      ...projection,
+      configs: projection.configs.map((config) =>
+        config.level === "project"
+          ? { ...config, direct: { ...config.direct, collections: [{ id: collection, owner }] } }
+          : config,
+      ),
+      effective: {
+        ...projection.effective,
+        collections: [collection],
+        collectionsView: projection.effective.collectionsView.map((item) => ({
+          ...item,
+          id: collection,
+          declared: [owner],
+        })),
+      },
+    };
+    const setup = await testRender(
+      () => <App core={directSourceCore(workspace)} exit={() => {}} />,
+      { width: 43, height: 13 },
+    );
+    try {
+      await openMainPage(setup, "collections");
+      await enterLive(setup, "collection-browser");
+      await enterLive(setup, "collection-add");
+      await enterLive(setup, "collection-action-add-membership");
+      await enterLive(setup, "installed-skill-acquire");
+      await setup.waitForFrame((frame) => frame.includes("Cancel"));
+      const choice = setup.renderer.root.findDescendantById("acquire-source-choice")!;
+      expect(choice.height).toBeGreaterThanOrEqual(6);
+      expect(choice.screenY).toBeGreaterThanOrEqual(2);
+      const footer = setup.renderer.root.findDescendantById("acquire-source-cancel")!;
+      expect(choice.screenY + choice.height).toBeLessThanOrEqual(footer.screenY);
+      for (const id of ["acquire-source-add", "acquire-source-back", "acquire-source-cancel"]) {
+        const control = setup.renderer.root.findDescendantById(id)!;
+        expect(control.screenY + control.height).toBeLessThanOrEqual(13);
+      }
+      await enterLive(setup, "acquire-source-cancel");
+      await setup.waitFor(() => !setup.renderer.root.findDescendantById("acquire-source-choice"));
+      expect(!!setup.renderer.root.findDescendantById("installed-skill-choice")).toBe(false);
+    } finally {
+      setup.renderer.destroy();
     }
-    await enterLive(setup, "acquire-source-cancel");
-    await setup.waitFor(() => !setup.renderer.root.findDescendantById("acquire-source-choice"));
-    expect(!!setup.renderer.root.findDescendantById("installed-skill-choice")).toBe(false);
-  } finally {
-    setup.renderer.destroy();
-  }
-});
+  },
+);
 
 test("Collection acquisition inherits its owner; Back preserves selection and Cancel ends the task", async () => {
   const setup = await testRender(
@@ -432,9 +455,10 @@ test("Space batch Add preserves slash-containing Source IDs and publishes select
     const beforeSecondSpace = loads;
     setup.mockInput.pressKey(" ");
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("2 selected");
+    expect(setup.captureCharFrame()).toContain("Selected 2");
     expect(loads).toBe(beforeSecondSpace);
-    await enterLive(setup, "workspace-batch-add-to-collection");
+    await enterLive(setup, "skills-selected");
+    await enterLive(setup, "skills-selected-skill-add-selected-to-collection");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-handoff-choice",
     );
@@ -638,7 +662,7 @@ test("Workspace Collection create selects a level, blocks duplicate submit, and 
   try {
     await openMainPage(setup, "collections");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-browser"));
-    await enterLive(setup, "collection-action-new-collection");
+    await collectionBrowserCommand(setup, "new-collection");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-create-level",
     );
@@ -701,3 +725,4 @@ test("RENDER Collection detail has no generic Actions or duplicate Back command"
     setup.renderer.destroy();
   }
 });
+import { collectionBrowserCommand } from "./reader-test-controls";

@@ -1,4 +1,6 @@
 import type { ConfigDeclarationOwner } from "@skctl/core";
+import { Show } from "solid-js";
+import { useTerminalSize } from "../ui/terminal-size";
 import type { CollectionReview } from "../session";
 import { createModalControlRegistry, useModalControlTraversal } from "../modal-controls";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
@@ -15,6 +17,11 @@ export function CollectionReviewOverlay(props: {
   readonly onBack?: () => void;
   readonly onPreviewAgain?: () => void;
 }) {
+  const terminal = useTerminalSize();
+  const renameTarget = () =>
+    props.review.kind === "collection-rename"
+      ? `Collection: ${props.review.intent.collection} -> ${props.review.intent.target}`
+      : "";
   const controls = createModalControlRegistry();
   useModalControlTraversal(controls, () => (props.onBack ?? props.onCancel)());
   const destructive = () =>
@@ -142,9 +149,13 @@ export function CollectionReviewOverlay(props: {
         controls={controls}
         header={
           <>
-            <text>{verb()}</text>
+            <text height={1} wrapMode="none">
+              {verb()}
+            </text>
             {props.review.kind === "collection-rename" && (
-              <text>{`Collection: ${props.review.intent.collection} -> ${props.review.intent.target}`}</text>
+              <text height={1} wrapMode="none">
+                {renameTarget()}
+              </text>
             )}
           </>
         }
@@ -212,16 +223,19 @@ export function CollectionReviewOverlay(props: {
           </box>
         }
       >
+        <Show when={Bun.stringWidth(renameTarget()) > terminal().width - 6}>
+          <text id="collection-review-target" wrapMode="word">
+            {renameTarget()}
+          </text>
+        </Show>
         {lines().map((line) => (
           <text>{line}</text>
         ))}
         {!props.review.impact.allowed && <text>Operation is blocked by current dependencies.</text>}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <text>
-          {props.pending
-            ? "Stop is a request; the operation may already have been applied."
-            : "Cancel is selected by default"}
-        </text>
+        {props.pending && (
+          <text>Stop is a request; the operation may already have been applied.</text>
+        )}
       </ModalBody>
     </ModalShell>
   );

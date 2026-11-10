@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { InputRenderable } from "@opentui/core";
+import { InputRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { SourceRegistrationOverlay } from "../src/operations";
 import { enterLive, focusLive } from "./reader-test-controls";
@@ -17,6 +17,7 @@ for (const width of [80, 43]) {
             configFile={() => "/project/skctl.local.jsonc"}
             onSubmit={(value) => submitted.push(value)}
             onCancel={() => {}}
+            onBack={() => {}}
           />
         ),
         { width, height: 13 },
@@ -27,6 +28,16 @@ for (const width of [80, 43]) {
         );
         await setup.mockInput.typeText("/shared/skills");
         await setup.renderOnce();
+        const submit = setup.renderer.root.findDescendantById("source-register-submit")!;
+        const cancel = setup.renderer.root.findDescendantById("source-register-choice")!;
+        const back = setup.renderer.root.findDescendantById("source-register-back")!;
+        for (const control of [submit, cancel, back]) {
+          expect(control.screenX + control.width).toBeLessThanOrEqual(width);
+          expect(control.screenY + control.height).toBeLessThanOrEqual(12);
+        }
+        let parent = setup.renderer.root.findDescendantById("source-register-origin")!.parent;
+        while (parent && !(parent instanceof ScrollBoxRenderable)) parent = parent.parent;
+        expect((parent as ScrollBoxRenderable).viewport.height).toBeGreaterThanOrEqual(6);
         await focusLive(setup, "source-register-id");
         const id = setup.renderer.currentFocusedRenderable as InputRenderable;
         id.value = "team";

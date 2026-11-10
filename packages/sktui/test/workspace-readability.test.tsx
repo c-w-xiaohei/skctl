@@ -115,42 +115,44 @@ test.each([
   [100, 24],
   [80, 24],
   [43, 13],
-])("Agent access explains its purpose, types and expansion at %ix%i", async (width, height) => {
-  await mount(width, height);
-  const frame = setup!.captureCharFrame();
-  expect(frame).toContain("Prepared in the Agent catalog");
-  expect(frame).toContain("S Skill");
-  expect(frame).toContain(height > 18 ? "C Collection" : "C Col");
-  expect(frame).toContain(height > 18 ? "Enter or ▸/▾ to expand/fold" : "Enter collapse");
-  expect(frame).not.toContain("▦");
-  expect(frame).not.toContain("≡");
-  const marker = setup!.renderer.root.findDescendantById(
-    `${rowId(rootKey)}-kind`,
-  ) as TextRenderable;
-  expect(marker.plainText.trim()).toBe("C");
-  const disclosure = setup!.renderer.root.findDescendantById(`${rowId(rootKey)}-disclosure`)!;
-  expect(disclosure.width).toBe(3);
-  await capture(`guided-tree-${width}x${height}`);
-  await setup!.mockMouse.click(disclosure.screenX + 2, disclosure.screenY);
-  await setup!.flush();
-  await setup!.mockMouse.click(disclosure.screenX + 2, disclosure.screenY);
-  await setup!.flush();
-  const skillKey = JSON.stringify([rootKey, "skill", "guide", "team-main", "guide"]);
-  expect(
-    (
-      setup!.renderer.root.findDescendantById(`${rowId(skillKey)}-kind`) as TextRenderable
-    ).plainText.trim(),
-  ).toBe("S");
-  expect(
-    (setup!.renderer.root.findDescendantById("current-exposure-browser") as ScrollBoxRenderable)
-      .viewport.height,
-  ).toBeGreaterThanOrEqual(3);
-  const skillName = setup!.renderer.root.findDescendantById(`${rowId(skillKey)}-name`)!;
-  await setup!.mockMouse.click(skillName.screenX + 1, skillName.screenY);
-  await parsedEnter(setup!);
-  await waitForReaderBody(setup!, "Usage instructions.");
-  await capture(`reader-readable-${width}x${height}`);
-});
+])(
+  "Agent catalog keeps typed rows and disclosure controls readable at %ix%i",
+  async (width, height) => {
+    await mount(width, height);
+    const frame = setup!.captureCharFrame();
+    expect(frame).toContain("Agent catalog");
+    expect(frame).not.toContain("Prepared in the Agent catalog");
+    expect(frame).toContain("Enter preview");
+    expect(frame).not.toContain("▦");
+    expect(frame).not.toContain("≡");
+    const marker = setup!.renderer.root.findDescendantById(
+      `${rowId(rootKey)}-kind`,
+    ) as TextRenderable;
+    expect(marker.plainText.trim()).toBe("C");
+    const disclosure = setup!.renderer.root.findDescendantById(`${rowId(rootKey)}-disclosure`)!;
+    expect(disclosure.width).toBe(3);
+    await capture(`guided-tree-${width}x${height}`);
+    await setup!.mockMouse.click(disclosure.screenX + 2, disclosure.screenY);
+    await setup!.flush();
+    await setup!.mockMouse.click(disclosure.screenX + 2, disclosure.screenY);
+    await setup!.flush();
+    const skillKey = JSON.stringify([rootKey, "skill", "guide", "team-main", "guide"]);
+    expect(
+      (
+        setup!.renderer.root.findDescendantById(`${rowId(skillKey)}-kind`) as TextRenderable
+      ).plainText.trim(),
+    ).toBe("S");
+    expect(
+      (setup!.renderer.root.findDescendantById("current-exposure-browser") as ScrollBoxRenderable)
+        .viewport.height,
+    ).toBeGreaterThanOrEqual(3);
+    const skillName = setup!.renderer.root.findDescendantById(`${rowId(skillKey)}-name`)!;
+    await setup!.mockMouse.click(skillName.screenX + 1, skillName.screenY);
+    await parsedEnter(setup!);
+    await waitForReaderBody(setup!, "Usage instructions.");
+    await capture(`reader-readable-${width}x${height}`);
+  },
+);
 test.each([
   [144, 40],
   [100, 24],
@@ -159,11 +161,7 @@ test.each([
   async (width, height) => {
     await mount(width, height);
     setup!.mockInput.pressArrow("down");
-    await setup!.waitFor(
-      () =>
-        (setup!.renderer.root.findDescendantById("agent-node-title") as TextRenderable)
-          ?.plainText === "domain-driven-design",
-    );
+    await setup!.waitForFrame((frame) => frame.includes("From 产品构思"));
     await setup!.flush();
     expect(setup!.captureCharFrame()).not.toContain("domain-driven-design → domain-driven-design");
     expect(setup!.captureCharFrame()).toContain("From 产品构思");
@@ -172,10 +170,10 @@ test.each([
     ) as TextRenderable;
     expect(descriptionText.plainText).toBe(description);
     expect(descriptionText.width).toBeLessThanOrEqual(88);
-    const title = setup!.renderer.root.findDescendantById("agent-node-title")!;
+    const pane = setup!.renderer.root.findDescendantById("agent-node-pane")!;
     const details = setup!.renderer.root.findDescendantById("agent-access-collection-details")!;
-    expect(details.screenY).toBe(title.screenY);
-    expect(descriptionText.screenY).toBeGreaterThan(title.screenY + 1);
+    expect(details.screenY).toBeGreaterThan(pane.screenY);
+    expect(descriptionText.screenY).toBeGreaterThan(details.screenY);
     await capture(`collection-readable-${width}x${height}`);
     await focusLive(setup!, "agent-node-description");
     setup!.mockInput.pressKey("PAGEDOWN");

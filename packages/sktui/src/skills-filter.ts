@@ -75,6 +75,15 @@ function matchesDimension(
   if (dimension === "Collection")
     return skill.collections.some((collection) => collection.id === value);
   if (dimension === "Source") return skill.owner.source === value;
+  if (dimension === "Membership")
+    return (
+      value === "Not in a Collection" &&
+      skill.collections.every((collection) =>
+        collection.paths.every(
+          (path) => path.kind !== "direct" && path.kind !== "repository-derived",
+        ),
+      )
+    );
   if (dimension === "Config") return configValue(skill) === value;
   if (dimension === "For agents") {
     const available =
@@ -158,6 +167,7 @@ export function filterValues(
       (value) => values.add(value),
     );
   if (dimension === "Problems") values.add("Has problems");
+  if (dimension === "Membership") values.add("Not in a Collection");
   const applied = state.filters?.[dimension];
   if (applied) values.add(applied);
   return [...values].sort();

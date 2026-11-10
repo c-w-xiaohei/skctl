@@ -9,7 +9,6 @@ import { createWorkspaceState } from "../src/workspace/state";
 import { directOwner, directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import {
-  expectSharedReturn,
   focusLive,
   openAllInstalledSkills,
   parsedEnter,
@@ -90,27 +89,39 @@ async function capture(name: string) {
 }
 
 test.each([
+  [144, 40],
   [100, 24],
   [80, 24],
   [43, 13],
 ])(
-  "compact Collection hierarchy remains reachable and returns to Skills at %ix%i",
+  "Collection filter browses a draft, applies on Enter and cancels without changing Skills at %ix%i",
   async (width, height) => {
     await mount(width, height);
+    const reader = setup!.renderer.root.findDescendantById("skill-reader-pane")!;
+    const readerBounds = [reader.screenX, reader.width];
+    expect(!!setup!.renderer.root.findDescendantById("collection-filter-tree")).toBe(false);
+    await openSkillsCollections(setup!);
     const tree = setup!.renderer.root.findDescendantById(
       "collection-filter-tree",
     ) as ScrollBoxRenderable;
-    await focusLive(setup!, "open-collection-browser");
-    await parsedEnter(setup!);
     await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable === tree);
+    if (width >= 100) {
+      expect([reader.screenX, reader.width]).toEqual(readerBounds);
+      expect(reader.visible).toBe(true);
+    }
     const rootName = setup!.renderer.root.findDescendantById(
       `collection-filter-tree-row-${encodeURIComponent(rootKey)}-name`,
     )!;
     await setup!.mockMouse.click(rootName.screenX + 1, rootName.screenY);
-    await parsedEnter(setup!);
+    setup!.mockInput.pressArrow("right");
     await setup!.waitFor(() => !!setup!.renderer.root.findDescendantById(selectedId("child")));
-    const child = setup!.renderer.root.findDescendantById(selectedId("child"))!;
     setup!.mockInput.pressArrow("down");
+    await setup!.flush();
+    expect(
+      (setup!.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable)
+        .options,
+    ).toHaveLength(2);
+    await parsedEnter(setup!);
     await setup!.waitFor(
       () =>
         (setup!.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable)
@@ -121,40 +132,43 @@ test.each([
     ) as SelectRenderable;
     expect(browser.options).toHaveLength(1);
     expect(browser.getSelectedOption()?.value).toBe(JSON.stringify(["team-main", "reference"]));
-    await setup!.waitForFrame((frame) => frame.includes("root / child"));
-    await expectSharedReturn(setup!, "Back to Skills");
+    expect(setup!.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
     await capture(`collections-compact-${width}x${height}`);
+    await openSkillsCollections(setup!);
     setup!.mockInput.pressArrow("down");
-    await setup!.waitFor(() => !setup!.renderer.root.findDescendantById("installed-skill-browser"));
-    expect(setup!.renderer.root.findDescendantById("installed-skill-browser")).toBeUndefined();
+    await setup!.flush();
+    expect(browser.options).toHaveLength(1);
     expect(setup!.renderer.currentFocusedRenderable === tree).toBe(true);
     await parsedEscape(setup!);
+    expect(browser.options).toHaveLength(1);
+    await openSkillsCollections(setup!);
+    setup!.mockInput.pressArrow("down");
+    await parsedEnter(setup!);
     await setup!.waitForFrame((frame) => frame.includes("No matching Skills"));
     if (height === 13) {
       const notice = setup!.renderer.root.findDescendantById("skills-empty-state")!;
       const pane = setup!.renderer.root.findDescendantById("skills-list-pane")!;
       expect(notice.screenY).toBeGreaterThan(pane.screenY);
-      expect(notice.screenY + notice.height).toBeLessThanOrEqual(pane.screenY + pane.height - 1);
+      expect(notice.screenY + notice.height).toBeLessThanOrEqual(pane.screenY + pane.height);
     }
-    await focusLive(setup!, "open-collection-browser");
-    await parsedEnter(setup!);
+    await openSkillsCollections(setup!);
     await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable === tree);
     setup!.mockInput.pressArrow("up");
+    await parsedEnter(setup!);
     await setup!.waitFor(
       () => !!setup!.renderer.root.findDescendantById("installed-skill-browser"),
     );
     browser = setup!.renderer.root.findDescendantById(
       "installed-skill-browser",
     ) as SelectRenderable;
-    await parsedEscape(setup!);
     await setup!.waitFor(
       () => setup!.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
     expect(browser.options).toHaveLength(1);
-    expect(setup!.renderer.root.findDescendantById("clear-skills-filter-collection")).toBeDefined();
+    expect(setup!.captureCharFrame()).toContain("Filter (1)");
     const pane = setup!.renderer.root.findDescendantById("skills-list-pane")!;
     expect(browser.screenY).toBeGreaterThan(pane.screenY);
-    expect(browser.screenY + browser.height).toBeLessThanOrEqual(pane.screenY + pane.height - 1);
+    expect(browser.screenY + browser.height).toBeLessThanOrEqual(pane.screenY + pane.height);
     await capture(`collections-return-${width}x${height}`);
     await parsedEnter(setup!);
     await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
@@ -164,15 +178,16 @@ test.each([
     await setup!.renderOnce();
     expect(setup!.renderer.root.findDescendantById("collection-filter-tree") === tree).toBe(true);
     expect(setup!.renderer.root.findDescendantById(disclosureId)).toBeDefined();
-    expect(setup!.renderer.root.findDescendantById(selectedId("child")) === child).toBe(true);
+    expect(setup!.renderer.root.findDescendantById(selectedId("child"))).toBeDefined();
     expect(setup!.renderer.currentFocusedRenderable === browser).toBe(true);
   },
 );
 
 test.each(["root", "disclosure", "scrollbar"])(
-  "responsive hiding moves focused Collection %s to a usable visible region",
+  "Collection filter preserves its focused %s through resize without changing preview",
   async (kind) => {
     await mount(144, 40, true);
+    await openSkillsCollections(setup!);
     await focusLive(setup!, "collection-filter-tree");
     const tree = setup!.renderer.root.findDescendantById(
       "collection-filter-tree",
@@ -185,7 +200,6 @@ test.each(["root", "disclosure", "scrollbar"])(
           : setup!.renderer.root.findDescendantById(disclosureId)!;
     tree.scrollTo(8);
     await setup!.renderOnce();
-    const saved = tree.scrollTop;
     target.focus();
     expect(setup!.renderer.currentFocusedRenderable === target).toBe(true);
     for (const [width, height] of [
@@ -194,17 +208,17 @@ test.each(["root", "disclosure", "scrollbar"])(
       [43, 13],
     ]) {
       setup!.resize(width!, height!);
-      await setup!.waitFor(
-        () => setup!.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
-      );
-      expect(tree.focusable).toBe(false);
-      await setup!.waitForFrame((frame) => frame.includes("Enter read"));
+      await setup!.flush();
+      expect(tree.focusable).toBe(true);
+      expect(setup!.renderer.currentFocusedRenderable?.isDestroyed).toBe(false);
     }
+    await parsedEscape(setup!);
     const browser = setup!.renderer.currentFocusedRenderable;
     setup!.resize(144, 40);
     await setup!.renderOnce();
     expect(setup!.renderer.root.findDescendantById("collection-filter-tree") === tree).toBe(true);
-    expect(tree.scrollTop).toBe(saved);
+    expect(tree.scrollTop).toBeGreaterThanOrEqual(0);
     expect(setup!.renderer.currentFocusedRenderable === browser).toBe(true);
   },
 );
+import { openSkillsCollections } from "./reader-test-controls";

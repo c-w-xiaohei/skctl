@@ -3,7 +3,6 @@ import { skillAddressKey, type CollectionView } from "@skctl/core";
 import { collectionDescendants } from "../src/collections/collection-filter-tree";
 import { filterSkills, filterValues } from "../src/skills-filter";
 import { createWorkspaceState } from "../src/workspace/state";
-import { unassignedSkills } from "../src/collections/state";
 import type { InstalledSkill } from "../src/types";
 import { readerProjection } from "./installed-reader.fixture";
 
@@ -33,7 +32,7 @@ const view = (
   links: [],
 });
 
-test("Collection and Unassigned browsing never prune checked installed addresses", () => {
+test("Collection and membership filtering never prune checked installed addresses", () => {
   const assigned: InstalledSkill = {
     ...skill("guide", ["child"]),
     collections: [
@@ -62,14 +61,17 @@ test("Collection and Unassigned browsing never prune checked installed addresses
       collectionsView: [view("root", ["child"]), view("child", [], [assigned])],
     },
   };
-  expect(unassignedSkills(projection)).toEqual([unassigned]);
+  expect(
+    filterSkills(projection.installedSkills, { filters: { Membership: "Not in a Collection" } }),
+  ).toEqual([unassigned]);
   const state = createWorkspaceState();
   state.selectSkillsView("all-installed-skills");
   state.toggleSkill(assigned.address);
   state.toggleSkill(unassigned.address);
-  state.selectSkillsView("unassigned");
+  state.setFilter("Membership", "Not in a Collection");
   state.reconcile(projection, projection);
   expect(state.selectedSkills()).toEqual([assigned.address, unassigned.address]);
+  state.setFilter("Membership", undefined);
   state.selectSkillsView("all-installed-skills");
   state.setFilter("Collection", "child");
   state.reconcile(projection, projection);

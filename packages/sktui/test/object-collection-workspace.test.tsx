@@ -56,8 +56,10 @@ test("Collection workspace exposes member tasks and stable views without per-row
     expect(frame).toContain("Instructions");
     expect(frame).toContain("Settings");
     expect(frame).toContain("Add…");
-    expect(frame).toContain("Details…");
+    expect(frame).toContain("More…");
     expect(frame).not.toContain("Manage…");
+    await clickVisible(setup, "collection-more");
+    expect(setup.captureCharFrame()).toContain("Details…");
   } finally {
     setup.renderer.destroy();
   }
@@ -179,6 +181,7 @@ test("Back from a Settings relationship returns focus to the inspected relations
     setup.mockInput.pressArrow("down");
     setup.mockInput.pressArrow("down");
     await setup.flush();
+    await clickVisible(setup, "collection-more");
     await clickVisible(setup, controlId);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),

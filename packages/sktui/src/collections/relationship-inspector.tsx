@@ -16,7 +16,7 @@ import { relationshipCommands, type RelationshipCommand } from "./relationship-c
 import type { FocusRegistry, FocusTarget } from "../focus";
 import type { CommandExecution, CommandRegistration } from "../types";
 import { useTheme } from "../ui/use-theme";
-import { Dialog, DialogContent } from "../ui/dialog";
+import { usePageReturn } from "../page-navigation";
 
 export type CollectionRelationshipIntent =
   | { readonly kind: "collection-rename"; readonly collection: string }
@@ -224,7 +224,7 @@ export function RelationshipInspector(props: {
   };
   const backRecord = (): RelationshipCommand => ({
     id: "collection.inspector-back",
-    verb: "Close",
+    verb: "Back to Contents",
     destination: props.collections.tab(props.collection.id) === "settings" ? "Settings" : "Members",
     scope: "page",
     keys: ["enter", "return"],
@@ -232,7 +232,16 @@ export function RelationshipInspector(props: {
     danger: false,
     intent: { kind: "collection-inspector-back", collection: props.collection.id },
   });
-  let surface: BoxRenderable | undefined;
+  const [surface, setSurface] = createSignal<BoxRenderable>();
+  const sharedReturn = usePageReturn(() =>
+    inspector()?.collection === props.collection.id
+      ? {
+          record: backRecord(),
+          anchor: surface,
+          execute: () => execute(backRecord()),
+        }
+      : undefined,
+  );
   const [width, setWidth] = createSignal(0);
   const execute = (record: RelationshipCommand) => {
     if (!record.enabled || !record.intent) return;
@@ -300,9 +309,11 @@ export function RelationshipInspector(props: {
           <For each={actions.commands}>{(record) => <InspectorCommand record={record} />}</For>
         </box>
       </Show>
-      <box height={1} flexShrink={0}>
-        <InspectorCommand record={backRecord()} />
-      </box>
+      <Show when={!sharedReturn}>
+        <box height={1} flexShrink={0}>
+          <InspectorCommand record={backRecord()} />
+        </box>
+      </Show>
     </box>
   );
   const Ownership = (owner: {
@@ -524,45 +535,28 @@ export function RelationshipInspector(props: {
   };
   return (
     <Show when={inspector()?.collection === props.collection.id}>
-      <Dialog
-        open
-        onOpenChange={(open) => {
-          if (!open)
-            props.onRelationship({
-              kind: "collection-inspector-back",
-              collection: props.collection.id,
-            });
+      <box
+        id="collection-inspector-surface"
+        width="100%"
+        flexDirection="column"
+        flexGrow={1}
+        minHeight={0}
+        minWidth={0}
+        ref={(target) => {
+          setSurface(target);
+          setWidth(target.width);
         }}
+        onSizeChange={() => setWidth(surface()?.width ?? 0)}
       >
-        <DialogContent
-          id="collection-inspector-surface"
-          width={Math.min(78, terminal().width - 4)}
-          maxWidth={78}
-          backgroundColor={tokens().colors.background}
-          border
-          title="Details"
-          paddingX={1}
-          flexDirection="column"
-          height={Math.max(6, Math.min(14, terminal().height - 5))}
-          flexShrink={0}
-          minHeight={0}
-          minWidth={0}
-          ref={(target) => {
-            surface = target;
-            setWidth(target.width);
-          }}
-          onSizeChange={() => setWidth(surface?.width ?? 0)}
-        >
-          <Switch>
-            <Match when={inspector()?.kind === "membership"}>
-              <Membership />
-            </Match>
-            <Match when={inspector()?.kind === "relation"}>
-              <Relation />
-            </Match>
-          </Switch>
-        </DialogContent>
-      </Dialog>
+        <Switch>
+          <Match when={inspector()?.kind === "membership"}>
+            <Membership />
+          </Match>
+          <Match when={inspector()?.kind === "relation"}>
+            <Relation />
+          </Match>
+        </Switch>
+      </box>
     </Show>
   );
 }

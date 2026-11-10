@@ -24,6 +24,43 @@ const available = [
   { id: "team", description: "Team authoring and review" },
   { id: "docs", description: "Read documentation" },
 ];
+
+test("Collection Use pins review and cancel while its long target and choices scroll at 43x13", async () => {
+  const setup = await testRender(
+    () => (
+      <CollectionUseOverlay
+        level="project"
+        file={"/workspace/" + "directory/".repeat(20) + "skctl.jsonc"}
+        collections={[]}
+        availableCollections={Array.from({ length: 20 }, (_, index) => ({
+          id: `collection-${index}`,
+        }))}
+        pending={false}
+        onPreview={() => {}}
+        onCancel={() => {}}
+      />
+    ),
+    { width: 43, height: 13 },
+  );
+  try {
+    await setup.flush();
+    const list = choices(setup);
+    expect(list.height).toBeGreaterThanOrEqual(6);
+    const review = live(setup, "collection-use-review");
+    const cancel = live(setup, "collection-use-cancel");
+    expect(review.screenY).toBe(cancel.screenY);
+    expect(review.screenY + review.height).toBeLessThanOrEqual(12);
+    let parent = list.parent;
+    while (parent && !(parent instanceof ScrollBoxRenderable)) parent = parent.parent;
+    const body = parent as ScrollBoxRenderable;
+    const y = review.screenY;
+    body.scrollTo(100);
+    await setup.flush();
+    expect(review.screenY).toBe(y);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
 const owner = {
   level: "project" as const,
   file: "/workspace/skctl/skctl.jsonc",
@@ -85,6 +122,14 @@ async function expectRenderedReview(setup: Setup, oldCollections: string, newCol
   expect(frame).toContain(`Owner: project: ${owner.file} /use`);
   expect(frame).toContain(`Old: ${oldCollections}`);
   expect(frame).toContain(`New: ${newCollections}`);
+}
+async function expectReviewFooter(setup: Setup) {
+  const review = live(setup, "collection-use-review");
+  const cancel = live(setup, "collection-use-cancel");
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable === review);
+  expect(review.screenY).toBe(cancel.screenY);
+  expect(review.screenY + review.height).toBeLessThanOrEqual(setup.renderer.height - 1);
+  expect(setup.captureCharFrame().split("\n")[review.screenY]).toContain("Review Collection Use");
 }
 function choices(setup: Setup) {
   const list = live(setup, "collection-use-values");
@@ -222,7 +267,7 @@ test("Use pointer row focus is separate from its check gutter and pending/error/
     expect(choices(setup)).toBe(list);
     expect(checked(setup)).toEqual(["team", "docs"]);
     await focusLive(setup, "collection-use-review");
-    await expectFocusedInBody(setup, "collection-use-review", "Review Collection Use");
+    await expectReviewFooter(setup);
     await parsedEnter(setup);
     expect(previews).toEqual([
       { kind: "collection-use", level: "global", collections: ["team", "docs"] },
@@ -291,7 +336,7 @@ for (const mode of ["dark", "light"] as const) {
         await current(setup, "docs");
         await parsedEnter(setup);
         await focusLive(setup, "collection-use-review");
-        await expectFocusedInBody(setup, "collection-use-review", "Review Collection Use");
+        await expectReviewFooter(setup);
         await parsedEnter(setup);
         setState({ pending: true });
         await setup.renderOnce();
@@ -305,7 +350,7 @@ for (const mode of ["dark", "light"] as const) {
         await expectFocusedInBody(setup, "collection-use-values", "[x] docs");
         await capture(setup, `use-${mode}-${width}x${height}-error-picker`);
         await focusLive(setup, "collection-use-review");
-        await expectFocusedInBody(setup, "collection-use-review", "Review Collection Use");
+        await expectReviewFooter(setup);
         await capture(setup, `use-${mode}-${width}x${height}-error-review`);
         await parsedEnter(setup);
         expect(previews).toEqual([
@@ -568,10 +613,7 @@ async function openConfigUse(setup: Setup) {
     await setup.renderOnce();
   }
   await parsedEnter(setup);
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("settings-section-tab-collections"),
-  );
-  await enterLive(setup, "settings-section-tab-collections");
+  await openSettingsCategory(setup, "collections");
   await chooseAction(setup, "set-collection-use");
 }
 for (const entry of ["Config", "relationship Edit Use", "Settings level"] as const) {
@@ -827,3 +869,4 @@ test("production App cancels an outstanding Use preview without applying its lat
     setup.renderer.destroy();
   }
 });
+import { openSettingsCategory } from "./settings-test-controls";

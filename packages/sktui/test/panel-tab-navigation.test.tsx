@@ -25,9 +25,8 @@ test("Tab cycles inventory, Reader, shell, search and filter panels", async () =
       if (id) visited.push(id);
       if (id === "installed-skill-browser") break;
     }
-    expect(visited).toContain("reader-action-skill-check-updates");
+    expect(visited).toContain("reader-details-action-skill-add-to-collection");
     expect(visited).toContain("shell-section-tab-skills");
-    expect(visited).toContain("skills-view-tab-all-installed-skills");
     expect(visited).toContain("skills-query");
     expect(visited).toContain("open-skills-filter");
     expect(visited.at(-1)).toBe("installed-skill-browser");

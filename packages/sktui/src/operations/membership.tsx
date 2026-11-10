@@ -26,9 +26,13 @@ export function MembershipRemovalPlanOverlay(props: {
     <ModalShell>
       <ModalBody
         controls={controls}
-        header={<text>{`Remove from ${props.plan.collection}`}</text>}
+        header={
+          <text height={1} wrapMode="none">
+            {`Remove from ${props.plan.collection}`}
+          </text>
+        }
         footer={
-          <box flexDirection="row" gap={1} flexShrink={0}>
+          <box flexDirection="row" flexWrap="wrap" gap={1} flexShrink={0}>
             <ModalCommand
               id="membership-removal-plan"
               controls={controls}
@@ -36,7 +40,19 @@ export function MembershipRemovalPlanOverlay(props: {
               initialFocus
               execute={props.onCancel}
             />
-            <Show when={props.review?.impact.allowed}>
+            <Show when={props.error && group() && !props.pending}>
+              <ModalCommand
+                id="membership-removal-retry"
+                controls={controls}
+                record={modalCommand(
+                  "membership-removal.retry",
+                  "Preview again",
+                  "Review current configuration",
+                )}
+                execute={() => props.onSelect(props.ownerIndex ?? 0)}
+              />
+            </Show>
+            <Show when={props.review?.impact.allowed && !props.error}>
               <ModalCommand
                 id="collection-review-confirm"
                 controls={controls}
@@ -53,6 +69,7 @@ export function MembershipRemovalPlanOverlay(props: {
           </box>
         }
       >
+        <text wrapMode="word">{`Remove from ${props.plan.collection}`}</text>
         <text>Installed Skills will be kept.</text>
         <Show when={props.plan.ownerGroups.length > 1}>
           <text>Choose the configuration to change. Other locations will be kept.</text>
@@ -117,18 +134,6 @@ export function MembershipRemovalPlanOverlay(props: {
         </Show>
         <Show when={props.error}>
           <text wrapMode="word">{props.error?.message}</text>
-        </Show>
-        <Show when={props.error && group() && !props.pending}>
-          <ModalCommand
-            id="membership-removal-retry"
-            controls={controls}
-            record={modalCommand(
-              "membership-removal.retry",
-              "Preview again",
-              "Review current configuration",
-            )}
-            execute={() => props.onSelect(props.ownerIndex ?? 0)}
-          />
         </Show>
       </ModalBody>
     </ModalShell>

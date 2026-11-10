@@ -52,6 +52,90 @@ function fixture(count = 3) {
   return { snapshot, observation };
 }
 
+test.each([43, 80, 100, 144])(
+  "Updates keeps complete commands above its table at %i columns",
+  async (width) => {
+    const { snapshot, observation } = fixture(12);
+    const state = createUpdatesState(buildUpdateScope(snapshot, { kind: "workspace" }));
+    state.observe(observation);
+    const submitted: unknown[] = [];
+    const setup = await testRender(
+      () => (
+        <UpdatesPage
+          state={state}
+          onCheck={() => {}}
+          onUpdate={(items) => submitted.push(items)}
+          onStop={() => {}}
+        />
+      ),
+      { width, height: 13 },
+    );
+    try {
+      await setup.flush();
+      const actions = live(setup, "updates-actions-pane");
+      const body = live(setup, "updates-browser-body") as ScrollBoxRenderable;
+      expect(actions.height).toBe(1);
+      expect(actions.screenY + actions.height).toBeLessThanOrEqual(body.screenY);
+      expect(body.viewport.height).toBeGreaterThanOrEqual(6);
+      expect(nativeText(live(setup, "updates-update-all"))).toContain("Update all");
+      state.toggle(snapshot.installedSkills[1]!.address);
+      await setup.flush();
+      expect(nativeText(live(setup, "updates-update-all"))).toContain("Update selected 1");
+      for (const child of actions.getChildren().filter((child) => child.focusable))
+        expect(child.screenX + child.width).toBeLessThanOrEqual(actions.screenX + actions.width);
+      await enterLive(setup, "updates-update-all");
+      expect(submitted).toEqual([[snapshot.installedSkills[1]!.address]]);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
+
+test("Updates exposes Stop checks and Continue not-run without opening a menu", async () => {
+  const { snapshot, observation } = fixture();
+  const state = createUpdatesState(buildUpdateScope(snapshot, { kind: "workspace" }));
+  state.observe(observation);
+  const [checking, setChecking] = createSignal(true);
+  const [run, setRun] = createSignal<UpdateRun>();
+  let stops = 0;
+  let retries = 0;
+  const setup = await testRender(
+    () => (
+      <UpdatesPage
+        state={state}
+        checkingActive={checking}
+        run={run}
+        onStopChecking={() => stops++}
+        onRetry={() => retries++}
+        onCheck={() => {}}
+        onUpdate={() => {}}
+        onStop={() => {}}
+      />
+    ),
+    { width: 43, height: 13 },
+  );
+  try {
+    await setup.flush();
+    expect(!!setup.renderer.root.findDescendantById("updates-stop-checking")).toBe(true);
+    await enterLive(setup, "updates-stop-checking");
+    expect(stops).toBe(1);
+    setChecking(false);
+    setRun({
+      phase: "settled",
+      addresses: state.scope.addresses,
+      results: state.scope.addresses.map((address) => ({ address, status: "not-run" as const })),
+    });
+    await setup.flush();
+    await enterLive(setup, "updates-retry");
+    expect(retries).toBe(1);
+    const toolbar = live(setup, "updates-actions-pane");
+    for (const child of toolbar.getChildren().filter((child) => child.focusable))
+      expect(child.screenX + child.width).toBeLessThanOrEqual(toolbar.screenX + toolbar.width);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
 test("RENDER overview commands and pointer keep current Source, selection and activation distinct", async () => {
   const { snapshot, observation } = fixture();
   const other = { ...snapshot.installedSkills[0]!, address: { source: "other", path: "guide" } };
@@ -348,7 +432,7 @@ test.each([
             addresses: state.scope.addresses,
             results: state.scope.addresses.map<UpdateRun["results"][number]>((address) => ({
               address,
-              status: "not-run",
+              status: "not-run" as const,
             })),
           });
         const id = active ? "source-updates-stop" : "source-updates-update-all";

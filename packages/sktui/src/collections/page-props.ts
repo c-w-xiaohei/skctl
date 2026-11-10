@@ -9,6 +9,7 @@ import type { CollectionRelationshipIntent } from "./relationship-inspector";
 import type { CollectionRemovalRow } from "./relationship-model";
 
 export interface CollectionsPageProps {
+  readonly browserWidth?: number;
   readonly collections: CollectionsReadonly;
   readonly mode: LayoutMode;
   readonly surface: "browser" | "detail";

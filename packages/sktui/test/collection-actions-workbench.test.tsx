@@ -383,7 +383,10 @@ test.each([
       expect(cell.screenX + cell.width).toBeLessThanOrEqual(body.screenX + body.width - 1);
       expect(cell.screenY + cell.height).toBeLessThanOrEqual(height - 2);
       expect(cell.width).toBeGreaterThan(0);
-      for (const paneId of ["collection-content-controls-pane", "collections-tree-controls-pane"]) {
+      for (const paneId of [
+        "collection-content-controls-pane",
+        "collections-search-controls-pane",
+      ]) {
         const pane = setup.renderer.root.findDescendantById(paneId);
         if (!pane) continue;
         for (const button of descendants(pane).filter((node) => node instanceof ButtonRenderable)) {
@@ -453,6 +456,7 @@ test("multi-origin Membership has no implicit Remove and Manage preserves explic
     const current = await openActions(setup);
     expect(current.options.some((option) => option.value.id === "membership.remove")).toBe(true);
     await parsedEscape(setup);
+    await enterLive(setup, "collection-more");
     await enterLive(setup, "collection-current-details");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-origin"),
@@ -495,6 +499,7 @@ test("Tab reaches a table with unavailable Read and still reaches its enabled Ma
     setup.mockInput.pressTab();
     await setup.flush();
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-relationships");
+    await enterLive(setup, "collection-more");
     await enterLive(setup, "collection-current-details");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
@@ -662,6 +667,7 @@ test("removing a direct Reference preserves its expected value and enclosing Col
   try {
     await openContents(setup);
     await selectRow(setup, team.members.length);
+    await enterLive(setup, "collection-more");
     await enterLive(setup, "collection-current-relationship.remove-reference");
     await enterLive(setup, "reference-review");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-review-choice"));

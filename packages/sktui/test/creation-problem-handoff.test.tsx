@@ -6,7 +6,13 @@ import { CollectionCreateOverlay } from "../src/operations";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { enterLive, parsedEnter, parsedEscape, waitForReaderBody } from "./reader-test-controls";
+import {
+  enterLive,
+  parsedEnter,
+  parsedEscape,
+  waitForReaderBody,
+  openWorkspaceProblems,
+} from "./reader-test-controls";
 import { problemRowKey, problemRows } from "../src/workspace/state";
 
 for (const action of ["cancel", "submit"] as const) {
@@ -95,8 +101,7 @@ test("Problems opens the exact Skill in Reader and Back restores the diagnostic 
     { width: 80, height: 24 },
   );
   try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("skills-view-tab-problems"));
-    await enterLive(setup, "skills-view-tab-problems");
+    await openWorkspaceProblems(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("problems-browser"));
     const browser = setup.renderer.root.findDescendantById("problems-browser") as SelectRenderable;
     expect(browser.getSelectedOption()?.value).toBe(key);

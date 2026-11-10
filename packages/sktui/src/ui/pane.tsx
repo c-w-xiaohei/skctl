@@ -1,14 +1,14 @@
 /** @jsxImportSource @opentui/solid */
 import { createSignal, onCleanup, onMount, Show, type JSXElement } from "solid-js";
 import { useRenderer } from "@opentui/solid";
+import { useTerminalSize } from "./terminal-size";
 import type { BaseRenderable } from "@opentui/core";
 import { useTheme } from "./use-theme";
 
 export interface PaneProps {
   readonly id: string;
   readonly title?: string;
-  readonly borderTitle?: string;
-  readonly borderBottomTitle?: string;
+  readonly description?: string;
   readonly active?: boolean;
   readonly border?: boolean;
   readonly width?: number | `${number}%`;
@@ -18,6 +18,8 @@ export interface PaneProps {
 export function Pane(props: PaneProps) {
   const tokens = useTheme();
   const renderer = useRenderer();
+  const terminal = useTerminalSize();
+  const compact = () => terminal().height < 24;
   const [focused, setFocused] = createSignal(false);
   const updateFocus = (target: BaseRenderable | null) => {
     let current = target;
@@ -39,11 +41,9 @@ export function Pane(props: PaneProps) {
       minHeight={0}
       minWidth={0}
       overflow="hidden"
-      border={props.border === false ? [] : true}
-      title={props.borderTitle}
-      bottomTitle={props.borderBottomTitle}
+      border={props.border === false || compact() ? [] : true}
       borderColor={
-        props.border === false
+        props.border === false || compact()
           ? undefined
           : (props.active ?? focused())
             ? tokens().colors.focus
@@ -52,13 +52,18 @@ export function Pane(props: PaneProps) {
       paddingX={1}
     >
       <Show when={props.title}>
-        <box height={2} flexShrink={0} paddingBottom={1}>
+        <box height={1} flexShrink={0}>
           <text fg={tokens().colors.foreground}>
             <strong>{props.title}</strong>
           </text>
         </box>
       </Show>
       {props.children}
+      <Show when={props.description}>
+        <text height={1} flexShrink={0} wrapMode="none" fg={tokens().colors.mutedForeground}>
+          {props.description}
+        </text>
+      </Show>
     </box>
   );
 }

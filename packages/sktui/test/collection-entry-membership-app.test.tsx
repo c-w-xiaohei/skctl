@@ -99,6 +99,7 @@ async function openEntries(setup: Awaited<ReturnType<typeof testRender>>) {
   );
 }
 async function manageCurrent(setup: Awaited<ReturnType<typeof testRender>>) {
+  await enterLive(setup, "collection-more");
   await enterLive(setup, "collection-current-details");
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
@@ -433,15 +434,14 @@ test("RENDER cancelling direct Membership removal retains the inspector origin a
   try {
     await openEntries(setup);
     await setup.waitForFrame((frame) => frame.includes("guide-entry"));
+    await enterLive(setup, "collection-more");
     await enterLive(setup, "collection-current-membership.remove");
     await setup.waitForFrame((frame) => frame.includes("Remove from team"));
     await setup.waitFor(() => previews.length === 1);
     expect(setup.renderer.root.findDescendantById("membership-removal-plan")).toBeDefined();
     await enterLive(setup, "membership-removal-plan");
     await setup.flush();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe(
-      "collection-current-membership.remove",
-    );
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-more");
     expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(false);
     expect(changes).toHaveLength(0);
   } finally {

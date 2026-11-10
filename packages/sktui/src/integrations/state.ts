@@ -8,9 +8,12 @@ export function createIntegrationsState(client: IntegrationsApi = api) {
   const [loading, setLoading] = createSignal(false);
   const [problem, setProblem] = createSignal<string>();
   const [selected, setSelected] = createSignal<string>();
+  const [entered, setEntered] = createSignal(false);
+  const views = new Map<string, { selected?: string; entered: boolean }>();
   const [confirmation, setConfirmation] = createSignal<api.MutationRequest>();
   const [task, setTask] = createSignal<{
     target: api.IntegrationTarget;
+    entry?: api.MutationRequest["entry"];
     running: boolean;
     result?: api.IntegrationChange;
     error?: string;
@@ -47,11 +50,14 @@ export function createIntegrationsState(client: IntegrationsApi = api) {
   };
   const selectTarget = (next: api.IntegrationTarget) => {
     if (key(next) === key(target())) return;
+    views.set(key(target()), { selected: selected(), entered: entered() });
+    const view = views.get(key(next));
     query?.abort();
     revision++;
     setTarget(next);
     setInspection(undefined);
-    setSelected(undefined);
+    setSelected(view?.selected);
+    setEntered(view?.entered ?? false);
     setConfirmation(undefined);
     setProblem(undefined);
     void refresh();
@@ -61,11 +67,12 @@ export function createIntegrationsState(client: IntegrationsApi = api) {
     setConfirmation(undefined);
     const controller = new AbortController();
     mutation = controller;
-    setTask({ target: request.target, running: true });
+    const captured = { target: request.target, entry: request.entry };
+    setTask({ ...captured, running: true });
     try {
       const result = await client[action](request, { signal: controller.signal });
       if (closed) return;
-      setTask({ target: request.target, running: false, result });
+      setTask({ ...captured, running: false, result });
       if (key(target()) === key(request.target)) {
         if (
           action === "disconnect" &&
@@ -76,8 +83,7 @@ export function createIntegrationsState(client: IntegrationsApi = api) {
         } else await refresh();
       }
     } catch (error) {
-      if (!closed)
-        setTask({ target: request.target, running: false, error: api.diagnostic(error).message });
+      if (!closed) setTask({ ...captured, running: false, error: api.diagnostic(error).message });
     }
   };
   const execute = async (action: "connect" | "disconnect") => {
@@ -105,6 +111,8 @@ export function createIntegrationsState(client: IntegrationsApi = api) {
     loading,
     problem,
     selected,
+    entered,
+    setEntered,
     select: (file: string | undefined) => {
       if (file !== selected()) setConfirmation(undefined);
       setSelected(file);

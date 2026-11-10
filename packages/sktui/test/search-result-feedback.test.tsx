@@ -29,7 +29,9 @@ test("RENDER search shows a compact named match and Enter opens the result", asy
     ) as SelectRenderable;
     expect(browser.getSelectedOption()?.value).toBe(JSON.stringify(["team-main", "reference"]));
     expect(browser.showDescription).toBe(false);
-    await setup.waitForFrame((frame) => frame.includes("Match") && frame.includes("reference"));
+    await setup.waitForFrame((frame) =>
+      frame.split("\n").some((line) => line.includes("reference") && line.includes("distin")),
+    );
     expect(setup.captureCharFrame()).toContain("Skills (1 of 2)");
 
     setup.mockInput.pressEnter();

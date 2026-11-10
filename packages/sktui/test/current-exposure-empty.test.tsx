@@ -127,7 +127,7 @@ test("global-only workspaces choose Collections at the existing global Config", 
     await enterLive(setup, "skills-setup-primary");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "scope-choices");
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Configuration: global"));
+    await setup.waitForFrame((frame) => frame.includes("Collection Use: global"));
     expect(setup.renderer.root.findDescendantById("collection-use-values")).toBeDefined();
   } finally {
     setup.renderer.destroy();

@@ -13,6 +13,7 @@ import {
 } from "../modal-controls";
 import { DataList } from "../ui/data-list";
 import { Input } from "../ui/input";
+import { FormField } from "../ui/form";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
 
 export function CollectionRenameOverlay(props: {
@@ -30,7 +31,11 @@ export function CollectionRenameOverlay(props: {
     <ModalShell>
       <ModalBody
         controls={controls}
-        header={<text>{`Rename ${props.collection}`}</text>}
+        header={
+          <text height={1} wrapMode="none">
+            {`Rename ${props.collection}`}
+          </text>
+        }
         footer={
           <box flexDirection="row" gap={1}>
             <ModalCommand
@@ -56,6 +61,7 @@ export function CollectionRenameOverlay(props: {
           </box>
         }
       >
+        <text wrapMode="word">{`Collection: ${props.collection}`}</text>
         <text>New Collection ID</text>
         <Input
           id="collection-rename-target"
@@ -94,7 +100,11 @@ export function CollectionContentOverlay(props: {
     <ModalShell>
       <ModalBody
         controls={controls}
-        header={<text>{`Edit ${props.collection}`}</text>}
+        header={
+          <text height={1} wrapMode="none">
+            {`Edit ${props.collection}`}
+          </text>
+        }
         footer={
           <box flexDirection="row" gap={1} flexWrap="wrap">
             <ModalCommand
@@ -130,6 +140,7 @@ export function CollectionContentOverlay(props: {
           </box>
         }
       >
+        <text wrapMode="word">{`Collection: ${props.collection}`}</text>
         {(props.owners?.length ?? 0) > 1 && (
           <DataList
             id="collection-content-owner"
@@ -321,17 +332,19 @@ export function CollectionCreateOverlay(
         {props.fixed ? (
           <text>{`Collection ID: ${collection()}`}</text>
         ) : (
-          <Input
-            id="collection-create-id"
-            ref={(value: InputRenderable) => {
-              idInput = value;
-              registerId(value);
-            }}
-            focused={!selectable}
-            value={collection()}
-            placeholder="Collection ID"
-            onInput={setCollection}
-          />
+          <FormField label="Collection ID" labelPosition="beside" labelWidth={12}>
+            <Input
+              id="collection-create-id"
+              ref={(value: InputRenderable) => {
+                idInput = value;
+                registerId(value);
+              }}
+              focused={!selectable}
+              value={collection()}
+              placeholder="Collection ID"
+              onInput={setCollection}
+            />
+          </FormField>
         )}
         <text>Description (optional)</text>
         <Input
@@ -341,7 +354,6 @@ export function CollectionCreateOverlay(
           onInput={setDescription}
         />
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <text>{`Tab switches controls. Enter activates. Esc ${props.onBack ? "goes back" : "discards the draft"}.`}</text>
       </ModalBody>
     </ModalShell>
   );
@@ -404,22 +416,26 @@ export function CollectionImportOverlay(props: {
         }
       >
         <text>{`Save to ${props.level}`}</text>
-        <Input
-          id="collection-import-from"
-          ref={registerFrom}
-          focused
-          value={from()}
-          placeholder="From collection"
-          onInput={setFrom}
-        />
-        <Input
-          id="collection-import-into"
-          ref={registerInto}
-          focused={false}
-          value={into()}
-          placeholder="Into collection"
-          onInput={setInto}
-        />
+        <FormField label="From" labelPosition="beside" labelWidth={12}>
+          <Input
+            id="collection-import-from"
+            ref={registerFrom}
+            focused
+            value={from()}
+            placeholder="From collection"
+            onInput={setFrom}
+          />
+        </FormField>
+        <FormField label="Into" labelPosition="beside" labelWidth={12}>
+          <Input
+            id="collection-import-into"
+            ref={registerInto}
+            focused={false}
+            value={into()}
+            placeholder="Into collection"
+            onInput={setInto}
+          />
+        </FormField>
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
       </ModalBody>
     </ModalShell>
@@ -511,31 +527,37 @@ export function ReferenceOverlay(props: {
         }
       >
         <text>{`Collection: ${props.collection}\nConfiguration: ${props.level}`}</text>
-        <Input
-          id="reference-name"
-          ref={registerName}
-          focused
-          value={name()}
-          placeholder="Entry name"
-          onInput={setName}
-        />
-        <Input
-          id="reference-target"
-          ref={registerTarget}
-          focused={false}
-          value={target()}
-          placeholder="Target collection"
-          onInput={setTarget}
-        />
-        {!props.remove && (
+        <FormField label="Entry name" labelPosition="beside" labelWidth={12}>
           <Input
-            id="reference-description"
-            ref={registerDescription}
-            focused={false}
-            value={description()}
-            placeholder="Description"
-            onInput={setDescription}
+            id="reference-name"
+            ref={registerName}
+            focused
+            value={name()}
+            placeholder="Entry name"
+            onInput={setName}
           />
+        </FormField>
+        <FormField label="Collection" labelPosition="beside" labelWidth={12}>
+          <Input
+            id="reference-target"
+            ref={registerTarget}
+            focused={false}
+            value={target()}
+            placeholder="Target collection"
+            onInput={setTarget}
+          />
+        </FormField>
+        {!props.remove && (
+          <FormField label="Description" labelPosition="beside" labelWidth={12}>
+            <Input
+              id="reference-description"
+              ref={registerDescription}
+              focused={false}
+              value={description()}
+              placeholder="Description"
+              onInput={setDescription}
+            />
+          </FormField>
         )}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
       </ModalBody>
@@ -603,14 +625,16 @@ export function LinkChangeOverlay(props: {
         }
       >
         <text>{`Collection: ${props.collection}\nConfiguration: ${props.level}`}</text>
-        <Input
-          id="link-target"
-          ref={registerTarget}
-          focused
-          value={target()}
-          placeholder="Target collection"
-          onInput={setTarget}
-        />
+        <FormField label="Collection" labelPosition="beside" labelWidth={12}>
+          <Input
+            id="link-target"
+            ref={registerTarget}
+            focused
+            value={target()}
+            placeholder="Target collection"
+            onInput={setTarget}
+          />
+        </FormField>
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
       </ModalBody>
     </ModalShell>

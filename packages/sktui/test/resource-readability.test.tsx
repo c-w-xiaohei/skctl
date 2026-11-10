@@ -131,7 +131,7 @@ test.each([
   const back = setup!.renderer.root.findDescendantById("route-back")!;
   expect(setup!.renderer.root.findDescendantById("reader-resource-path")).toBeUndefined();
   expect(back.screenY).toBeLessThan(body.screenY);
-  expect(body.height).toBeGreaterThanOrEqual(height === 13 ? 1 : 6);
+  expect(body.viewport.height).toBeGreaterThanOrEqual(6);
   await focusLive(setup!, "resource-content");
   setup!.mockInput.pressArrow("down");
   await setup!.flush();

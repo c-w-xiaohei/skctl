@@ -261,7 +261,7 @@ test("Collection creation keeps its submit visible at 43 by 13 while editing the
     await setup.renderOnce();
     const submit = setup.renderer.root.findDescendantById("collection-create-submit")!;
     expect(submit.screenY).toBeGreaterThanOrEqual(0);
-    expect(submit.screenY + submit.height).toBeLessThanOrEqual(11);
+    expect(submit.screenY + submit.height).toBeLessThanOrEqual(12);
     expect(setup.captureCharFrame()).toContain("Create");
   } finally {
     setup.renderer.destroy();
@@ -290,7 +290,7 @@ test("Collection content editing keeps save and cancel visible above long instru
     for (const id of ["collection-content-save", "collection-content-cancel"]) {
       const control = setup.renderer.root.findDescendantById(id)!;
       expect(control.screenY).toBeGreaterThanOrEqual(2);
-      expect(control.screenY + control.height).toBeLessThanOrEqual(11);
+      expect(control.screenY + control.height).toBeLessThanOrEqual(12);
     }
     await enterLive(setup, "collection-content-save");
     expect(saved).toEqual([
@@ -397,62 +397,81 @@ test("empty Collections suggest adding members before choosing catalog roots", (
   });
 });
 
-test("Source candidates support search and Space selection without losing checked paths", async () => {
-  let selected!: () => readonly string[];
-  const setup = await testRender(
-    () => {
-      const [paths, setPaths] = createSignal<readonly string[]>([]);
-      const [query, setQuery] = createSignal("");
-      selected = paths;
-      return (
-        <SourceSelectionOverlay
-          review={{
-            kind: "discovery",
-            id: "test",
-            intent: { kind: "source-discovery", source: "mine" },
-            observation: {
-              source: "mine",
-              kind: "local",
-              candidates: ["alpha", "beta"].map((name) => ({
-                name,
-                path: name,
-                description: name,
-              })),
-            },
-          }}
-          installed={new Set()}
-          selected={paths()}
-          query={query()}
-          onQuery={setQuery}
-          pending={false}
-          onToggle={(path) =>
-            setPaths((items) =>
-              items.includes(path) ? items.filter((item) => item !== path) : [...items, path],
-            )
-          }
-          onSubmit={() => {}}
-          onCancel={() => {}}
-        />
+test.each([
+  [80, 24],
+  [43, 13],
+])(
+  "Source candidates support search and Space selection without losing checked paths at %ix%i",
+  async (width, height) => {
+    let selected!: () => readonly string[];
+    const setup = await testRender(
+      () => {
+        const [paths, setPaths] = createSignal<readonly string[]>([]);
+        const [query, setQuery] = createSignal("");
+        selected = paths;
+        return (
+          <SourceSelectionOverlay
+            review={{
+              kind: "discovery",
+              id: "test",
+              intent: { kind: "source-discovery", source: "mine" },
+              observation: {
+                source: "mine",
+                kind: "local",
+                candidates: ["alpha", "beta", "gamma"].map((name) => ({
+                  name,
+                  path: name,
+                  description: name,
+                })),
+              },
+            }}
+            installed={new Set()}
+            selected={paths()}
+            query={query()}
+            onQuery={setQuery}
+            pending={false}
+            onToggle={(path) =>
+              setPaths((items) =>
+                items.includes(path) ? items.filter((item) => item !== path) : [...items, path],
+              )
+            }
+            onSubmit={() => {}}
+            onCancel={() => {}}
+          />
+        );
+      },
+      { width, height },
+    );
+    try {
+      await setup.waitFor(
+        () => !!setup.renderer.root.findDescendantById("source-operation-search"),
       );
-    },
-    { width: 80, height: 24 },
-  );
-  try {
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-operation-search"));
-    await focusLive(setup, "source-operation-selection");
-    await setup.mockInput.typeText(" ");
-    await setup.renderOnce();
-    await focusLive(setup, "source-operation-search");
-    await setup.mockInput.typeText("beta");
-    await setup.renderOnce();
-    await focusLive(setup, "source-operation-selection");
-    await setup.mockInput.typeText(" ");
-    await setup.renderOnce();
-    expect(selected()).toEqual(["alpha", "beta"]);
-  } finally {
-    setup.renderer.destroy();
-  }
-});
+      await focusLive(setup, "source-operation-selection");
+      expect(
+        setup.renderer.root.findDescendantById("source-operation-selection")!.height,
+      ).toBeGreaterThanOrEqual(6);
+      const candidates = setup.renderer.root.findDescendantById("source-operation-selection")!;
+      expect(candidates.screenY + candidates.height).toBeLessThanOrEqual(
+        setup.renderer.root.findDescendantById("source-operation-submit")!.screenY,
+      );
+      await setup.mockInput.typeText(" ");
+      await setup.renderOnce();
+      await focusLive(setup, "source-operation-search");
+      await setup.mockInput.typeText("beta");
+      await setup.renderOnce();
+      await focusLive(setup, "source-operation-selection");
+      await setup.mockInput.typeText(" ");
+      await setup.renderOnce();
+      expect(selected()).toEqual(["alpha", "beta"]);
+      for (const id of ["source-operation-submit", "source-operation-cancel"]) {
+        const control = setup.renderer.root.findDescendantById(id)!;
+        expect(control.screenY + control.height).toBeLessThanOrEqual(height - 1);
+      }
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 
 test("Collection picker keeps checked Skills across searches and submits the explicit batch", async () => {
   const submitted: unknown[] = [];

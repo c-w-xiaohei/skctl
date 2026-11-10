@@ -29,7 +29,7 @@ export function createCommandRegistry(context: Accessor<readonly ExecutableComma
     const current = mounted();
     const commands = new Map<string, ExecutableCommand>();
     for (const command of current.values()) {
-      if (command.record.scope === "page") commands.set(command.record.id, command);
+      if (command.record.scope !== "widget") commands.set(command.record.id, command);
     }
     for (const command of context()) {
       if (!current.has(command.record.id) && !commands.has(command.record.id))

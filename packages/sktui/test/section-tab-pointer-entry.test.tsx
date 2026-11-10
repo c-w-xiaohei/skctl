@@ -71,7 +71,7 @@ for (const activationMode of ["automatic", "manual"] as const) {
   );
 }
 test.each(["global", "project", "local"] as const)(
-  "one batched native click enters %s Collections after Scope changes without Enter",
+  "one batched native click selects %s Collections after Scope changes and Enter opens it",
   async (level) => {
     const core = directSourceCore(collectionsSourcesProjection());
     let writes = 0;
@@ -98,11 +98,17 @@ test.each(["global", "project", "local"] as const)(
       await parsedEnter(setup);
       await setup.flush();
       const target = setup.renderer.root.findDescendantById(
-        "settings-section-tab-collections",
-      ) as TabsTabRenderable;
-      expect(target.getState().selected).toBe(false);
-      await click(setup, target, true);
-      expect(target.getState().selected).toBe(true);
+        "settings-categories",
+      ) as SelectRenderable;
+      const row = target.options.findIndex((option) => option.value === "collections");
+      expect(row).toBeGreaterThanOrEqual(0);
+      const x = target.screenX + 2,
+        y = target.screenY + row + 1;
+      setup.mockInput.pressKey(`\x1b[<0;${x};${y}M\x1b[<0;${x};${y}m`);
+      await setup.flush();
+      expect(target.getSelectedOption()?.value).toBe("collections");
+      expect(!!setup.renderer.root.findDescendantById("config-collection-browser")).toBe(false);
+      await parsedEnter(setup);
       if (level === "project")
         expect(setup.renderer.root.findDescendantById("config-collection-browser")).toBeDefined();
       expect(writes).toBe(0);

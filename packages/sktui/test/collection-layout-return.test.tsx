@@ -22,6 +22,7 @@ async function inspectDocs(setup: Setup) {
   setup.mockInput.pressArrow("down");
   setup.mockInput.pressArrow("down");
   await setup.flush();
+  await enterLive(setup, "collection-more");
   await enterLive(setup, "collection-current-details");
 }
 async function mount(width = 144, height = 40, projection = collectionsSourcesProjection()) {
@@ -79,10 +80,10 @@ test("Collection rows stay quiet while the current direct member exposes only it
     const actions = setup.renderer.root.findDescendantById("collection-current-actions-pane");
     expect(actions).toBeDefined();
     expect(
-      descendants(actions!)
+      descendants(setup.renderer.root.findDescendantById("collection-toolbar")!)
         .filter((node) => node instanceof ButtonRenderable)
         .map((node) => node.id),
-    ).toContain(guideManageId);
+    ).toContain("collection-more");
     expect(
       setup.renderer.root.findDescendantById("collection-relationships-row-guide%3A0:actions"),
     ).toBeUndefined();
@@ -122,23 +123,28 @@ test("Collection inspector returns through the single shared header with the tab
   const { setup } = mounted;
   try {
     await openContents(setup);
+    await enterLive(setup, "collection-more");
     await enterLive(setup, guideManageId);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
     );
-    const contentsBack = setup.renderer.root.findDescendantById("collection.inspector-back");
+    const contentsBack = setup.renderer.root.findDescendantById("route-back");
     expect(contentsBack).toBeInstanceOf(ButtonRenderable);
-    expect(setup.captureCharFrame()).toContain("Close");
-    await enterLive(setup, "collection.inspector-back");
+    await enterLive(setup, "route-back");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-relationships"));
     await enterLive(setup, "collection-tabs-tab-settings");
     await inspectDocs(setup);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
     );
-    const relationsBack = setup.renderer.root.findDescendantById("collection.inspector-back");
+    const relationsBack = setup.renderer.root.findDescendantById("route-back");
     expect(relationsBack).toBeInstanceOf(ButtonRenderable);
-    expect(setup.captureCharFrame()).toContain("Close");
+    expect(!!setup.renderer.root.findDescendantById("collection.inspector-back")).toBe(false);
+    await openMainPage(setup, "skills");
+    await openMainPage(setup, "collections");
+    expect(!!setup.renderer.root.findDescendantById("collection-relation-inspector")).toBe(true);
+    await enterLive(setup, "route-back");
+    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(true);
   } finally {
     mounted.dispose();
   }
@@ -184,6 +190,7 @@ test("multi-origin current members require Manage before any origin-specific act
     expect(ids).toContain("membership.remove");
     expect(ids).toContain("collection.current.details");
     await parsedEscape(setup);
+    await enterLive(setup, "collection-more");
     await enterLive(setup, guideManageId);
     const origin = setup.renderer.root.findDescendantById("collection-membership-origin");
     expect(origin).toBeInstanceOf(SelectRenderable);
@@ -207,11 +214,11 @@ test("Relations current Reference retains direct Open in Actions without changin
       enabled: true,
       object: "docs",
       opens: "Collection workspace",
-      destination: "docs",
+      intent: { kind: "collection-open-collection", collection: "team", target: "docs" },
     });
     await parsedEscape(setup);
     expect(setup.renderer.root.findDescendantById("collection-relation-inspector")).toBeDefined();
-    await enterLive(setup, "collection.inspector-back");
+    await enterLive(setup, "route-back");
     await inspectDocs(setup);
     await enterLive(setup, "relationship.open-collection");
     await setup.waitFor(() =>
@@ -237,6 +244,7 @@ for (const [width, height] of [
       expect(
         descendants(actions).filter((node) => node instanceof ButtonRenderable).length,
       ).toBeGreaterThan(0);
+      await enterLive(setup, "collection-more");
       await enterLive(setup, guideManageId);
       const pane = setup.renderer.root.findDescendantById("collection-inspector-surface")!;
       const body = setup.renderer.root.findDescendantById(
@@ -244,26 +252,24 @@ for (const [width, height] of [
       ) as ScrollBoxRenderable;
       const normal = setup.renderer.root.findDescendantById("collection-inspector-normal-actions")!;
       const danger = setup.renderer.root.findDescendantById("collection-inspector-danger-actions")!;
-      expect(body.viewport.height).toBeGreaterThanOrEqual(1);
+      expect(body.viewport.height).toBeGreaterThanOrEqual(6);
       expect(normal.height).toBe(1);
       expect(!!danger).toBe(false);
       for (const group of [normal]) {
         for (const button of descendants(group).filter(
           (node) => node instanceof ButtonRenderable,
         )) {
-          expect(button.screenX).toBeGreaterThan(pane.screenX);
-          expect(button.screenX + button.width).toBeLessThanOrEqual(pane.screenX + pane.width - 1);
-          expect(button.screenY).toBeGreaterThan(pane.screenY);
-          expect(button.screenY + button.height).toBeLessThanOrEqual(
-            pane.screenY + pane.height - 1,
-          );
+          expect(button.screenX).toBeGreaterThanOrEqual(pane.screenX);
+          expect(button.screenX + button.width).toBeLessThanOrEqual(pane.screenX + pane.width);
+          expect(button.screenY).toBeGreaterThanOrEqual(pane.screenY);
+          expect(button.screenY + button.height).toBeLessThanOrEqual(pane.screenY + pane.height);
         }
       }
-      expect(setup.renderer.root.findDescendantById("collection.inspector-back")).toBeDefined();
-      await enterLive(setup, "collection.inspector-back");
-      expect(
-        setup.renderer.root.findDescendantById("collection-membership-inspector"),
-      ).toBeUndefined();
+      expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(true);
+      await enterLive(setup, "route-back");
+      expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(
+        false,
+      );
     } finally {
       mounted.dispose();
     }

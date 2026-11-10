@@ -57,6 +57,8 @@ export interface DataTableProps<T> extends Pick<
   readonly onKey?: (key: NavKey) => DispatchResult;
   readonly onBoundary?: (direction: "up" | "down") => void;
   readonly initialScrollTop?: number;
+  /** A new dataset restores its own initial viewport without replacing the native table. */
+  readonly datasetKey?: string;
   readonly onScroll?: (scrollTop: number) => void;
   readonly selection?: {
     readonly keys: ReadonlySet<string>;
@@ -105,15 +107,25 @@ export function DataTable<T>(props: DataTableProps<T>) {
     }
     return { keys, rows, indices };
   });
-  const cursor = createMemo((previous?: { key: string | undefined; index: number }) => {
-    const { keys, indices } = data();
-    const requested = props.currentKey;
-    const index =
-      (requested === undefined ? undefined : indices.get(requested)) ??
-      Math.min(Math.max(0, previous?.index ?? 0), keys.length - 1);
-    const key = keys[index];
-    return previous && previous.key === key && previous.index === index ? previous : { key, index };
-  });
+  const cursor = createMemo(
+    (previous?: { key: string | undefined; index: number; dataset?: string }) => {
+      const { keys, indices } = data();
+      const requested = props.currentKey;
+      const index =
+        (requested === undefined ? undefined : indices.get(requested)) ??
+        Math.min(
+          Math.max(0, previous?.dataset === props.datasetKey ? (previous?.index ?? 0) : 0),
+          keys.length - 1,
+        );
+      const key = keys[index];
+      return previous &&
+        previous.key === key &&
+        previous.index === index &&
+        previous.dataset === props.datasetKey
+        ? previous
+        : { key, index, dataset: props.datasetKey };
+    },
+  );
   const isCurrent = createSelector(() => props.currentKey);
 
   // Definition identity does not depend on width. For receives stable IDs, not layouts.
@@ -138,7 +150,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
   let unregister: (() => void) | undefined;
   let measurePending = true;
   let revealPending = true;
-  const initialScrollTop = props.initialScrollTop;
+  let initialScrollTop = props.initialScrollTop;
   let restorePending = initialScrollTop !== undefined;
   let reportedScroll: number | undefined;
   const actionTargets = new Map<string, Map<string, Renderable>>();
@@ -174,6 +186,19 @@ export function DataTable<T>(props: DataTableProps<T>) {
     }),
   );
   createEffect(on(cursor, reveal));
+  createEffect(
+    on(
+      () => props.datasetKey,
+      () => {
+        initialScrollTop = props.initialScrollTop;
+        restorePending = true;
+        reportedScroll = undefined;
+        pendingAction = undefined;
+        reveal();
+      },
+      { defer: true },
+    ),
+  );
 
   const reportScroll = () => {
     if (!body || body.isDestroyed || restorePending || !fits()) return;

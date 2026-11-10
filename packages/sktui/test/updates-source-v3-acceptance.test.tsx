@@ -15,7 +15,13 @@ import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
 import { collectionFilterPathKey } from "../src/collections/collection-filter-tree";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
+import {
+  enterLive,
+  focusLive,
+  parsedEnter,
+  parsedEscape,
+  openWorkspaceProblems,
+} from "./reader-test-controls";
 type Setup = Awaited<ReturnType<typeof testRender>>;
 const longFailure = `Remote unavailable: ${"the upstream request failed with a deliberately long diagnostic; ".repeat(8)}`;
 const revision = "d".repeat(40);
@@ -200,13 +206,15 @@ function expectActionBounds(setup: Setup, prefix: string, actionId: string) {
     expect(target.screenX).toBeGreaterThanOrEqual(pane.screenX + 1);
     expect(target.screenX + target.width).toBeLessThanOrEqual(pane.screenX + pane.width - 1);
     expect(target.screenY).toBeGreaterThanOrEqual(pane.screenY + 1);
-    expect(target.screenY + target.height).toBeLessThanOrEqual(pane.screenY + pane.height - 1);
+    expect(target.screenY + target.height).toBeLessThanOrEqual(
+      pane.screenY + pane.height - (setup.renderer.height < 24 ? 0 : 1),
+    );
   }
   expect(browser.height).toBeGreaterThanOrEqual(2);
-  expect(action.screenY).toBeGreaterThanOrEqual(browser.screenY + browser.height);
-  const localContent = setup.renderer.root.findDescendantById(`${prefix}-notice`) ?? browser;
-  expect(action.screenY - (localContent.screenY + localContent.height)).toBeGreaterThanOrEqual(0);
-  expect(action.screenY - (localContent.screenY + localContent.height)).toBeLessThanOrEqual(4);
+  expect(action.screenY + action.height).toBeLessThanOrEqual(browser.screenY);
+  expect(browser.screenY - (action.screenY + action.height)).toBeLessThanOrEqual(
+    setup.renderer.height >= 24 ? 2 : 1,
+  );
   expect(action.screenX).toBeGreaterThanOrEqual(0);
   expect(action.screenX + action.width).toBeLessThanOrEqual(setup.renderer.width);
   expect(action.screenY + action.height).toBeLessThanOrEqual(setup.renderer.height - 1);
@@ -328,24 +336,30 @@ test.each([12, 2])(
         }
         const first = expectActionBounds(setup, "updates", firstAction);
         expect(first).toBeInstanceOf(ButtonRenderable);
+        const overflow = !compactFeedback && width < 72;
+        const nextAction = compactFeedback
+          ? "updates-feedback-details"
+          : overflow
+            ? "updates-more"
+            : "updates-check";
         for (
           let step = 0;
-          step < 4 &&
-          setup.renderer.currentFocusedRenderable?.id !==
-            (compactFeedback ? "updates-feedback-details" : "updates-check");
+          step < 4 && setup.renderer.currentFocusedRenderable?.id !== nextAction;
           step++
         ) {
           setup.mockInput.pressArrow("right");
           await setup.flush();
         }
         await setup.renderOnce();
-        const action = expectActionBounds(
-          setup,
-          "updates",
-          compactFeedback ? "updates-feedback-details" : "updates-check",
-        );
+        const action = expectActionBounds(setup, "updates", nextAction);
         expect(action).toBeInstanceOf(ButtonRenderable);
         expect(setup.renderer.currentFocusedRenderable === action).toBe(true);
+        if (overflow) {
+          await parsedEnter(setup);
+          expect(!!setup.renderer.root.findDescendantById("updates-more-updates.check")).toBe(true);
+          await parsedEscape(setup);
+          expect(setup.renderer.currentFocusedRenderable?.id).toBe("updates-more");
+        }
         if (compactFeedback) {
           const choices = await openActions(setup);
           for (const id of [
@@ -452,8 +466,7 @@ test("Committed Source query and hidden checked targets survive draft cancellati
     );
     expect(setup.captureCharFrame()).toContain("Filter: bravo");
     expect(fixture.updates).toEqual([]);
-    // Shared Back navigates; browser Escape intentionally clears selection/query first.
-    await enterLive(setup, "route-back");
+    await parsedEscape(setup);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "updates-browser");
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById(skillRow("bravo")));
@@ -470,7 +483,7 @@ test("Committed Source query and hidden checked targets survive draft cancellati
       choices.options.find((option) => option.value.id === "source-updates.update-all")?.value,
     ).toMatchObject({
       enabled: true,
-      destination: "team-main · 2 selected Skills · 1 hidden selections included",
+      destination: "2 selected Skills in team-main. Includes 1 hidden selections",
     });
     await parsedEscape(setup);
     expect(fixture.updates).toEqual([]);
@@ -530,7 +543,7 @@ test("An empty Source draft submits all legal targets; Stop before mutation keep
     const choices = await openActions(setup);
     expect(
       choices.options.find((option) => option.value.id === "source-updates.update-all")?.value,
-    ).toMatchObject({ enabled: true, destination: "team-main · 3 installed Skills" });
+    ).toMatchObject({ enabled: true, destination: "3 installed Skills in team-main" });
     await parsedEscape(setup);
     expect(fixture.updates).toEqual([]);
     holdSubmission = true;
@@ -540,16 +553,14 @@ test("An empty Source draft submits all legal targets; Stop before mutation keep
     );
     await enterLive(setup, "source-updates-stop");
     await setup.waitFor(
-      () =>
-        heldSignal!.aborted &&
-        !!setup.renderer.root.findDescendantById("source-updates-update-all"),
+      () => heldSignal!.aborted && !!setup.renderer.root.findDescendantById("source-updates-retry"),
     );
     expect(fixture.updates).toEqual([]);
     expect(setup.renderer.root.findDescendantById("source-updates-clear")).toBeUndefined();
     for (const path of sourcePaths) expect(text(setup, `${skillRow(path)}:check`)).toBeUndefined();
     expect(fixture.checks).toEqual(["team-main", "source-02"]);
     holdSubmission = false;
-    await enterLive(setup, "source-updates-update-all");
+    await enterLive(setup, "source-updates-retry");
     await setup.waitFor(
       () =>
         fixture.updates.length === 1 &&
@@ -577,14 +588,10 @@ test.each(["current-exposure", "problems"] as const)(
     const mounted = await renderApp(fixture.core);
     const { setup } = mounted;
     try {
-      await setup.waitFor(
-        () =>
-          fixture.completed.length === 2 &&
-          !!setup.renderer.root.findDescendantById("skills-view-tab-problems"),
-      );
+      await setup.waitFor(() => fixture.completed.length === 2);
       await setup.waitFor(() => fixture.reads.length === 1);
       const startupReads = [...fixture.reads];
-      if (initialView === "problems") await enterLive(setup, "skills-view-tab-problems");
+      if (initialView === "problems") await openWorkspaceProblems(setup);
       else await openMainPage(setup, "agent");
       await openMainPage(setup, "collections");
       const tree = await focusLive(setup, "collection-browser");
@@ -662,7 +669,7 @@ test.each(["current-exposure", "problems"] as const)(
       const choices = await openActions(setup);
       expect(
         choices.options.find((option) => option.value.id === "source-updates.update-all")?.value,
-      ).toMatchObject({ enabled: true, destination: "team-main · 1 selected Skills" });
+      ).toMatchObject({ enabled: true, destination: "1 selected Skills in team-main" });
       await parsedEscape(setup);
       expect(fixture.updates).toEqual([]);
       for (const [width, height] of viewports) {

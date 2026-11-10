@@ -171,7 +171,7 @@ async function focusCollection(setup: Awaited<ReturnType<typeof testRender>>) {
 }
 async function openProjectConfigSourceActions(setup: Awaited<ReturnType<typeof testRender>>) {
   await navigateProjectSettings(setup);
-  await activateControl(setup, "settings-section-tab-config-sources");
+  await openSettingsCategory(setup, "config-sources");
   await setup.waitForFrame((frame) => frame.includes("team-remote"));
   await focusLive(setup, "config-config-source-browser");
   await awaitParsedEnter(setup);
@@ -585,6 +585,7 @@ test("RENDER cancelled Membership removal settles before a fresh removal and nev
     { width: 120, height: 40 },
   );
   const beginRemoval = async () => {
+    await activateControl(setup, "collection-more");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-current-membership.remove"),
     );
@@ -1553,16 +1554,16 @@ test("RENDER contributed Source filters unhealthy Installed Skills and restores 
     setup.mockInput.pressArrow("down");
     await setup.flush();
     await openSourceCommand(setup, "view-installed-skills");
-    await setup.waitForFrame(
-      (frame) => frame.includes("Source: team-config/lark") && frame.includes("doc"),
-    );
+    await setup.waitForFrame((frame) => frame.includes("Filter (1)") && frame.includes("doc"));
     const browser = setup.renderer.root.findDescendantById(
       "installed-skill-browser",
     ) as SelectRenderable;
     expect(browser.options.map((option) => option.value)).toEqual([
       JSON.stringify(["team-config/lark", "doc"]),
     ]);
-    await activateControl(setup, "clear-source-filter");
+    await activateControl(setup, "open-skills-filter");
+    await setup.waitForFrame((frame) => frame.includes("Source: team-config/lark"));
+    await activateControl(setup, "skills-filter-reset-source");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-browser"));
     expect(
       (
@@ -1623,7 +1624,7 @@ test("RENDER Open Config and Open Config Source route to their exact selected ow
       (direct.renderer.root.findDescendantById("config-source-browser") as SelectRenderable)
         .getSelectedOption()
         ?.name.trimEnd(),
-    ).toBe("team-main · github");
+    ).toBe("team-main");
   } finally {
     direct.renderer.destroy();
   }
@@ -1690,8 +1691,9 @@ test("RENDER blocked impact repair select opens the exact Rebind repair form", a
     await activateControl(setup, "source-removal-repair-0-rebind");
     await setup.waitForFrame(
       (frame) =>
-        frame.includes("Rebind Skill") &&
-        frame.includes("Replacement Source-root-relative Skill path"),
+        frame.includes("Change Source") &&
+        frame.includes("Current Skill: team-main/review") &&
+        frame.includes("Skill path in new Source"),
     );
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("rebind-source-choice");
   } finally {
@@ -2090,6 +2092,7 @@ test("RENDER Palette routes its Project destination and omits contributed remova
   try {
     await populated(setup, "sources");
     await navigateProjectSettings(setup);
+    await openSettingsCategory(setup, "sources");
     await setup.waitFor(
       () =>
         (
@@ -2495,3 +2498,4 @@ test("RENDER cancelled Source preview settles without confirmation before reopen
     setup.renderer.destroy();
   }
 });
+import { openSettingsCategory } from "./settings-test-controls";

@@ -22,7 +22,7 @@ export function readerPublicDiagnostic(setup: ReaderSetup) {
   return JSON.stringify({
     frame: setup.captureCharFrame(),
     focused: setup.renderer.currentFocusedRenderable?.id,
-    readerTabIds: ["skill", "resources", "details"].map((value) => ({
+    readerTabIds: ["skill", "resources"].map((value) => ({
       id: `reader-tabs-tab-${value}`,
       mounted: !!setup.renderer.root.findDescendantById(`reader-tabs-tab-${value}`),
     })),
@@ -37,35 +37,34 @@ export function readerPublicDiagnostic(setup: ReaderSetup) {
 }
 
 export function live(setup: ReaderSetup, id: string) {
-  if (id === "reader-tabs") return selectedReaderTabRenderable(setup);
   const target = setup.renderer.root.findDescendantById(id);
   if (!target || target.isDestroyed || !target.parent) throw new Error(`Expected mounted ${id}`);
   return target;
 }
 
-const readerTabValues = ["skill", "resources", "details"] as const;
+const readerTabValues = ["skill", "resources"] as const;
 
-export function selectedReaderTab(setup: ReaderSetup): 0 | 1 | 2 {
+export function selectedReaderTab(setup: ReaderSetup): 0 | 1 {
   const selected = readerTabValues.findIndex((value) => {
     const tab = setup.renderer.root.findDescendantById(`reader-tabs-tab-${value}`);
     return tab instanceof TabsTabRenderable && tab.getState().selected;
   });
   if (selected < 0) throw new Error(`No Reader tab is selected\n${readerPublicDiagnostic(setup)}`);
-  return selected as 0 | 1 | 2;
+  return selected as 0 | 1;
 }
 
-export function readerTabId(index: 0 | 1 | 2) {
+export function readerTabId(index: 0 | 1) {
   return `reader-tabs-tab-${readerTabValues[index]}`;
 }
 
-export function readerTab(setup: ReaderSetup, index: 0 | 1 | 2): Renderable {
+export function readerTab(setup: ReaderSetup, index: 0 | 1): Renderable {
   const target = setup.renderer.root.findDescendantById(readerTabId(index));
   if (!target || target.isDestroyed || !target.parent)
     throw new Error(`Expected mounted ${readerTabId(index)}`);
   return target;
 }
 
-function selectedReaderTabRenderable(setup: ReaderSetup): Renderable {
+export function selectedReaderTabRenderable(setup: ReaderSetup): Renderable {
   const value = readerTabValues[selectedReaderTab(setup)];
   const target = setup.renderer.root.findDescendantById(`reader-tabs-tab-${value}`);
   if (!target || target.isDestroyed || !target.parent)
@@ -110,6 +109,13 @@ export async function focusLive(setup: ReaderSetup, id: string) {
 export async function enterLive(setup: ReaderSetup, id: string) {
   await focusLive(setup, id);
   await parsedEnter(setup);
+}
+
+export async function openInstallation(setup: ReaderSetup) {
+  if (setup.renderer.root.findDescendantById("reader-details")) return;
+  await enterLive(setup, "reader-more");
+  await enterLive(setup, "reader-installation-open");
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
 }
 
 /** The compact Back exposes its full owned command in the focus-aware footer. */
@@ -164,22 +170,7 @@ export async function clickLive(setup: ReaderSetup, id: string, x = 1, y = 0) {
 }
 
 export async function openAllInstalledSkills(setup: ReaderSetup) {
-  const installedTab = () =>
-    setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills");
-  const installedSelected = () => {
-    const tab = installedTab();
-    return tab instanceof TabsTabRenderable && tab.getState().selected;
-  };
-  if (!installedSelected()) {
-    if (!installedTab()) await openMainPage(setup, "skills");
-    await setup.waitFor(() => !!installedTab());
-    if (!installedSelected()) {
-      const tab = installedTab()!;
-      expect(tab.visible && tab.width > 0 && tab.height > 0).toBe(true);
-      await setup.mockMouse.click(tab.screenX + 1, tab.screenY);
-      await setup.waitFor(installedSelected);
-    }
-  }
+  await openMainPage(setup, "skills");
   await setup.waitFor(() => {
     const browser = setup.renderer.root.findDescendantById("installed-skill-browser");
     return !!browser && !browser.isDestroyed && !!browser.parent;
@@ -188,15 +179,89 @@ export async function openAllInstalledSkills(setup: ReaderSetup) {
   return (await focusLive(setup, "installed-skill-browser")) as SelectRenderable;
 }
 
-export async function openReaderTab(setup: ReaderSetup, index: 0 | 1 | 2) {
+export async function openWorkspaceProblems(setup: ReaderSetup) {
+  setup.mockInput.pressKey("p", { ctrl: true });
+  await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "palette-choices");
+  const choices = setup.renderer.currentFocusedRenderable as SelectRenderable;
+  const index = choices.options.findIndex((option) => option.value.id === "workspace.problems");
+  expect(index).toBeGreaterThanOrEqual(0);
+  choices.setSelectedIndex(index);
+  await parsedEnter(setup);
+  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("problems-browser"));
+}
+
+export async function filterUncollectedSkills(setup: ReaderSetup) {
+  await enterLive(setup, "open-skills-filter");
+  await focusLive(setup, "skills-filter-dimensions");
+  const dimensions = live(setup, "skills-filter-dimensions") as SelectRenderable;
+  const index = dimensions.options.findIndex((option) => option.value === "Membership");
+  for (let i = dimensions.getSelectedIndex(); i !== index;) {
+    const direction = i < index ? "down" : "up";
+    setup.mockInput.pressArrow(direction);
+    i += direction === "down" ? 1 : -1;
+    await setup.flush();
+  }
+  await focusLive(setup, "skills-filter-values");
+  setup.mockInput.pressArrow("down");
+  await setup.flush();
+  await parsedEnter(setup);
+  await parsedEscape(setup);
+}
+
+export async function openSkillsCollections(setup: ReaderSetup) {
+  await enterLive(setup, "skills-browser-more");
+  await enterLive(setup, "skills-browser-more-workspace.collections.open");
+}
+
+export async function collectionBrowserCommand(
+  setup: ReaderSetup,
+  command: "collections.expand-all" | "collections.collapse-all" | "new-collection",
+) {
+  await enterLive(setup, "collections-browser-more");
+  await enterLive(setup, `collections-browser-more-${command}`);
+}
+
+export async function setSkillsFilter(setup: ReaderSetup, dimension: string, value: string) {
+  await enterLive(setup, "open-skills-filter");
+  const dimensions = (await focusLive(setup, "skills-filter-dimensions")) as SelectRenderable;
+  const index = dimensions.options.findIndex((option) => option.value === dimension);
+  expect(index).toBeGreaterThanOrEqual(0);
+  dimensions.setSelectedIndex(index);
+  await setup.flush();
+  await parsedEnter(setup);
+  const values = (await focusLive(setup, "skills-filter-values")) as SelectRenderable;
+  const valueIndex = values.options.findIndex((option) => option.value === value);
+  expect(valueIndex).toBeGreaterThanOrEqual(0);
+  values.setSelectedIndex(valueIndex);
+  await parsedEnter(setup);
+  await parsedEscape(setup);
+}
+
+export async function appliedSkillsFilters(setup: ReaderSetup) {
+  await enterLive(setup, "open-skills-filter");
+  const dimensions = live(setup, "skills-filter-dimensions") as SelectRenderable;
+  const applied = dimensions.options
+    .filter((option) => option.name.includes(":"))
+    .map((option) => option.value);
+  await parsedEscape(setup);
+  return applied;
+}
+
+export async function clearSkillsFilters(setup: ReaderSetup) {
+  await enterLive(setup, "open-skills-filter");
+  await enterLive(setup, "skills-filter-clear-all");
+  await parsedEscape(setup);
+}
+
+export async function openReaderTab(setup: ReaderSetup, index: 0 | 1) {
   const current = selectedReaderTab(setup);
-  expect(Math.abs(index - current)).toBeLessThanOrEqual(2);
+  expect(Math.abs(index - current)).toBeLessThanOrEqual(1);
   for (let next: number = current; next !== index;) {
     const targetIndex = next + (index > next ? 1 : -1);
     const active = selectedReaderTabRenderable(setup);
     await focusLive(setup, active.id);
     setup.mockInput.pressKey(index > next ? "ARROW_RIGHT" : "ARROW_LEFT");
-    const expectedId = readerTabId(targetIndex as 0 | 1 | 2);
+    const expectedId = readerTabId(targetIndex as 0 | 1);
     await setup.waitFor(() => {
       const trigger = setup.renderer.root.findDescendantById(expectedId);
       return (
@@ -236,23 +301,6 @@ export async function enterInstalledAddress(
   await setup.waitFor(() => browser.getSelectedOption()?.value === value);
   await focusLive(setup, "installed-skill-browser");
   await parsedEnter(setup);
-}
-
-export async function enterReaderDetailsAction(setup: ReaderSetup, actionId: string) {
-  await openReaderSettings(setup);
-  await setup.waitFor(
-    () =>
-      !!setup.renderer.root.findDescendantById("reader-details") &&
-      !!setup.renderer.root.findDescendantById(`reader-details-action-${actionId}`),
-  );
-  await enterLive(setup, `reader-details-action-${actionId}`);
-}
-
-export async function openReaderSettings(setup: ReaderSetup) {
-  if (selectedReaderTab(setup) !== 2) await openReaderTab(setup, 2);
-  await setup.waitFor(
-    () => !!setup.renderer.root.findDescendantById("reader-details-action-skill-uninstall"),
-  );
 }
 
 export async function enterReaderDetailsRelationship(setup: ReaderSetup, value: string) {

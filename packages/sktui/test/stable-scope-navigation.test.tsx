@@ -8,13 +8,15 @@ import {
   focusLive,
   openAllInstalledSkills,
   openReaderTab,
+  openInstallation,
   parsedEnter,
   selectedReaderTab,
   waitForReaderBody,
 } from "./reader-test-controls";
 
-for (const tab of [0, 2] as const) {
-  test(`switching from Reader tab ${tab} to Agent access and back retains cached content and view`, async () => {
+for (const view of ["content", "resources", "installation"] as const) {
+  test(`switching from Reader ${view} to Agent access and back retains cached content and view`, async () => {
+    const tab = view === "resources" ? 1 : 0;
     let loads = 0;
     const setup = await testRender(
       () => (
@@ -35,6 +37,7 @@ for (const tab of [0, 2] as const) {
       await parsedEnter(setup);
       await waitForReaderBody(setup, "needle in prose");
       await openReaderTab(setup, tab);
+      if (view === "installation") await openInstallation(setup);
       await focusLive(setup, "shell-section-tab-agent");
       await parsedEnter(setup);
       await setup.waitForFrame((frame) => frame.includes("Organize Skills into a Collection"));
@@ -44,12 +47,19 @@ for (const tab of [0, 2] as const) {
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("installed-skill-browser"),
       );
-      expect(selectedReaderTab(setup)).toBe(tab);
+      if (view !== "installation") expect(selectedReaderTab(setup)).toBe(tab);
+      expect(!!setup.renderer.root.findDescendantById("reader-details")).toBe(
+        view === "installation",
+      );
       expect(loads).toBe(1);
       await focusLive(setup, "installed-skill-browser");
       await parsedEnter(setup);
-      expect(!!setup.renderer.root.findDescendantById("reader-views")).toBe(true);
-      expect(selectedReaderTab(setup)).toBe(tab);
+      if (view === "installation") {
+        expect(!!setup.renderer.root.findDescendantById("reader-details")).toBe(true);
+      } else {
+        expect(!!setup.renderer.root.findDescendantById("reader-views")).toBe(true);
+        expect(selectedReaderTab(setup)).toBe(tab);
+      }
       expect(loads).toBe(1);
     } finally {
       setup.renderer.destroy();

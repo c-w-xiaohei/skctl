@@ -4,7 +4,8 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
+import { enterLive, focusLive, parsedEnter, parsedEscape } from "./reader-test-controls";
+import { openSettingsCategory } from "./settings-test-controls";
 
 function countById(root: BaseRenderable, id: string): number {
   const visit = (node: BaseRenderable): number =>
@@ -19,12 +20,11 @@ async function openConfig(setup: Awaited<ReturnType<typeof testRender>>) {
   const choices = (await focusLive(setup, "scope-choices")) as SelectRenderable;
   choices.setSelectedIndex(choices.options.findIndex((option) => option.value === "global"));
   await parsedEnter(setup);
-  await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-work-area"));
+  await openSettingsCategory(setup, "sources");
 }
 
 async function openConfigSources(setup: Awaited<ReturnType<typeof testRender>>) {
-  const tab = setup.renderer.root.findDescendantById("settings-section-tab-config-sources")!;
-  await setup.mockMouse.click(tab.screenX + 1, tab.screenY);
+  await openSettingsCategory(setup, "config-sources");
   await setup.waitFor(
     () =>
       !!setup.renderer.root.findDescendantById("config-config-source-browser") ||
@@ -73,17 +73,25 @@ test("RENDER compact Global Sources shows selection/list and reveals every sourc
     const browser = (await focusLive(setup, "config-source-browser")) as SelectRenderable;
     await setup.mockInput.pressArrow("down");
     await setup.waitFor(() => browser.getSelectedOption()?.value === "global-source-1");
-    const pane = setup.renderer.root.findDescendantById("config-work-area")!;
+    await parsedEnter(setup);
+    const pane = setup.renderer.root.findDescendantById("config-object-pane")!;
+    await setup.waitFor(
+      () => setup.renderer.currentFocusedRenderable?.id === "config-command-check-updates",
+    );
+    setup.mockInput.pressArrow("down");
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("config-command-add-skills");
+    setup.mockInput.pressArrow("down");
+    await setup.flush();
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("config-command-remove-source");
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
     expect(frame).toContain("global-source-1");
-    expect(frame).toContain("Selected Source");
-    for (const label of ["Check updates", "Find and install"]) expect(frame).toContain(label);
     for (const id of ["check-updates", "add-skills", "remove-source"]) {
       const control = await focusLive(setup, `config-command-${id}`);
       await setup.renderOnce();
       expect(control.screenY).toBeGreaterThan(pane.screenY);
-      expect(control.screenY + control.height).toBeLessThan(pane.screenY + pane.height);
+      expect(control.screenY + control.height).toBeLessThanOrEqual(pane.screenY + pane.height);
       expect(setup.captureCharFrame()).toContain(
         control.id === "config-command-check-updates"
           ? "Check updates"
@@ -92,15 +100,17 @@ test("RENDER compact Global Sources shows selection/list and reveals every sourc
             : "Remove Source",
       );
     }
+    await parsedEscape(setup);
+    const browserPane = setup.renderer.root.findDescendantById("config-browser-pane")!;
     const add = await focusLive(setup, "config-command-add-source");
     await setup.renderOnce();
-    expect(add.screenY).toBeGreaterThanOrEqual(pane.screenY);
-    expect(add.screenY + add.height).toBeLessThanOrEqual(pane.screenY + pane.height);
+    expect(add.screenY).toBeGreaterThanOrEqual(browserPane.screenY);
+    expect(add.screenY + add.height).toBeLessThanOrEqual(browserPane.screenY + browserPane.height);
     const returnedBrowser = (await focusLive(setup, "config-source-browser")) as SelectRenderable;
     await setup.renderOnce();
-    expect(returnedBrowser.screenY).toBeGreaterThanOrEqual(pane.screenY);
+    expect(returnedBrowser.screenY).toBeGreaterThanOrEqual(browserPane.screenY);
     expect(returnedBrowser.screenY + returnedBrowser.height).toBeLessThanOrEqual(
-      pane.screenY + pane.height,
+      browserPane.screenY + browserPane.height,
     );
     expect(setup.captureCharFrame()).toContain("global-source-1");
   } finally {
@@ -128,12 +138,12 @@ test("RENDER compact empty Config Sources keeps the add action in the bounded wo
   try {
     await openConfig(setup);
     await openConfigSources(setup);
-    const pane = setup.renderer.root.findDescendantById("config-work-area")!;
+    const pane = setup.renderer.root.findDescendantById("config-browser-pane")!;
     const command = await focusLive(setup, "config-command-add-config-source");
     await setup.renderOnce();
     expect(command.screenY).toBeGreaterThan(pane.screenY);
     expect(command.screenY + command.height).toBeLessThan(pane.screenY + pane.height);
-    expect(setup.captureCharFrame()).toContain("Register a reusable Config Source");
+    expect(setup.captureCharFrame()).toContain("No Config Sources yet");
     expect(setup.captureCharFrame()).toContain("Add Config Source");
     expect(countById(setup.renderer.root, "config-command-add-config-source")).toBe(1);
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("config-command-add-config-source");
@@ -177,7 +187,6 @@ test("RENDER compact populated Config Sources has one list action owner and keep
   try {
     await openConfig(setup);
     await openConfigSources(setup);
-    const pane = setup.renderer.root.findDescendantById("config-work-area")!;
     const browser = (await focusLive(setup, "config-config-source-browser")) as SelectRenderable;
     await setup.waitFor(() => browser.getSelectedOption()?.value === "/configSources/team-config");
     await setup.renderOnce();
@@ -185,15 +194,16 @@ test("RENDER compact populated Config Sources has one list action owner and keep
     expect(countById(setup.renderer.root, "config-command-add-config-source")).toBe(1);
     await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-source-inspector"));
+    const pane = setup.renderer.root.findDescendantById("config-object-pane")!;
     const labels: Record<string, string> = {
-      "config-observe": "Check / review Config update",
+      "config-observe": "Review update",
       "config-remove": "Remove Config Source",
     };
     for (const id of Object.keys(labels)) {
       const control = await focusLive(setup, `config-command-${id}`);
       await setup.renderOnce();
       expect(control.screenY).toBeGreaterThan(pane.screenY);
-      expect(control.screenY + control.height).toBeLessThan(pane.screenY + pane.height);
+      expect(control.screenY + control.height).toBeLessThanOrEqual(pane.screenY + pane.height);
       expect(setup.captureCharFrame().split("\n")[control.screenY]).toContain(labels[id]!);
     }
     expect(countById(setup.renderer.root, "config-command-config-observe")).toBe(1);

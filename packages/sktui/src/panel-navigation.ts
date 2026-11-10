@@ -5,7 +5,7 @@ import type { FocusOwner } from "./types";
 const titles: Record<string, string> = {
   "shell-context-panel": "Context",
   "section-nav": "Pages",
-  "skills-local-views": "Skill views",
+  "route-back-slot": "Back",
   "settings-section": "Settings sections",
   "agent-view": "Agent views",
   "skills-list-pane": "Skills",
@@ -85,7 +85,7 @@ export function createPanelNavigation(
         ) ??
         candidates.find((owner) => owner === "browser") ??
         candidates.find((owner) => owner === "agent-preview" || owner === "collection-tree") ??
-        candidates.find((owner) => ["top-nav", "local-nav", "skills-views"].includes(owner)) ??
+        candidates.find((owner) => ["top-nav", "local-nav", "agent-views"].includes(owner)) ??
         candidates.find((owner) => owner.startsWith("command:")) ??
         candidates[0]!,
     );

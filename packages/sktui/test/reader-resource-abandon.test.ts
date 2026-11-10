@@ -10,8 +10,6 @@ test("resource Back invalidates a deferred body completion while retaining Reade
   owner.patch({
     tab: "resources",
     raw: true,
-    find: "needle",
-    match: 2,
     scroll: 7,
     detailsScroll: 11,
     resourcesLoaded: true,
@@ -29,8 +27,6 @@ test("resource Back invalidates a deferred body completion while retaining Reade
     resourceLoading: false,
     selectedResource: "notes.md",
     raw: true,
-    find: "needle",
-    match: 2,
     scroll: 7,
     detailsScroll: 11,
     loading: true,
@@ -56,11 +52,12 @@ test("tab change rejects a deferred resource failure without overwriting the new
   owner.select(alpha);
   const completion = owner.read(alpha, "notes.md");
   owner.abandonResource();
-  owner.patch({ tab: "details" });
+  owner.patch({ tab: "skill", installationOpen: true });
   reads[0]!.reject(new Error("late failure"));
   expect(await completion).toBeUndefined();
   expect(owner.current()).toMatchObject({
-    tab: "details",
+    tab: "skill",
+    installationOpen: true,
     resourceLevel: "list",
     resourceLoading: false,
   });

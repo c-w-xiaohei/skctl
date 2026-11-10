@@ -119,7 +119,7 @@ test.each([
       );
       expect(setup.renderer.root.findDescendantById(id(root))).toBeDefined();
       expect(setup.renderer.root.findDescendantById(id(child))).toBeUndefined();
-      await enterLive(setup, "collections-expand-all");
+      await collectionBrowserCommand(setup, "collections.expand-all");
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById(id(child)));
       await setup.flush();
       await focusLive(setup, "collection-browser");
@@ -147,11 +147,11 @@ test.each([
         );
         expect(setup.renderer.root.findDescendantById(id(child))).toBeDefined();
       }
-      await enterLive(setup, "collections-collapse-all");
+      await collectionBrowserCommand(setup, "collections.collapse-all");
       await setup.flush();
       expect(setup.renderer.root.findDescendantById(id(child))).toBeUndefined();
       if (width >= 100) {
-        expect(setup.captureCharFrame()).toContain("─team─");
+        expect(setup.captureCharFrame()).toContain("team");
         const cell = setup.renderer.root.findDescendantById(
           "collection-relationships-row-guide%3A0:cell-name",
         )!;
@@ -236,7 +236,7 @@ test("search reveals matching nested Collections with their Reference ancestor c
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-browser");
     setup.mockInput.pressArrow("right");
     await setup.flush();
-    expect(setup.captureCharFrame()).toContain("─docs─");
+    expect(setup.captureCharFrame()).toContain("docs");
   } finally {
     await mounted.dispose();
   }
@@ -288,20 +288,22 @@ test("Tab reaches bulk tree controls and their arrows stay within that region", 
     const reads = [...mounted.reads];
     for (
       let step = 0;
-      step < 24 &&
-      setup.renderer.currentFocusedRenderable?.id !== "collection-action-new-collection";
+      step < 24 && setup.renderer.currentFocusedRenderable?.id !== "collections-browser-more";
       step++
     ) {
       setup.mockInput.pressTab();
       await setup.flush();
     }
-    await waitFocus("collection-action-new-collection");
-    setup.mockInput.pressArrow("right");
-    await waitFocus("collections-expand-all");
+    await waitFocus("collections-browser-more");
+    await parsedEnter(setup);
+    setup.mockInput.pressArrow("down");
+    await waitFocus("collections-browser-more-collections.expand-all");
     await parsedEnter(setup);
     await setup.flush();
-    setup.mockInput.pressArrow("right");
-    await waitFocus("collections-collapse-all");
+    await enterLive(setup, "collections-browser-more");
+    setup.mockInput.pressArrow("down");
+    setup.mockInput.pressArrow("down");
+    await waitFocus("collections-browser-more-collections.collapse-all");
     await parsedEnter(setup);
     for (
       let step = 0;
@@ -349,7 +351,7 @@ test.each([
         mounted.reads.some((address) => address.source === "team-main" && address.path === "guide"),
       );
       const reads = [...mounted.reads];
-      await enterLive(setup, "collections-expand-all");
+      await collectionBrowserCommand(setup, "collections.expand-all");
       await focusLive(setup, "collection-browser");
       setup.mockInput.pressArrow("right");
       await setup.flush();
@@ -358,7 +360,7 @@ test.each([
         () => setup.renderer.currentFocusedRenderable?.id === "collection-tree-issue",
       );
       expect(setup.captureCharFrame()).toContain("gone-target");
-      expect(setup.captureCharFrame()).toContain("unavailable");
+      expect(setup.captureCharFrame()).toMatch(/unavailable/i);
       expect(setup.renderer.root.findDescendantById("collection-relationships")).toBeUndefined();
       await parsedEscape(setup);
       await setup.waitFor(
@@ -399,7 +401,7 @@ test("cycle termination is explained and Enter can still enter the actual availa
       mounted.reads.some((address) => address.source === "team-main" && address.path === "guide"),
     );
     const reads = [...mounted.reads];
-    await enterLive(setup, "collections-expand-all");
+    await collectionBrowserCommand(setup, "collections.expand-all");
     await focusLive(setup, "collection-browser");
     setup.mockInput.pressArrow("right");
     await setup.flush();
@@ -412,7 +414,7 @@ test("cycle termination is explained and Enter can still enter the actual availa
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
     );
-    expect(setup.captureCharFrame()).toContain(`─${cycle.collection}─`);
+    expect(setup.captureCharFrame()).toContain(cycle.collection);
     expect(mounted.reads).toEqual(reads);
   } finally {
     await mounted.dispose();
@@ -452,8 +454,8 @@ test("issue Escape returns locally before an existing Reference route predecesso
     setup.mockInput.pressArrow("down");
     await setup.flush();
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("─docs─"));
-    await enterLive(setup, "collections-expand-all");
+    await setup.waitForFrame((frame) => frame.includes("docs"));
+    await collectionBrowserCommand(setup, "collections.expand-all");
     await focusLive(setup, "collection-browser");
     setup.mockInput.pressArrow("right");
     await setup.flush();
@@ -465,10 +467,11 @@ test("issue Escape returns locally before an existing Reference route predecesso
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "collection-browser");
     expect(setup.captureCharFrame()).toContain("gone-target");
     await parsedEscape(setup);
-    await setup.waitForFrame((frame) => frame.includes("─team─"));
+    await setup.waitForFrame((frame) => frame.includes("team"));
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-relationships");
     expect(mounted.reads).toEqual(reads);
   } finally {
     await mounted.dispose();
   }
 });
+import { collectionBrowserCommand } from "./reader-test-controls";

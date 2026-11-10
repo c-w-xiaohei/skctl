@@ -4,7 +4,6 @@ import { onCleanup, onMount, Show } from "solid-js";
 import type { CommandRecord } from "./types";
 import { Button, type ButtonProps } from "./ui/button";
 import { useTheme } from "./ui/use-theme";
-import { hasModalKeyModifier } from "./modal-controls";
 
 /** One physical command control; pages and modals retain their own dispatch policy. */
 export function CommandControl(props: {
@@ -37,6 +36,10 @@ export function CommandControl(props: {
         !target?.parent
       )
         return;
+      let scrollParent: Renderable | null = target.parent;
+      while (scrollParent && !(scrollParent instanceof ScrollBoxRenderable))
+        scrollParent = scrollParent.parent;
+      if (!scrollParent) return;
       const reveal = (retry = false) => {
         pendingReveal = undefined;
         if (
@@ -119,21 +122,6 @@ export function CommandControl(props: {
         onPress={(details) => {
           if (!props.record.enabled || (details.source === "keyboard" && props.keyboard === false))
             return;
-          props.execute();
-        }}
-        onKeyDown={(event) => {
-          const key = event.name.toLowerCase() === "return" ? "enter" : event.name.toLowerCase();
-          if (
-            props.keyboard === false ||
-            event.defaultPrevented ||
-            !props.record.enabled ||
-            hasModalKeyModifier(event) ||
-            key !== "right" ||
-            !props.record.keys.includes("enter")
-          )
-            return;
-          event.preventDefault();
-          event.stopPropagation();
           props.execute();
         }}
       />

@@ -5,6 +5,7 @@ import { App } from "../src/app";
 import { SelectRenderable } from "@opentui/core";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { enterLive, focusLive, parsedEnter } from "./reader-test-controls";
+import { openSettingsCategory } from "./settings-test-controls";
 
 test("RENDER App mounts only the destination surface without an orphan Config fallback", async () => {
   const setup = await testRender(
@@ -33,7 +34,7 @@ test("RENDER App mounts only the destination surface without an orphan Config fa
       await setup.renderOnce();
     }
     await parsedEnter(setup);
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("config-work-area"));
+    await openSettingsCategory(setup, "sources");
     expect(setup.renderer.root.findDescendantById("config-source-browser")).toBeDefined();
   } finally {
     setup.renderer.destroy();

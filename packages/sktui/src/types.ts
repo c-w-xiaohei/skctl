@@ -16,7 +16,7 @@ export const destinations = ["workspace", "global", "project", "local"] as const
 export type Destination = (typeof destinations)[number];
 export type WorkspaceSection = "skills" | "collections" | "sources" | "updates" | "agent";
 export type MainPage = WorkspaceSection | "settings";
-export type SkillsView = "all-installed-skills" | "unassigned" | "problems";
+export type SkillsView = "all-installed-skills" | "problems";
 export type ConfigSection = "sources" | "config-sources" | "collections" | "integrations";
 export type Section = WorkspaceSection | ConfigSection;
 export type NavigationContext = Destination;
@@ -28,15 +28,13 @@ export type FocusOwner =
   | "scope"
   | "work-area"
   | "local-nav"
-  | "skills-views"
+  | "agent-views"
   | "browser"
   | "collection-tree"
   | "agent-preview"
   | "reader"
   | "reader-tabs"
   | "reader-raw"
-  | "reader-find-previous"
-  | "reader-find-next"
   | "open-match-raw"
   | "reader-resource-list"
   | "reader-resource-content"
@@ -52,6 +50,7 @@ export type FocusOwner =
   | "input"
   | "skills-query"
   | "source-updates-query"
+  | "updates-sources"
   | "source-installed-skills"
   | "collection-tree-issue"
   | "updates-query"
@@ -115,8 +114,6 @@ export const readerOwnsFocus = (focus: FocusOwner): boolean =>
     "reader",
     "reader-tabs",
     "reader-raw",
-    "reader-find-previous",
-    "reader-find-next",
     "open-match-raw",
     "reader-resource-list",
     "reader-resource-content",
@@ -144,10 +141,9 @@ export type Overlay =
   | "installed-preview";
 
 export interface ReaderState {
-  readonly tab: "skill" | "resources" | "details";
+  readonly tab: "skill" | "resources";
+  readonly installationOpen?: boolean;
   readonly raw: boolean;
-  readonly find: string;
-  readonly match: number;
   readonly scroll: number;
   readonly detailsScroll: number;
   readonly detailsDescriptionOpen?: boolean;
@@ -164,6 +160,9 @@ export interface ReaderState {
   readonly selectedResource?: string;
   readonly resource?: ReadInstalledResource;
   readonly resourceLevel?: "list" | "content";
+  readonly resourceDirectory?: string;
+  readonly resourceScrolls?: Readonly<Record<string, number>>;
+  readonly resourceListScrolls?: Readonly<Record<string, number>>;
 }
 export interface TaskState {
   readonly id: string;
@@ -260,7 +259,7 @@ export const projectionOwnerExists = (snapshot: WorkspaceView, owner: Projection
 
 export const filterDimensions = (section: Section): readonly string[] =>
   section === "skills"
-    ? ["Collection", "Source", "Config", "Problems"]
+    ? ["Collection", "Membership", "Source", "Config", "Problems"]
     : section === "collections"
       ? ["Contains Skill", "Config", "Problems"]
       : section === "sources"
@@ -269,46 +268,3 @@ export const filterDimensions = (section: Section): readonly string[] =>
 
 export { sameSkillAddress, skillAddressKey };
 export type { SkillAddress };
-
-export interface SourceMatch {
-  readonly offset: number;
-  readonly line: number;
-  readonly column: number;
-}
-
-export function findLiteralMatches(source: string, query: string): readonly SourceMatch[] {
-  if (!query) return [];
-  const matches: SourceMatch[] = [];
-  for (
-    let offset = source.indexOf(query);
-    offset >= 0;
-    offset = source.indexOf(query, offset + query.length)
-  ) {
-    const before = source.slice(0, offset);
-    const line = (before.match(/\n/g) ?? []).length;
-    matches.push({
-      offset,
-      line,
-      column: offset - (before.lastIndexOf("\n") + 1),
-    });
-  }
-  return matches;
-}
-
-export function rawOffsetForMarkdownMatch(
-  rawText: string,
-  markdownText: string,
-  offset: number,
-): number {
-  return rawText.length - markdownText.length + offset;
-}
-
-/** Maps a rendered Markdown match back to the complete raw SKILL.md line. */
-export function rawLineForMarkdownMatch(
-  rawText: string,
-  markdownText: string,
-  markdownOffset: number,
-): number {
-  const rawOffset = rawOffsetForMarkdownMatch(rawText, markdownText, markdownOffset);
-  return (rawText.slice(0, Math.max(0, rawOffset)).match(/\n/g) ?? []).length;
-}

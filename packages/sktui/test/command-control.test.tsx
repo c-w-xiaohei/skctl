@@ -28,6 +28,11 @@ test("command controls are native buttons, with one activation per native press 
     const target = setup.renderer.root.findDescendantById("open")!;
     expect(target).toBeInstanceOf(ButtonRenderable);
     target.focus();
+    for (const direction of ["left", "right", "up", "down"] as const) {
+      setup.mockInput.pressArrow(direction);
+      await setup.renderOnce();
+    }
+    expect(executions).toBe(0);
     setup.mockInput.pressEnter();
     await setup.renderOnce();
     expect(executions).toBe(1);
@@ -66,6 +71,22 @@ test("App-owned bindings do not also invoke a native button's keyboard handler",
     await setup.mockMouse.click(target.screenX + 1, target.screenY);
     await setup.renderOnce();
     expect(executions).toBe(1);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("focusing a toolbar command does not schedule scroll work without a scroll ancestor", async () => {
+  const setup = await testRender(
+    () => <CommandControl id="toolbar-command" record={command} execute={() => {}} />,
+    { width: 60, height: 13 },
+  );
+  try {
+    await setup.flush();
+    const before = setup.renderer.listenerCount("frame");
+    setup.renderer.root.findDescendantById("toolbar-command")!.focus();
+    await Promise.resolve();
+    expect(setup.renderer.listenerCount("frame")).toBe(before);
   } finally {
     setup.renderer.destroy();
   }

@@ -4,6 +4,7 @@ import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
+import { openSettingsCategory } from "./settings-test-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
 import {
@@ -11,6 +12,7 @@ import {
   focusLive,
   openAllInstalledSkills,
   openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
   selectedReaderTab,
@@ -68,7 +70,10 @@ test.each([120, 80, 43])(
       );
       expect(!!setup.renderer.root.findDescendantById("source-register-origin")).toBe(true);
       expect(setup.captureCharFrame()).toContain("Add Source");
-      expect(setup.captureCharFrame()).toContain("Tab");
+      setup.mockInput.pressTab();
+      await setup.waitFor(
+        () => setup.renderer.currentFocusedRenderable?.id === "source-register-id",
+      );
       await parsedEscape(setup);
       await setup.waitForFrame((frame) => frame.includes("Add your first Source"));
     } finally {
@@ -104,14 +109,20 @@ test.each([120, 80, 43])(
       for (const [index, label] of [
         [0, "Content"],
         [1, "Resources"],
-        [2, "Settings"],
       ] as const) {
         await openReaderTab(setup, index);
         expect(selectedReaderTab(setup)).toBe(index);
         expect(setup.captureCharFrame()).toContain(label);
       }
-      await focusLive(setup, "reader-action-skill-check-updates");
+      await openInstallation(setup);
+      await setup.waitForFrame((frame) => frame.includes("Installation details"));
+      if (width === 43) await enterLive(setup, "reader-more");
+      await focusLive(
+        setup,
+        width === 43 ? "reader-menu-skill-check-updates" : "reader-action-skill-check-updates",
+      );
       await setup.waitForFrame((frame) => frame.includes("Check updates"));
+      if (width === 43) await parsedEscape(setup);
       await focusLive(setup, "reader-details-action-skill-add-to-collection");
       expect(setup.renderer.currentFocusedRenderable?.id).toBe(
         "reader-details-action-skill-add-to-collection",
@@ -146,15 +157,16 @@ test.each(["arrow", "native"])(
 );
 
 test.each([120, 43])(
-  "Config Right reaches the selected declaration action without changing Scope at %i columns",
+  "Config Enter reaches the selected declaration without changing Scope at %i columns",
   async (width) => {
     const setup = await mount(false, width);
     try {
       await setup.flush();
       await scope(setup, "project");
+      await openSettingsCategory(setup, "sources");
       const browser = (await focusLive(setup, "config-source-browser")) as SelectRenderable;
       const selection = browser.getSelectedOption()?.value;
-      setup.mockInput.pressArrow("right");
+      await parsedEnter(setup);
       await setup.flush();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("config-command-check-updates");
       expect(browser.getSelectedOption()?.value).toBe(selection);
@@ -179,9 +191,7 @@ test("Scope selection commits on activation, including reselecting the current S
     await setup.flush();
     expect(setup.captureCharFrame()).toContain("Scope: Global");
     await parsedEnter(setup);
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("settings-section-tab-sources"),
-    );
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("settings-categories"));
     expect(setup.captureCharFrame()).toContain("Scope: Project");
     await scope(setup, "project");
     expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
@@ -192,7 +202,7 @@ test("Scope selection commits on activation, including reselecting the current S
   }
 });
 
-test("Workspace and Config page arrows activate one page without creating history", async () => {
+test("main-page arrows switch pages and Settings category arrows only move selection", async () => {
   const setup = await mount(true);
   try {
     await setup.flush();
@@ -208,15 +218,13 @@ test("Workspace and Config page arrows activate one page without creating histor
       expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
     }
     await scope(setup, "global");
-    await focusLive(setup, "settings-section-tab-sources");
+    const categories = (await focusLive(setup, "settings-categories")) as SelectRenderable;
     for (const section of ["config-sources", "collections"]) {
-      setup.mockInput.pressArrow("right");
-      await setup.waitFor(
-        () => setup.renderer.currentFocusedRenderable?.id === `settings-section-tab-${section}`,
-      );
-      expect(
-        (setup.renderer.currentFocusedRenderable as TabsTabRenderable).getState().selected,
-      ).toBe(true);
+      setup.mockInput.pressArrow("down");
+      await setup.waitFor(() => categories.getSelectedOption()?.value === section);
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("settings-categories");
+      expect(!!setup.renderer.root.findDescendantById("config-config-source-browser")).toBe(false);
+      expect(!!setup.renderer.root.findDescendantById("config-collection-browser")).toBe(false);
       expect(setup.captureCharFrame()).toContain("Global");
     }
   } finally {
@@ -233,8 +241,8 @@ test("empty Config pages provide direct actions", async () => {
       ["sources", "Add Source"],
       ["config-sources", "Add Config Source"],
       ["collections", "New Collection"],
-    ]) {
-      await enterLive(setup, `settings-section-tab-${section}`);
+    ] as const) {
+      await openSettingsCategory(setup, section);
       await setup.waitForFrame((frame) => frame.includes(label!));
     }
   } finally {

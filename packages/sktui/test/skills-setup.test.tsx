@@ -240,7 +240,7 @@ test("installation result locates the newly installed Skill ahead of older Sourc
       () => !!setup.renderer.root.findDescendantById("shell-section-tab-sources"),
     );
     await openMainPage(setup, "sources");
-    await setup.waitForFrame((frame) => frame.includes("Find and install"));
+    await setup.waitForFrame((frame) => frame.includes("Install Skills"));
     await enterLive(setup, "workspace-action-add-skills");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("source-operation-selection"),
@@ -248,6 +248,15 @@ test("installation result locates the newly installed Skill ahead of older Sourc
     await enterLive(setup, "source-operation-selection");
     await enterLive(setup, "source-operation-submit");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-result-view"));
+    setup.resize(43, 13);
+    await setup.flush();
+    const done = setup.renderer.root.findDescendantById("installed-result-done")!;
+    let parent = done.parent;
+    while (parent) {
+      expect(parent.constructor.name.includes("ScrollBox")).toBe(false);
+      parent = parent.parent;
+    }
+    expect(done.screenY + done.height).toBeLessThanOrEqual(12);
     await enterLive(setup, "installed-result-view");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
     expect(

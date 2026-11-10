@@ -68,12 +68,20 @@ test("RENDER Sources restores exact selected source and native offset after Insp
   try {
     await setup.flush();
     await openSources(setup);
+    const selectionListeners = setup.renderer.listenerCount("selection");
+    const viewTabs = setup.renderer.root.findDescendantById("source-view-viewport");
     const browser = native("source-browser", setup);
     for (let index = 0; index < 10; index++) {
       setup.mockInput.pressArrow("down");
       await setup.renderOnce();
+      expect(setup.renderer.root.findDescendantById("source-view-viewport") === viewTabs).toBe(
+        true,
+      );
+      expect(setup.renderer.listenerCount("selection")).toBe(selectionListeners);
     }
     const selected = browser.getSelectedOption()?.value;
+    await setup.flush();
+    expect(setup.renderer.listenerCount("selection")).toBe(selectionListeners);
     const offset = selectScrollOffset(browser);
     expect(selected).toBe("source-10");
     await parsedEnter(setup);

@@ -257,7 +257,6 @@ export function SourceRegistrationOverlay(props: {
             Enter a Source ID and local path or credential-free HTTP(S) repository URL.
           </text>
         )}
-        <text>Tab switch controls · Enter activate · Esc cancel</text>
       </ModalBody>
     </ModalShell>
   );

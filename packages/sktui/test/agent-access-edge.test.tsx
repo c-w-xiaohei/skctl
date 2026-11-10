@@ -5,7 +5,13 @@ import { ButtonRenderable } from "@tuiparts/core/button";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { focusLive, live, openReaderTab, parsedEnter, parsedEscape } from "./reader-test-controls";
+import {
+  focusLive,
+  live,
+  openInstallation,
+  parsedEnter,
+  parsedEscape,
+} from "./reader-test-controls";
 import { openAgentAccess, press, rowId, selected, waitForBody } from "./agent-access-test-controls";
 const rootPathKey = JSON.stringify([["root", null]]);
 const itemName = (index: number) => `edge-skill-${String(index).padStart(3, "0")}`;
@@ -246,7 +252,7 @@ for (const viewport of [
       expect(tree.height).toBeGreaterThanOrEqual(1);
       const pane = setup.renderer.root.findDescendantById("agent-access-pane")!;
       expect(tree.screenY).toBeGreaterThanOrEqual(pane.screenY + 1);
-      expect(tree.screenY + tree.height).toBeLessThanOrEqual(pane.screenY + pane.height - 1);
+      expect(tree.screenY + tree.height).toBeLessThanOrEqual(pane.screenY + pane.height);
       const selectedRow = live(setup, rowId(itemKey(119)));
       expect(selectedRow.screenY).toBeGreaterThanOrEqual(tree.viewport.screenY);
       expect(selectedRow.screenY).toBeLessThan(tree.viewport.screenY + tree.viewport.height);
@@ -258,25 +264,20 @@ for (const viewport of [
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-scrollbox");
       await waitForBody(setup, "Installed body edge/119");
       expect(contentLoads).toEqual([...startupLoads, "edge/119"]);
-      await openReaderTab(setup, 2);
+      await openInstallation(setup);
       const metadata = live(setup, "reader-details") as ScrollBoxRenderable;
       await focusLive(setup, "reader-details");
-      let detailFrame = setup.captureCharFrame();
-      for (let page = 0; page < 8 && !detailFrame.includes("team-main/edge/119"); page++) {
-        await press(setup, "\u001b[6~");
-        detailFrame = setup.captureCharFrame();
-      }
-      expect(detailFrame).toContain("team-main/edge/119");
       expect(metadata.viewport.height).toBeGreaterThan(0);
-      // Details, not a second tree preview, owns the long installed description.
       const text = (node: BaseRenderable): string =>
         ["plainText" in node ? String(node.plainText) : "", ...node.getChildren().map(text)].join(
           "\n",
         );
-      expect(text(metadata)).toContain(longDescription);
+      expect(text(metadata)).toContain("Source: team-main");
+      expect(text(metadata)).toContain("Path: edge/119");
       expect(contentLoads).toEqual([...startupLoads, "edge/119"]);
       expect(installs).toBe(0);
       expect(mutations).toEqual([]);
+      await parsedEscape(setup);
       await parsedEscape(setup);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("current-exposure-browser"),

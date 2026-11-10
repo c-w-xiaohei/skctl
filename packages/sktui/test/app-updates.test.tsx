@@ -198,7 +198,8 @@ test.each([100, 43])(
       await focusLive(setup, "skills-query");
       await setup.mockInput.typeText("no-matches");
       await setup.waitForFrame((frame) => frame.includes("No matching Skills"));
-      await enterLive(setup, "workspace-batch-update-skills");
+      await enterLive(setup, "skills-selected");
+      await enterLive(setup, "skills-selected-update-selected-skills");
       await setup.waitForFrame(
         (frame) => frame.includes("1 selected Skills") && frame.includes("Updates available"),
       );

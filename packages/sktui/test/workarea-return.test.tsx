@@ -45,6 +45,7 @@ async function openMembership(setup: Awaited<ReturnType<typeof testRender>>) {
   await openMainPage(setup, "collections");
   await enterLive(setup, "collection-browser");
   await setup.flush();
+  await enterLive(setup, "collection-more");
   await enterLive(setup, "collection-current-details");
   await setup.waitFor(
     () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
@@ -75,8 +76,9 @@ test("Escape from the left Collection tree does not close an inactive right insp
     await setup.flush();
     if (setup.renderer.root.findDescendantById("collection-membership-inspector"))
       await parsedEscape(setup);
-    expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(false);
-    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(true);
+    expect(!!setup.renderer.root.findDescendantById("collection-membership-inspector")).toBe(true);
+    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(false);
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-section-tab-collections");
   } finally {
     await mounted.dispose();
   }
@@ -162,14 +164,14 @@ test.each([
           setup.captureCharFrame(),
         );
       }
-      await enterLive(setup, "collection.inspector-back");
+      await enterLive(setup, "route-back");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
       );
       expect(
         setup.renderer.root.findDescendantById("collection-membership-inspector"),
       ).toBeUndefined();
-      expect(setup.captureCharFrame()).toContain("─team─");
+      expect(setup.captureCharFrame()).toContain("team");
       if (width < 100) expect(setup.renderer.root.findDescendantById("route-back")).toBeDefined();
       const table = setup.renderer.root.findDescendantById("collection-relationships")!;
       table.focus();
@@ -177,12 +179,13 @@ test.each([
       setup.mockInput.pressArrow("down");
       await setup.flush();
       const relationControl = "collection-current-details";
+      await enterLive(setup, "collection-more");
       await enterLive(setup, relationControl);
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
       );
       await setup.flush();
-      await enterLive(setup, "collection.inspector-back");
+      await enterLive(setup, "route-back");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
       );
@@ -204,13 +207,13 @@ test("the shared return is reachable by ordinary Tab and remains the same action
     for (let index = 0; index < 12; index++) {
       setup.mockInput.pressTab();
       await setup.flush();
-      if (setup.renderer.currentFocusedRenderable?.id === "collection.inspector-back") {
+      if (setup.renderer.currentFocusedRenderable?.id === "route-back") {
         reached = true;
         break;
       }
     }
     expect(reached).toBe(true);
-    expect(setup.captureCharFrame()).toContain("Close");
+    expect(setup.captureCharFrame()).toContain("Back");
     await parsedEnter(setup);
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
@@ -220,7 +223,7 @@ test("the shared return is reachable by ordinary Tab and remains the same action
   }
 });
 
-test("Escape exits Reader Find before navigation but the displayed Back returns directly to its Collection", async () => {
+test("Reader ordinary characters preserve reading focus and displayed Back returns directly to its Collection", async () => {
   const mounted = await mount();
   const { setup } = mounted;
   try {
@@ -230,14 +233,11 @@ test("Escape exits Reader Find before navigation but the displayed Back returns 
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-scrollbox"));
     await focusLive(setup, "reader-scrollbox");
     await setup.mockInput.typeText("/");
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-find");
-    await parsedEscape(setup);
+    await setup.flush();
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
     expect(setup.renderer.root.findDescendantById("reader-find-row")?.visible ?? false).toBe(false);
     expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(true);
 
-    await setup.mockInput.typeText("/");
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-find");
     const back = setup.renderer.root.findDescendantById("route-back")!;
     await expectSharedReturn(setup, "Back to Collections");
     await setup.mockMouse.click(back.screenX + 1, back.screenY);
@@ -245,7 +245,7 @@ test("Escape exits Reader Find before navigation but the displayed Back returns 
       () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
     );
     expect(setup.renderer.root.findDescendantById("reader-find-row")?.visible ?? false).toBe(false);
-    expect(setup.captureCharFrame()).toContain("─team─");
+    expect(setup.captureCharFrame()).toContain("team");
   } finally {
     await mounted.dispose();
   }
@@ -256,7 +256,7 @@ test("Actions dismissal and the resize gate never replace a local return with it
   const { setup } = mounted;
   try {
     await openMembership(setup);
-    await focusLive(setup, "collection.inspector-back");
+    await focusLive(setup, "route-back");
     setup.resize(42, 12);
     await setup.flush();
     expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(false);
@@ -266,14 +266,12 @@ test("Actions dismissal and the resize gate never replace a local return with it
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
     );
-    await setup.waitFor(
-      () => !!setup.renderer.root.findDescendantById("collection.inspector-back"),
-    );
-    await enterLive(setup, "collection.inspector-back");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("route-back"));
+    await enterLive(setup, "route-back");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
     );
-    expect(setup.captureCharFrame()).toContain("─team─");
+    expect(setup.captureCharFrame()).toContain("team");
   } finally {
     await mounted.dispose();
   }
@@ -288,14 +286,14 @@ test.each([100, 80])(
       await openMembership(setup);
       for (
         let step = 0;
-        step < 12 && setup.renderer.currentFocusedRenderable?.id !== "collection.inspector-back";
+        step < 12 && setup.renderer.currentFocusedRenderable?.id !== "route-back";
         step++
       ) {
         setup.mockInput.pressTab();
         await setup.flush();
       }
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection.inspector-back");
-      expect(setup.captureCharFrame()).toContain("Close");
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("route-back");
+      expect(setup.captureCharFrame()).toContain("Back");
       const old = setup.renderer.root.findDescendantById("collection-membership-inspector")!;
       setup.resize(42, 12);
       await setup.flush();
@@ -303,12 +301,12 @@ test.each([100, 80])(
       setup.resize(width, 24);
       await setup.waitFor(
         () =>
-          !!setup.renderer.root.findDescendantById("collection.inspector-back") &&
-          setup.captureCharFrame().includes("Close"),
+          !!setup.renderer.root.findDescendantById("route-back") &&
+          setup.captureCharFrame().includes("Back"),
       );
       const live = setup.renderer.root.findDescendantById("collection-membership-inspector")!;
       expect(live === old).toBe(false);
-      await enterLive(setup, "collection.inspector-back");
+      await enterLive(setup, "route-back");
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
       );
@@ -316,7 +314,7 @@ test.each([100, 80])(
         false,
       );
       expect(!!setup.renderer.root.findDescendantById("route-back")).toBe(width < 100);
-      expect(setup.captureCharFrame()).toContain("─team─");
+      expect(setup.captureCharFrame()).toContain("team");
     } finally {
       await mounted.dispose();
     }

@@ -23,7 +23,8 @@ import {
   focusLive,
   live,
   openAllInstalledSkills,
-  openReaderTab,
+  openInstallation,
+  enterLive,
   parsedEnter,
   type ReaderSetup,
 } from "./reader-test-controls";
@@ -256,26 +257,24 @@ test.each([
     try {
       await openAllInstalledSkills(setup);
       await parsedEnter(setup);
-      await openReaderTab(setup, 2);
+      await openInstallation(setup);
       await setup.flush();
       const source = live(setup, "reader-details-relationship-source");
-      expect(face(source).backgroundColor.a).toBe(1);
-      const row = source.parent!.parent!.parent!;
-      const target = row.getChildren().at(-1)!;
+      expect(source.focusable).toBe(true);
+      expect(setup.captureCharFrame()).toContain("Open Source: team-main");
       const pane = live(setup, "reader-pane");
-      if (pane.width < 48) expect(target.screenY).toBeGreaterThan(source.screenY);
-      else expect(target.screenY).toBe(source.screenY);
       await focusLive(setup, source.id);
       await setup.flush();
       await capture(setup, `connections-${width}x${height}`);
-      await focusLive(setup, "reader-reload");
+      await enterLive(setup, "reader-more");
+      await focusLive(setup, "reader-menu-reload");
       await setup.flush();
-      const trigger = live(setup, "reader-reload");
+      const trigger = live(setup, "reader-menu-reload");
       expect(trigger.screenY).toBeGreaterThan(pane.screenY);
       expect(trigger.screenY + trigger.height).toBeLessThan(pane.screenY + pane.height);
       const focused = cell(setup, trigger.screenX + 2, trigger.screenY);
       expect(rgba(focused.bg)).not.toEqual(rgba(theme.get().colors.primary));
-      expect(setup.captureCharFrame()).toContain("›Reload");
+      expect(setup.captureCharFrame()).toContain("Reread installed files");
       await setup.flush();
       await capture(setup, `reader-${width}x${height}`);
       expect(live(setup, "reader-details-relationship-source")).toBe(source);

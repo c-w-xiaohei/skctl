@@ -134,7 +134,7 @@ async function waitForBody(text: string) {
     throw error;
   }
 }
-test("default disclosure is guided and Enter reads the selected Skill in a stable Reader", async () => {
+test("Right expands the catalog and Enter reads the selected Skill in a stable Reader", async () => {
   const reads: string[] = [];
   setup = await testRender(
     () => (
@@ -178,10 +178,20 @@ test("default disclosure is guided and Enter reads the selected Skill in a stabl
     throw error;
   }
   const tree = setup.renderer.currentFocusedRenderable as ScrollBoxRenderable;
+  let peakSelectionListeners = setup.renderer.listenerCount("selection");
+  const inspectSelections = (event: string) => {
+    if (event === "selection")
+      peakSelectionListeners = Math.max(
+        peakSelectionListeners,
+        setup!.renderer.listenerCount("selection") + 1,
+      );
+  };
+  setup.renderer.on("newListener", inspectSelections);
   expect(reads).toEqual(initialReads);
-  await setup.waitForFrame((frame) => frame.includes("Enter or ▸/▾ to expand/fold"));
+  await setup.waitForFrame((frame) => frame.includes("Enter preview"));
   await capture("agent-startup-144x40");
-  await parsedEnter(setup);
+  setup.mockInput.pressArrow("right");
+  await setup.flush();
   expect(setup.renderer.currentFocusedRenderable === tree).toBe(true);
   expect(reads).toEqual(initialReads);
   const rootPath = exposureTreePathKey({ segments: [{ collection: "root" }] });
@@ -247,6 +257,7 @@ test("default disclosure is guided and Enter reads the selected Skill in a stabl
     await waitForBody("Body: guide");
   }
   expect(reads).toEqual(afterSelections);
+  expect(peakSelectionListeners).toBeLessThanOrEqual(10);
   const currentBody = setup.renderer.root.findDescendantById("reader-scrollbox")!;
   expect(setup.renderer.currentFocusedRenderable === currentBody).toBe(true);
   for (const [width, height] of [
@@ -273,29 +284,23 @@ test("All Skills Collection tree filters descendants and survives popup clearing
     height: 40,
   });
   await openAllInstalledSkills(setup);
+  await openSkillsCollections(setup);
   await setup.waitFor(() => !!setup!.renderer.root.findDescendantById("collection-filter-tree"));
   const tree = setup.renderer.root.findDescendantById(
     "collection-filter-tree",
   ) as ScrollBoxRenderable;
+  await focusLive(setup, "collection-filter-tree");
+  setup.mockInput.pressArrow("right");
+  await setup.flush();
+  expect(setup.renderer.currentFocusedRenderable?.id).toBe("collection-filter-tree");
+  expect(setup.captureCharFrame()).toContain("Enter apply");
+  await arrow("down");
+  await parsedEnter(setup);
   const browser = setup.renderer.root.findDescendantById(
     "installed-skill-browser",
   ) as SelectRenderable;
-  await focusLive(setup, "collection-filter-tree");
-  await arrow("down");
-  await arrow("down");
-  await setup.renderOnce();
-  expect(browser.options).toHaveLength(2);
-  await setup.waitFor(
-    () => !!setup!.renderer.root.findDescendantById("clear-skills-filter-collection"),
-  );
-  await parsedEnter(setup);
-  await arrow("down");
-  await setup.renderOnce();
   expect(browser.options).toHaveLength(1);
   expect(browser.getSelectedOption()?.value).toBe(JSON.stringify(["team-main", "reference"]));
-  await setup.waitForFrame(
-    (frame) => frame.includes("No children") && !frame.includes("Enter expand"),
-  );
   await capture("inventory-collections-144x40");
   await focusLive(setup, "open-skills-filter");
   await parsedEnter(setup);
@@ -317,10 +322,10 @@ test("All Skills Collection tree filters descendants and survives popup clearing
   expect(browser.options).toHaveLength(2);
   setup.resize(100, 24);
   await setup.renderOnce();
-  expect(tree.focusable).toBe(false);
+  expect(tree.isDestroyed || !tree.focusable).toBe(true);
   setup.resize(144, 40);
   await setup.renderOnce();
-  expect(setup.renderer.root.findDescendantById("collection-filter-tree") === tree).toBe(true);
+  expect(setup.renderer.currentFocusedRenderable?.id).not.toBe("collection-filter-tree");
   expect(browser.options).toHaveLength(2);
 });
 test("native Tree scrollbar focus keeps Tree commands and does not select another object", async () => {
@@ -355,18 +360,19 @@ test("native Tree scrollbar focus keeps Tree commands and does not select anothe
   await setup.waitFor(
     () => setup!.renderer.currentFocusedRenderable?.id === "current-exposure-browser",
   );
-  await parsedEnter(setup);
+  setup.mockInput.pressArrow("right");
+  await setup.flush();
   const tree = setup.renderer.root.findDescendantById(
     "current-exposure-browser",
   ) as ScrollBoxRenderable;
   const thumb = tree.verticalScrollBar.slider;
   await setup.renderOnce();
   await setup.mockMouse.click(thumb.screenX, thumb.screenY);
-  await setup.waitForFrame((frame) => frame.includes("Enter collapse"));
+  await setup.waitForFrame((frame) => frame.includes("Enter preview"));
   expect(setup.renderer.currentFocusedRenderable === tree.verticalScrollBar).toBe(true);
   expect(setup.captureCharFrame()).toContain("Root task description");
-  await parsedEnter(setup);
-  await setup.waitForFrame((frame) => frame.includes("Enter expand"));
+  setup.mockInput.pressArrow("left");
+  await setup.flush();
   expect(tree.scrollTop).toBe(0);
 });
 test("an incomplete projection offers Problems without suggesting an unrelated Managed mutation", async () => {
@@ -410,3 +416,4 @@ test("an incomplete projection offers Problems without suggesting an unrelated M
   }
   expect(setup.captureCharFrame()).toContain("Fix the unreadable Collection declaration");
 });
+import { openSkillsCollections } from "./reader-test-controls";

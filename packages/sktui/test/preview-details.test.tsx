@@ -9,7 +9,7 @@ import {
   enterReaderDetailsRelationship,
   focusLive,
   openAllInstalledSkills,
-  openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
   waitForReaderBody,
@@ -17,7 +17,7 @@ import {
 async function openSourceDetails(setup: Awaited<ReturnType<typeof testRender>>) {
   await openAllInstalledSkills(setup);
   await parsedEnter(setup);
-  await openReaderTab(setup, 2);
+  await openInstallation(setup);
   await enterReaderDetailsRelationship(setup, "source");
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("source-details-pane"));
   await setup.flush();
@@ -76,7 +76,7 @@ test("All Skills selection keeps a persistent Reader, loads its exact address, a
     }
   }
 });
-test("Reader Details keeps its action surface reachable and discloses the full address only there", async () => {
+test("Installation details disclose the exact address and keep update commands reachable", async () => {
   const base = readerProjection();
   const projection = {
     ...base,
@@ -98,10 +98,12 @@ test("Reader Details keeps its action surface reachable and discloses the full a
     await openAllInstalledSkills(setup);
     expect(setup.captureCharFrame()).not.toContain("team-main/guide");
     await parsedEnter(setup);
-    await openReaderTab(setup, 2);
+    await openInstallation(setup);
     const details = setup.renderer.root.findDescendantById("reader-details") as ScrollBoxRenderable;
-    expect(details).toBeDefined();
-    await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
+    expect(!!details).toBe(true);
+    await setup.waitForFrame(
+      (frame) => frame.includes("Source: team-main") && frame.includes("Path: guide"),
+    );
     expect(
       setup.renderer.root.findDescendantById("reader-action-skill-check-updates"),
     ).toBeDefined();
@@ -157,10 +159,11 @@ test("Source action/detail disclosures return to the originating Skill relations
       await parsedEnter(setup);
     }
     await parsedEscape(setup);
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "reader-details-relationship-source",
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-more");
+    await openInstallation(setup);
+    await setup.waitForFrame(
+      (frame) => frame.includes("Source: team-main") && frame.includes("Path: guide"),
     );
-    await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
   } finally {
     setup.renderer.destroy();
   }

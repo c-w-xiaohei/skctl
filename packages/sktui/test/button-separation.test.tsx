@@ -58,9 +58,10 @@ async function revealCommands(setup: ReaderSetup, buttons: readonly ButtonRender
     if (!button.focusable) continue;
     await focusLive(setup, button.id);
     await setup.flush();
+    const current = live(setup, button.id);
     const content = live(setup, "route-content");
-    expect(button.screenY).toBeGreaterThanOrEqual(content.screenY);
-    expect(button.screenY + button.height).toBeLessThanOrEqual(content.screenY + content.height);
+    expect(current.screenY).toBeGreaterThanOrEqual(content.screenY);
+    expect(current.screenY + current.height).toBeLessThanOrEqual(content.screenY + content.height);
   }
 }
 async function capture(setup: ReaderSetup, name: string) {
@@ -208,10 +209,10 @@ test.each([100, 43])(
       expect(index).toBeGreaterThanOrEqual(0);
       choices.setSelectedIndex(index);
       await parsedEnter(setup);
-      await enterLive(setup, "settings-section-tab-config-sources");
+      await openSettingsCategory(setup, "config-sources");
       await enterLive(setup, "config-config-source-browser");
       await setup.flush();
-      await revealCommands(setup, separated(setup, "config-source-danger-actions"));
+      await revealCommands(setup, separated(setup, "config-source-inspector"));
       await capture(setup, `config-source-${width}`);
     } finally {
       await mounted.dispose();
@@ -225,7 +226,7 @@ test("short Agent access recovery separates commands and reveals each focused bu
     await openMainPage(setup, "agent");
     await enterLive(setup, "agent-view-tab-catalog");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("agent-access-pane"));
-    const buttons = separated(setup, "agent-access-pane");
+    const buttons = separated(setup, "agent-catalog-actions");
     for (const button of buttons) {
       if (!button.focusable) continue;
       await focusLive(setup, button.id);
@@ -261,8 +262,9 @@ test.each([80, 43])(
       await setup.flush();
       const cancel = live(setup, "installed-skill-preview-failure-cancel");
       const retry = live(setup, "installed-skill-preview-failure-retry");
-      expect(retry.screenY - cancel.screenY - cancel.height).toBeGreaterThanOrEqual(1);
-      expect(setup.renderer.currentFocusedRenderable === cancel).toBe(true);
+      expect(retry.screenY).toBe(cancel.screenY);
+      expect(retry.screenX - cancel.screenX - cancel.width).toBeGreaterThanOrEqual(1);
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe(cancel.id);
       setup.mockInput.pressTab();
       await setup.waitFor(() => setup.renderer.currentFocusedRenderable === retry);
       await parsedEnter(setup);
@@ -363,3 +365,4 @@ test("resizing a spaced form keeps its focused command visible without losing th
     setup.renderer.destroy();
   }
 });
+import { openSettingsCategory } from "./settings-test-controls";

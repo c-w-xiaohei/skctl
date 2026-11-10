@@ -1,10 +1,119 @@
 import { expect, test } from "bun:test";
 import type { WorkspaceView } from "@skctl/core";
 import { createConfigState } from "../src/config/state";
+import { createCollectionsState } from "../src/collections/state";
 import { createRoute } from "../src/route";
 import { validSections } from "../src/types";
 import { createWorkspaceState } from "../src/workspace/state";
 import { readerProjection } from "./installed-reader.fixture";
+
+test("main pages restore their object layer without reverting shared selections or other scopes", () => {
+  const workspace = createWorkspaceState();
+  const config = createConfigState();
+  const route = createRoute({ workspace, config });
+  const address = { source: "team-main", path: "guide" };
+  workspace.selectSkill(address);
+  workspace.openReader();
+  workspace.openDetail();
+  route.syncCurrent({ focus: "reader", surface: "reader" });
+  route.switchPage("agent");
+  workspace.selectExposurePath("root");
+  workspace.selectSkill(undefined);
+  workspace.openDetail();
+  route.syncCurrent({ focus: "agent-preview" });
+  config.land("project", "collections", "new-collection");
+  workspace.setQuery("changed query");
+  workspace.toggleSkill({ source: "other", path: "checked" });
+  route.switchPage("skills");
+  expect(workspace.selectedSkill()).toEqual(address);
+  expect(workspace.readerOpen()).toBe(true);
+  expect(workspace.narrowLevel()).toBe("detail");
+  expect(workspace.query()).toBe("changed query");
+  expect(workspace.selectedSkills()).toEqual([{ source: "other", path: "checked" }]);
+  expect(config.selection("project", "collections")).toBe("new-collection");
+  expect(route.snapshot().stack).toEqual([]);
+  route.switchPage("agent");
+  expect(workspace.selectedExposurePath()).toBe("root");
+  expect(workspace.selectedSkill()).toBeUndefined();
+  expect(workspace.narrowLevel()).toBe("detail");
+  expect(route.snapshot().current.focus).toBe("agent-preview");
+});
+
+test("main Settings page restores its last scope and declaration category", () => {
+  const workspace = createWorkspaceState();
+  const config = createConfigState();
+  const route = createRoute({ workspace, config });
+  route.switchPage("settings");
+  route.switchContext("project");
+  route.switchSection("collections");
+  config.land("project", "collections", "team");
+  route.switchPage("agent");
+  route.switchContext("project");
+  route.switchSection("integrations");
+  route.switchPage("settings");
+  expect(route.snapshot().destination).toBe("project");
+  expect(config.section("project")).toBe("collections");
+  expect(config.selection("project")).toBe("team");
+  expect(config.snapshot("project").browserLevel).toBe("object");
+});
+
+test("explicit expansion belongs to each page and relationship Back restores it", () => {
+  const workspace = createWorkspaceState();
+  const config = createConfigState();
+  const route = createRoute({ workspace, config });
+  route.setExpanded(true);
+  route.switchPage("sources");
+  expect(route.expanded()).toBe(false);
+  route.switchPage("skills");
+  expect(route.expanded()).toBe(true);
+  route.push({ destination: "project", section: "sources", selection: "team-main" });
+  expect(route.expanded()).toBe(false);
+  route.back();
+  expect(route.expanded()).toBe(true);
+  route.setExpanded(false);
+  expect(route.snapshot().stack).toEqual([]);
+});
+
+test("removing the expanded object clears expansion before recovery", () => {
+  const workspace = createWorkspaceState();
+  const config = createConfigState();
+  const route = createRoute({ workspace, config });
+  workspace.selectSkill({ source: "missing", path: "guide" });
+  route.syncCurrent();
+  route.setExpanded(true);
+  route.revalidate(readerProjection());
+  expect(route.expanded()).toBe(false);
+  expect(route.snapshot().current.recovery).toBe("unavailable");
+});
+
+test("page switching preserves a relationship predecessor without adding main pages to Back", () => {
+  const workspace = createWorkspaceState();
+  const config = createConfigState();
+  const route = createRoute({ workspace, config });
+  route.switchPage("collections");
+  route.activate({ destination: "project", section: "collections", selection: "team" });
+  route.switchPage("agent");
+  route.switchPage("settings");
+  expect(route.snapshot().stack).toHaveLength(1);
+  route.back();
+  expect(route.snapshot().current.page).toBe("collections");
+  expect(route.snapshot().stack).toEqual([]);
+});
+
+test("revalidation discards a removed saved object before returning to its main page", () => {
+  const workspace = createWorkspaceState();
+  const config = createConfigState();
+  const route = createRoute({ workspace, config });
+  workspace.selectSkill({ source: "removed", path: "guide" });
+  workspace.openReader();
+  workspace.openDetail();
+  route.switchPage("agent");
+  route.revalidate(readerProjection());
+  route.switchPage("skills");
+  expect(workspace.selectedSkill()).toBeUndefined();
+  expect(workspace.readerOpen()).toBe(false);
+  expect(workspace.narrowLevel()).not.toBe("detail");
+});
 
 test("route landing delegates selection to page owners", () => {
   const workspace = createWorkspaceState();
@@ -13,6 +122,20 @@ test("route landing delegates selection to page owners", () => {
   route.source({ destination: "project", section: "sources", selection: "origin" });
   expect(config.section("project")).toBe("sources");
   expect(config.selection("project")).toBe("origin");
+});
+
+test("Collection routes land the exact selection and Back restores the previous Collection", () => {
+  const workspace = createWorkspaceState();
+  const config = createConfigState();
+  const collections = createCollectionsState();
+  collections.select("engineering");
+  workspace.selectSection("collections");
+  const route = createRoute({ workspace, config, collections });
+  route.push({ destination: "workspace", section: "collections", selection: "contributed" });
+  expect(collections.selected()).toBe("contributed");
+  expect(route.snapshot().current.collections?.selected).toBe("contributed");
+  route.back();
+  expect(collections.selected()).toBe("engineering");
 });
 
 test("Config Use is not a user-facing Config section or valid route target", () => {
@@ -79,10 +202,9 @@ test("relationship return rejects a different structural address with the same s
     () => {},
     () => ({
       address: { source: "team", path: "main/guide" },
-      tab: "details",
+      tab: "skill",
+      installationOpen: true,
       raw: false,
-      find: "",
-      match: 0,
       scroll: 0,
       detailsScroll: 0,
       resources: [],
@@ -113,15 +235,14 @@ test("relationship return restores the originating colliding Reader Details addr
     () => {},
     () => ({
       address: first,
-      tab: "details",
+      tab: "skill",
+      installationOpen: true,
       raw: false,
-      find: "",
-      match: 0,
       scroll: 0,
       detailsScroll: 0,
       resources: [],
     }),
-    (address, surface) => selected.push({ address, surface }),
+    (address) => selected.push(address),
   );
 
   route.relationship({
@@ -135,7 +256,7 @@ test("relationship return restores the originating colliding Reader Details addr
 
   expect(workspace.selectedSkill()).toEqual(first);
   expect(workspace.readerOpen()).toBe(true);
-  expect(selected).toEqual([{ address: first, surface: "details" }]);
+  expect(selected).toEqual([first]);
 });
 
 test("Source relationship destination uses the shared Inspector owner while Reader Details retains its owner", () => {
@@ -149,10 +270,9 @@ test("Source relationship destination uses the shared Inspector owner while Read
     () => {},
     () => ({
       address,
-      tab: "details",
+      tab: "skill",
+      installationOpen: true,
       raw: false,
-      find: "",
-      match: 0,
       scroll: 0,
       detailsScroll: 0,
       resources: [],
@@ -257,10 +377,9 @@ test("Browser and Inspector frames neither capture nor restore Reader state", ()
     () => {},
     () => ({
       address,
-      tab: "details",
+      tab: "skill",
+      installationOpen: true,
       raw: true,
-      find: "needle",
-      match: 2,
       scroll: 15,
       detailsScroll: 7,
       resources: [],
@@ -512,10 +631,9 @@ test("projection revalidation recovers a removed frame object without restoring 
     () => {},
     () => ({
       address,
-      tab: "details",
+      tab: "skill",
+      installationOpen: true,
       raw: false,
-      find: "",
-      match: 0,
       scroll: 0,
       detailsScroll: 0,
       resources: [],

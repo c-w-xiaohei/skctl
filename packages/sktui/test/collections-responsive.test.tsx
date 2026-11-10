@@ -571,6 +571,8 @@ test("RENDER Settings Reference Inspect opens exact relation without a mutation 
     setup.mockInput.pressArrow("down");
     await setup.flush();
     const id = "collection-current-details";
+    await enterLive(setup, "collection-more");
+    await setup.flush();
     const control = setup.renderer.root.findDescendantById(id)!;
     expect(control).toBeDefined();
     await setup.mockMouse.click(control.screenX + 1, control.screenY);
@@ -585,7 +587,7 @@ test("RENDER Settings Reference Inspect opens exact relation without a mutation 
   }
 });
 
-test("RENDER Membership origin panel retains the member table and exposes exact metadata", async () => {
+test("RENDER Membership Details replaces the member table and exposes exact metadata", async () => {
   const collections = createCollectionsState();
   collections.select("engineering");
   collections.openMembership("engineering", "guide:0");
@@ -594,10 +596,10 @@ test("RENDER Membership origin panel retains the member table and exposes exact 
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-membership-inspector"),
     );
-    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(true);
+    expect(!!setup.renderer.root.findDescendantById("collection-relationships")).toBe(false);
     expect(
       setup.renderer.root.findDescendantById("collection-inspector-surface")!.height,
-    ).toBeLessThanOrEqual(14);
+    ).toBeGreaterThanOrEqual(6);
     expect(!!setup.renderer.root.findDescendantById("collection-membership-origin")).toBe(false);
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
@@ -811,6 +813,7 @@ test("RENDER Collection browser opens its exact memberships and their ownership 
     expect(
       body.getChildren().filter((row) => row.id.startsWith("collection-relationships-row-")),
     ).toHaveLength(1);
+    await enterLive(setup, "collection-more");
     await enterLive(setup, "collection-current-details");
     await setup.waitForFrame(
       (frame) => frame.includes("/project.jsonc") && frame.includes("/collections/engineering"),
@@ -1138,7 +1141,21 @@ test("TASK7 RENDER Collection browser uses remaining list height for long result
     ) as ScrollBoxRenderable;
     expect(browser.height).toBeGreaterThan(10);
     await focusLive(setup, "collection-browser");
-    for (let index = 0; index < 11; index++) setup.mockInput.pressArrow("down");
+    const tabs = setup.renderer.root.findDescendantById("collection-tabs-viewport")!;
+    const table = setup.renderer.root.findDescendantById("collection-relationships-body")!;
+    const baseline = setup.renderer.listenerCount("selection");
+    for (let index = 0; index < 11; index++) {
+      setup.mockInput.pressArrow("down");
+      expect(setup.renderer.root.findDescendantById("collection-tabs-viewport") === tabs).toBe(
+        true,
+      );
+      expect(
+        setup.renderer.root.findDescendantById("collection-relationships-body") === table,
+      ).toBe(true);
+      expect(setup.renderer.listenerCount("selection")).toBe(baseline);
+    }
+    await setup.flush();
+    expect(setup.renderer.listenerCount("selection")).toBe(baseline);
     await enterLive(setup, "collection-browser");
     await setup.waitForFrame(
       (frame) => frame.includes("collection-11") && frame.includes("Contents"),
@@ -1175,7 +1192,10 @@ test("TASK7 RENDER medium Collection browser fills the 80x24 Content height and 
       "collection-browser",
     ) as SelectRenderable;
     expect(browser.height).toBeGreaterThan(0);
-    const frame = setup.captureCharFrame().split("\n");
+    const frame = setup
+      .captureCharFrame()
+      .split("\n")
+      .slice(browser.screenY, browser.screenY + browser.height);
     expect(frame.filter((line) => /alpha|bravo|charlie|delta/.test(line))).toHaveLength(4);
   } finally {
     setup.renderer.destroy();

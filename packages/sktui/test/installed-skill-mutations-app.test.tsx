@@ -458,7 +458,7 @@ test("App routes blocked Uninstall reference resolution by Collection ID with ex
       () => setup.renderer.currentFocusedRenderable?.id === "config-collection-browser",
     );
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("Uninstall Membership handoff");
+    expect(frame).toContain("uninstall-membership");
     expect(frame).toContain("team-main/guide");
     expect(frame).toContain("/workspace/skctl/skctl.jsonc");
     expect(textIn(setup.renderer.root)).toContain("/collections/engineering/members/guide");
@@ -562,7 +562,7 @@ test("App routes the selected blocked Uninstall owner to its exact selector Memb
       () => setup.renderer.currentFocusedRenderable?.id === "config-collection-browser",
     );
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("Uninstall Membership handoff");
+    expect(frame).toContain("uninstall-membership");
     expect(frame).toContain("team-main/guide");
     expect(frame).toContain("documentation");
     expect(frame).toContain("guide-copy");

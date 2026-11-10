@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
-import { SelectRenderable, TextRenderable } from "@opentui/core";
+import { ScrollBoxRenderable, SelectRenderable, TextRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { SkctlError } from "@skctl/core";
 import { directSourceCore } from "./direct-source.fixture";
+import { openMainPage } from "./main-page-controls";
+import { selectScrollOffset } from "../src/select-scroll";
 import {
   readerAddress,
   readerContent,
@@ -23,6 +25,177 @@ import {
   waitForReaderBody,
 } from "./reader-test-controls";
 type Setup = Awaited<ReturnType<typeof testRender>>;
+
+test("resource breadcrumbs return to Resources and Content without rereading a file", async () => {
+  let reads = 0;
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(readerProjection(), {
+          listInstalledResources: async () => [{ path: "config.json", kind: "file" }],
+          readInstalledResource: async (_environment, request) => {
+            reads++;
+            return { kind: "text", path: request.path, format: "text", text: "configuration" };
+          },
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 144, height: 24 },
+  );
+  try {
+    await openResources(setup);
+    await openSelectedResource(setup, "config.json");
+    await focusLive(setup, "breadcrumb-0");
+    setup.mockInput.pressArrow("right");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "breadcrumb-1");
+    setup.mockInput.pressArrow("right");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "breadcrumb-2");
+    setup.mockInput.pressArrow("left");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "breadcrumb-1");
+    await enterLive(setup, "breadcrumb-2");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-browser");
+    expect(setup.renderer.root.findDescendantById("resource-content")).toBeUndefined();
+    await enterLive(setup, "breadcrumb-1");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
+    expect(selectedReaderTab(setup)).toBe(0);
+    expect(reads).toBe(1);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("Resource list restores its viewport independently from the selected row", async () => {
+  const setup = await testRender(
+    () => (
+      <App
+        core={directSourceCore(readerProjection(), {
+          listInstalledResources: async () =>
+            Array.from({ length: 60 }, (_, index) => ({ path: `file-${index}.txt`, kind: "file" })),
+        })}
+        exit={() => {}}
+      />
+    ),
+    { width: 120, height: 24 },
+  );
+  try {
+    await openResources(setup);
+    const browser = await resourceBrowser(setup);
+    await focusLive(setup, "resource-browser");
+    const selected = browser.getSelectedOption()?.value;
+    await setup.mockMouse.scroll(browser.screenX + 2, browser.screenY + 2, "down");
+    await setup.waitFor(() => selectScrollOffset(browser) > 0);
+    const scroll = selectScrollOffset(browser);
+    expect(browser.getSelectedOption()?.value).toBe(selected);
+    await openMainPage(setup, "sources");
+    await openMainPage(setup, "skills");
+    const restored = await resourceBrowser(setup);
+    await setup.waitFor(() => selectScrollOffset(restored) === scroll);
+    expect(restored.getSelectedOption()?.value).toBe(selected);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("Installation information survives switching pages and returns to Content", async () => {
+  const setup = await testRender(
+    () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
+    { width: 120, height: 24 },
+  );
+  try {
+    await openAllInstalledSkills(setup);
+    await enterInstalledAddress(setup, readerAddress);
+    await enterLive(setup, "reader-more");
+    await enterLive(setup, "reader-installation-open");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
+    await openMainPage(setup, "sources");
+    await openMainPage(setup, "skills");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
+    await focusLive(setup, "reader-details");
+    await parsedEscape(setup);
+    expect(setup.renderer.root.findDescendantById("reader-details")).toBeUndefined();
+    expect(selectedReaderTab(setup)).toBe(0);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test.each([43, 120])(
+  "Resource directory and file position survive page changes and remain isolated at %i columns",
+  async (width) => {
+    const reads: unknown[] = [];
+    const setup = await testRender(
+      () => (
+        <App
+          core={directSourceCore(readerProjection(), {
+            loadInstalledSkill: async () => readerContent,
+            listInstalledResources: async () => [
+              { path: "docs", kind: "directory" },
+              { path: "docs/guide.md", kind: "file" },
+              { path: "docs/config.json", kind: "file" },
+              { path: "outside.txt", kind: "file" },
+            ],
+            readInstalledResource: async (_environment, request) => {
+              reads.push(request);
+              return {
+                kind: "text",
+                path: request.path,
+                format: "text",
+                text: Array.from(
+                  { length: 100 },
+                  (_, index) => `${request.path} line ${index}`,
+                ).join("\n"),
+              };
+            },
+          })}
+          exit={() => {}}
+        />
+      ),
+      { width, height: 24 },
+    );
+    const content = () =>
+      setup.renderer.root.findDescendantById("resource-content") as ScrollBoxRenderable;
+    try {
+      await openResources(setup);
+      await openSelectedResource(setup, "docs");
+      expect(reads).toEqual([]);
+      await openSelectedResource(setup, "docs/guide.md");
+      await focusLive(setup, "resource-content");
+      setup.mockInput.pressArrow("down");
+      await setup.waitFor(() => content().scrollTop > 0);
+      const scroll = content().scrollTop;
+      await openMainPage(setup, "sources");
+      await openMainPage(setup, "skills");
+      await setup.waitFor(() => !!content());
+      await setup.waitFor(() => content().scrollTop === scroll);
+      await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "resource-content");
+      await parsedEscape(setup);
+      expect((await resourceBrowser(setup)).options.map((option) => option.value)).toEqual([
+        "docs/guide.md",
+        "docs/config.json",
+      ]);
+      await openSelectedResource(setup, "docs/config.json");
+      await setup.waitFor(() => !!content());
+      expect(content().scrollTop).toBe(0);
+      await focusLive(setup, "resource-content");
+      await parsedEscape(setup);
+      await openSelectedResource(setup, "docs/guide.md");
+      await setup.waitFor(() => content().scrollTop === scroll);
+      await focusLive(setup, "resource-content");
+      await parsedEscape(setup);
+      await parsedEscape(setup);
+      expect((await resourceBrowser(setup)).getSelectedOption()?.value).toBe("docs");
+      expect(reads).toEqual(
+        ["docs/guide.md", "docs/config.json", "docs/guide.md"].map((path) => ({
+          address: readerAddress,
+          path,
+        })),
+      );
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 async function resourceBrowser(setup: Setup) {
   await setup.waitFor(() => {
     const browser = setup.renderer.root.findDescendantById("resource-browser");

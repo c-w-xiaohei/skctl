@@ -72,10 +72,40 @@ export function CollectionUseOverlay(props: {
   let list: SelectRenderable | undefined;
   return (
     <ModalShell>
-      <ModalBody controls={controls}>
-        <text>Set Collection Use</text>
-        <text>{`Configuration: ${props.level}\n${collections().length} entries selected`}</text>
-        {props.file && <text wrapMode="word">{`Target: ${props.file}`}</text>}
+      <ModalBody
+        controls={controls}
+        header={<text height={1} wrapMode="none">{`Collection Use: ${props.level}`}</text>}
+        footer={
+          <box flexDirection="row" gap={1} flexShrink={0}>
+            <ModalCommand
+              id="collection-use-cancel"
+              controls={controls}
+              record={modalCommand("collection-use.cancel", "Cancel", "Discard draft")}
+              execute={props.onCancel}
+            />
+            <ModalCommand
+              id="collection-use-review"
+              intent="primary"
+              controls={controls}
+              record={modalCommand(
+                "collection-use.review",
+                props.pending ? "Reviewing" : "Review Collection Use",
+                "Preview disclosure",
+                !props.pending,
+                false,
+                props.pending ? "Wait for the current review to settle" : undefined,
+              )}
+              execute={() =>
+                props.onPreview({
+                  kind: "collection-use",
+                  level: props.level,
+                  collections: [...collections()],
+                })
+              }
+            />
+          </box>
+        }
+      >
         <DataList
           id="collection-use-values"
           ref={(value: SelectRenderable) => {
@@ -83,7 +113,7 @@ export function CollectionUseOverlay(props: {
             registerCollections(value);
           }}
           focused
-          height={Math.max(1, Math.min(choices().length, 8, terminal().height - 12))}
+          height={Math.max(1, Math.min(choices().length, 8, terminal().height - 6))}
           flexShrink={0}
           selectedIndex={currentIndex()}
           showDescription={false}
@@ -110,6 +140,8 @@ export function CollectionUseOverlay(props: {
             return true;
           }}
         />
+        <text>{`${collections().length} entries selected`}</text>
+        {props.file && <text wrapMode="word">{`Target: ${props.file}`}</text>}
         {current() && <text wrapMode="word">{`Collection: ${current()!.id}`}</text>}
         {current()?.unavailable && (
           <text wrapMode="word">
@@ -133,34 +165,6 @@ export function CollectionUseOverlay(props: {
           <text>No Collections selected — review writes an explicit empty Use.</text>
         )}
         {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
-        <box flexDirection="column" gap={1} flexShrink={0}>
-          <ModalCommand
-            id="collection-use-cancel"
-            controls={controls}
-            record={modalCommand("collection-use.cancel", "Cancel", "Discard draft")}
-            execute={props.onCancel}
-          />
-          <ModalCommand
-            id="collection-use-review"
-            intent="primary"
-            controls={controls}
-            record={modalCommand(
-              "collection-use.review",
-              props.pending ? "Reviewing" : "Review Collection Use",
-              "Preview disclosure",
-              !props.pending,
-              false,
-              props.pending ? "Wait for the current review to settle" : undefined,
-            )}
-            execute={() =>
-              props.onPreview({
-                kind: "collection-use",
-                level: props.level,
-                collections: [...collections()],
-              })
-            }
-          />
-        </box>
       </ModalBody>
     </ModalShell>
   );

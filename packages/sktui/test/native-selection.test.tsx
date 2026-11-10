@@ -3,7 +3,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
-import { openAllInstalledSkills, parsedEnter } from "./reader-test-controls";
+import { enterLive, openAllInstalledSkills, parsedEnter } from "./reader-test-controls";
 test("RENDER native Raw Reader exposes mouse-dragged selected text through the renderer", async () => {
   const setup = await testRender(
     () => (
@@ -19,11 +19,8 @@ test("RENDER native Raw Reader exposes mouse-dragged selected text through the r
   try {
     await openAllInstalledSkills(setup);
     await parsedEnter(setup);
-    const raw = setup.renderer.root.findDescendantById("reader-raw");
-    expect(raw).toBeDefined();
-    raw!.focus();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable === raw);
-    setup.mockInput.pressEnter();
+    await enterLive(setup, "reader-more");
+    await enterLive(setup, "reader-menu-raw");
     await setup.waitForFrame((frame) => frame.includes("title: Guide"));
     const reader = setup.renderer.root.findDescendantById("reader-scrollbox");
     expect(reader).toBeDefined();

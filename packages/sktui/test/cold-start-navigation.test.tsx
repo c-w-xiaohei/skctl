@@ -105,7 +105,7 @@ test("page and Scope navigation are reachable from cold startup by keyboard", as
       await press(setup, "ARROW_DOWN");
     expect(choices.getSelectedOption()?.value).toBe("global");
     await press(setup, "ENTER");
-    await tabTo(setup, "settings-section-tab-sources");
+    await tabTo(setup, "settings-categories");
     await press(setup, "ENTER");
     await setup.waitForFrame((frame) => frame.includes("Sources"));
   } finally {

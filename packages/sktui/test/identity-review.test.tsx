@@ -6,6 +6,7 @@ import { InstalledSkillReviewOverlay } from "../src/operations/installed-review"
 import { CollectionReviewOverlay } from "../src/operations/collection-review";
 import type { CollectionReview, InstalledSkillReview } from "../src/session";
 import { directOwner } from "./direct-source.fixture";
+import { enterLive } from "./reader-test-controls";
 
 const address = { source: "old", path: "guide" };
 const after = { source: "new", path: "guide" };
@@ -314,6 +315,84 @@ function findScrollbox(node: BaseRenderable): ScrollBoxRenderable | undefined {
   return undefined;
 }
 
+for (const kind of ["rebind", "rename"] as const) {
+  for (const state of ["ready", "blocked", "pending", "stale"] as const) {
+    test(`${kind} ${state} keeps review and recovery controls bounded across sizes`, async () => {
+      const calls: string[] = [];
+      const common = {
+        pending: state === "pending",
+        error:
+          state === "stale"
+            ? { code: "CONFIG_CONFLICT", message: "Review the current configuration again" }
+            : undefined,
+        onCancel: () => calls.push("cancel"),
+        onConfirm: () => calls.push("confirm"),
+        onPreviewAgain: () => calls.push("preview"),
+      };
+      const setup = await testRender(
+        () =>
+          kind === "rebind" ? (
+            <InstalledSkillReviewOverlay
+              {...common}
+              review={{ ...rebind, impact: { ...rebind.impact, allowed: state !== "blocked" } }}
+              onResolveMembership={() => {}}
+            />
+          ) : (
+            <CollectionReviewOverlay
+              {...common}
+              review={{ ...rename, impact: { ...rename.impact, allowed: state !== "blocked" } }}
+              onBack={() => calls.push("back")}
+            />
+          ),
+        { width: 120, height: 30 },
+      );
+      try {
+        await setup.flush();
+        const body = findScrollbox(setup.renderer.root)!;
+        const cancelId =
+          kind === "rebind" ? "installed-skill-review-cancel" : "collection-review-choice";
+        const confirmId =
+          kind === "rebind" ? "installed-skill-review-confirm" : "collection-review-confirm";
+        const retryId =
+          kind === "rebind" ? "installed-skill-preview-again" : "collection-review-preview-again";
+        for (const [width, height] of [
+          [120, 30],
+          [100, 24],
+          [80, 23],
+          [43, 13],
+        ] as const) {
+          setup.resize(width, height);
+          await setup.flush();
+          expect(body.viewport.height).toBeGreaterThanOrEqual(6);
+          expect(!!setup.renderer.root.findDescendantById(confirmId)).toBe(state === "ready");
+          for (const id of [
+            cancelId,
+            ...(state === "stale" ? [retryId] : []),
+            ...(state === "ready" ? [confirmId] : []),
+          ]) {
+            const control = setup.renderer.root.findDescendantById(id)!;
+            expect(!!body.findDescendantById(id)).toBe(false);
+            expect(control.screenX + control.width).toBeLessThanOrEqual(width - 1);
+            expect(control.screenY + control.height).toBeLessThanOrEqual(height - 1);
+          }
+        }
+        if (state === "ready") await enterLive(setup, confirmId);
+        if (state === "stale") await enterLive(setup, retryId);
+        await enterLive(setup, cancelId);
+        expect(calls).toEqual(
+          state === "ready"
+            ? ["confirm", "cancel"]
+            : state === "stale"
+              ? ["preview", "cancel"]
+              : ["cancel"],
+        );
+      } finally {
+        setup.renderer.destroy();
+      }
+    });
+  }
+}
+
 test("compact rebind review keeps identity and actions visible while impact scrolls", async () => {
   let confirmed = 0;
   const longReview: InstalledSkillReview = {
@@ -367,6 +446,74 @@ test("compact rebind review keeps identity and actions visible while impact scro
     confirm!.focus();
     setup.mockInput.pressEnter();
     expect(confirmed).toBe(1);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("long installed address remains readable without consuming the compact review body", async () => {
+  const address = {
+    source: "team/" + "来源".repeat(30),
+    path: "skills/" + "directory/".repeat(16) + "guide",
+  };
+  const review: InstalledSkillReview = {
+    ...rebind,
+    address,
+    impact: { ...rebind.impact, address, allowed: true, blockers: [] },
+  };
+  const setup = await testRender(
+    () => (
+      <InstalledSkillReviewOverlay
+        review={review}
+        pending={false}
+        onCancel={() => {}}
+        onConfirm={() => {}}
+        onResolveMembership={() => {}}
+      />
+    ),
+    { width: 43, height: 13 },
+  );
+  try {
+    await setup.flush();
+    const scroll = findScrollbox(setup.renderer.root)!;
+    expect(scroll.viewport.height).toBeGreaterThanOrEqual(6);
+    expect(scroll.scrollHeight).toBeGreaterThan(scroll.viewport.height);
+    const target = setup.renderer.root.findDescendantById("installed-review-target");
+    expect(!!target).toBe(true);
+    expect(target!.parent === scroll.content).toBe(true);
+    const confirm = setup.renderer.root.findDescendantById("installed-skill-review-confirm")!;
+    expect(confirm.screenY + confirm.height).toBeLessThanOrEqual(12);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("long Collection rename targets keep the compact review body and cancel visible", async () => {
+  const collection = "team/" + "collection/".repeat(18);
+  const target = "next/" + "目录/".repeat(25);
+  const review: CollectionReview = {
+    ...rename,
+    intent: { ...rename.intent, collection, target },
+    impact: { ...rename.impact, collection, target, allowed: true, blockers: [] },
+  };
+  const setup = await testRender(
+    () => (
+      <CollectionReviewOverlay
+        review={review}
+        pending={false}
+        onCancel={() => {}}
+        onConfirm={() => {}}
+      />
+    ),
+    { width: 43, height: 13 },
+  );
+  try {
+    await setup.flush();
+    const scroll = findScrollbox(setup.renderer.root)!;
+    expect(scroll.viewport.height).toBeGreaterThanOrEqual(6);
+    expect(!!scroll.findDescendantById("collection-review-target")).toBe(true);
+    const cancel = setup.renderer.root.findDescendantById("collection-review-choice")!;
+    expect(cancel.screenY + cancel.height).toBeLessThanOrEqual(12);
   } finally {
     setup.renderer.destroy();
   }

@@ -86,3 +86,20 @@ test("ConfigState preserves Config Source selection when leaving its inspector",
   expect(state.configSourceSurface("project")).toBe("list");
   expect(state.selection("project", "config-sources")).toBe("/configSources/team");
 });
+
+test("Settings snapshots preserve scope-specific browser levels and exact declarations", () => {
+  const state = createConfigState();
+  expect(state.snapshot("global").browserLevel).toBe("categories");
+  state.land("project", "config-sources", "/configSources/team");
+  state.openConfigSourceInspector("project");
+  const saved = structuredClone(state.snapshot("project"));
+  state.showDeclarations("project");
+  state.showCategories("project");
+  expect(state.selection("project")).toBe("/configSources/team");
+  expect(state.snapshot("global").browserLevel).toBe("categories");
+  state.restore("project", saved);
+  expect(state.snapshot("project")).toEqual(saved);
+  expect(state.snapshot("project").browserLevel).toBe("object");
+  state.showDeclarations("project");
+  expect(state.configSourceSurface("project")).toBe("list");
+});

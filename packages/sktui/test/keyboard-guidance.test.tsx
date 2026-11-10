@@ -9,6 +9,8 @@ import {
   focusLive,
   openAllInstalledSkills,
   openReaderTab,
+  openInstallation,
+  parsedEscape,
   parsedEnter,
 } from "./reader-test-controls";
 async function mount(width: number, height = 30) {
@@ -52,9 +54,9 @@ test("Skill controls expose their actual Enter action and Tab moves without exec
   const { setup } = mounted;
   try {
     const loadsAfterOpen = mounted.loads();
-    await focusLive(setup, "reader-raw");
+    await focusLive(setup, "reader-more");
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Enter Raw");
+    expect(setup.captureCharFrame()).toContain("More");
     expect(setup.captureCharFrame()).toContain("Tab panels");
     setup.mockInput.pressTab();
     await setup.flush();
@@ -63,32 +65,32 @@ test("Skill controls expose their actual Enter action and Tab moves without exec
     );
     setup.mockInput.pressTab();
     await setup.flush();
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("route-back");
-    setup.mockInput.pressTab();
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "shell-more-actions");
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("shell-more-actions");
     await setup.waitForFrame((frame) => frame.includes("Actions"));
     expect(setup.renderer.root.findDescendantById("scope-choices")).toBeUndefined();
     expect(setup.renderer.root.findDescendantById("reader-tabs-tab-skill")).toBeDefined();
     expect(mounted.loads()).toBe(loadsAfterOpen);
     expect(mounted.updates()).toBe(0);
     setup.mockInput.pressTab({ shift: true });
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "route-back");
-    setup.mockInput.pressTab({ shift: true });
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "shell-section-tab-skills",
     );
     setup.mockInput.pressTab({ shift: true });
-    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-raw");
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-more");
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("Enter Prose"));
+    await enterLive(setup, "reader-menu-raw");
+    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-line-0"));
+    await enterLive(setup, "reader-more");
+    await setup.waitForFrame((frame) => frame.includes("Show formatted text"));
+    await parsedEscape(setup);
     expect(mounted.loads()).toBe(loadsAfterOpen);
     await focusLive(setup, "reader-tabs-tab-skill");
     await setup.waitForFrame((frame) => frame.includes("←→ move"));
     await openReaderTab(setup, 1);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("resource-browser"));
-    await openReaderTab(setup, 2);
-    await focusLive(setup, "reader-action-skill-check-updates");
-    await setup.waitForFrame((frame) => frame.includes("Check updates"));
+    await openInstallation(setup);
+    await focusLive(setup, "reader-details-action-skill-add-to-collection");
+    await setup.waitForFrame((frame) => frame.includes("Add to Collection"));
     expect(mounted.updates()).toBe(0);
   } finally {
     await mounted.dispose();
@@ -99,8 +101,8 @@ test("narrow Reader retains specific Enter guidance and native tab selection", a
   const { setup } = mounted;
   try {
     const loadsAfterOpen = mounted.loads();
-    await focusLive(setup, "reader-action-skill-check-updates");
-    await setup.waitForFrame((frame) => frame.includes("Check updates"));
+    await focusLive(setup, "reader-details-action-skill-add-to-collection");
+    await setup.waitForFrame((frame) => frame.includes("Add to Collection"));
     expect(setup.renderer.root.findDescendantById("command-status")?.height).toBe(1);
     expect(setup.captureCharFrame()).not.toContain("Enter details");
     expect(mounted.loads()).toBe(loadsAfterOpen);

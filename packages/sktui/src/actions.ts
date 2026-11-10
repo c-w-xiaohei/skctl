@@ -13,7 +13,7 @@ import {
   problemRows,
   type WorkspaceSnapshot,
 } from "./workspace/state";
-import { unassignedSkills, type CollectionsSnapshot } from "./collections/state";
+import { type CollectionsSnapshot } from "./collections/state";
 import type { ConfigSnapshot } from "./config/state";
 import { skillsStatus } from "./workspace/skills-status";
 
@@ -142,19 +142,16 @@ export function installedSkillContext(
       )
         return undefined;
     } else {
-      candidates = filterSkills(
-        workspace.skillsView === "unassigned" ? unassignedSkills(projection) : candidates,
-        {
-          query: workspace.query,
-          filters: workspace.filters,
-          source: workspace.sourceFilter,
-          agentStatus: projection.effective.agent.status,
-          collectionViews:
-            projection.effective.status === "complete"
-              ? projection.effective.collectionsView
-              : undefined,
-        },
-      );
+      candidates = filterSkills(candidates, {
+        query: workspace.query,
+        filters: workspace.filters,
+        source: workspace.sourceFilter,
+        agentStatus: projection.effective.agent.status,
+        collectionViews:
+          projection.effective.status === "complete"
+            ? projection.effective.collectionsView
+            : undefined,
+      });
     }
   }
   const skill = candidates.find((item) => sameSkillAddress(item.address, selected));

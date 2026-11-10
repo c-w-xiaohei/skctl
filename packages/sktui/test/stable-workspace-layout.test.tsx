@@ -26,14 +26,12 @@ test.each([120, 80, 60])(
     try {
       await openAllInstalledSkills(setup);
       await setup.renderOnce();
-      const scope = geometry("skills-local-views");
       const list = geometry("skills-list-pane");
       const listNode = setup.renderer.root.findDescendantById("installed-skill-browser");
       const title = geometry("section-nav");
       await parsedEnter(setup);
       const detail = geometry("skill-reader-pane");
       if (width >= 100) {
-        expect(geometry("skills-local-views")).toEqual(scope);
         expect(geometry("section-nav")).toEqual(title);
         expect(detail[1]).toBe(list[1]);
         expect(geometry("skills-list-pane")).toEqual(list);
@@ -51,7 +49,6 @@ test.each([120, 80, 60])(
         () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
       );
       expect(geometry("skills-list-pane")).toEqual(list);
-      expect(geometry("skills-local-views")).toEqual(scope);
       expect(geometry("section-nav")).toEqual(title);
     } finally {
       setup.renderer.destroy();
@@ -105,8 +102,6 @@ test("short nonwide terminals bound Reader and restore inventory geometry", asyn
     await setup.renderOnce();
     const list = setup.renderer.root.findDescendantById("skills-list-pane")!;
     const origin = [list.screenY, list.height];
-    const tabs = setup.renderer.root.findDescendantById("skills-local-views")!;
-    const tabsGeometry = [tabs.screenY, tabs.height];
     await parsedEnter(setup);
     const detail = setup.renderer.root.findDescendantById("skill-reader-pane")!;
     const detailGeometry = [detail.screenY, detail.height];
@@ -121,8 +116,6 @@ test("short nonwide terminals bound Reader and restore inventory geometry", asyn
     );
     const returned = setup.renderer.root.findDescendantById("skills-list-pane")!;
     expect([returned.screenY, returned.height]).toEqual(origin);
-    const returnedTabs = setup.renderer.root.findDescendantById("skills-local-views")!;
-    expect([returnedTabs.screenY, returnedTabs.height]).toEqual(tabsGeometry);
   } finally {
     setup.renderer.destroy();
   }
@@ -140,8 +133,6 @@ test("resizing detail preserves the surface and returns to the same Skill", asyn
       setup.resize(width, 30);
       await setup.flush();
       expect(!!setup.renderer.root.findDescendantById("skill-reader-pane")).toBe(true);
-      if (width >= 100)
-        expect(setup.renderer.root.findDescendantById("skills-local-views")).toBeDefined();
       expect(setup.captureCharFrame()).toContain("guide");
     }
     await parsedEscape(setup);

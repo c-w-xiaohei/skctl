@@ -4,9 +4,15 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerProjection } from "./installed-reader.fixture";
-import { enterLive, focusLive, openAllInstalledSkills, parsedEscape } from "./reader-test-controls";
+import {
+  clearSkillsFilters,
+  setSkillsFilter,
+  appliedSkillsFilters,
+  openAllInstalledSkills,
+  parsedEscape,
+} from "./reader-test-controls";
 
-test("filter chips clear one dimension without clearing the search query", async () => {
+test("Filter clears one dimension without clearing search or the other applied condition", async () => {
   const fixture = readerProjection();
   const base = {
     ...fixture,
@@ -74,26 +80,19 @@ test("filter chips clear one dimension without clearing the search query", async
     await setup.renderOnce();
 
     await parsedEscape(setup);
-    await focusLive(setup, "clear-skills-filter-source");
-    await setup.flush();
-    await setup.waitForFrame((frame) => frame.includes("Source: team-main ×"));
-    expect(setup.renderer.root.findDescendantById("clear-skills-filter-source")).toBeDefined();
-    expect(setup.renderer.root.findDescendantById("clear-skills-filter-collection")).toBeDefined();
-    const chip = setup.renderer.root.findDescendantById("clear-skills-filter-source")!;
-    await setup.mockMouse.click(chip.screenX + 1, chip.screenY);
-    await setup.renderOnce();
+    expect(await appliedSkillsFilters(setup)).toEqual(["Collection", "Source"]);
+    await setSkillsFilter(setup, "Source", "");
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "guide",
     );
-    expect(!!setup.renderer.root.findDescendantById("clear-skills-filter-source")).toBe(false);
-    expect(setup.renderer.root.findDescendantById("clear-skills-filter-collection")).toBeDefined();
+    expect(await appliedSkillsFilters(setup)).toEqual(["Collection"]);
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "open-skills-filter");
-    await enterLive(setup, "clear-all-skills-filters");
+    await clearSkillsFilters(setup);
     await setup.renderOnce();
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "guide",
     );
-    expect(!!setup.renderer.root.findDescendantById("clear-skills-filter-collection")).toBe(false);
+    expect(await appliedSkillsFilters(setup)).toEqual([]);
   } finally {
     setup.renderer.destroy();
   }

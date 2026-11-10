@@ -233,7 +233,7 @@ test("Reference opens its actual Collection and Back restores the parent query a
     setup.mockInput.pressArrow("down");
     await setup.renderOnce();
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("─docs─"));
+    await setup.waitForFrame((frame) => frame.includes("docs"));
     expect(
       (setup.renderer.root.findDescendantById("collections-query") as InputRenderable).value,
     ).toBe("");
@@ -243,7 +243,7 @@ test("Reference opens its actual Collection and Back restores the parent query a
       (setup.renderer.root.findDescendantById("collections-query") as InputRenderable).value,
     ).toBe("team");
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("─docs─"));
+    await setup.waitForFrame((frame) => frame.includes("docs"));
     expect(mounted.reads).toEqual(startupReads);
     expect(mounted.sideEffects).toEqual([]);
   } finally {
@@ -292,6 +292,7 @@ test("optional single-origin ownership has live focus and all original exact-tar
     await selectTeam(setup);
     await enterLive(setup, "collection-browser");
     const startupReads = [...mounted.reads];
+    await enterLive(setup, "collection-more");
     await enterLive(setup, "collection-current-details");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-membership-inspector",
@@ -504,6 +505,7 @@ test("changing Membership origin keeps visible command order instead of landing 
   try {
     await selectTeam(setup);
     await enterLive(setup, "collection-browser");
+    await enterLive(setup, "collection-more");
     await enterLive(setup, "collection-current-details");
     const origins = await focusLive(setup, "collection-membership-origin");
     for (const direction of ["down", "up", "down"] as const) {
@@ -640,13 +642,13 @@ test("ordinary member-row click then Reader Back restores table focus and a non-
     );
     const returned = setup.renderer.root.findDescendantById(browser.id) as ScrollBoxRenderable;
     expect(returned.viewport.height).toBeGreaterThan(0);
-    expect(setup.captureCharFrame()).toContain("─team─");
+    await setup.waitForFrame((frame) => frame.includes("team"));
     setup.mockInput.pressArrow("down");
     await setup.flush();
     setup.mockInput.pressArrow("down");
     await setup.flush();
     await parsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("─docs─"));
+    await setup.waitForFrame((frame) => frame.includes("docs"));
     expect(mounted.sideEffects).toEqual([]);
   } finally {
     await mounted.dispose();

@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import { ScrollBoxRenderable, SelectRenderable } from "@opentui/core";
 import { testRender } from "@opentui/solid";
-import { ModalControlScope } from "../src/modal-controls";
+import { ModalControlScope, useModalControl } from "../src/modal-controls";
 import { ModalCommand } from "../src/operations";
+import { ModalBody, ModalShell } from "../src/operations/modal";
 import { CommandPalette } from "../src/command-palette";
 import type { CommandRecord } from "../src/types";
 
@@ -16,6 +17,103 @@ const records = (count: number): CommandRecord[] =>
     enabled: true,
     danger: index === count - 1,
   }));
+
+test("modal fields outside scroll containers do not schedule focus reveal frames", async () => {
+  const setup = await testRender(
+    () => {
+      const register = useModalControl("field");
+      return <input id="field" ref={register} />;
+    },
+    { width: 43, height: 13 },
+  );
+  try {
+    await setup.flush();
+    const baseline = setup.renderer.listenerCount("frame");
+    setup.renderer.root.findDescendantById("field")!.focus();
+    expect(setup.renderer.listenerCount("frame")).toBe(baseline);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("modal focus reveal discards blurred fields and reveals the current field", async () => {
+  const setup = await testRender(
+    () => {
+      const first = useModalControl("first");
+      const last = useModalControl("last");
+      return (
+        <scrollbox id="fields" height={4} contentOptions={{ flexDirection: "column" }}>
+          <input id="first" ref={first} />
+          <text height={12}>Long form</text>
+          <input id="last" ref={last} />
+        </scrollbox>
+      );
+    },
+    { width: 43, height: 13 },
+  );
+  try {
+    await setup.flush();
+    const baseline = setup.renderer.listenerCount("frame");
+    setup.renderer.root.findDescendantById("first")!.focus();
+    setup.renderer.root.findDescendantById("last")!.focus();
+    expect(setup.renderer.listenerCount("frame") - baseline).toBe(1);
+    await setup.flush();
+    const body = setup.renderer.root.findDescendantById("fields") as ScrollBoxRenderable;
+    const last = setup.renderer.root.findDescendantById("last")!;
+    expect(last.screenY).toBeGreaterThanOrEqual(body.viewport.screenY);
+    expect(last.screenY + last.height).toBeLessThanOrEqual(
+      body.viewport.screenY + body.viewport.height,
+    );
+    expect(setup.renderer.listenerCount("frame")).toBe(baseline);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+test("short task canvas preserves six body rows and fixed submission controls at 43x13", async () => {
+  const setup = await testRender(
+    () => (
+      <ModalShell>
+        <ModalBody
+          header={
+            <>
+              <text height={1}>Review Collection changes</text>
+              <text height={1}>Project: team</text>
+              <text height={1}>3 entries</text>
+            </>
+          }
+          footer={
+            <text id="task-submit" height={1}>
+              Save / Cancel
+            </text>
+          }
+        >
+          <text id="task-content" wrapMode="word">
+            {Array.from({ length: 30 }, (_, i) => `Change ${i}`).join("\n")}
+          </text>
+        </ModalBody>
+      </ModalShell>
+    ),
+    { width: 43, height: 13 },
+  );
+  try {
+    await setup.flush();
+    const content = setup.renderer.root.findDescendantById("task-content")!;
+    let parent = content.parent;
+    while (parent && !(parent instanceof ScrollBoxRenderable)) parent = parent.parent;
+    expect(parent instanceof ScrollBoxRenderable).toBe(true);
+    const body = parent as ScrollBoxRenderable;
+    expect(body.viewport.height).toBeGreaterThanOrEqual(6);
+    const footer = setup.renderer.root.findDescendantById("task-submit")!;
+    const y = footer.screenY;
+    body.scrollTo(20);
+    await setup.flush();
+    expect(footer.screenY).toBe(y);
+    expect(y + footer.height).toBeLessThanOrEqual(12);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
 
 test("mounted ModalControlScope clamps eight commands without activating the boundary", async () => {
   const commands = records(8);

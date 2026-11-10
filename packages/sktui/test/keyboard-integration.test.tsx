@@ -31,9 +31,7 @@ test("search owns printable keys and Ctrl+C without quitting or changing route",
     );
     await parsedEscape(setup);
     expect(!!setup.renderer.root.findDescendantById("source-register-id")).toBe(false);
-    expect(!!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills")).toBe(
-      true,
-    );
+    expect(!!setup.renderer.root.findDescendantById("skills-list-pane")).toBe(true);
   } finally {
     setup.renderer.destroy();
   }
@@ -60,9 +58,7 @@ test("palette owns arrows, Tab, q and Escape without delivering them to the page
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "installed-skill-browser",
     );
-    expect(!!setup.renderer.root.findDescendantById("skills-view-tab-all-installed-skills")).toBe(
-      true,
-    );
+    expect(!!setup.renderer.root.findDescendantById("installed-skill-browser")).toBe(true);
   } finally {
     setup.renderer.destroy();
   }

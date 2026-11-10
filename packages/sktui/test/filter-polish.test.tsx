@@ -132,11 +132,15 @@ test("Filter candidate viewport is independent of category count and applies des
   await parsedEnter(setup!);
   await setup!.renderOnce();
   expect(list.options).toHaveLength(2);
-  expect(setup!.renderer.root.findDescendantById("clear-skills-filter-collection")).toBeDefined();
+  expect(dimensions.options.find((option) => option.value === "Collection")?.name).toContain(
+    "Collection:",
+  );
   await focusLive(setup!, "skills-filter-clear-all");
   await parsedEnter(setup!);
   await setup!.renderOnce();
-  expect(setup!.renderer.root.findDescendantById("clear-skills-filter-collection")).toBeUndefined();
+  expect(dimensions.options.find((option) => option.value === "Collection")?.name.trim()).toBe(
+    "Collection",
+  );
   expect(list.options).toHaveLength(3);
 });
 

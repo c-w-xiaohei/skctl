@@ -8,10 +8,11 @@ export interface Layout {
   readonly wide: Accessor<boolean>;
   readonly narrow: Accessor<boolean>;
   readonly tooSmall: Accessor<boolean>;
+  readonly browserWidth: Accessor<number>;
   resize(width: number, height: number, reconcileNarrow: (wasNarrow: boolean) => void): void;
 }
 
-export function createLayout(): Layout {
+export function createLayout(preferredWidth: Accessor<number> = () => 38): Layout {
   const [width, setWidth] = createSignal(80);
   const [height, setHeight] = createSignal(12);
   const tooSmall = createMemo(
@@ -29,6 +30,7 @@ export function createLayout(): Layout {
     wide,
     narrow,
     tooSmall,
+    browserWidth: () => Math.max(30, Math.min(preferredWidth(), width() - 51)),
     resize(nextWidth, nextHeight, reconcileNarrow) {
       const wasNarrow = narrow();
       batch(() => {

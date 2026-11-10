@@ -7,10 +7,8 @@ import { readerContent, readerProjection } from "./installed-reader.fixture";
 import {
   enterLive,
   openAllInstalledSkills,
-  openReaderTab,
+  openInstallation,
   parsedEnter,
-  readerTab,
-  selectedReaderTab,
 } from "./reader-test-controls";
 test("RENDER Skills browser owns slash query and updates its local result count", async () => {
   const setup = await testRender(
@@ -103,15 +101,14 @@ test("RENDER filtering selected A reconciles Reader and Details Actions to visib
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
     expect(loads.at(-1)).toBe("reference");
     expect(setup.renderer.root.findDescendantById("reader-views")).toBeDefined();
-    await openReaderTab(setup, 2);
-    const detailsTab = readerTab(setup, 2);
-    expect(selectedReaderTab(setup)).toBe(2);
-    expect(setup.renderer.currentFocusedRenderable === detailsTab).toBe(true);
+    await openInstallation(setup);
+    expect(setup.renderer.currentFocusedRenderable?.id).toBe("reader-details");
     expect(setup.captureCharFrame()).toContain("reference");
+    const checksBeforeAction = checks.length;
     await enterLive(setup, "reader-action-skill-check-updates");
-    await setup.waitFor(() => checks.length === 1);
+    await setup.waitFor(() => checks.length === checksBeforeAction + 1);
     expect(loads).toEqual(["guide", "reference"]);
-    expect(checks).toEqual(["team-main"]);
+    expect(checks.slice(checksBeforeAction)).toEqual(["team-main"]);
   } finally {
     setup.renderer.destroy();
   }

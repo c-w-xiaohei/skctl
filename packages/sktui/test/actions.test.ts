@@ -377,7 +377,7 @@ test("K6 structural Collection targets do not confuse slash-colliding addresses"
   ).toContain(JSON.stringify(a));
 });
 
-test("K7 Unassigned eligibility excludes assigned cursor memory but preserves checked targets", () => {
+test("K7 membership filtering excludes assigned cursor memory but preserves checked targets", () => {
   const base = collectionTargetProjection();
   const b = base.installedSkills[1]!;
   const projection: WorkspaceView = {
@@ -400,7 +400,7 @@ test("K7 Unassigned eligibility excludes assigned cursor memory but preserves ch
   const owners = pages();
   owners.workspace.selectSkill(b.address);
   owners.workspace.toggleSkill(b.address);
-  owners.workspace.selectSkillsView("unassigned");
+  owners.workspace.setFilter("Membership", "Not in a Collection");
   expect(installedSkillContext("workspace", projection, owners.facts)).toBeUndefined();
   expect(selectedSkillActions("workspace", projection, owners.facts)).toEqual([]);
   expect(

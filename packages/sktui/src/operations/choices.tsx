@@ -281,8 +281,9 @@ export function InstalledSkillChooserOverlay(props: {
         controls={controls}
         header={
           <>
-            <text>{`Add Skills to ${props.collection}`}</text>
-            <text height={1} wrapMode="none">{`Save to ${ownerLine(props.owner)}`}</text>
+            <text height={1} wrapMode="none">
+              {`Add Skills to ${props.collection}`}
+            </text>
           </>
         }
         footer={
@@ -340,7 +341,7 @@ export function InstalledSkillChooserOverlay(props: {
         <DataList
           id="installed-skill-choice"
           focused={true}
-          height={Math.max(1, Math.min(matches().length * 2, Math.floor(terminal().height / 3)))}
+          height={Math.max(1, Math.min(matches().length * 2, terminal().height - 7))}
           ref={registerChoice}
           options={matches().map((skill, index) => ({
             name: `${included(skill.address) ? "[-]" : selected().some((item) => sameSkillAddress(item.address, skill.address)) ? "[x]" : "[ ]"} ${skill.name}  ${skill.address.source}/${skill.address.path}`,
@@ -353,7 +354,9 @@ export function InstalledSkillChooserOverlay(props: {
             toggle(Number(option.value));
           }}
         />
-        <text>{`${selected().length} selected. Space checks items. Tab switches controls.`}</text>
+        <text wrapMode="word">{`Collection: ${props.collection}`}</text>
+        <text wrapMode="word">{`Save to ${ownerLine(props.owner)}`}</text>
+        <text>{`${selected().length} selected`}</text>
         <Index each={selected()}>
           {(item, index) => (
             <Input

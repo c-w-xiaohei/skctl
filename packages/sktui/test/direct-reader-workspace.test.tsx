@@ -19,6 +19,7 @@ import {
   focusLive,
   openAllInstalledSkills,
   openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
   selectedReaderTab,
@@ -213,7 +214,8 @@ test("same-list A-B-A restores body position and default body, resize preserves 
   const body = setup!.renderer.root.findDescendantById("reader-scrollbox") as ScrollBoxRenderable;
   const scroll = body.scrollTop;
   expect(scroll).toBeGreaterThan(0);
-  await openReaderTab(setup!, 2);
+  await openInstallation(setup!);
+  await parsedEscape(setup!);
   await parsedEscape(setup!);
   await setup!.mockInput.typeText(" ");
   setup!.mockInput.pressArrow("down");
@@ -240,12 +242,13 @@ test("same-list A-B-A restores body position and default body, resize preserves 
   expect(browser.getSelectedOption()?.name).toContain("✓");
   expect(selectedReaderTab(setup!)).toBe(1);
 });
-test.each([1, 2] as const)(
-  "filter-driven object changes from tab %i show the new object's body",
-  async (tab) => {
+test.each(["resources", "installation"] as const)(
+  "filter-driven object changes from %s show the new object's body",
+  async (view) => {
     await mount();
     await parsedEnter(setup!);
-    await openReaderTab(setup!, tab);
+    if (view === "resources") await openReaderTab(setup!, 1);
+    else await openInstallation(setup!);
     await focusLive(setup!, "skills-query");
     await setup!.mockInput.typeText("reference");
     await waitForBody("Body of reference");
@@ -295,17 +298,19 @@ test("explicit installed Reload refreshes Local instructions and an already-acti
   await parsedEnter(setup!);
   await openReaderTab(setup!, 1);
   await setup!.waitForFrame((frame) => frame.includes("v0.md"));
-  await openReaderTab(setup!, 2);
+  await openInstallation(setup!);
   const beforeChecks = checks;
   version = 1;
-  await enterLive(setup!, "reader-reload");
+  await enterLive(setup!, "reader-more");
+  await enterLive(setup!, "reader-menu-reload");
   await setup!.waitFor(() => reads.length === 2);
-  expect(selectedReaderTab(setup!)).toBe(2);
-  expect(resourceReads).toEqual(["guide:v0"]);
+  expect(!!setup!.renderer.root.findDescendantById("reader-details")).toBe(true);
+  await setup!.waitFor(() => resourceReads.includes("guide:v1"));
+  expect(resourceReads).toEqual(["guide:v0", "guide:v1"]);
   expect(reads).toEqual(["guide", "guide"]);
   expect(workspaceReads).toBe(1);
   expect(checks).toBe(beforeChecks);
-  await openReaderTab(setup!, 1);
+  await parsedEscape(setup!);
   await setup!.waitFor(() => resourceReads.includes("guide:v1"));
   await setup!.waitForFrame((frame) => frame.includes("v1.md"));
   expect(resourceReads).toEqual(["guide:v0", "guide:v1"]);
@@ -488,7 +493,7 @@ test("Collection dispatch uses only current B or explicitly checked A/C, includi
     );
     await enterLive(setup!, "installed-skill-choice-submit");
   };
-  await openReaderTab(setup!, 2);
+  await openInstallation(setup!);
   await preview("reader-details-action-skill-add-to-collection");
   await setup!.waitFor(() => previews.length === 1);
   expect(previews[0]).toEqual([addresses[1]]);
@@ -509,8 +514,9 @@ test("Collection dispatch uses only current B or explicitly checked A/C, includi
   await focusLive(setup!, "skills-query");
   await setup!.mockInput.typeText("no-matches");
   await setup!.waitForFrame((frame) => frame.includes("No matching Skills"));
-  expect(setup!.captureCharFrame()).toContain("Add 2 selected to Collection");
-  await preview("workspace-batch-add-to-collection");
+  expect(setup!.captureCharFrame()).toContain("Selected 2");
+  await enterLive(setup!, "skills-selected");
+  await preview("skills-selected-skill-add-selected-to-collection");
   await setup!.waitFor(() => previews.length === 2);
   expect(previews[1]).toEqual([addresses[0], addresses[2]]);
 });
@@ -531,47 +537,37 @@ test("Enter enters the existing body and Escape returns to the same list row", a
   expect(setup!.renderer.root.findDescendantById("reader-scrollbox")).toBe(body);
   await capture("direct-reader-focus-144x40");
 });
-test("reader Find owns text input and Escape returns to content before the list", async () => {
+test("Reader ignores printable text and paste without creating an input or mutating the list", async () => {
   await mount();
   await setup!.waitForFrame((frame) => frame.includes("Body of guide"));
   await parsedEnter(setup!);
   await setup!.mockInput.typeText("/");
-  await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "reader-find");
   await setup!.mockInput.typeText("u q");
   await setup!.mockInput.pasteBracketedText(" /u q");
-  expect((setup!.renderer.currentFocusedRenderable as InputRenderable).value).toBe("u q /u q");
-  await parsedEscape(setup!);
+  await setup!.flush();
+  expect(!!setup!.renderer.root.findDescendantById("reader-find")).toBe(false);
   expect(setup!.renderer.currentFocusedRenderable?.id).toBe("reader-scrollbox");
   await parsedEscape(setup!);
   expect(setup!.renderer.currentFocusedRenderable?.id).toBe("installed-skill-browser");
 });
-test("43x13 matching Find keeps a body viewport and restores the ordinary toolbar on Escape", async () => {
+test("43x13 reading keeps its viewport when opening and cancelling More", async () => {
   await mount(43, 13);
   await parsedEnter(setup!);
   await settleHighlighting(setup!.renderer.root);
   const body = setup!.renderer.root.findDescendantById("reader-scrollbox") as ScrollBoxRenderable;
   const bodyHeight = body.height;
   expect(setup!.renderer.root.findDescendantById("reader-find-open")).toBeUndefined();
-  await executeReaderAction("reader.find", "Find");
-  await setup!.waitFor(() => setup!.renderer.currentFocusedRenderable?.id === "reader-find");
-  await setup!.mockInput.typeText("Line");
-  await setup!.renderOnce();
-  expect(body.height).toBeGreaterThanOrEqual(2);
-  expect(body.height).toBe(bodyHeight - 1);
-  expect(setup!.renderer.root.findDescendantById("reader-find-next")).toBeUndefined();
-  expect(setup!.renderer.root.findDescendantById("reader-find")!.screenY).toBe(body.screenY - 1);
-  await capture("direct-reader-find-43x13");
-  await parsedEnter(setup!);
-  expect(setup!.renderer.currentFocusedRenderable).toBe(body);
-  await executeReaderAction("reader.find.next", "Next");
-  await setup!.waitForFrame((frame) => frame.includes("2/80"));
+  await enterLive(setup!, "reader-more");
+  expect(body.height).toBeGreaterThanOrEqual(6);
+  expect(body.height).toBe(bodyHeight);
+  await capture("direct-reader-more-43x13");
   await parsedEscape(setup!);
   expect(body.height).toBeGreaterThanOrEqual(3);
   expect(body.height).toBe(bodyHeight);
-  expect(setup!.renderer.currentFocusedRenderable).toBe(body);
-  expect(
-    setup!.renderer.root.findDescendantById("reader-action-skill-check-updates"),
-  ).toBeDefined();
+  expect(setup!.renderer.currentFocusedRenderable?.id).toBe("reader-more");
+  await enterLive(setup!, "reader-more");
+  expect(!!setup!.renderer.root.findDescendantById("reader-menu-skill-check-updates")).toBe(true);
+  await parsedEscape(setup!);
   expect(setup!.renderer.root.findDescendantById("reader-find-next")).toBeUndefined();
 });
 test.each([
@@ -625,22 +621,26 @@ test.each([
     );
     await parsedEnter(setup!);
     await setup!.waitFor(
-      () => !!setup!.renderer.root.findDescendantById("reader-action-skill-check-updates"),
+      () =>
+        !!setup!.renderer.root.findDescendantById("reader-details-action-skill-add-to-collection"),
     );
     await setup!.flush();
     const body = setup!.renderer.root.findDescendantById("reader-scrollbox") as ScrollBoxRenderable;
     const pane = setup!.renderer.root.findDescendantById("skill-reader-pane")!;
-    const raw = setup!.renderer.root.findDescendantById("reader-raw");
-    const update = setup!.renderer.root.findDescendantById("reader-action-skill-check-updates")!;
+    const update = setup!.renderer.root.findDescendantById(
+      "reader-details-action-skill-add-to-collection",
+    )!;
     expect(update.screenX).toBeGreaterThan(pane.screenX);
     expect(update.screenX + update.width).toBeLessThanOrEqual(pane.screenX + pane.width - 1);
-    expect(setup!.captureCharFrame().split("\n")[update.screenY]).toContain("Check updates");
+    expect(setup!.captureCharFrame().split("\n")[update.screenY]).toContain("Add to Collection");
     expect(body.height).toBeGreaterThanOrEqual(3);
-    if (raw) expect(raw.screenX + raw.width).toBeLessThanOrEqual(pane.screenX + pane.width);
-    else {
-      expect(width).toBe(43);
-      expect((await executeReaderAction("reader.raw", "Raw")).verb).toBe("Raw");
-      expect((await executeReaderAction("reader.raw", "Prose")).verb).toBe("Prose");
+    {
+      expect((await executeReaderAction("reader.raw", "Markdown source")).verb).toBe(
+        "Show Markdown source",
+      );
+      expect((await executeReaderAction("reader.raw", "formatted text")).verb).toBe(
+        "Show formatted text",
+      );
       expect(setup!.renderer.root.findDescendantById("reader-scrollbox")).toBe(body);
       expect(body.height).toBeGreaterThanOrEqual(3);
     }
@@ -648,16 +648,16 @@ test.each([
     expect(identity.plainText).toStartWith("很长");
     expect(Bun.stringWidth(identity.plainText)).toBeLessThanOrEqual(identity.width);
     expect(setup!.captureCharFrame()).not.toContain("Loading SKILL.md");
-    expect(setup!.renderer.currentFocusedRenderable).toBe(body);
+    await focusLive(setup!, "reader-scrollbox");
     await capture(`direct-reader-long-empty-${width}x${height}`);
-    await openReaderTab(setup!, 2);
+    await openInstallation(setup!);
     const summary = setup!.renderer.root.findDescendantById("reader-details-summary")!;
     const text = (node: BaseRenderable): string =>
       node instanceof TextRenderable ? node.plainText : node.getChildren().map(text).join("\n");
     const fullName = "很长的技能名称-e\u0301-\u{1f680}-with-extra-context-for-clipping";
     if (identity.plainText !== fullName) {
-      await setup!.waitFor(() => text(summary).includes(`Name\n${fullName}`));
-      expect(text(summary)).toContain(`Name\n${fullName}`);
+      await setup!.waitFor(() => text(summary).includes(`Name: ${fullName}`));
+      expect(text(summary)).toContain(`Name: ${fullName}`);
     } else {
       expect(identity.plainText).toBe(fullName);
     }

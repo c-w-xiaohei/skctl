@@ -1,14 +1,12 @@
 import { expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 import {
-  BoxRenderable,
   ScrollBoxRenderable,
   SelectRenderable,
   TextRenderable,
   type BaseRenderable,
 } from "@opentui/core";
 import { App } from "../src/app";
-import { exposureTreePathKey } from "../src/collections/agent-access-tree";
 import { collectionRelationRows } from "../src/collections/relationship-model";
 import { directOwner, directSourceCore, workspaceProjection } from "./direct-source.fixture";
 import {
@@ -17,10 +15,8 @@ import {
   expectSharedReturn,
   live,
   openAllInstalledSkills,
-  openReaderSettings,
-  openReaderTab,
+  openInstallation,
   focusLive,
-  parsedEnter,
 } from "./reader-test-controls";
 const address = { source: "team-main", path: "guide" };
 const globalCollectionOwner = {
@@ -160,7 +156,7 @@ test("Details renders provenance and routes Collection Use to its owning Config 
   try {
     await openAllInstalledSkills(setup);
     await enterInstalledAddress(setup, address);
-    await openReaderTab(setup, 2);
+    await openInstallation(setup);
     await setup.waitFor(() =>
       nativeText(live(setup, "reader-details-summary")).includes(
         "SOURCE_DRIFT: Observed binding drift",
@@ -168,8 +164,8 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     );
     const summary = nativeText(live(setup, "reader-details-summary"));
     for (const value of [
-      "Address\nteam-main/guide",
-      "Health\nhealthy",
+      "Source: team-main",
+      "Path: guide",
       "SOURCE_DRIFT: Observed binding drift",
     ])
       expect(summary).toContain(value);
@@ -207,23 +203,13 @@ test("Details renders provenance and routes Collection Use to its owning Config 
         frame.includes("docs:guide") &&
         /Primary[^\n]*\n[^\n]*selector/.test(frame),
     );
-    await openReaderSettings(setup);
+    await openInstallation(setup);
     expect(live(setup, "reader-details-action-skill-add-to-collection").focusable).toBe(true);
     expect(live(setup, "reader-details-relationship-source").focusable).toBe(true);
     await enterLive(setup, "reader-details-relationship-selectors");
-    const exposureRootId = `current-exposure-browser-row-${encodeURIComponent(exposureTreePathKey({ segments: [{ collection: "engineering" }] }))}`;
-    await setup.waitFor(() => {
-      const row = setup.renderer.root.findDescendantById(exposureRootId);
-      return row instanceof BoxRenderable && row.backgroundColor.a > 0;
-    });
-    expect(setup.captureCharFrame()).toContain("Prepared in the Agent catalog");
-    expect(setup.captureCharFrame()).toContain("engineering");
-    const exposureName = live(setup, `${exposureRootId}-name`);
-    expect(exposureName).toBeInstanceOf(TextRenderable);
-    expect((exposureName as TextRenderable).plainText.trim()).toBe("engineering");
-    expect(setup.renderer.currentFocusedRenderable?.id).toBe("current-exposure-browser");
-    expect(!!setup.renderer.root.findDescendantById("collection-tabs-tab-members")).toBe(false);
-    await enterLive(setup, "agent-access-collection-details");
+    expect(nativeText(live(setup, "reader-details"))).toContain("engineering:guide");
+    await enterLive(setup, "reader-details-relationship-collection:engineering");
+    await enterLive(setup, "collection-browser");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-detail-pane"));
     await setup.waitForFrame(
       (frame) => frame.includes("engineering") && frame.includes("Contents"),
@@ -250,16 +236,16 @@ test("Details renders provenance and routes Collection Use to its owning Config 
       throw new Error("Expected owning Config Collections");
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable === collections);
     expect(collections.getSelectedOption()?.value).toBe("engineering");
-    expect(collections.getSelectedOption()?.name.trim()).toBe("engineering (global)");
+    expect(collections.getSelectedOption()?.name.trim()).toBe("engineering");
     await setup.waitForFrame(
       (frame) =>
-        frame.includes("Selected Collection  engineering") &&
+        frame.includes("engineering") &&
         frame.includes(engineeringOwner.file) &&
         frame.includes("/collections/engineering"),
     );
-    expect(nativeText(live(setup, "config-declaration-metadata"))).toContain(
-      `Selected Collection  engineering\nOwner  ${engineeringOwner.file} ${engineeringOwner.pointer}`,
-    );
+    const declaration = nativeText(live(setup, "config-declaration-body"));
+    expect(declaration).toContain(engineeringOwner.file);
+    expect(declaration).toContain(engineeringOwner.pointer);
     // Config returns to the owning relation inspector before its local Relations Back.
     await expectSharedReturn(setup, "Back to Collections");
     await enterLive(setup, "route-back");
@@ -268,20 +254,14 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     await setup.waitForFrame(
       (frame) => frame.includes("engineering") && frame.includes("Configuration locations"),
     );
-    // The cross-section detail has one route predecessor: the same Agent Access path/action.
-    await expectSharedReturn(setup, "Back to Agent");
+    await expectSharedReturn(setup, "Back to Skills");
     await enterLive(setup, "route-back");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "agent-access-collection-details",
-    );
-    await setup.waitForFrame(
-      (frame) => frame.includes("Prepared in the Agent catalog") && frame.includes("engineering"),
-    );
-    expect(nativeText(live(setup, `${exposureRootId}-name`)).trim()).toBe("engineering");
-    expect((live(setup, exposureRootId) as BoxRenderable).backgroundColor.a).toBeGreaterThan(0);
-    expect(setup.renderer.root.findDescendantById("collection-detail-pane")).toBeUndefined();
-    // Re-enter directly through the restored physical Details command.
-    await parsedEnter(setup);
+    await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-more");
+    await openInstallation(setup);
+    expect(nativeText(live(setup, "reader-details-summary"))).toContain("Path: guide");
+    expect(!!setup.renderer.root.findDescendantById("collection-detail-pane")).toBe(false);
+    await enterLive(setup, "reader-details-relationship-collection:engineering");
+    await enterLive(setup, "collection-browser");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "collection-relationships",
     );

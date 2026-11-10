@@ -1,6 +1,21 @@
 import { expect, test } from "bun:test";
 import { createEffect, createRoot } from "solid-js";
 import { createLayout } from "../src/layout";
+import { createSignal } from "solid-js";
+
+test("shared browser width clamps to the viewport without replacing the user's preference", () => {
+  const [preferred, setPreferred] = createSignal(60);
+  const layout = createLayout(preferred);
+  layout.resize(144, 24, () => {});
+  expect(layout.browserWidth()).toBe(60);
+  layout.resize(100, 24, () => {});
+  expect(layout.browserWidth()).toBe(49);
+  expect(preferred()).toBe(60);
+  layout.resize(144, 24, () => {});
+  expect(layout.browserWidth()).toBe(60);
+  setPreferred(38);
+  expect(layout.browserWidth()).toBe(38);
+});
 
 test("layout owns wide, medium, narrow and too-small breakpoints", () => {
   const layout = createLayout();

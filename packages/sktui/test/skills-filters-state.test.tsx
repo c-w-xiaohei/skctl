@@ -10,8 +10,7 @@ import { directSourceCore } from "./direct-source.fixture";
 import {
   enterInstalledAddress,
   enterLive,
-  focusLive,
-  openReaderTab,
+  openInstallation,
   openAllInstalledSkills,
   selectedReaderTab,
   waitForReaderBody,
@@ -93,12 +92,6 @@ async function key(setup: Setup, name: string, shift = false) {
 async function type(setup: Setup, value: string) {
   for (const character of value.toLocaleLowerCase()) await key(setup, character);
 }
-async function click(setup: Setup, id: string) {
-  const target = setup.renderer.root.findDescendantById(id);
-  expect(target).toBeDefined();
-  await setup.mockMouse.click(target!.screenX + 1, target!.screenY);
-  await setup.renderOnce();
-}
 async function clickFilterOption(
   setup: Setup,
   id: "skills-filter-dimensions" | "skills-filter-values",
@@ -115,23 +108,6 @@ async function clickFilterOption(
   await setup.mockMouse.click(select.screenX + 1, select.screenY + index);
   await setup.renderOnce();
 }
-async function clearFilterWithKeyboard(setup: Setup, id: string) {
-  const target = setup.renderer.root.findDescendantById(id);
-  expect(target).toBeDefined();
-  expect(target!.isDestroyed).toBe(false);
-  expect(target!.parent).toBeDefined();
-  expect(target!.focusable).toBe(true);
-  target!.focus();
-  await setup.waitFor(
-    () =>
-      setup.renderer.currentFocusedRenderable === target &&
-      !target!.isDestroyed &&
-      target!.parent !== undefined &&
-      target!.focusable,
-  );
-  await parsedEnter(setup);
-  await setup.waitFor(() => setup.renderer.root.findDescendantById(id) === undefined);
-}
 async function parsedEscape(setup: Setup) {
   await new Promise<void>((resolve) => {
     const onKeypress = (event: { readonly name: string }) => {
@@ -143,19 +119,6 @@ async function parsedEscape(setup: Setup) {
     setup.renderer.keyInput.prependListener("keypress", onKeypress);
     setup.mockInput.pressKey("ESCAPE");
   });
-  await setup.renderOnce();
-}
-async function parsedEnter(setup: Setup) {
-  await new Promise<void>((resolve) => {
-    const onKeypress = (event: { readonly name: string }) => {
-      if (event.name !== "enter" && event.name !== "return") return;
-      setup.renderer.keyInput.off("keypress", onKeypress);
-      resolve();
-    };
-    setup.renderer.keyInput.prependListener("keypress", onKeypress);
-    setup.mockInput.pressEnter();
-  });
-  await new Promise<void>((resolve) => setImmediate(resolve));
   await setup.renderOnce();
 }
 async function chooseFilter(setup: Setup, dimension: string, value: string) {
@@ -194,13 +157,6 @@ async function query(setup: Setup, value: string) {
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable === query);
   await type(setup, value);
 }
-function filterChipIds(setup: Setup): readonly string[] {
-  return ["Collection", "Source", "Config", "Problems"].flatMap((dimension) =>
-    setup.renderer.root.findDescendantById(`clear-skills-filter-${dimension.toLowerCase()}`)
-      ? [dimension]
-      : [],
-  );
-}
 test("STATE-012 RENDER Skills compose query and dimensions, clear one physically, then clear all", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(projection())} exit={() => {}} />,
@@ -212,29 +168,22 @@ test("STATE-012 RENDER Skills compose query and dimensions, clear one physically
     await chooseFilter(setup, "Source", "team-main-extra");
     await query(setup, "reference");
     await setup.waitForFrame((frame) => frame.includes("Skills (1 of 3)"));
-    expect(filterChipIds(setup)).toEqual(["Collection", "Source"]);
-    expect(setup.captureCharFrame()).toContain("Collection: documentation");
-    await focusLive(setup, "clear-skills-filter-source");
-    await setup.flush();
-    expect(setup.captureCharFrame()).toContain("Source: team-main-extra");
-    await focusLive(setup, "clear-skills-filter-collection");
-    await setup.flush();
-    await click(setup, "clear-skills-filter-collection");
+    expect(await appliedSkillsFilters(setup)).toEqual(["Collection", "Source"]);
+    await setSkillsFilter(setup, "Collection", "");
     await setup.waitForFrame((frame) => frame.includes("Skills (1 of 3)"));
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "reference",
     );
-    expect(filterChipIds(setup)).toEqual(["Source"]);
-    await clearFilterWithKeyboard(setup, "clear-skills-filter-source");
-    expect(filterChipIds(setup)).toEqual([]);
+    expect(await appliedSkillsFilters(setup)).toEqual(["Source"]);
+    await setSkillsFilter(setup, "Source", "");
+    expect(await appliedSkillsFilters(setup)).toEqual([]);
     await chooseFilter(setup, "Source", "team-main-extra");
-    await click(setup, "clear-all-skills-filters");
+    await clearSkillsFilters(setup);
     await setup.waitForFrame((frame) => frame.includes("Skills (1 of 3)"));
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "reference",
     );
-    expect(filterChipIds(setup)).toEqual([]);
-    expect(!!setup.renderer.root.findDescendantById("clear-all-skills-filters")).toBe(false);
+    expect(await appliedSkillsFilters(setup)).toEqual([]);
   } finally {
     setup.renderer.destroy();
   }
@@ -408,14 +357,13 @@ const refreshedProblemsTest = async () => {
   try {
     await setup.renderOnce();
     await chooseFilter(setup, "Problems", "Has problems");
-    if (!setup.renderer.root.findDescendantById("clear-skills-filter-problems"))
-      throw new Error(
-        `Problems filter did not apply; focus=${setup.renderer.currentFocusedRenderable?.id}\n${setup.captureCharFrame()}`,
-      );
+    expect(await appliedSkillsFilters(setup)).toEqual(["Problems"]);
     await setup.waitForFrame((frame) => frame.includes("Skills (1 of 2)"));
     await enterInstalledAddress(setup, { source: "team-main", path: "guide" });
-    await openReaderTab(setup, 2);
-    await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
+    await openInstallation(setup);
+    await setup.waitForFrame(
+      (frame) => frame.includes("Source: team-main") && frame.includes("Path: guide"),
+    );
     await enterLive(setup, "reader-action-skill-check-updates");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("updates-update-all"));
     expect(updates).toEqual([]);
@@ -434,10 +382,11 @@ const refreshedProblemsTest = async () => {
     await enterLive(setup, "route-back");
     await waitForReaderBody(setup, "Reference");
     expect(selectedReaderTab(setup)).toBe(0);
-    await openReaderTab(setup, 2);
-    await setup.waitForFrame((frame) => frame.includes("team-main-extra/reference"));
+    await openInstallation(setup);
+    await setup.waitForFrame(
+      (frame) => frame.includes("Source: team-main-extra") && frame.includes("Path: reference"),
+    );
     expect(loads.at(-1)).toBe("reference");
-    expect(selectedReaderTab(setup)).toBe(2);
     expect(setup.captureCharFrame()).toContain("Source moved");
     expect(setup.renderer.root.findDescendantById("reader-details")).toBeDefined();
     await parsedEscape(setup);
@@ -501,9 +450,8 @@ test("STATE-005 RENDER resize retains filters and never leaves unmounted clear f
         expect(visible).toBe(false);
       }
     }
-    await focusLive(setup, "clear-skills-filter-collection");
-    await parsedEnter(setup);
-    expect(filterChipIds(setup)).toEqual([]);
+    await setSkillsFilter(setup, "Collection", "");
+    expect(await appliedSkillsFilters(setup)).toEqual([]);
     expect((setup.renderer.root.findDescendantById("skills-query") as InputRenderable).value).toBe(
       "reference",
     );
@@ -573,7 +521,7 @@ test("STATE-012 RENDER local filtering makes no workspace, provider, or manageme
     expect(calls.workspace).toBe(1);
     await chooseFilter(setup, "Collection", "documentation");
     await query(setup, "reference");
-    await enterLive(setup, "clear-all-skills-filters");
+    await clearSkillsFilters(setup);
     expect(calls).toEqual(beforeFiltering);
   } finally {
     setup.renderer.destroy();
@@ -583,3 +531,4 @@ test(
   "STATE-012 RENDER refreshed Problems membership reselects the visible Skill and its Reader actions",
   refreshedProblemsTest,
 );
+import { appliedSkillsFilters, clearSkillsFilters, setSkillsFilter } from "./reader-test-controls";

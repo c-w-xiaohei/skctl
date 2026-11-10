@@ -122,6 +122,7 @@ function expectTab(setup: Setup, tab: "members" | "settings") {
   expect((trigger as TabsTabRenderable).getState().selected).toBe(true);
 }
 async function manageCurrent(setup: Setup) {
+  await enterLive(setup, "collection-more");
   await enterLive(setup, "collection-current-details");
 }
 
@@ -195,18 +196,18 @@ test("RENDER 80x16 Collection Contents reads directly, Manage opens ownership, a
       );
       expect(setup.renderer.root.findDescendantById("membership.open-source")).toBeDefined();
     }
-    await enterLive(setup, "collection.inspector-back");
+    await parsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById(rowId(memberKey)));
     expectTab(setup, "members");
     await focusLive(setup, "collection-relationships");
     setup.mockInput.pressArrow("down");
     await setup.flush();
-    await enterLive(setup, "collection-current-details");
+    await manageCurrent(setup);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
     );
     expect(setup.captureCharFrame()).toContain("Read team documentation");
-    await enterLive(setup, "collection.inspector-back");
+    await parsedEscape(setup);
     expectTab(setup, "members");
     expect(reads).toHaveLength(1);
     expect(mutations).toEqual([]);
@@ -241,7 +242,7 @@ test.each([
       expect(setup.captureCharFrame()).toContain("review");
       await manageCurrent(setup);
       await setup.waitFor(() => !!setup.renderer.root.findDescendantById("membership.open-source"));
-      for (const id of ["collection.inspector-back", "membership.open-source"]) {
+      for (const id of ["membership.open-source"]) {
         const control = await focusLive(setup, id);
         await setup.flush();
         assertInside(
@@ -275,7 +276,7 @@ test("RENDER Reference-only Contents preserves the exact owner through Relations
     // References are real Contents now, not an empty Entries fallback button.
     expect(setup.renderer.root.findDescendantById("collection-open-relations")).toBeUndefined();
     expect(setup.captureCharFrame()).toContain("docs");
-    await enterLive(setup, "collection-current-details");
+    await manageCurrent(setup);
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("collection-relation-inspector"),
     );
@@ -289,7 +290,7 @@ test("RENDER Reference-only Contents preserves the exact owner through Relations
     // Legal relationship commands are direct native controls, without another Actions disclosure.
     expect(!!setup.renderer.root.findDescendantById("relationship.remove-reference")).toBe(false);
     expect(setup.renderer.root.findDescendantById("collection-relation-actions")).toBeUndefined();
-    await enterLive(setup, "collection.inspector-back");
+    await parsedEscape(setup);
     expectTab(setup, "members");
   } finally {
     setup.renderer.destroy();

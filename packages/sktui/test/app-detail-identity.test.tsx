@@ -12,7 +12,7 @@ import {
   enterLive,
   focusLive,
   openAllInstalledSkills,
-  openReaderTab,
+  openInstallation,
   parsedEnter,
   parsedEscape,
   waitForReaderBody,
@@ -134,16 +134,19 @@ test("Agent access opens the exact structural Skill while preserving an All Skil
       readerSecondAddress.path,
     ]);
     await focusLive(setup, "current-exposure-browser");
-    await parsedEnter(setup);
+    setup.mockInput.pressArrow("right");
+    await setup.flush();
     const exactName = `current-exposure-browser-row-${encodeURIComponent(skillKey)}-name`;
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById(exactName));
     const row = setup.renderer.root.findDescendantById(exactName)!;
     await setup.mockMouse.click(row.screenX, row.screenY);
     await parsedEnter(setup);
     await waitForReaderBody(setup, "Body reference");
-    await openReaderTab(setup, 2);
-    await setup.waitForFrame((frame) =>
-      frame.includes(`${readerSecondAddress.source}/${readerSecondAddress.path}`),
+    await openInstallation(setup);
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes(`Source: ${readerSecondAddress.source}`) &&
+        frame.includes(`Path: ${readerSecondAddress.path}`),
     );
     expect(setup.captureCharFrame()).not.toContain(`${readerSecondAddress.source}/guide`);
     await enterLive(setup, "reader-action-skill-check-updates");
@@ -159,10 +162,13 @@ test("Agent access opens the exact structural Skill while preserving an All Skil
     expect(checks).toContain(readerSecondAddress.source);
     await parsedEscape(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
-    await setup.waitForFrame((frame) =>
-      frame.includes(`${readerSecondAddress.source}/${readerSecondAddress.path}`),
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes(`Source: ${readerSecondAddress.source}`) &&
+        frame.includes(`Path: ${readerSecondAddress.path}`),
     );
     expect(setup.captureCharFrame()).not.toContain(`${readerSecondAddress.source}/guide`);
+    await enterLive(setup, "route-back");
     await enterLive(setup, "route-back");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("current-exposure-browser"));
     await openMainPage(setup, "skills");
@@ -239,11 +245,14 @@ for (const originKind of ["direct", "via-link"] as const) {
       await enterLive(setup, "collection-browser");
       await enterLive(setup, "collection-current-membership.open-skill");
       await waitForReaderBody(setup, "Body reference");
-      await openReaderTab(setup, 2);
-      await setup.waitForFrame((frame) =>
-        frame.includes(`${readerSecondAddress.source}/${readerSecondAddress.path}`),
+      await openInstallation(setup);
+      await setup.waitForFrame(
+        (frame) =>
+          frame.includes(`Source: ${readerSecondAddress.source}`) &&
+          frame.includes(`Path: ${readerSecondAddress.path}`),
       );
       expect(setup.captureCharFrame()).not.toContain("team-main/guide");
+      await enterLive(setup, "route-back");
       await enterLive(setup, "route-back");
       await setup.waitFor(
         () => !!setup.renderer.root.findDescendantById("collection-relationships"),
@@ -251,7 +260,7 @@ for (const originKind of ["direct", "via-link"] as const) {
       await setup.waitForFrame(
         (frame) => frame.includes("Contents") && frame.includes("reference"),
       );
-      expect(setup.captureCharFrame()).toContain("─team─");
+      expect(setup.captureCharFrame()).toContain("team");
     } finally {
       setup.renderer.destroy();
     }

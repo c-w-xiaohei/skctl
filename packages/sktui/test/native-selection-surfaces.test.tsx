@@ -7,6 +7,7 @@ import {
   enterLive,
   focusLive,
   openReaderTab,
+  openInstallation,
   openAllInstalledSkills,
   parsedEnter,
   readerTab,
@@ -36,9 +37,7 @@ async function openReader(setup: Setup) {
   await parsedEnter(setup);
   await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === "reader-scrollbox");
 }
-async function chooseReaderTab(setup: Setup, stepsRight: number) {
-  const index = stepsRight === 0 || stepsRight === 1 || stepsRight === 2 ? stepsRight : null;
-  if (index === null) throw new Error(`Invalid Reader tab index: ${stepsRight}`);
+async function chooseReaderTab(setup: Setup, index: 0 | 1) {
   await openReaderTab(setup, index);
   const selected = readerTab(setup, index);
   expect(selectedReaderTab(setup)).toBe(index);
@@ -54,7 +53,7 @@ async function openResources(setup: Setup) {
 }
 async function openDetails(setup: Setup) {
   await openReader(setup);
-  await chooseReaderTab(setup, 2);
+  await openInstallation(setup);
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-details"));
 }
 async function dragFirstLine(setup: Setup, id: string, width: number) {

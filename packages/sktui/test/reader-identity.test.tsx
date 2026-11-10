@@ -17,7 +17,8 @@ import {
   live,
   openAllInstalledSkills,
   openReaderTab,
-  parsedEnter,
+  openInstallation,
+  enterLive,
   parsedEscape,
   selectedReaderTab,
   waitForReaderBody,
@@ -80,22 +81,20 @@ test("RENDER Reader names one Installed Skill and retains exact ownership across
     await openAllInstalledSkills(setup);
     await enterInstalledAddress(setup, readerAddress);
     await waitForReaderBody(setup, "needle in prose");
-    for (const [index, view] of ["Content", "Resources", "Settings"].entries()) {
+    for (const [index, view] of ["Content", "Resources"].entries()) {
+      await openReaderTab(setup, index as 0 | 1);
       expectVisibleIdentity(setup, setup.captureCharFrame(), "guide");
       expect<number>(selectedReaderTab(setup)).toBe(index);
       expect(
         (live(setup, "installed-skill-browser") as SelectRenderable).getSelectedOption()?.value,
       ).toBe(JSON.stringify([readerAddress.source, readerAddress.path]));
       expect(setup.captureCharFrame()).toContain(view);
-      if (view === "Settings") {
-        await setup.waitForFrame((frame) => frame.includes("team-main/guide"));
-        expect(textIn(live(setup, "reader-details-summary"))).toContain("Address\nteam-main/guide");
-        expect(setup.captureCharFrame()).toContain("team-main/guide");
-      }
-      if (view !== "Settings") {
-        await openReaderTab(setup, (index + 1) as 1 | 2);
-      }
     }
+    await openInstallation(setup);
+    expectVisibleIdentity(setup, setup.captureCharFrame(), "guide");
+    const summary = textIn(live(setup, "reader-details-summary"));
+    expect(summary).toContain("Source: team-main");
+    expect(summary).toContain("Path: guide");
   } finally {
     setup.renderer.destroy();
   }
@@ -180,12 +179,12 @@ test("RENDER Reader retains full structural identity and native Markdown/raw wra
         expect(markdown.height).toBeGreaterThan(wideMarkdownHeight);
         expect(frame).toContain("bounded content surface.");
       }
-      await openReaderTab(setup, 2);
-      const fullAddress = `${address.source}/${address.path}`;
+      await openInstallation(setup);
       const summary = live(setup, "reader-details-summary");
-      await setup.waitFor(() => textIn(summary).includes(fullAddress));
+      await setup.waitFor(() => textIn(summary).includes(address.path));
       await setup.flush();
-      expect(textIn(summary)).toContain(`Address\n${fullAddress}`);
+      expect(textIn(summary)).toContain(`Source: ${address.source}`);
+      expect(textIn(summary)).toContain(`Path: ${address.path}`);
       const paintedAddress = setup
         .captureCharFrame()
         .split("\n")
@@ -195,13 +194,13 @@ test("RENDER Reader retains full structural identity and native Markdown/raw wra
         .replace(/\s/g, "");
       paintedAddresses.push(paintedAddress);
       expect(reads).toEqual([address]);
-      await openReaderTab(setup, 0);
-      await parsedEnter(setup);
+      await parsedEscape(setup);
+      await focusLive(setup, "reader-scrollbox");
     }
     setup.resize(79, 24);
     await setup.flush();
-    await focusLive(setup, "reader-raw");
-    await parsedEnter(setup);
+    await enterLive(setup, "reader-more");
+    await enterLive(setup, "reader-menu-raw");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("reader-line-0"));
     setup.resize(43, 30);
     await setup.renderOnce();
@@ -213,8 +212,10 @@ test("RENDER Reader retains full structural identity and native Markdown/raw wra
     expect(fallback.width).toBeLessThanOrEqual(
       setup.renderer.root.findDescendantById("reader-scrollbox")!.width,
     );
-    for (const paintedAddress of paintedAddresses)
-      expect(paintedAddress).toContain(`${address.source}/${address.path}`);
+    for (const paintedAddress of paintedAddresses) {
+      expect(paintedAddress).toContain(address.source);
+      expect(paintedAddress).toContain(address.path);
+    }
   } finally {
     setup.renderer.destroy();
   }

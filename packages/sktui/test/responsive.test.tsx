@@ -125,7 +125,7 @@ test("RENDER Workspace Sources keeps source identity primary and origin secondar
     await navigateToSources(setup);
     const browser = setup.renderer.root.findDescendantById("source-browser") as SelectRenderable;
     expect(browser.options[0]?.name.trimEnd()).toBe("team-main");
-    expect(browser.options[0]?.description.trimEnd()).toBe("github · Direct");
+    expect(browser.options[0]?.description.trimEnd()).toBe("github (Direct)");
     expect(browser.options[0]?.value).toBe("team-main");
     expect(browser.showDescription).toBe(false);
     expect(browser.showSelectionIndicator).toBe(true);
@@ -291,10 +291,11 @@ test("RENDER Current Exposure keeps deep Reference paths bounded while retaining
       await setup.flush();
     }
     expect(textIn(exposure)).toContain("branch-6");
-    expect(
-      (setup.renderer.root.findDescendantById("agent-node-title") as TextBufferRenderable)
-        .plainText,
-    ).toBe("branch-6");
+    await parsedEnter(setup);
+    await setup.waitForFrame((frame) => frame.includes("branch-6"));
+    expect(textIn(setup.renderer.root.findDescendantById("agent-node-pane")!)).toContain(
+      "branch-6",
+    );
     await enterLive(setup, "agent-access-collection-details");
     await setup.waitForFrame((frame) => frame.includes("node-7"));
     expect(exposure.screenX + exposure.width).toBeLessThanOrEqual(80);
@@ -462,7 +463,7 @@ test("RENDER 43x30 keeps Source actions and Back visible in its compact workspac
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Back");
     expect(frame).toContain("Installed");
-    expect(frame).toContain("Find and install");
+    expect(frame).toContain("Install Skills");
     expect(frame).not.toMatch(/\bW G P L\b/);
     expect(frame).not.toContain("Scop Sou Con Co I");
   } finally {

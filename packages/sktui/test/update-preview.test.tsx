@@ -156,7 +156,11 @@ test.each([
         setup.renderer.root.findDescendantById("source-updates-preview-diff") as DiffRenderable;
       expect(diff().diff).toContain("-Old instruction 0");
       expect(diff().diff).toContain("+New instruction 0");
-      expect(diff().view).toBe(width >= 100 ? "split" : "unified");
+      expect(diff().view).toBe(
+        setup.renderer.root.findDescendantById("source-updates-preview-pane")!.width >= 100
+          ? "split"
+          : "unified",
+      );
       expect(diff().screenY).toBeLessThan(height - 1);
       expect(setup.captureCharFrame()).toContain("Old instruction");
       expect(setup.captureCharFrame()).toContain("New instruction");
@@ -203,7 +207,11 @@ test.each([
         ]) {
           setup.resize(w!, h!);
           await setup.flush();
-          expect(diff().view).toBe(w! >= 100 ? "split" : "unified");
+          expect(diff().view).toBe(
+            setup.renderer.root.findDescendantById("source-updates-preview-pane")!.width >= 100
+              ? "split"
+              : "unified",
+          );
         }
         expect(requests).toHaveLength(1);
       }

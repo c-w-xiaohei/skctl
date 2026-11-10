@@ -4,7 +4,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { directSourceCore } from "./direct-source.fixture";
 import { readerContent, readerProjection } from "./installed-reader.fixture";
-import { live, parsedEnter, waitForReaderBody } from "./reader-test-controls";
+import { enterLive, live, parsedEnter, waitForReaderBody } from "./reader-test-controls";
 
 async function enterFirstSkill(setup: Awaited<ReturnType<typeof testRender>>) {
   await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
@@ -13,7 +13,7 @@ async function enterFirstSkill(setup: Awaited<ReturnType<typeof testRender>>) {
   await parsedEnter(setup);
 }
 
-test("Reader exposes Settings management directly through visible tabs", async () => {
+test("Reader exposes Content and Resources tabs with target-local maintenance in More", async () => {
   const setup = await testRender(
     () => (
       <App
@@ -29,24 +29,21 @@ test("Reader exposes Settings management directly through visible tabs", async (
     await enterFirstSkill(setup);
     await waitForReaderBody(setup, "needle in prose");
     const frame = setup.captureCharFrame();
-    for (const label of ["Content", "Resources", "Settings"]) expect(frame).toContain(label);
+    for (const label of ["Content", "Resources", "More"]) expect(frame).toContain(label);
 
-    // Click the visible Content tab, then use native tab navigation to reach Settings.
+    // Native tab navigation switches reading views; maintenance has its own menu.
     const content = live(setup, "reader-tabs-tab-skill");
     await setup.mockMouse.click(content.screenX + 1, content.screenY);
     setup.mockInput.pressKey("ARROW_RIGHT");
     await setup.waitFor(
       () => setup.renderer.currentFocusedRenderable?.id === "reader-tabs-tab-resources",
     );
-    setup.mockInput.pressKey("ARROW_RIGHT");
-    await setup.waitFor(
-      () => setup.renderer.currentFocusedRenderable?.id === "reader-tabs-tab-details",
-    );
+    await enterLive(setup, "reader-more");
     await setup.renderOnce();
     const settings = setup.captureCharFrame();
-    expect(settings).toContain("Change Skill's Source");
-    expect(settings).toContain("Uninstall Skill");
-    expect(settings).toContain("Reload");
+    expect(settings).toContain("Change Source");
+    expect(settings).toContain("Uninstall");
+    expect(settings).toContain("Reread installed files");
     expect(settings).not.toContain("Manage Skill");
     expect(!!setup.renderer.root.findDescendantById("reader-details-manage")).toBe(false);
   } finally {
@@ -75,7 +72,7 @@ test("compact Reader retains a useful reading viewport at 43 by 13", async () =>
     expect(body).toBeInstanceOf(ScrollBoxRenderable);
     expect((body as ScrollBoxRenderable).viewport.height).toBeGreaterThanOrEqual(7);
     const frame = setup.captureCharFrame();
-    for (const label of ["Content", "Resources", "Settings"]) expect(frame).toContain(label);
+    for (const label of ["Content", "Resources", "More"]) expect(frame).toContain(label);
     expect(frame).toContain("needle in prose");
   } finally {
     setup.renderer.destroy();
