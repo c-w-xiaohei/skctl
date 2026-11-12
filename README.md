@@ -8,140 +8,66 @@
 
 # skctl
 
-**Manage your skills. Choose what agents discover.**
+An Agent Skill manager with a command-line tool and a terminal workbench.
 
-An Agent Skill manager with a CLI and terminal workbench.
-
-[Get started](#get-started) · [Use cases](#use-cases) · [Agent integrations](#connect-codex-or-opencode) · [Configuration](#configuration-paths) · [Development](#development)
+English · [简体中文](README-zh.md)
 
 </div>
 
----
+## Contents
 
-skctl means Skill Control. Maintain third-party Skills, tool documentation and
-Skills you write yourself across projects. Install and update by Source, organize
-discovery with Collections, and choose what agents can discover through global
-and project configuration. Codex hooks and an OpenCode V2 plugin provide agent
-entry points; instruction-file guidance is the fallback when no adapter matches.
+- [Introduction](#introduction)
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Concepts](#concepts)
+- [Usage](#usage)
+- [Agent integration](#agent-integration)
+- [Configuration](#configuration)
+- [Development](#development)
 
-## Use cases
+## Introduction
 
-### Maintain Skills by source
+Have you run into any of these?
 
-Related Skills often ship together in one Git repository. A Source records where
-they come from and owns their updates. Check a Source for changes, review the
-affected installed Skills and update them together or select a subset.
+- A project installs a marketing Skill set from GitHub so the agent can help run marketing; the set has more than a hundred member Skills. This time the task is adding a usage section to the README, and under the usual installation the dozen groups for positioning, SEO, email, paid ads and creators unfold in the catalog along with each member's description; one writing Skill is all the task needs.
+- A project has three performance-analysis Skills installed, each doing a different job. Their descriptions alone do not say which one comes first or how they fit together, so the division of labor is explained again in every session, and again for the next person or project.
+- Take `solid-js-best-practices`: it only matters in SolidJS projects. Install it globally and every session in a React project, a backend service or a CLI repository sees it; install it only where needed and two SolidJS projects keep a copy each, so when upstream changes the guidance the copies drift, and updating means visiting each project and remembering which ones installed it.
+- When upstream changes a few Skills, say paid ads and email from the marketing source, `npx skills update` has no way to select a whole source. You name each member, or update everything and touch other sources too.
+- `skills-lock.json` can restore the Skills a project installed from their sources and verify them by hash, but what comes back is still a flat list. The traditional model has no collection layer, so there is nowhere to record why the team chose these sets, which members belong together, or what to read first for a given task. A new colleague restores the installs and still has to ask.
+- A release Skill you wrote yourself can only be tried in another project by copying the files over. Project A puts build output in `dist/`, so the instructions read `dist/`. Project B builds into `build/`, and the agent following the same instructions finds nothing. Every fix has to be synced in two places.
 
-### Organize what agents discover
+These problems look different, but they share one cause. Where a Skill is stored, how it is updated, and what the agent can see could be decided separately, yet the usual installation ties them together. skctl separates the three.
 
-A Collection groups Skills behind a descriptive entry. For example, a Lark
-Collection can introduce the tool without putting every operation's Skill
-description into the initial catalog. An agent browses that Collection when
-the task needs it, then loads the relevant instructions and resources.
+## Features
 
-Collections can follow a tool's suite or regroup Skills from several Sources.
-Adding a Skill to another Collection reuses the same installation. Catalog
-discovery and loading the full instructions are separate steps.
+- **Collection as Skill**: Use Collections as the organizing unit for existing Skills. A Collection turns a group of Skills into one catalog entry; the agent sees member descriptions after entering, and reads a member's instructions only when it loads that member. That adds another layer of progressive disclosure on top of the Skills, so the context window no longer holds a hundred member Skills at once. The Collection's own instructions can tell similar Skills apart and record how several Skills work together, so the next task of the same kind follows the same path.
+- **One update, per-project selection**: A Skill is installed once on the machine, with a Source recording its repository. Update it once and every project that selected it reads the new version next time; which project can use it is decided by the Collections that project selects, so projects that select none never see it and projects that do read the same installation. Remote sources install at an exact commit, and candidates can be listed and reviewed before anything is installed.
+- **Updates by Source**: No need to recall member names; start from the Source. The check lists what changed across the set; you pick the members to apply, and the check itself leaves installed content untouched. Newly added Skills in the repository are not installed along the way.
+- **Team sharing**: Sources, Collections, membership, disclosure layers and instructions all live in JSONC; the whole configuration is declarative. The shared part goes into a `config.jsonc` in the repository, and the entries a project enables go into its `skctl.jsonc`. A new colleague installs what is missing from those two files and inherits the team's setup without asking around.
+- **Local development**: When you are writing a Skill, register its directory as a local Source and you can try it from another project directly. Edits to instructions and resources take effect immediately; only the name and description need one explicit update.
 
-The **Collection as Skill** model adds optional custom instructions to
-the member descriptions disclosed on entry, without repeating the Collection's
-own description. Add an optional `instructions` string to a Collection in JSONC:
+## How it works
 
-```jsonc
-{
-  "collections": {
-    "frontend-perf-analysis": {
-      "description": "Diagnose frontend performance and plan improvements.",
-      "instructions": "Start by checking the available evidence.\nLoad only the member Skills needed for the current task.",
-      // Keep your existing members, links and references here.
-    },
-  },
-}
-```
+skctl's integration writes a short entry into the coding agent's system prompt: when you need to find a Skill, call `skctl agent browse` first. The command returns the currently disclosed Skill catalog and a short usage guide, and the agent takes every later address from that catalog.
 
-`skctl agent browse` shows the entry description. `skctl agent browse
-frontend-perf-analysis` reveals its custom instructions and member descriptions;
-`skctl agent load <selector>` still loads a selected Skill. Collections can
-carry their own instructions for the entries they disclose.
+What appears in the catalog is decided by `use` declarations: enable a few Collections and the catalog lists those entries, each with a short description. That is the first disclosure layer. If a task matches, the agent calls `skctl agent browse <collection>` to see the Collection's custom instructions and immediate member descriptions. Once it settles on a member, `skctl agent load <collection>:<member>` brings in the full instructions. Scripts and reference files are listed with `agent ls` and read with `agent read` only when needed. Each layer opens only when the one above it is not enough, and Skill instructions stay on disk until the agent asks for them.
 
-`skctl agent load <selector> <selector> ...` loads several Skills in order. A
-single selector returns the original `SKILL.md` unchanged; multiple selectors
-return XML-escaped content in selector-labeled `<skill>` elements. If any Skill
-cannot be loaded, the command fails without returning a partial batch.
+For example, a project enables two Collections, `frontend` and `docs`, and you ask the agent to restyle a button. The catalog shows the `frontend` entry; the agent browses in, finds a `css-conventions` member, loads the full instructions, and starts work. `docs` has nothing to do with the task, so the agent never enters it, and none of its members or instructions enter the context.
 
-To inspect a selected Skill's resources without loading their contents, use
-`skctl agent ls <selector> [directory]` (`list` is equivalent). Paths are relative
-to the Skill Root. `-a` includes hidden entries, `-R` lists recursively, and `-1`
-selects the default one-path-per-line format. Results are bounded to 50 entries
-and 8 KiB by default; `--limit` accepts 1–200 entries and `--offset` continues a
-truncated listing. Changes to the installed Skill between calls may cause offset
-pages to omit or repeat entries. Unsupported entries are marked and not followed.
+`skctl integration connect` picks the way in for the host: lifecycle hooks for Codex, a plugin for OpenCode, and a fixed instruction file for an unknown host, so the agent can look up the catalog itself. The injected content is only the entry and the usage guide; Skill instructions stay on disk. Where Skills are installed and which Collections a project can use stay under skctl's management, so an update changes one installation and the agent reads the new version next time.
 
-In the TUI, a Collection's **Description & instructions** view shows both fields.
-The **Agent** catalog previews the selected Collection's instructions under
-"Instructions · disclosed on entry"; selecting a Reference previews its target's
-instructions while retaining the Reference's own entry description.
+## Install
 
-Configure these fields through the management CLI (writes default to project scope):
+skctl ships as two programs that read the same configuration and installed state:
 
-```sh
-skctl collection set frontend-perf-analysis --description "Diagnose frontend performance"
-skctl collection set frontend-perf-analysis --instructions-file ./collection-guide.md
-skctl collection inspect frontend-perf-analysis --json
-skctl collection set frontend-perf-analysis --clear-instructions
-```
+| Program | Role                                                              |
+| ------- | ----------------------------------------------------------------- |
+| `skctl` | Management CLI; opens the workbench when run without a subcommand |
+| `sktui` | Standalone terminal workbench                                     |
 
-`--instructions <text>` accepts inline text. `--instructions-file` copies the file
-contents into JSONC; it does not persist a file reference. Omitted fields and
-existing members, links and references are preserved. Use `--clear-description`
-or `--clear-instructions` to remove a field, and `--scope global|project|local`
-to select its directly declared owner. Create a declaration with
-`skctl collection create <id>` before configuring it.
-
-### Reuse Skills across projects
-
-Maintain one installed Skill and select its Collections in the projects that
-need it. Global, project and local root selections combine additively. To expose
-a Collection only in selected projects, declare it in those projects and leave
-it out of global roots.
-
-Projects using the same Installed Skill see the same current content, including
-updates to that installation.
-
-### Validate local edits in another project
-
-Register the directory where you write a Skill as a local Source, then expose it
-through a Collection in another project. Instructions and resources reflect local
-edits. After changing a Skill's name or description, apply an explicit update to
-refresh its discovery metadata.
-
-### Share configuration through Git
-
-Put reusable Sources and Collections in a Config repository for your own projects
-or a team. Review changes in Git and select the required Collection roots in each
-host Config.
-
-Shared configuration describes Sources and Collections. Each machine maintains
-its own installed Skills and versions.
-
-<a id="programs"></a>
-
-## Get started
-
-- **`skctl`** manages Skills, Sources and Collections from the command line.
-- **`sktui`** provides the interactive terminal workbench. It is installed separately
-  and shares configuration and installed Skills with the CLI.
-
-Install matching versions of the binaries for your platform. Put them on `PATH`,
-or keep the release-named binaries in the same directory. For example, on Linux x64:
-
-```text
-skctl-linux-x64
-sktui-linux-x64
-```
-
-Rename them to `skctl` and `sktui` to use the commands below. On Windows, keep
-the `.exe` extension.
+Both are native binaries with no extra runtime. Release artifacts are named per platform, for example `skctl-linux-x64`, `sktui-linux-x64`, `skctl-darwin-arm64` and `skctl-windows-x64.exe`, and can be downloaded from the repository's Releases page. Put `skctl` and `sktui` on `PATH`, or keep them in one directory under the release names; on Windows keep the `.exe` extension. To build from source, see [Development](#development).
 
 ```sh
 skctl --help
@@ -149,52 +75,167 @@ skctl tui
 sktui --project /path/to/project
 ```
 
-Running `skctl` without a command in an interactive terminal opens the installed
-workbench. Use `--project /path/to/project` with either program to select a project.
-The compiled binaries do not require Bun.
+Both programs accept `--project` to set the project boundary. Running `skctl` directly in an interactive terminal opens the workbench.
 
-## Connect Codex or OpenCode
+## Quick start
 
-Install `skctl` on the agent host's `PATH`, then configure an entry at an explicit
-global or project scope:
+### 1. Register a source and install
+
+Remote sources install at an exact commit; local sources read the original directory.
+
+```sh
+# Register a Git repository
+skctl source register github team https://github.com/acme/skills --ref main --scope global
+
+# List candidate Skill Roots at that revision (nothing is installed yet)
+skctl source discover team --json
+
+# Install one reviewed root at its exact commit
+skctl install team skills/review --revision <40-hex-commit>
+```
+
+To register a local directory:
+
+```sh
+skctl source register local mine /path/to/skills --scope global
+skctl install mine skills/review
+```
+
+### 2. Create and enable a Collection
+
+```sh
+skctl collection create task-review
+skctl collection member add task-review review team skills/review
+skctl use add task-review -g
+```
+
+`use add` puts the Collection in the agent catalog.
+
+### 3. Connect an agent host
+
+Configure once per host and scope:
 
 ```sh
 skctl integration connect codex --scope global
-skctl integration inspect codex --scope global --json
-
 skctl integration connect opencode --scope project --project /path/to/project
-skctl integration inspect opencode --scope project --project /path/to/project
 ```
 
-`connect` chooses the matching adapter. Codex uses native lifecycle hooks calling
-`skctl agent browse`; OpenCode V2 uses the plugin bundled with the binaries.
-When no adapter matches, `default` adds stable guidance to an instruction file.
-Unknown compatibility or an installation failure stops automatic setup.
+### 4. Agent reads
 
-Repeat `connect` to maintain an existing entry. Use `disconnect` with the same
-host and scope to remove it. Existing entries retain their mechanism across
-updates. Codex requires hook review in `/hooks`; OpenCode needs its intended
-service or location reloaded after configuration changes.
+The agent reads layer by layer with these commands:
 
-Connection and catalog disclosure have separate controls. Choose Collection
-roots with `skctl use`; a complete configuration with empty Use has an available
-empty catalog. `agents.opencode: "managed"` is deprecated and ignored.
-`skctl managed set` and `unset` now return `MANAGED_COMMAND_RETIRED` without writing
-configuration. Existing plugins can begin receiving the catalog after upgrading
-even if the old managed gate was previously off.
+```sh
+skctl agent browse                  # catalog roots and the description of each entry
+skctl agent browse task-review      # custom instructions and member descriptions
+skctl agent load task-review:review # the selected Skill's full instructions
+skctl agent ls task-review:review   # supporting resources, without loading them
+```
 
-Codex 0.164.0 uses the native adapter; 0.118.0 uses default instruction guidance.
-Other Codex versions require compatibility verification before automatic setup.
-Real-host tests cover trusted JSON/inline hooks, startup, resume, fork, compaction,
-subagent context and complete large-catalog delivery. Existing hooks on 0.118.0
-require explicit removal before reconnecting with guidance. Real OpenCode 2.0.32
-tests cover global/project loading, catalog refresh, compaction, moved session cwd,
-CLI failure and removal. Run `skctl integration --help` for managed entry paths,
-custom host executables, removal and migration.
+## Concepts
 
-## Configuration paths
+| Term                 | Meaning                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Source**           | A repository or directory that provides Skills. It owns acquisition and updates.                              |
+| **Installed Skill**  | One Skill actually installed on this machine; remote Skills are pinned to an exact revision.                  |
+| **Collection**       | A named group of installed Skills, with a description of when the agent should enter.                         |
+| **Use**              | A declaration that puts a Collection in the agent catalog, at global, project or local scope.                 |
+| **Reference / Link** | Relationships between Collections: a Reference points at another Collection's entry, a Link includes it live. |
 
-Both programs read the same configuration and installed state:
+A Skill is installed once and can belong to any number of Collections. Membership, discoverability and context loading are independent, so different projects can enable different Collections while using the same installation.
+
+## Usage
+
+### Configure a Collection
+
+A Collection is written much like a Skill: the description says when to enter; once inside, the agent gets member descriptions and the instructions you wrote, without seeing the Collection's own description again. Instructions are optional and live in JSONC:
+
+```jsonc
+{
+  "collections": {
+    "frontend-perf-analysis": {
+      "description": "Diagnose frontend performance and plan improvements.",
+      "instructions": "Start by checking the available evidence.\nLoad only the member Skills the current task needs.",
+      // Keep the members, Links and References here
+    },
+  },
+}
+```
+
+It can also be set from the CLI, writing to project scope by default:
+
+```sh
+skctl collection set frontend-perf-analysis --description "Diagnose frontend performance"
+skctl collection set frontend-perf-analysis --instructions-file ./collection-guide.md
+skctl collection inspect frontend-perf-analysis --json
+```
+
+- `--instructions` takes inline text; `--instructions-file` copies the file content into JSONC and keeps no reference to the file.
+- Fields, members, Links and References not mentioned in the command are preserved as they are.
+- `--clear-description` and `--clear-instructions` remove the corresponding field.
+- `--scope global|project|local` sets the owner.
+
+### Updates
+
+**Check updates** only refreshes the check result and does not modify installed content. To apply updates, open the corresponding Source on the **Updates** page of the workbench, select the Skills to update with Space, then apply. Stopping mid-update keeps the parts already applied. The workbench checks installed Sources for updates on startup.
+
+### Migrating to another Source
+
+Moving an installed Skill under another Source requires a preview and review before applying:
+
+```sh
+skctl rebind preview old-source skills/review new-source --json > rebind-review.json
+skctl rebind apply rebind-review.json
+```
+
+If the Source-relative path at the destination differs, add `--path` to `preview`. The rules are:
+
+- Core must prove that the old and new addresses identify the same Skill.
+- The preview lists affected direct memberships.
+- Apply repairs writable addresses together with ownership and rejects stale evidence.
+- The operation covers the captured workspace only, not unknown projects that also reference the old address.
+
+### Terminal workbench
+
+The workbench contains six pages: **Skills, Collections, Sources, Updates, Agent, Settings**.
+
+| Action                           | Key              |
+| -------------------------------- | ---------------- |
+| Move between regions             | Tab              |
+| Browse                           | Arrow keys       |
+| Enter / return                   | Enter / Escape   |
+| Open the current page's commands | Ctrl+P (Actions) |
+
+What each page contains:
+
+- **Skills**: the installed inventory. When nothing is installed, the first step is **Add Source**.
+- **Collections**: each Collection has **Members**, **Description & instructions** and **Settings**.
+- **Sources**: each Source has **Installed** and **Source settings**.
+- **Updates**: check and apply updates.
+- **Agent**: the catalog and host connections are shown separately; connect, inspect or disconnect Codex and OpenCode here.
+- **Settings**: choose the Global, Project or Local configuration scope.
+
+## Agent integration
+
+`skctl integration connect` picks the matching adapter for the host:
+
+- **Codex**: uses native lifecycle hooks that call `skctl agent browse`.
+- **OpenCode V2**: uses a plugin bundled with the binaries.
+- **Other cases**: when no adapter matches, `default` writes stable guidance to an instruction file and does not switch to another mechanism automatically.
+
+Automatic setup stops when compatibility is unknown or installation fails. Repeating `connect` maintains the existing entry. Running `disconnect` with the same host and scope removes it. Entries keep their original mechanism after an upgrade. Connecting a host only provides the path. What the agent can see is decided by `use` declarations.
+
+<details>
+<summary>Host compatibility and retired settings</summary>
+
+Codex 0.164.0 uses the native adapter, 0.118.0 uses instruction guidance, and other versions need compatibility verification before automatic setup. Codex requires hook review in `/hooks`; OpenCode needs its service or location reloaded after configuration changes. Real-host tests cover trusted JSON and inline hooks, startup, resume, fork, compaction, subagent context and large-catalog delivery for Codex, and global and project loading, catalog refresh, compaction, moved session cwd, CLI failure and removal for OpenCode 2.0.32.
+
+`agents.opencode: "managed"` is deprecated and ignored. `skctl managed set` and `unset` return `MANAGED_COMMAND_RETIRED` and write no configuration. After an upgrade, existing plugins can start receiving a catalog even if the old managed gate was off. For managed entry paths, custom host executables, removal and migration, see `skctl integration --help`.
+
+</details>
+
+## Configuration
+
+`skctl` and `sktui` read the same configuration and installed state:
 
 | Scope          | Path                                                                                |
 | -------------- | ----------------------------------------------------------------------------------- |
@@ -205,30 +246,14 @@ Both programs read the same configuration and installed state:
 | macOS state    | `~/Library/Application Support/skctl`                                               |
 | Windows state  | `%LOCALAPPDATA%\skctl`                                                              |
 
-`SKCTL_STATE_DIR` overrides the state directory and requires an absolute path.
-Configuration files can declare `"$schema": "https://skctl.dev/schema.json"`.
+- `SKCTL_STATE_DIR` can override the state directory, and its value must be an absolute path.
+- Configuration files can declare `"$schema": "https://skctl.dev/schema.json"`.
+- Agent entry files belong to Codex or OpenCode and are managed by `skctl integration`. They have only `global` and `project` scopes; `local` applies only to skctl's own content configuration.
 
-Agent entry files belong to Codex or OpenCode and are managed by `skctl integration`.
-Their scopes are `global` and `project`; `local` applies only to skctl content
-configuration. Run `skctl integration --help` for the exact host file locations.
+<details>
+<summary>Proxy</summary>
 
-Installed state now uses format v4. Close older `skctl`/`sktui` processes before
-using this version with the same state directory. Older formats remain readable
-offline; the next successful management write upgrades state without moving or
-rehashing installed content. Agent reads do not rewrite state. Downgrading after
-a v4 write is not supported by older binaries.
-
-Remote installations are private write-once snapshots, not tamper-detection
-storage. Read commands check the selected path rather than hash every installed
-file. Local resource edits are visible immediately; Local updates refresh Skill
-name/description metadata. Remote previews compare installed and target Git
-versions, not untracked edits inside the private snapshot directory.
-
-### Proxy
-
-Set an optional proxy in the **user** Config at
-`~/.config/skctl/config.jsonc` (or `$XDG_CONFIG_HOME/skctl/config.jsonc`
-when `XDG_CONFIG_HOME` is set):
+Set it in the user Config at `~/.config/skctl/config.jsonc` (or the corresponding path when `$XDG_CONFIG_HOME` is set):
 
 ```jsonc
 {
@@ -238,68 +263,27 @@ when `XDG_CONFIG_HOME` is set):
 }
 ```
 
-This setting applies to HTTP(S) Source downloads and update checks, and belongs
-only in the user Config. SSH uses its own configuration. If omitted, skctl uses
-existing environment and Git proxy settings.
+This setting applies to HTTP(S) Source downloads and update checks, and belongs only in the user Config. SSH uses its own configuration. When unset, the existing environment variables and Git proxy settings are used.
 
-## Terminal workbench
+</details>
 
-The **Skills** page opens your installed inventory. With no Source or installed
-content, it offers **Add Source** to begin finding Skills. The main pages are
-**Skills, Collections, Sources, Updates, Agent, Settings**.
+<details>
+<summary>Installed state and remote snapshots</summary>
 
-- Use Tab to move between regions and arrow keys to browse.
-- Press Enter to move into the Reader and Escape to return.
-- Use **Settings** to choose Global, Project or Local configuration scope.
-- Open a Skill's **Settings** for Reload, Change Source and Uninstall.
-- Press Ctrl+P for **Actions**, an accelerator for the visible page commands.
+Installed state uses format v4. Before upgrading, close all older `skctl` and `sktui` processes, then let the new version use the same state directory. Older formats remain readable offline and are upgraded on the next successful management write; that process neither moves installed content nor rehashes it. Agent reads do not write state, but once the state is v4, older binaries cannot use that directory. Remote installations are private, write-once snapshots and do not provide tamper detection: read commands check the selected path and do not hash every installed file. Local resource edits are visible immediately, and Local updates refresh only name and description metadata. Remote previews compare the installed version with the target Git version and exclude untracked edits inside the private snapshot directory.
 
-The **Agent** page separates the catalog available to agents from host connections.
-Choose a Global or Project connection to select Codex or OpenCode and use
-**Connect / update**, **Inspect** or **Disconnect**. Connection inspection reads
-host entry files independently of the content workspace. Custom host paths and
-shared-file removal confirmation currently use the CLI.
-
-Collections provide **Members**, **Description & instructions**, and **Settings**.
-Sources provide **Installed** and **Source settings**, with **Find and install**
-available in the Source workspace. Removing Collection membership and uninstalling
-a Skill are separate operations.
-
-### Reviewed Source ownership changes
-
-To move an installed Skill to a different Source owner, save and inspect a review
-before applying it:
-
-```sh
-skctl rebind preview old-source skills/review new-source --json > rebind-review.json
-skctl rebind apply rebind-review.json
-```
-
-Use `--path` on `preview` when the Skill has a different Source-relative path at
-the destination. Core must prove that both addresses identify the same Skill. The
-review includes affected direct Collection memberships; apply repairs writable
-addresses together with ownership and rejects stale evidence. The operation covers
-the captured workspace, not unknown projects that also refer to the old address.
-
-### Updates
-
-The workbench checks installed Sources for updates on startup. Use **Check updates**
-to refresh the results. Checking does not install, update or remove Skills.
-
-In **Updates**, open a Source, select the Skills you want with Space, then apply
-the updates. Stopping an update leaves already applied updates in place.
+</details>
 
 ## Development
 
-Use Bun **1.4.3** and Docker. Prepare dependencies and the runner image before
-running checks:
+Development needs Bun **1.4.3** and Docker. Prepare dependencies and the runner image first:
 
 ```sh
 bun install --frozen-lockfile
 docker pull node:22.23.2-bookworm
 ```
 
-Run checks and build through the [Docker runner](scripts/resource-run.md):
+Verification and builds run through the bounded [Docker runner](scripts/resource-run.md):
 
 ```sh
 bun run typecheck
@@ -309,14 +293,13 @@ scripts/resource-run.sh bun run schema:check
 scripts/resource-run.sh --timeout 300 bun scripts/build.ts native
 ```
 
-`native` builds the host's CLI and TUI plus `opencode-adapter.js` and
-`opencode-adapter.tgz` in `dist/`, with `SHA256SUMS` and `release-metadata.json`.
-Both binaries embed the plugin for `integration connect`. `build:cli` and
-`build:tui` build one binary plus the plugin; `pack:plugin` builds only the plugin.
+Build commands:
 
-The current `typecheck` script lists the original packages explicitly, so check
-`packages/integrations` separately as shown. Focused integration tests need the
-plugin artifact prepared first:
+- `native`: builds the CLI and TUI for the current platform and writes `opencode-adapter.js`, `opencode-adapter.tgz`, `SHA256SUMS` and `release-metadata.json` to `dist/`.
+- `build:cli`, `build:tui`: build a single binary plus the plugin.
+- `pack:plugin`: builds only the plugin.
+
+Individual test suites:
 
 ```sh
 bun run pack:plugin
@@ -325,5 +308,4 @@ scripts/resource-run.sh bun test packages/skctl/test
 bun run test:tui
 ```
 
-Run `bun run dev:tui` for interactive development from source. Run
-`bun run pack:plugin` first when testing OpenCode connection from source.
+For interactive development from source: `bun run dev:tui`.
