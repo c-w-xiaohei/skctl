@@ -245,7 +245,8 @@ test("RENDER Collection Entry Space selection is isolated from Relations and con
     await selectOrigins(setup, 1);
     expect(setup.captureCharFrame()).toContain("2 items checked");
     await enterLive(setup, "collection-tabs-tab-settings");
-    await setup.waitForFrame((frame) => frame.includes("No included Collections."));
+    await setup.waitForFrame((frame) => frame.includes("Configuration details"));
+    expect(setup.captureCharFrame()).not.toContain("Included Collections");
     expect(loads).toBe(0);
     await enterLive(setup, "collection-tabs-tab-members");
     await setup.waitFor(() => setup.captureCharFrame().includes("guide-entry"));

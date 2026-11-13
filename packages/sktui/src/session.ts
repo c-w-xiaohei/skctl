@@ -927,7 +927,7 @@ export function createTuiSession(
           },
           { signal },
         ),
-      "Skills installed",
+      `Installed ${paths.length} ${paths.length === 1 ? "Skill" : "Skills"} from ${reviewed.observation.source}`,
       () => {
         liveDiscovery = undefined;
       },

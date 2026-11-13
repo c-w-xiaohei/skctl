@@ -4,7 +4,7 @@ import type { CollectionView } from "@skctl/core";
 import { createEffect, createMemo, createSignal, For, on, Show, type JSX } from "solid-js";
 import type { ActionRecord } from "../actions";
 import type { ExecutableCommand } from "../commands";
-import { usePageCommands, usePageReturn, usePageView } from "../page-navigation";
+import { usePageCommands, usePageReturn } from "../page-navigation";
 import type { CommandRecord } from "../types";
 import { CommandMenuBody } from "../command-menu-body";
 import { SectionTabs } from "../components/section-tabs";
@@ -43,6 +43,7 @@ export function CollectionDetail(
     | "onRemoveOrigins"
     | "registerCommand"
     | "executeCommand"
+    | "contentEditor"
   > & {
     readonly collection: CollectionView;
     readonly issue?: string;
@@ -64,6 +65,7 @@ export function CollectionDetail(
   const [controlWidth, setControlWidth] = createSignal(0);
   const [adding, setAdding] = createSignal(false);
   const [more, setMore] = createSignal(false);
+  const configurationDetails = () => props.collections.configurationDetails(collection().id);
   createEffect(
     on(
       () => collection().id,
@@ -391,31 +393,10 @@ export function CollectionDetail(
     },
     execute: () => inspectRow(),
   });
-  const view = usePageView();
-  const viewCommands = (): ExecutableCommand[] =>
-    view?.available()
-      ? [
-          {
-            record: {
-              id: "workspace.toggle-view",
-              keys: ["enter"],
-              verb: view.expanded() ? "Restore split" : "Expand view",
-              destination: collection().id,
-              scope: "page",
-              enabled: true,
-              danger: false,
-            },
-            execute: () => view.toggle(),
-          },
-        ]
-      : [];
-  usePageCommands(viewCommands);
-  const menuCommands = () => [
-    ...(selectedTab() === "members" && currentRow()
+  const menuCommands = () =>
+    selectedTab() === "members" && currentRow()
       ? [...currentCommands().filter((command) => command.record.danger), detailsCommand()]
-      : []),
-    ...viewCommands(),
-  ];
+      : [];
   const closeMore = () => {
     setMore(false);
     queueMicrotask(() => renderer.root.findDescendantById("collection-more")?.focus());
@@ -487,8 +468,8 @@ export function CollectionDetail(
                 () => setAdding(true),
               )}
             </Show>
-            <Show when={selectedTab() === "description"}>
-              {props.managedAction("edit-collection-content", "Edit description & instructions…")}
+            <Show when={selectedTab() === "description" && !props.contentEditor}>
+              {props.managedAction("edit-collection-content", "Edit…")}
             </Show>
             <Show when={selectedTab() === "settings"}>
               {props.managedAction("add-link", "Include Collection…")}
@@ -581,28 +562,49 @@ export function CollectionDetail(
           {(collection) => (
             <>
               <Show when={!inspector() && selectedTab() === "description"}>
-                <scrollbox
-                  id="collection-description"
-                  flexGrow={1}
-                  minHeight={0}
-                  focusable
-                  ref={(value) => {
-                    props.bind("work-area", value);
-                    retainScroll(value, "description");
-                  }}
+                <Show
+                  when={props.contentEditor}
+                  fallback={
+                    <scrollbox
+                      id="collection-description"
+                      flexGrow={1}
+                      minHeight={0}
+                      focusable
+                      ref={(value) => {
+                        props.bind("work-area", value);
+                        retainScroll(value, "description");
+                      }}
+                    >
+                      <Show when={props.issue}>
+                        <text wrapMode="word">{props.issue}</text>
+                      </Show>
+                      <box flexDirection="column" flexShrink={0} marginBottom={1}>
+                        <text>
+                          <b>Description</b>
+                        </text>
+                        <text wrapMode="word" fg={tokens().colors.mutedForeground}>
+                          Before entry: when should an agent use this Collection?
+                        </text>
+                        <text wrapMode="word">
+                          {collection.description ||
+                            "Add a description to help agents know when to use this Collection."}
+                        </text>
+                      </box>
+                      <text>
+                        <b>Instructions (optional)</b>
+                      </text>
+                      <text wrapMode="word" fg={tokens().colors.mutedForeground}>
+                        Shown after entry, alongside member descriptions.
+                      </text>
+                      <text wrapMode="word">
+                        {collection.instructions ||
+                          "No shared guidance. Agents can still choose Skills from their descriptions."}
+                      </text>
+                    </scrollbox>
+                  }
                 >
-                  <Show when={props.issue}>
-                    <text wrapMode="word">{props.issue}</text>
-                  </Show>
-                  <text fg={tokens().colors.mutedForeground}>Description</text>
-                  <text wrapMode="word">
-                    {collection.description || "No description provided."}
-                  </text>
-                  <text fg={tokens().colors.mutedForeground}>Instructions</text>
-                  <text wrapMode="word">
-                    {collection.instructions || "No instructions provided."}
-                  </text>
-                </scrollbox>
+                  {(editor) => editor()()}
+                </Show>
               </Show>
               <Show when={!inspector() && selectedTab() === "settings"}>
                 <scrollbox
@@ -615,169 +617,172 @@ export function CollectionDetail(
                     retainScroll(value, "settings");
                   }}
                 >
+                  <box flexDirection="column" flexShrink={0} marginBottom={1}>
+                    <text>
+                      <b>Collection name</b>
+                    </text>
+                    <text wrapMode="word">{collection.id}</text>
+                    {props.commandZone(
+                      "collection-rename",
+                      {
+                        id: "collection.rename",
+                        keys: ["enter", "return"],
+                        verb: "Rename…",
+                        destination: collection.id,
+                        scope: "page",
+                        enabled: true,
+                        danger: false,
+                      },
+                      () =>
+                        props.onRelationship({
+                          kind: "collection-rename",
+                          collection: collection.id,
+                        }),
+                    )}
+                  </box>
                   {props.commandZone(
-                    "collection-rename",
+                    "collection-configuration-details",
                     {
-                      id: "collection.rename",
+                      id: "collection.configuration-details",
                       keys: ["enter", "return"],
-                      verb: "Rename…",
+                      verb: configurationDetails()
+                        ? "Hide configuration details"
+                        : "Configuration details…",
                       destination: collection.id,
                       scope: "page",
                       enabled: true,
                       danger: false,
                     },
                     () =>
-                      props.onRelationship({
-                        kind: "collection-rename",
-                        collection: collection.id,
-                      }),
+                      props.collections.setConfigurationDetails(
+                        collection.id,
+                        !configurationDetails(),
+                      ),
                   )}
-                  <text>Configuration locations</text>
-                  <Show when={collection.repository.derived}>
-                    <text wrapMode="word">
-                      Repository-derived members remain owned by their Source.
-                    </text>
-                  </Show>
-                  <For
-                    each={collection.declared}
-                    fallback={<text>No Collection declaration.</text>}
-                  >
-                    {(owner) => (
-                      <box flexDirection="column" flexShrink={0}>
-                        <text wrapMode="word">{`${owner.level}: ${owner.file}\n${owner.pointer}${owner.contribution ? "\nShared configuration (read-only)" : ""}`}</text>
-                        {props.commandZone(
-                          `collection-location-open-${owner.level}`,
-                          {
-                            id: `collection.location.open.${owner.level}.${owner.file}`,
-                            keys: ["enter"],
-                            verb: "Open configuration",
-                            destination: owner.file,
-                            scope: "page",
-                            enabled: true,
-                            danger: false,
-                          },
-                          () =>
-                            props.onRelationship({
-                              kind: "collection-open-config",
-                              collection: collection.id,
-                              owner,
-                            }),
-                        )}
-                        <Show when={!owner.contribution}>
-                          {props.commandZone(
-                            `collection-remove-declaration-${encodeURIComponent(`${owner.level}:${owner.file}:${owner.pointer}`)}`,
-                            {
-                              id: `collection.remove-declaration.${encodeURIComponent(`${owner.level}:${owner.file}:${owner.pointer}`)}`,
-                              keys: ["enter", "return"],
-                              verb: "Remove declaration…",
-                              destination: `${collection.id}: ${owner.level} ${owner.file} ${owner.pointer}`,
-                              scope: "page",
-                              enabled: true,
-                              danger: true,
-                            },
-                            () =>
-                              props.onRelationship({
-                                kind: "collection-remove-declaration",
-                                collection: collection.id,
-                                owner,
-                              }),
-                          )}
-                        </Show>
-                      </box>
-                    )}
-                  </For>
-                  <text>Agent catalog entry</text>
-                  <For
-                    each={
-                      props
-                        .projection()
-                        ?.configs.filter((config) =>
-                          ["valid", "missing"].includes(config.file.status),
-                        ) ?? []
-                    }
-                  >
-                    {(config) => (
-                      <box flexDirection="column" flexShrink={0}>
-                        <text>{`${config.level}: ${config.direct.collectionUse.some((entry) => entry.collection === collection.id) ? "Direct entry enabled" : "No direct entry"}`}</text>
-                        <text wrapMode="word">{config.file.file}</text>
-                        {props.commandZone(
-                          `collection-use-${config.level}`,
-                          {
-                            id: `collection.use.${config.level}`,
-                            keys: ["enter", "return"],
-                            verb: `Edit ${config.level} catalog…`,
-                            destination: `${config.level} Collection Use`,
-                            scope: "page",
-                            enabled: true,
-                            danger: false,
-                          },
-                          () =>
-                            props.onRelationship({
-                              kind: "collection-use-level",
-                              level: config.level,
-                            }),
-                        )}
-                      </box>
-                    )}
-                  </For>
-                  <text>Included Collections</text>
-                  <For
-                    each={relationRows().filter((row) => row.kind === "collection-link")}
-                    fallback={<text>No included Collections.</text>}
-                  >
-                    {(row) => (
-                      <box flexDirection="column" flexShrink={0}>
-                        <text wrapMode="word">{row.target}</text>
+                  <Show when={configurationDetails()}>
+                    <box flexDirection="column" flexShrink={0} marginTop={1} gap={1}>
+                      <Show when={collection.repository.derived}>
                         <text wrapMode="word">
-                          {row.owner
-                            ? `${row.owner.level}: ${row.owner.file}`
-                            : "Configuration unavailable"}
+                          Repository-derived members remain owned by their Source.
                         </text>
-                        <box flexDirection="row" flexWrap="wrap" gap={1}>
-                          {props.commandZone(
-                            `collection-included-open-${encodeURIComponent(collectionRelationKey(row))}`,
-                            {
-                              id: `collection.included.open.${collectionRelationKey(row)}`,
-                              keys: ["enter"],
-                              verb: "Open",
-                              destination: row.target ?? "",
-                              scope: "page",
-                              enabled: !!row.target,
-                              danger: false,
-                            },
-                            () =>
-                              row.target &&
-                              props.onRelationship({
-                                kind: "collection-open-collection",
-                                collection: collection.id,
-                                target: row.target,
-                              }),
-                          )}
-                          <For
-                            each={relationshipCommands(collection.id, {
-                              kind: "relation",
-                              relation: row,
-                            }).filter((command) => command.danger)}
-                          >
-                            {(command) =>
-                              props.commandZone(
-                                `collection-included-remove-${encodeURIComponent(collectionRelationKey(row))}`,
+                      </Show>
+                      <For
+                        each={collection.declared}
+                        fallback={<text>No Collection declaration.</text>}
+                      >
+                        {(owner) => (
+                          <box flexDirection="column" flexShrink={0}>
+                            <text>
+                              <b>{owner.level[0]!.toUpperCase() + owner.level.slice(1)}</b>
+                            </text>
+                            <text
+                              wrapMode="word"
+                              fg={tokens().colors.mutedForeground}
+                            >{`${owner.file}\n${owner.pointer}${owner.contribution ? "\nShared configuration (read-only)" : ""}`}</text>
+                            <box flexDirection="row" flexWrap="wrap" gap={1}>
+                              {props.commandZone(
+                                `collection-location-open-${owner.level}`,
                                 {
-                                  ...command,
-                                  id: `${command.id}.${collectionRelationKey(row)}`,
-                                  verb: "Stop including…",
+                                  id: `collection.location.open.${owner.level}.${owner.file}`,
+                                  keys: ["enter"],
+                                  verb: "Open configuration",
+                                  destination: owner.file,
+                                  scope: "page",
+                                  enabled: true,
+                                  danger: false,
                                 },
                                 () =>
-                                  command.enabled &&
-                                  command.intent &&
-                                  props.onRelationship(command.intent),
-                              )
-                            }
-                          </For>
+                                  props.onRelationship({
+                                    kind: "collection-open-config",
+                                    collection: collection.id,
+                                    owner,
+                                  }),
+                              )}
+                              <Show when={!owner.contribution}>
+                                {props.commandZone(
+                                  `collection-remove-declaration-${encodeURIComponent(`${owner.level}:${owner.file}:${owner.pointer}`)}`,
+                                  {
+                                    id: `collection.remove-declaration.${encodeURIComponent(`${owner.level}:${owner.file}:${owner.pointer}`)}`,
+                                    keys: ["enter", "return"],
+                                    verb: "Remove declaration…",
+                                    destination: `${collection.id}: ${owner.level} ${owner.file} ${owner.pointer}`,
+                                    scope: "page",
+                                    enabled: true,
+                                    danger: true,
+                                  },
+                                  () =>
+                                    props.onRelationship({
+                                      kind: "collection-remove-declaration",
+                                      collection: collection.id,
+                                      owner,
+                                    }),
+                                )}
+                              </Show>
+                            </box>
+                          </box>
+                        )}
+                      </For>
+                    </box>
+                  </Show>
+                  <Show when={relationRows().some((row) => row.kind === "collection-link")}>
+                    <text marginTop={1}>
+                      <b>Included Collections</b>
+                    </text>
+                    <For each={relationRows().filter((row) => row.kind === "collection-link")}>
+                      {(row) => (
+                        <box flexDirection="column" flexShrink={0}>
+                          <text wrapMode="word">{row.target}</text>
+                          <Show when={row.owner?.contribution}>
+                            <text fg={tokens().colors.mutedForeground}>
+                              Shared configuration (read-only)
+                            </text>
+                          </Show>
+                          <box flexDirection="row" flexWrap="wrap" gap={1}>
+                            {props.commandZone(
+                              `collection-included-open-${encodeURIComponent(collectionRelationKey(row))}`,
+                              {
+                                id: `collection.included.open.${collectionRelationKey(row)}`,
+                                keys: ["enter"],
+                                verb: "Open",
+                                destination: row.target ?? "",
+                                scope: "page",
+                                enabled: !!row.target,
+                                danger: false,
+                              },
+                              () =>
+                                row.target &&
+                                props.onRelationship({
+                                  kind: "collection-open-collection",
+                                  collection: collection.id,
+                                  target: row.target,
+                                }),
+                            )}
+                            <For
+                              each={relationshipCommands(collection.id, {
+                                kind: "relation",
+                                relation: row,
+                              }).filter((command) => command.danger)}
+                            >
+                              {(command) =>
+                                props.commandZone(
+                                  `collection-included-remove-${encodeURIComponent(collectionRelationKey(row))}`,
+                                  {
+                                    ...command,
+                                    id: `${command.id}.${collectionRelationKey(row)}`,
+                                    verb: "Stop including…",
+                                  },
+                                  () =>
+                                    command.enabled &&
+                                    command.intent &&
+                                    props.onRelationship(command.intent),
+                                )
+                              }
+                            </For>
+                          </box>
                         </box>
-                      </box>
-                    )}
-                  </For>
+                      )}
+                    </For>
+                  </Show>
                 </scrollbox>
               </Show>
             </>

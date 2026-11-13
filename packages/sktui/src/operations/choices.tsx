@@ -1,6 +1,6 @@
 import { sameSkillAddress, type ConfigDeclarationOwner, type SkillAddress } from "@skctl/core";
 import { SelectRenderable } from "@opentui/core";
-import { useTerminalDimensions } from "@opentui/solid";
+import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { createSignal, Index, Show } from "solid-js";
 import {
   createModalControlRegistry,
@@ -134,14 +134,44 @@ export function CollectionHandoffOverlay(props: {
 }) {
   const controls = createModalControlRegistry();
   const registerChoice = useModalControl("collection-handoff-choice", controls);
-  useModalControlTraversal(controls, props.onClose);
+  const renderer = useRenderer();
+  const terminal = useTerminalDimensions();
+  const [query, setQuery] = createSignal("");
+  const [collection, setCollection] = createSignal<string>();
+  const [current, setCurrent] = createSignal(0);
+  const [selectedCollection, setSelectedCollection] = createSignal<string>();
+  const collections = () =>
+    [...new Set(props.choices.map((choice) => choice.collection))].filter((id) =>
+      id.toLowerCase().includes(query().trim().toLowerCase()),
+    );
+  const owners = () => props.choices.filter((choice) => choice.collection === collection());
+  const back = () => {
+    if (collection()) {
+      setCollection(undefined);
+      queueMicrotask(() => renderer.root.findDescendantById("collection-handoff-choice")?.focus());
+    } else props.onClose();
+  };
+  const choose = (id: string) => {
+    const choices = props.choices.filter((choice) => choice.collection === id);
+    if (choices.length === 1) props.onSelect(choices[0]!);
+    else {
+      setCurrent(0);
+      setCollection(id);
+    }
+  };
+  useModalControlTraversal(controls, back);
   return (
-    <ModalShell>
+    <ModalShell transparent>
       <ModalBody
         controls={controls}
         maxWidth={76}
-        maxHeight={Math.min(8, props.choices.length * 2) + 5}
-        header={<text flexShrink={0}>Add to Collection</text>}
+        maxHeight={Math.min(terminal().height - 2, Math.max(10, collections().length + 7))}
+        scroll={false}
+        header={
+          <text height={1} wrapMode="none" flexShrink={0}>
+            {collection() ? `Save to: ${collection()}` : "Add to Collection"}
+          </text>
+        }
         footer={
           <box flexDirection="row" gap={1} flexShrink={0}>
             <Show when={props.onCreate}>
@@ -161,10 +191,10 @@ export function CollectionHandoffOverlay(props: {
               controls={controls}
               record={modalCommand(
                 "collection-handoff.cancel",
-                "Cancel",
+                collection() ? "Back" : "Cancel",
                 "Return to previous view",
               )}
-              execute={props.onClose}
+              execute={back}
             />
           </box>
         }
@@ -175,24 +205,71 @@ export function CollectionHandoffOverlay(props: {
             <text wrapMode="word">No available Collection. Create one to add this Skill.</text>
           }
         >
-          <DataList
-            id="collection-handoff-choice"
-            focused={true}
-            height={Math.min(8, props.choices.length * 2)}
-            flexShrink={0}
-            showDescription
-            ref={registerChoice}
-            options={props.choices.map((choice, index) => ({
-              name: `${choice.collection}${choice.owner ? ` (${ownerLine(choice.owner)})` : choice.level ? ` (${choice.level})` : ""}`,
-              description: choice.level
-                ? `Add to its ${choice.level} declaration`
-                : "Create a direct contribution before adding",
-              value: `${index}`,
-            }))}
-            onSelect={(_index, option) =>
-              option && props.onSelect(props.choices[Number(option.value)]!)
+          <Show
+            when={!collection()}
+            fallback={
+              <>
+                <text>Choose where to add these Skills.</text>
+                <DataList
+                  id="collection-handoff-owner"
+                  focused
+                  flexGrow={1}
+                  minHeight={1}
+                  ref={useModalControl("collection-handoff-owner", controls)}
+                  showDescription={false}
+                  options={owners().map((choice, index) => ({
+                    name: choice.level ?? "Choose a new save location…",
+                    description: choice.owner?.file ?? "",
+                    value: index,
+                  }))}
+                  onChange={(index) => setCurrent(index)}
+                  onSelect={(_index, option) => option && props.onSelect(owners()[option.value]!)}
+                />
+                <scrollbox
+                  height={2}
+                  flexShrink={0}
+                  focusable
+                  scrollX={false}
+                  ref={useModalControl("collection-handoff-location", controls)}
+                >
+                  <text wrapMode="word">{owners()[current()]?.owner?.file ?? ""}</text>
+                </scrollbox>
+              </>
             }
-          />
+          >
+            <text flexShrink={0}>Search Collections</text>
+            <Input
+              id="collection-handoff-search"
+              ref={useModalControl("collection-handoff-search", controls)}
+              value={query()}
+              onInput={(value) => {
+                setQuery(value);
+                setCurrent(0);
+              }}
+            />
+            <DataList
+              id="collection-handoff-choice"
+              focused={true}
+              flexGrow={1}
+              minHeight={1}
+              showDescription={false}
+              ref={registerChoice}
+              options={collections().map((id) => ({
+                name: id,
+                description: "",
+                value: id,
+              }))}
+              selectedIndex={Math.max(0, collections().indexOf(selectedCollection() ?? ""))}
+              onChange={(index, option) => {
+                setCurrent(index);
+                if (option) setSelectedCollection(option.value);
+              }}
+              onSelect={(_index, option) => option && choose(option.value)}
+            />
+            <Show when={!collections().length}>
+              <text>No matching Collections. Change the search.</text>
+            </Show>
+          </Show>
         </Show>
       </ModalBody>
     </ModalShell>

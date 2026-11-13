@@ -2,19 +2,18 @@ import { createEffect, createSignal, on, Show } from "solid-js";
 import { useRenderer } from "@opentui/solid";
 import { useTerminalSize } from "./ui/terminal-size";
 import { CommandControl } from "./command-control";
-import { usePageCommands, usePageReturn, usePageView } from "./page-navigation";
+import { usePageCommands, usePageReturn } from "./page-navigation";
 import { CommandMenuBody } from "./command-menu-body";
 import { Dialog, DialogContent } from "./ui/dialog";
 import type { CommandRegistration } from "./types";
 import type { FocusRegistry } from "./focus";
 import type { ExecutableCommand } from "./commands";
 
-/** Secondary object commands and explicit view control share one menu. */
+/** A menu exists only when the object has secondary commands. */
 export function ObjectMenu(props: {
   id: string;
   label?: string;
   intent?: "neutral" | "menu";
-  viewControl?: boolean;
   target?: string;
   commands?: readonly ExecutableCommand[];
   focusRegistry?: FocusRegistry;
@@ -22,7 +21,6 @@ export function ObjectMenu(props: {
 }) {
   const renderer = useRenderer();
   const terminal = useTerminalSize();
-  const view = usePageView();
   const [open, setOpen] = createSignal(false);
   createEffect(
     on(
@@ -31,18 +29,13 @@ export function ObjectMenu(props: {
       { defer: true },
     ),
   );
-  const canToggleView = () => props.viewControl !== false && !!view?.available();
-  const available = () => canToggleView() || !!props.commands?.length;
+  const available = () => !!props.commands?.length;
   createEffect(() => {
     if (!available()) setOpen(false);
   });
   const close = () => {
     setOpen(false);
     queueMicrotask(() => renderer.root.findDescendantById(props.id)?.focus());
-  };
-  const toggle = () => {
-    close();
-    view?.toggle();
   };
   const moreRecord = () => ({
     id: `${props.id}.open`,
@@ -53,21 +46,8 @@ export function ObjectMenu(props: {
     enabled: true,
     danger: false,
   });
-  const record = () => ({
-    id: "workspace.toggle-view",
-    verb: view?.expanded() ? "Restore split" : "Expand view",
-    destination: "Current workspace",
-    scope: "page" as const,
-    keys: ["enter"],
-    enabled: true,
-    danger: false,
-  });
-  const commands = (): readonly ExecutableCommand[] => [
-    ...(props.commands ?? []),
-    ...(canToggleView() ? [{ record: record(), execute: toggle }] : []),
-  ];
-  const commandId = (command: ExecutableCommand) =>
-    `${props.id}-${command.record.id === "workspace.toggle-view" ? "view" : command.record.id}`;
+  const commands = (): readonly ExecutableCommand[] => props.commands ?? [];
+  const commandId = (command: ExecutableCommand) => `${props.id}-${command.record.id}`;
   usePageCommands(commands);
   usePageReturn(() =>
     open()

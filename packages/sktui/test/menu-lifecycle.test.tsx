@@ -142,7 +142,7 @@ test("Source More releases its portal once on repeated close and page exit", asy
   });
   const setup = await testRender(
     () => <App core={directSourceCore(readerProjection())} exit={() => {}} />,
-    { width: 120, height: 30 },
+    { width: 43, height: 30 },
   );
   try {
     await openMainPage(setup, "sources");
@@ -261,9 +261,15 @@ test.each([43, 100, 120])(
       await setup.flush();
       expect(actions.height).toBe(1);
       const install = live(setup, "workspace-action-add-skills");
-      const more = live(setup, "source-more");
-      expect(more.screenY).toBe(install.screenY);
-      expect(more.screenX + more.width).toBeLessThanOrEqual(actions.screenX + actions.width);
+      const more = setup.renderer.root.findDescendantById("source-more");
+      if (more) {
+        expect(more.screenY).toBe(install.screenY);
+        expect(more.screenX + more.width).toBeLessThanOrEqual(actions.screenX + actions.width);
+      } else {
+        expect(!!setup.renderer.root.findDescendantById("workspace-action-check-updates")).toBe(
+          true,
+        );
+      }
       if (width === 43) {
         expect(!!setup.renderer.root.findDescendantById("workspace-action-check-updates")).toBe(
           false,

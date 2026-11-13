@@ -190,13 +190,13 @@ test.each(["dark", "light"] as const)(
     try {
       await setup.flush();
       const cover = live(setup, "source-observation-overlay") as BoxRenderable;
-      expect(rgba(cover.backgroundColor)).toEqual(rgba(theme.get().colors.background));
+      expect(parseColor(cover.backgroundColor).a).toBe(0);
       const field = live(setup, "field") as InputRenderable;
       expect(parseColor(field.backgroundColor).a).toBe(1);
       expect(rgba(field.backgroundColor)).not.toEqual(rgba(theme.get().colors.background));
       palette(mode === "dark" ? "light" : "dark");
       await setup.flush();
-      expect(rgba(cover.backgroundColor)).toEqual(rgba(theme.get().colors.background));
+      expect(parseColor(cover.backgroundColor).a).toBe(0);
       await capture(setup, `operation-cover-${mode}`);
     } finally {
       setup.renderer.destroy();

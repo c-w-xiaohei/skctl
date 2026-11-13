@@ -61,6 +61,7 @@ export interface CollectionsSnapshot {
   readonly selected?: string;
   readonly selectedPath?: string;
   readonly expandedPaths?: Readonly<Record<string, boolean>>;
+  readonly configurationDetails?: Readonly<Record<string, boolean>>;
   readonly query: string;
   readonly filters: Readonly<Record<string, string>>;
   readonly tabs: Readonly<Record<string, CollectionTab>>;
@@ -238,6 +239,14 @@ export function createCollectionsState() {
     query: () => snapshot().query,
     filters: () => snapshot().filters,
     tab: (collection: string): CollectionTab => snapshot().tabs[collection] ?? "members",
+    configurationDetails: (collection: string) =>
+      snapshot().configurationDetails?.[collection] ?? false,
+    setConfigurationDetails(collection: string, open: boolean) {
+      update((current) => ({
+        ...current,
+        configurationDetails: { ...current.configurationDetails, [collection]: open },
+      }));
+    },
     selectedRow: (collection: string, tab: CollectionTab) =>
       snapshot().selectedRows[`${collection}:${tab}`],
     selectedOrigins: (collection: string) => snapshot().selectedOrigins[collection] ?? [],
@@ -429,6 +438,8 @@ export type CollectionsReadonly = Pick<
   | "query"
   | "filters"
   | "tab"
+  | "configurationDetails"
+  | "setConfigurationDetails"
   | "selectedRow"
   | "filter"
   | "selectedOrigins"

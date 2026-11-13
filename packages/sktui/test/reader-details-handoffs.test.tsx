@@ -508,9 +508,12 @@ test.each([120, 43])(
 );
 async function chooseCollection(setup: Awaited<ReturnType<typeof testRender>>, count: number) {
   await focusLive(setup, "collection-handoff-choice");
-  await setup.mockInput.pressKeys(Array.from({ length: count }, () => "ARROW_DOWN"));
-  setup.mockInput.pressEnter();
-  await setup.renderOnce();
+  await parsedEnter(setup);
+  if (setup.renderer.root.findDescendantById("collection-handoff-owner")) {
+    const owners = (await focusLive(setup, "collection-handoff-owner")) as SelectRenderable;
+    owners.setSelectedIndex(count);
+    await parsedEnter(setup);
+  }
 }
 async function openRelationships(
   setup: Awaited<ReturnType<typeof testRender>>,
@@ -936,6 +939,7 @@ test("Details Collection relation routes to its owning contributed Config Source
     });
     await enterLive(setup, "collection-browser");
     await enterLive(setup, "collection-tabs-tab-settings");
+    await enterLive(setup, "collection-configuration-details");
     expect(renderableText(live(setup, "collection-detail-pane"))).toContain(
       "/collections/contributed",
     );

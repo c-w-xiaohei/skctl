@@ -33,7 +33,7 @@ import type { FocusRegistry, FocusTarget } from "./focus";
 import { isPlainNavKey, type NavKey } from "./navigation";
 import { Accordion } from "@tuiparts/solid/accordion";
 import { CommandControl } from "./command-control";
-import { usePageReturn, usePageView } from "./page-navigation";
+import { usePageReturn } from "./page-navigation";
 import { DataList } from "./ui/data-list";
 import { restoreSelectState, selectScrollOffset, setSelectScrollOffset } from "./select-scroll";
 import { SectionTabs, sectionTabsWidth } from "./components/section-tabs";
@@ -123,7 +123,6 @@ export function Reader(props: {
 }) {
   const renderer = useRenderer();
   const terminal = useTerminalDimensions();
-  const view = usePageView();
   const tokens = useTheme();
   const [popup, setPopup] = createSignal<"more">();
   const installation = () => props.reader().installationOpen === true;
@@ -777,7 +776,6 @@ export function Reader(props: {
     "reader.installation": "reader-installation-open",
     "reader.reload": "reader-reload",
     "reader.raw": "reader-raw",
-    "workspace.toggle-view": "reader-menu-view",
   };
   // Include the shared caption padding and separating cells in the tool budget.
   const tabsWidth = sectionTabsWidth(readerViews);
@@ -806,20 +804,9 @@ export function Reader(props: {
         props.onPatch({ raw: !reader().raw });
       },
     );
-  const viewCommand = () =>
-    command(
-      "workspace.toggle-view",
-      view?.expanded() ? "Restore split" : "Expand view",
-      "Current workspace",
-      () => {
-        closePopup();
-        view?.toggle();
-      },
-    );
   createEffect(() => {
     const commands = [
       installationCommand(),
-      ...(view?.available() ? [viewCommand()] : []),
       ...(props.onReload ? [reloadCommand()] : []),
       ...(!installation() && reader().tab === "skill" ? [rawCommand()] : []),
     ];
@@ -1314,7 +1301,6 @@ export function Reader(props: {
                       },
                     ]
                   : []),
-                ...(view?.available() ? [{ ...viewCommand(), id: "reader-menu-view" }] : []),
                 ...readerActions()
                   .filter(
                     (action) =>

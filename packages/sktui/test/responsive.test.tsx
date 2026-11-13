@@ -535,10 +535,10 @@ test("RENDER narrow observation progress remains bounded at 79x24 and 43x30", as
       await setup.waitForFrame((frame) => frame.includes("team-main"));
       await parsedEnter(setup);
       await openPaletteAddSkills(setup);
-      await setup.waitForFrame((frame) => frame.includes("Discovering Skills"));
+      await setup.waitForFrame((frame) => frame.includes("Finding Skills"));
       if (width === 79) {
         const frame = setup.captureCharFrame();
-        expect(frame).toContain("Cancel");
+        expect(frame).toContain("Stop");
         await parsedEscape(setup);
         await setup.waitFor(() => aborts === 1);
         await setup.waitFor(
@@ -600,7 +600,7 @@ test("RENDER narrow selection remains bounded through resize at 79x24 and 43x30"
       await setup.waitForFrame((frame) => frame.includes("team-main"));
       await parsedEnter(setup);
       await openPaletteAddSkills(setup);
-      await setup.waitForFrame((frame) => frame.includes("[ ] Available review"));
+      await setup.waitForFrame((frame) => frame.includes("[ ] review"));
       const selection = setup.renderer.root.findDescendantById("source-operation-selection");
       expect(selection).toBeDefined();
       expect(selection!.screenX).toBeGreaterThanOrEqual(0);
@@ -610,7 +610,7 @@ test("RENDER narrow selection remains bounded through resize at 79x24 and 43x30"
       await setup.renderOnce();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-operation-selection");
       setup.resize(width === 79 ? 43 : 79, height);
-      await setup.waitForFrame((frame) => frame.includes("[ ] Available review"));
+      await setup.waitForFrame((frame) => frame.includes("[ ] review"));
     } finally {
       setup.renderer.destroy();
     }

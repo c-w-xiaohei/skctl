@@ -127,8 +127,12 @@ for (const width of [120, 43]) {
       expect(list.height).toBeGreaterThan(0);
       expect(setup.captureCharFrame()).toContain("engineering");
       expect(setup.captureCharFrame()).toContain("Cancel");
-      list.selectedIndex = 1;
       await enterLive(setup, "collection-handoff-choice");
+      const owners = setup.renderer.root.findDescendantById(
+        "collection-handoff-owner",
+      ) as SelectRenderable;
+      owners.selectedIndex = 1;
+      await enterLive(setup, "collection-handoff-owner");
       expect(selected).toEqual([choices[1]]);
       await mkdir("out/reader-clarity", { recursive: true });
       await writeFile(`out/reader-clarity/collections-${width}.txt`, setup.captureCharFrame());

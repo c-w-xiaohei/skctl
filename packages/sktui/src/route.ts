@@ -67,7 +67,6 @@ export interface NavigationFrame {
   readonly surface: NavigationSurface;
   readonly region: NavigationRegion;
   readonly focus: FocusOwner;
-  readonly expanded?: boolean;
   readonly handoff?: RouteHandoff;
   readonly sublocation?: RouteSublocation;
   readonly workspace: WorkspaceSnapshot;
@@ -211,7 +210,6 @@ export function createRoute(
   updatesState: Accessor<UpdatesState | undefined> = () => undefined,
   restoreUpdatesState: (state: UpdatesState) => void = () => {},
 ) {
-  const [expanded, setExpanded] = createSignal(false);
   const objectFor = (context: NavigationContext, section: RouteTarget["section"]) => {
     if (context === "workspace")
       return section === "skills"
@@ -269,7 +267,6 @@ export function createRoute(
     surface,
     region,
     focus,
-    expanded: expanded(),
     ...(handoff ? { handoff: structuredClone(handoff) } : {}),
     sublocation: sublocation ? structuredClone(sublocation) : undefined,
     workspace: structuredClone(pages.workspace.snapshot()),
@@ -384,8 +381,6 @@ export function createRoute(
     };
     const surface = surfaceFor(target);
     batch(() => {
-      if (target.destination !== active.context || target.section !== active.section)
-        setExpanded(false);
       landTarget();
       dismissOverlay();
       const current = capture(
@@ -412,7 +407,6 @@ export function createRoute(
   };
   const restore = (frame: NavigationFrame, stack: readonly NavigationFrame[]) => {
     batch(() => {
-      setExpanded(frame.expanded === true);
       pages.workspace.restore(frame.workspace);
       pages.config.restore("global", frame.config.global);
       pages.config.restore("project", frame.config.project);
@@ -548,7 +542,6 @@ export function createRoute(
     workspace: { ...frame.workspace, readerOpen: false, selectedSkill: undefined },
     reader: undefined,
     recovery: "unavailable",
-    expanded: false,
   });
 
   const mainPages = new Map<
@@ -597,8 +590,6 @@ export function createRoute(
 
   return {
     snapshot,
-    expanded,
-    setExpanded,
     canReturn: () => snapshot().stack.length > 0,
     syncCurrent,
     transition(target: RouteTarget, landing: () => void) {
@@ -618,7 +609,6 @@ export function createRoute(
       apply(target, [...snapshot().stack, snapshot().current], landing);
     },
     revalidate(projection: WorkspaceView) {
-      if (!available(snapshot().current, projection)) setExpanded(false);
       for (const [page, saved] of mainPages)
         mainPages.set(page, {
           frame: available(saved.frame, projection) ? saved.frame : recover(saved.frame),
@@ -773,12 +763,7 @@ export function createRoute(
       const prior = snapshot();
       const frame = prior.stack.at(-1);
       if (!frame) return;
-      restore(
-        frame.context === prior.current.context && frame.section === prior.current.section
-          ? { ...frame, expanded: expanded() }
-          : frame,
-        prior.stack.slice(0, -1),
-      );
+      restore(frame, prior.stack.slice(0, -1));
     },
   };
 }

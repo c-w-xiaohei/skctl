@@ -7,7 +7,7 @@ import { openMainPage } from "./main-page-controls";
 import { directSourceCore } from "./direct-source.fixture";
 import { collectionsSourcesProjection } from "./collections-sources-operate.fixture";
 import { collectionFilterPathKey } from "../src/collections/collection-filter-tree";
-import { parsedEnter, parsedEscape } from "./reader-test-controls";
+import { parsedEnter, parsedEscape, focusLive } from "./reader-test-controls";
 
 type Setup = Awaited<ReturnType<typeof testRender>>;
 
@@ -74,10 +74,12 @@ test("Collection Settings is reachable through its visible tab and exposes decla
     await openCollection(setup);
     await clickVisible(setup, "collection-tabs-tab-settings");
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("Configuration locations");
+    expect(frame).toContain("Configuration details");
     expect(frame).toContain("Include Collection");
     expect(frame).toContain("Copy Skills");
-    expect(frame).toContain("Remove");
+    expect(frame).not.toContain("Remove declaration");
+    await clickVisible(setup, "collection-configuration-details");
+    expect(setup.captureCharFrame()).toContain("Remove declaration");
   } finally {
     setup.renderer.destroy();
   }
@@ -141,6 +143,7 @@ test("Settings previews removal of the selected declaration owner", async () => 
     const key = encodeURIComponent(
       `${globalOwner.level}:${globalOwner.file}:${globalOwner.pointer}`,
     );
+    await clickVisible(setup, "collection-configuration-details");
     await clickVisible(setup, `collection-remove-declaration-${key}`);
     await setup.waitFor(() => previews.length === 1);
     expect(previews[0]).toMatchObject({ level: "global", collection: "team" });
@@ -240,15 +243,12 @@ test("Description and Settings restore their own scroll positions after switchin
     const descriptionOffset = description.scrollTop;
     expect(descriptionOffset).toBeGreaterThan(0);
     await clickVisible(setup, "collection-tabs-tab-settings");
+    await clickVisible(setup, "collection-configuration-details");
     const settings = setup.renderer.root.findDescendantById(
       "collection-settings",
     ) as ScrollBoxRenderable;
-    for (let i = 0; i < 5; i++)
-      await setup.mockMouse.scroll(
-        settings.viewport.screenX + 2,
-        settings.viewport.screenY + 1,
-        "down",
-      );
+    await focusLive(setup, "collection-settings");
+    setup.mockInput.pressKey("END");
     await setup.flush();
     const settingsOffset = settings.scrollTop;
     expect(settingsOffset).toBeGreaterThan(0);

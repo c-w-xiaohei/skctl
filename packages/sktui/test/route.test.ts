@@ -57,32 +57,26 @@ test("main Settings page restores its last scope and declaration category", () =
   expect(config.snapshot("project").browserLevel).toBe("object");
 });
 
-test("explicit expansion belongs to each page and relationship Back restores it", () => {
+test("relationship Back restores the originating page without a layout return layer", () => {
   const workspace = createWorkspaceState();
   const config = createConfigState();
   const route = createRoute({ workspace, config });
-  route.setExpanded(true);
   route.switchPage("sources");
-  expect(route.expanded()).toBe(false);
   route.switchPage("skills");
-  expect(route.expanded()).toBe(true);
   route.push({ destination: "project", section: "sources", selection: "team-main" });
-  expect(route.expanded()).toBe(false);
+  expect(route.snapshot().destination).toBe("project");
   route.back();
-  expect(route.expanded()).toBe(true);
-  route.setExpanded(false);
+  expect(route.snapshot().current.page).toBe("skills");
   expect(route.snapshot().stack).toEqual([]);
 });
 
-test("removing the expanded object clears expansion before recovery", () => {
+test("removing the current object recovers the browser", () => {
   const workspace = createWorkspaceState();
   const config = createConfigState();
   const route = createRoute({ workspace, config });
   workspace.selectSkill({ source: "missing", path: "guide" });
   route.syncCurrent();
-  route.setExpanded(true);
   route.revalidate(readerProjection());
-  expect(route.expanded()).toBe(false);
   expect(route.snapshot().current.recovery).toBe("unavailable");
 });
 

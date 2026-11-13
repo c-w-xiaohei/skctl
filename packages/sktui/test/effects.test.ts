@@ -522,7 +522,7 @@ test("STATE-016/018 successful install after abort wins and refresh failure rema
   effects.cancel();
   resolveInstall!({ value: [], diagnostics: [] });
   expect(await applying).toBe(true);
-  expect(effects.operation.notice()).toBe("Skills installed; Workspace is stale");
+  expect(effects.operation.notice()).toBe("Installed 1 Skill from team-main; Workspace is stale");
 });
 test("STATE-016/018 cancelled install retains its observed review and retries without rediscovery", async () => {
   let discovers = 0;

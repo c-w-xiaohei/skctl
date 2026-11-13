@@ -1,4 +1,3 @@
-import { usePageView } from "./page-navigation";
 import {
   InputRenderable,
   Renderable,
@@ -46,7 +45,6 @@ export {
 } from "./collections/relationship-model";
 
 export function CollectionsPage(props: CollectionsPageProps) {
-  const view = usePageView();
   const renderer = useRenderer();
   const terminal = useTerminalSize();
   const tokens = useTheme();
@@ -451,7 +449,6 @@ export function CollectionsPage(props: CollectionsPageProps) {
         <ObjectMenu
           id="collections-browser-more"
           intent="menu"
-          viewControl={false}
           focusRegistry={props.focusRegistry}
           registerCommand={props.registerCommand}
           commands={[
@@ -646,7 +643,6 @@ export function CollectionsPage(props: CollectionsPageProps) {
       fallback={
         <box width="100%" minWidth={0} flexDirection="row" flexGrow={1} minHeight={0} gap={1}>
           <box
-            visible={!(view?.available() && view.expanded())}
             width={props.mode === "wide" ? (props.browserWidth ?? 38) : "100%"}
             flexShrink={0}
             minHeight={0}

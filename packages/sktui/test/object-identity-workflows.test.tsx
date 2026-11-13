@@ -13,6 +13,7 @@ import {
 } from "./reader-test-controls";
 import { SkctlError, type CollectionRenameImpact, type RebindImpact } from "@skctl/core";
 import {
+  InputRenderable,
   ScrollBoxRenderable,
   SelectRenderable,
   TextRenderable,
@@ -552,7 +553,7 @@ test.each([false, true])(
   },
 );
 
-test("install result names only newly installed addresses and opens the first exact Skill", async () => {
+test("install returns to its Source and preserves both exact installed identities", async () => {
   const base = collectionsSourcesProjection();
   const beta = base.installedSkills[0]!;
   let workspace = {
@@ -607,12 +608,13 @@ test("install result names only newly installed addresses and opens the first ex
     await parsedEnter(setup);
     await clickVisible(setup, "workspace-action-add-skills");
     await clickVisible(setup, "source-operation-selection");
-    await parsedEnter(setup);
+    await setup.flush();
     await clickVisible(setup, "source-operation-submit");
-    await setup.waitForFrame((frame) => frame.includes(`${beta.address.source}/alpha`));
-    expect(setup.captureCharFrame()).not.toContain(`${beta.address.source}/beta`);
-    await clickVisible(setup, "installed-result-view");
-    await setup.waitFor(() => reads.includes("alpha"));
+    await setup.waitFor(
+      () => !setup.renderer.root.findDescendantById("source-operation-selection"),
+    );
+    expect(workspace.installedSkills.map((item) => item.address.path)).toEqual(["beta", "alpha"]);
+    expect(reads).not.toContain("alpha");
   } finally {
     setup.renderer.destroy();
   }
@@ -656,7 +658,7 @@ test("separate acquisition returns exact installed addresses and retains the reg
       () => !!setup.renderer.root.findDescendantById("source-operation-selection"),
     );
     await clickVisible(setup, "source-operation-selection");
-    await parsedEnter(setup);
+    await setup.flush();
     await clickVisible(setup, "source-operation-submit");
     await setup.waitForFrame((frame) =>
       frame.includes("Installed separately replacement/nested/new-guide"),
@@ -761,7 +763,7 @@ test("failed separate installation preserves registration and blocks blind retry
     await registerReplacement(setup);
     await clickVisible(setup, "replacement-acquire");
     await clickVisible(setup, "source-operation-selection");
-    await parsedEnter(setup);
+    await setup.flush();
     await clickVisible(setup, "source-operation-submit");
     await setup.waitForFrame((frame) => frame.includes("Installation outcome unknown"));
     expect(setup.captureCharFrame()).toContain("Registered replacement");
@@ -850,7 +852,7 @@ for (const scenario of ["match", "root-drift", "owner-drift"] as const) {
       await registerReplacement(setup);
       await clickVisible(setup, "replacement-acquire");
       await clickVisible(setup, "source-operation-selection");
-      await parsedEnter(setup);
+      await setup.flush();
       await clickVisible(setup, "source-operation-submit");
       await setup.waitForFrame((frame) => frame.includes("Installation outcome unknown"));
       const item = original.installedSkills[0]!;
@@ -990,7 +992,7 @@ for (const input of ["../skills", "/x/../skills"]) {
       await setup.waitForFrame((frame) => frame.includes("Registered skills"));
       await clickVisible(setup, "replacement-acquire");
       await clickVisible(setup, "source-operation-selection");
-      await parsedEnter(setup);
+      await setup.flush();
       await clickVisible(setup, "source-operation-submit");
       await setup.waitForFrame((frame) => frame.includes("Installation outcome unknown"));
       const item = initial.installedSkills[0]!;
@@ -1906,6 +1908,10 @@ test("replacement Back from rebind review preserves selected address and target 
     await clickVisible(setup, "replacement-path");
     setup.mockInput.pressKey("HOME");
     await setup.mockInput.typeText("nested/");
+    await setup.flush();
+    expect(
+      (setup.renderer.root.findDescendantById("replacement-path") as InputRenderable).value,
+    ).toBe("nested/guide");
     await clickVisible(setup, "replacement-preview");
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("installed-skill-review-cancel"),
@@ -1913,6 +1919,8 @@ test("replacement Back from rebind review preserves selected address and target 
     await clickVisible(setup, "installed-skill-review-cancel");
     await setup.waitForFrame((frame) => frame.includes("nested/guide"));
     expect(setup.renderer.root.findDescendantById("replacement-preview")?.focusable).toBe(true);
+  } catch (error) {
+    throw new Error(`${error}\n${setup.captureCharFrame()}`);
   } finally {
     setup.renderer.destroy();
   }

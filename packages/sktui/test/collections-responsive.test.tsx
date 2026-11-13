@@ -916,8 +916,10 @@ test("RENDER Collection Relations keep Collection Use, Reference, and Link owner
     const frame = setup.captureCharFrame();
     expect(frame).not.toContain("Reference docs");
     expect(frame).toContain("Stop including");
-    expect(frame).toContain("/project.jsonc");
-    expect(frame).toContain("/collections/engineering");
+    expect(frame).not.toContain("/project.jsonc");
+    expect(frame).not.toContain("/collections/engineering");
+    await enterLive(setup, "collection-configuration-details");
+    expect(setup.captureCharFrame()).toContain("/project.jsonc");
   } finally {
     setup.renderer.destroy();
   }
@@ -999,8 +1001,9 @@ test("RENDER Collection rows omit full address and relation owner facts from pri
     expect(setup.captureCharFrame()).not.toContain("/project.jsonc");
     collections.selectTab("engineering", "settings");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-settings"));
+    await enterLive(setup, "collection-configuration-details");
     await setup.waitForFrame(
-      (frame) => frame.includes("Configuration locations") && frame.includes("/project.jsonc"),
+      (frame) => frame.includes("configuration details") && frame.includes("/project.jsonc"),
     );
     expect(setup.captureCharFrame()).not.toContain("engineering -> docs");
     expect(setup.captureCharFrame()).toContain("/project.jsonc");

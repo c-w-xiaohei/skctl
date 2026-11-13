@@ -583,6 +583,7 @@ function useProjection(): WorkspaceView {
     effective: {
       ...base.effective,
       use: ["docs", "retired", "team"],
+      agent: { ...base.effective.agent, status: "available" as const },
       collectionsView: base.effective.collectionsView.slice(0, 2),
       collections: ["team", "docs"],
     },
@@ -658,10 +659,16 @@ for (const entry of ["Config", "relationship Edit Use", "Settings level"] as con
     try {
       if (entry === "Config") await openConfigUse(setup);
       else {
-        await openMainPage(setup, "collections");
-        await enterLive(setup, "collection-browser");
-        await enterLive(setup, "collection-tabs-tab-settings");
-        await enterLive(setup, "collection-use-project");
+        await openMainPage(setup, "agent");
+        await enterLive(
+          setup,
+          setup.renderer.root.findDescendantById("agent-access-collections")
+            ? "agent-access-collections"
+            : "skills-setup-primary",
+        );
+        const scope = (await focusLive(setup, "scope-choices")) as SelectRenderable;
+        scope.setSelectedIndex(scope.options.findIndex((item) => item.value === "project"));
+        await parsedEnter(setup);
       }
       await setup.waitFor(
         () => setup.renderer.currentFocusedRenderable?.id === "collection-use-values",

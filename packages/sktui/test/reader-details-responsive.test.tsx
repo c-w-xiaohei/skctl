@@ -60,7 +60,6 @@ test.each([
     for (const id of [
       "reader-menu-raw",
       "reader-menu-reload",
-      ...(width >= 100 ? ["reader-menu-view"] : []),
       ...(width === 43 ? ["reader-menu-skill-check-updates"] : []),
       "reader-menu-skill-rebind",
       "reader-menu-skill-uninstall",

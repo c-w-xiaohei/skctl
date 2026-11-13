@@ -56,7 +56,7 @@ import { filterSkills, skillSearchMatch } from "./skills-filter";
 import { restoreSelectState, selectScrollOffset, setSelectScrollOffset } from "./select-scroll";
 import { Reader } from "./reader";
 import { CommandControl } from "./command-control";
-import { usePageReturn, usePageView } from "./page-navigation";
+import { usePageReturn } from "./page-navigation";
 import { ObjectMenu } from "./object-menu";
 import { Input } from "./ui/input";
 import { SectionTabs } from "./components/section-tabs";
@@ -125,6 +125,7 @@ export interface WorkspacePageProps {
   readonly onCollectionFilterSearch: (value: string) => void;
   readonly onCollectionFilterClose: () => void;
   readonly onCollectionTab: (collection: string, tab: import("./types").CollectionTab) => void;
+  readonly collectionContentEditor?: () => import("solid-js").JSX.Element;
   readonly onCollectionDetail: (collection?: string) => void;
   readonly onCollectionRelationship: (intent: CollectionRelationshipIntent) => void;
   readonly onToggleCollectionOrigin: (collection: string, key: string) => void;
@@ -190,11 +191,9 @@ export function WorkspacePage(props: WorkspacePageProps) {
     return effective?.status === "complete" ? effective.collectionsView : undefined;
   });
   const section = workspace.section;
-  const view = usePageView();
-  const split = () => props.mode === "wide" && !view?.expanded();
+  const split = () => props.mode === "wide";
   const browserWidth = () => props.browserWidth ?? 38;
-  const detail = () =>
-    (props.mode === "wide" && view?.expanded()) || props.narrowLevel === "detail";
+  const detail = () => props.narrowLevel === "detail";
   const compactCollections = workspace.collectionBrowserOpen;
   const collectionBrowserMounted = createMemo((opened) => opened || compactCollections(), false);
   const skills = createMemo(() =>
@@ -607,7 +606,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
           <ObjectMenu
             id="skills-browser-more"
             intent="menu"
-            viewControl={false}
             focusRegistry={props.focusRegistry}
             registerCommand={props.registerCommand}
             commands={[
@@ -734,7 +732,6 @@ export function WorkspacePage(props: WorkspacePageProps) {
               id="skills-selected"
               label={`Selected ${workspace.selectedSkills().length}`}
               target={workspace.selectedSkills().map(skillAddressKey).join("\n")}
-              viewControl={false}
               commands={batchCommands()}
               focusRegistry={props.focusRegistry}
               registerCommand={props.registerCommand}
@@ -1709,6 +1706,7 @@ export function WorkspacePage(props: WorkspacePageProps) {
           </Match>
           <Match when={section() === "collections"}>
             <CollectionsPage
+              contentEditor={props.collectionContentEditor}
               browserWidth={browserWidth()}
               active={!props.overlay?.()}
               collections={props.collections}

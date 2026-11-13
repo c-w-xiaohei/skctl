@@ -235,18 +235,23 @@ export function useModalControlTraversal(
   onEscape?: () => void,
   allowUnregistered = !!local,
 ) {
-  const registry = local ?? useContext(ModalControlsContext);
+  const parent = useContext(ModalControlsContext);
+  const registry = local ?? parent;
   const renderer = useRenderer();
-  useKeyboard((event) => {
+  const handle = (event: KeyEvent) => {
     const key = event.name.toLowerCase().replace(/^arrow[_-]?/, "");
     const current = renderer.currentFocusedRenderable;
-    if (!event.defaultPrevented && registry?.handleKey(event, current)) return;
+    if (!event.defaultPrevented && registry?.handleKey(event, current)) return true;
     if (!event.defaultPrevented && !hasModalKeyModifier(event) && onEscape && key === "escape") {
       event.preventDefault();
       event.stopPropagation();
       onEscape();
-      return;
+      return true;
     }
-    if (registry) traverseModalControls(registry, current, event, allowUnregistered);
-  });
+    return registry ? traverseModalControls(registry, current, event, allowUnregistered) : false;
+  };
+  // The App's key listener runs before mounted children. Delegate to the active
+  // task first, so local Back and dirty-draft guards precede global dismissal.
+  if (parent && local && parent !== local) onCleanup(parent.intercept(handle));
+  useKeyboard(handle);
 }

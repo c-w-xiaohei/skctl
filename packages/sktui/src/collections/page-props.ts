@@ -1,4 +1,5 @@
 import type { BaseRenderable } from "@opentui/core";
+import type { JSX } from "solid-js";
 import type { WorkspaceView } from "@skctl/core";
 import type { ActionRecord } from "../actions";
 import type { CollectionFilterDimension } from "../collections-filter";
@@ -9,6 +10,7 @@ import type { CollectionRelationshipIntent } from "./relationship-inspector";
 import type { CollectionRemovalRow } from "./relationship-model";
 
 export interface CollectionsPageProps {
+  readonly contentEditor?: () => JSX.Element;
   readonly browserWidth?: number;
   readonly collections: CollectionsReadonly;
   readonly mode: LayoutMode;

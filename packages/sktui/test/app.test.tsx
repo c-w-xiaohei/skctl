@@ -983,17 +983,18 @@ test("RENDER Add Skills selects observed eligible roots, disables installed root
   try {
     await populated(setup, "sources");
     await activatePaletteCommand(setup, "add-skills");
-    await setup.waitForFrame(
-      (frame) => frame.includes("Find Skills") && frame.includes("Revision: reviewed"),
-    );
-    expect(setup.captureCharFrame()).toContain("[-] Installed installed");
+    await setup.waitForFrame((frame) => frame.includes("Install Skills") && frame.includes("new"));
+    expect(setup.captureCharFrame()).not.toContain("[-] Installed installed");
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-operation-selection");
-    setup.mockInput.pressArrow("down");
-    await setup.renderOnce();
-    await awaitParsedEnter(setup);
+    await setup.mockInput.typeText(" ");
+    await setup.flush();
     await activateControl(setup, "source-operation-submit");
     await setup.waitFor(() => calls.length === 1);
     expect(calls).toEqual([{ source: "team-main", paths: ["new"], exactRevision: "reviewed" }]);
+    await setup.waitFor(
+      () => !setup.renderer.root.findDescendantById("source-operation-selection"),
+    );
+    expect(!!setup.renderer.root.findDescendantById("installed-result-view")).toBe(false);
   } finally {
     setup.renderer.destroy();
   }
@@ -1027,11 +1028,11 @@ test("RENDER Source observation Cancel waits for an abort-ignoring provider and 
   try {
     await populated(setup, "sources");
     await activatePaletteCommand(setup, "add-skills");
-    await setup.waitForFrame((frame) => frame.includes("Discovering Skills"));
+    await setup.waitForFrame((frame) => frame.includes("Finding Skills"));
     expect(setup.renderer.currentFocusedRenderable?.id).toBe("source-observation-progress");
     await awaitParsedEnter(setup);
     setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitForFrame((frame) => frame.includes("Cancelling observation"));
+    await setup.waitForFrame((frame) => frame.includes("Stopping."));
     expect(!!setup.renderer.root.findDescendantById("palette-choices")).toBe(false);
     resolveDiscovery!({
       value: {
@@ -1088,15 +1089,15 @@ test("RENDER retry observation Cancel retains cancellation ownership until its l
   try {
     await populated(setup, "sources");
     await activatePaletteCommand(setup, "add-skills");
-    await setup.waitForFrame((frame) => frame.includes("Observation failed"));
+    await setup.waitForFrame((frame) => frame.includes("Could not find Skills"));
     await setup.renderOnce();
     await setup.waitForFrame((frame) => frame.includes("Retry"));
     await focusLive(setup, "source-observation-progress");
     await activateControl(setup, "source-observation-retry");
-    await setup.waitForFrame((frame) => frame.includes("Observing"));
+    await setup.waitForFrame((frame) => frame.includes("Finding Skills"));
     await activateControl(setup, "source-observation-progress");
     setup.mockInput.pressKey("p", { ctrl: true });
-    await setup.waitForFrame((frame) => frame.includes("Cancelling observation"));
+    await setup.waitForFrame((frame) => frame.includes("Stopping."));
     expect(!!setup.renderer.root.findDescendantById("palette-choices")).toBe(false);
     resolveRetry!({
       value: {
@@ -1153,7 +1154,7 @@ test("RENDER Config observation Retry repeats observe and preview without checki
   try {
     await openProjectConfigSourceActions(setup);
     await awaitParsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("PROVIDER_UNAVAILABLE: offline"));
+    await setup.waitForFrame((frame) => frame.includes("offline"));
     await activateControl(setup, "source-observation-retry");
     await setup.waitForFrame((frame) => frame.includes("Exact revision: retry-commit"));
     expect(calls).toEqual([
@@ -1266,7 +1267,7 @@ test("RENDER cancelled Config retry settles before a fresh observation without p
   try {
     await openProjectConfigSourceActions(setup);
     await awaitParsedEnter(setup);
-    await setup.waitForFrame((frame) => frame.includes("PROVIDER_UNAVAILABLE: offline"));
+    await setup.waitForFrame((frame) => frame.includes("offline"));
     await activateControl(setup, "source-observation-retry");
     await setup.waitFor(() => previews === 1);
     await awaitParsedEscape(setup);
@@ -1409,8 +1410,10 @@ test("RENDER Project contributed Source installs selected observed roots at its 
     const browser = await readySourceBrowser(setup);
     browser.setSelectedIndex(1);
     await activateControl(setup, "workspace-action-add-skills");
-    await setup.waitForFrame((frame) => frame.includes("Revision: contributed-install"));
-    await activateControl(setup, "source-operation-selection");
+    await setup.waitForFrame((frame) => frame.includes("[ ] review"));
+    await focusLive(setup, "source-operation-selection");
+    await setup.mockInput.typeText(" ");
+    await setup.flush();
     await activateControl(setup, "source-operation-submit");
     await setup.waitFor(() => calls.length === 2);
     expect(calls).toEqual([

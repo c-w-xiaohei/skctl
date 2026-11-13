@@ -21,8 +21,11 @@ test("Collection view commands fit one row at 100 columns", async () => {
       await setup.flush();
       const row = setup.renderer.root.findDescendantById("collection-toolbar")!;
       expect(row.height).toBe(1);
-      const more = setup.renderer.root.findDescendantById("collection-more")!;
-      expect(more.screenX + more.width).toBeLessThanOrEqual(row.screenX + row.width);
+      const more = setup.renderer.root.findDescendantById("collection-more");
+      if (view === "members") {
+        expect(!!more).toBe(true);
+        expect(more!.screenX + more!.width).toBeLessThanOrEqual(row.screenX + row.width);
+      } else expect(!!more).toBe(false);
     }
   } finally {
     setup.renderer.destroy();
@@ -168,7 +171,7 @@ for (const width of [120, 43]) {
   });
 }
 
-test("Settings exposes included Collections and catalog locations without a generic inspector", async () => {
+test("Settings omits empty inclusions and catalog-wide controls while keeping configuration on demand", async () => {
   const setup = await testRender(
     () => <App core={directSourceCore(collectionsSourcesProjection())} exit={() => {}} />,
     { width: 120, height: 40 },
@@ -185,9 +188,10 @@ test("Settings exposes included Collections and catalog locations without a gene
     await enterLive(setup, "collection-tabs-tab-settings");
     expect(!!setup.renderer.root.findDescendantById("collection-inspector-surface")).toBe(false);
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("Included Collections");
-    expect(frame).toContain("Agent catalog entry");
-    expect(frame).toContain("Configuration locations");
+    expect(frame).not.toContain("Included Collections");
+    expect(frame).not.toContain("Agent catalog entry");
+    expect(frame).toContain("Configuration details");
+    expect(frame).not.toContain("/workspace/skctl/skctl.jsonc");
     expect(frame).not.toContain("Relationships");
     expect(frame).not.toContain("Inspect…");
   } finally {

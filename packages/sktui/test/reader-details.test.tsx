@@ -226,6 +226,7 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     );
     expect(relation).toBeDefined();
     const relationId = "collection-location-open-global";
+    await enterLive(setup, "collection-configuration-details");
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById(relationId));
     await enterLive(setup, relationId);
     await setup.waitFor(
@@ -252,7 +253,7 @@ test("Details renders provenance and routes Collection Use to its owning Config 
     await setup.waitFor(() => setup.renderer.currentFocusedRenderable?.id === relationId);
     expect(setup.renderer.root.findDescendantById("collection-relation-inspector")).toBeUndefined();
     await setup.waitForFrame(
-      (frame) => frame.includes("engineering") && frame.includes("Configuration locations"),
+      (frame) => frame.includes("engineering") && frame.includes("configuration details"),
     );
     await expectSharedReturn(setup, "Back to Skills");
     await enterLive(setup, "route-back");

@@ -1,6 +1,5 @@
 import { createMemo, createSignal, For, Show, onCleanup, untrack, type JSX } from "solid-js";
 import { ObjectMenu } from "./object-menu";
-import { usePageView } from "./page-navigation";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { ScrollBoxRenderable, type Renderable } from "@opentui/core";
 import type {
@@ -91,8 +90,7 @@ export function ConfigPage(props: {
   const config = () => props.projection()?.configs.find((item) => item.level === props.destination);
   const section = createMemo(() => props.config.section(props.destination));
   const level = () => props.config.snapshot(props.destination).browserLevel;
-  const view = usePageView();
-  const wide = () => props.mode === "wide" && !view?.expanded();
+  const wide = () => props.mode === "wide";
   const title = () => categories.find((item) => item.value === section())?.name ?? "Settings";
   const selected = createMemo(() => props.config.selection(props.destination));
   const scrollKey = () => JSON.stringify([section(), selected()]);
@@ -205,9 +203,7 @@ export function ConfigPage(props: {
     destination: "Settings",
   });
   const sharedReturn = usePageReturn(() =>
-    !(view?.available() && view.expanded()) &&
-    !props.relationshipReturn &&
-    (level() !== "categories" || props.interface)
+    !props.relationshipReturn && (level() !== "categories" || props.interface)
       ? { record: backRecord(), anchor: root, execute: back }
       : undefined,
   );
@@ -423,12 +419,7 @@ export function ConfigPage(props: {
   };
   return (
     <box id="config-page-pane" ref={setRoot} flexDirection="row" gap={1} flexGrow={1} minHeight={0}>
-      <Show
-        when={
-          !(view?.available() && view.expanded()) &&
-          (wide() || (!props.interface && level() !== "object"))
-        }
-      >
+      <Show when={wide() || (!props.interface && level() !== "object")}>
         <box width={wide() ? (props.browserWidth ?? 38) : "100%"} flexShrink={0} minHeight={0}>
           <Pane
             id="config-browser-pane"
@@ -502,14 +493,7 @@ export function ConfigPage(props: {
           </Pane>
         </box>
       </Show>
-      <Show
-        when={
-          wide() ||
-          (view?.available() && view.expanded()) ||
-          props.interface ||
-          level() === "object"
-        }
-      >
+      <Show when={wide() || props.interface || level() === "object"}>
         <box flexGrow={1} flexBasis={0} minWidth={0} minHeight={0}>
           <Show
             when={props.interface}

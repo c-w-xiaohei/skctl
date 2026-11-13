@@ -690,6 +690,14 @@ test("inline Use edit retains the host Config's other roots and cancellation wri
   const base = projection();
   const input = {
     ...base,
+    effective:
+      base.effective.status === "complete"
+        ? {
+            ...base.effective,
+            use: ["team", "docs"],
+            agent: { ...base.effective.agent, status: "available" as const },
+          }
+        : base.effective,
     configs: base.configs.map((config) =>
       config.level === "project"
         ? {
@@ -713,8 +721,16 @@ test("inline Use edit retains the host Config's other roots and cancellation wri
   const { setup } = mounted;
   try {
     await openContents(setup);
-    await enterLive(setup, "collection-tabs-tab-settings");
-    await enterLive(setup, "collection-use-project");
+    await openMainPage(setup, "agent");
+    await enterLive(
+      setup,
+      setup.renderer.root.findDescendantById("agent-access-collections")
+        ? "agent-access-collections"
+        : "skills-setup-primary",
+    );
+    const scope = (await focusLive(setup, "scope-choices")) as SelectRenderable;
+    scope.setSelectedIndex(scope.options.findIndex((item) => item.value === "project"));
+    await parsedEnter(setup);
     await setup.waitFor(() => !!setup.renderer.root.findDescendantById("collection-use-values"));
     expect(
       (setup.renderer.root.findDescendantById("collection-use-values") as SelectRenderable).options

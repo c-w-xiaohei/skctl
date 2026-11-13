@@ -1,6 +1,6 @@
-import type { Renderable, ScrollBoxRenderable } from "@opentui/core";
+import type { BoxRenderable, Renderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions, type BoxProps } from "@opentui/solid";
-import { createEffect, onCleanup, type JSX } from "solid-js";
+import { createEffect, onCleanup, Show, type JSX } from "solid-js";
 import { CommandControl } from "../command-control";
 import { createModalControlRegistry, useModalControl } from "../modal-controls";
 import type { CommandRecord } from "../types";
@@ -11,19 +11,33 @@ import { useTheme } from "../ui/use-theme";
 export function ModalShell(props: {
   readonly children: JSX.Element;
   readonly id?: string;
+  readonly transparent?: boolean;
+  readonly inline?: boolean;
   readonly onMouseDown?: BoxProps["onMouseDown"];
 }) {
   const tokens = useTheme();
+  let shell: BoxRenderable | undefined;
   return (
     <box
       id={props.id}
-      position="absolute"
+      ref={(target) => {
+        shell = target;
+      }}
+      position={props.inline ? "relative" : "absolute"}
       left={0}
       top={0}
       width="100%"
       height="100%"
-      backgroundColor={tokens().colors.background}
-      onMouseDown={props.onMouseDown}
+      flexGrow={1}
+      minHeight={0}
+      backgroundColor={props.transparent ? "transparent" : tokens().colors.background}
+      onMouseDown={(event) => {
+        if (event.target === shell) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        if (shell) props.onMouseDown?.call(shell, event);
+      }}
     >
       {props.children}
     </box>
@@ -38,6 +52,8 @@ export function ModalBody(props: {
   readonly footer?: JSX.Element;
   readonly children: JSX.Element;
   readonly controls?: ReturnType<typeof createModalControlRegistry>;
+  readonly scroll?: boolean;
+  readonly inline?: boolean;
 }) {
   const terminal = useTerminalDimensions();
   const compact = () => terminal().height < 24;
@@ -83,20 +99,21 @@ export function ModalBody(props: {
   });
   return (
     <box
-      border={compact() ? [] : true}
+      border={compact() || props.inline ? [] : true}
       borderStyle="rounded"
       borderColor={tokens().colors.border}
       backgroundColor={tokens().colors.background}
-      margin={1}
-      paddingX={1}
-      paddingY={compact() || props.maxHeight ? 0 : 1}
+      margin={props.inline ? 0 : 1}
+      paddingX={props.inline ? 0 : 1}
+      paddingY={compact() || props.maxHeight || props.inline ? 0 : 1}
       maxWidth={props.maxWidth}
       alignSelf={props.maxWidth ? "center" : undefined}
       width={
         props.maxWidth ? Math.max(1, Math.min(props.maxWidth, terminal().width - 2)) : undefined
       }
       maxHeight={props.maxHeight}
-      height={Math.max(1, terminal().height - 2)}
+      height={props.inline ? undefined : Math.max(1, terminal().height - 2)}
+      flexGrow={1}
       minHeight={0}
       flexDirection="column"
     >
@@ -105,19 +122,28 @@ export function ModalBody(props: {
           {props.header}
         </box>
       )}
-      <scrollbox
-        flexGrow={1}
-        minHeight={0}
-        scrollX={false}
-        ref={(target: ScrollBoxRenderable) => {
-          body = target;
-          if (props.controls) register(target);
-        }}
-        onSizeChange={scheduleReveal}
-        contentOptions={{ flexDirection: "column", flexShrink: 0 }}
+      <Show
+        when={props.scroll !== false}
+        fallback={
+          <box flexGrow={1} minHeight={0} flexDirection="column">
+            {props.children}
+          </box>
+        }
       >
-        {props.children}
-      </scrollbox>
+        <scrollbox
+          flexGrow={1}
+          minHeight={0}
+          scrollX={false}
+          ref={(target: ScrollBoxRenderable) => {
+            body = target;
+            if (props.controls) register(target);
+          }}
+          onSizeChange={scheduleReveal}
+          contentOptions={{ flexDirection: "column", flexShrink: 0 }}
+        >
+          {props.children}
+        </scrollbox>
+      </Show>
       {props.footer && (
         <box flexDirection="column" flexShrink={0}>
           {props.footer}

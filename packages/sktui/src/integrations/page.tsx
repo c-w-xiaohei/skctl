@@ -10,7 +10,7 @@ import type { CommandRegistration, FocusOwner } from "../types";
 import type { FocusRegistry } from "../focus";
 import type { IntegrationsState } from "./state";
 import type { IntegrationTarget } from "@skctl/integrations";
-import { usePageReturn, usePageView } from "../page-navigation";
+import { usePageReturn } from "../page-navigation";
 import { ObjectMenu } from "../object-menu";
 
 export function IntegrationsPage(props: {
@@ -25,7 +25,6 @@ export function IntegrationsPage(props: {
   const tokens = useTheme();
   const renderer = useRenderer();
   const terminal = useTerminalSize();
-  const view = usePageView();
   const entered = props.state.entered;
   const [object, setObject] = createSignal<Renderable>();
   const enter = () => {
@@ -56,9 +55,7 @@ export function IntegrationsPage(props: {
     danger: false,
   };
   const sharedReturn = usePageReturn(() =>
-    entered() && !(view?.available() && view.expanded())
-      ? { record: backRecord, anchor: object, execute: back }
-      : undefined,
+    entered() ? { record: backRecord, anchor: object, execute: back } : undefined,
   );
   const [harness, setHarness] = createSignal<"codex" | "opencode">(
     props.state.target()?.environment.harness ?? "codex",
@@ -179,7 +176,7 @@ export function IntegrationsPage(props: {
   };
   return (
     <box id="integrations-page" width="100%" flexDirection="row" gap={1} flexGrow={1} minHeight={0}>
-      <Show when={!(view?.available() && view.expanded()) && (props.wide || !entered())}>
+      <Show when={props.wide || !entered()}>
         <box width={props.wide ? props.browserWidth : "100%"} flexShrink={0} minHeight={0}>
           <Pane id="integration-hosts-pane" title="Hosts">
             <DataList

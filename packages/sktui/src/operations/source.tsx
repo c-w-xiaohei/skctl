@@ -1,4 +1,5 @@
-import { useTerminalDimensions } from "@opentui/solid";
+import { useRenderer, useTerminalDimensions } from "@opentui/solid";
+import { createSignal, Show, type JSX } from "solid-js";
 import { SelectRenderable } from "@opentui/core";
 import { Input } from "../ui/input";
 import type { DiscoveryReview, SourceRemovalReview } from "../session";
@@ -10,7 +11,37 @@ import {
 import { DataList } from "../ui/data-list";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
 
+/** Discovery, candidate review and installation occupy one stable task frame. */
+export function SourceAcquisitionFrame(props: {
+  readonly source: string;
+  readonly observing?: boolean;
+  readonly collection?: string;
+  readonly children: JSX.Element;
+}) {
+  return (
+    <ModalShell transparent>
+      <ModalBody
+        maxWidth={120}
+        maxHeight={props.observing ? 10 : undefined}
+        scroll={false}
+        header={
+          <>
+            <text>Install Skills</text>
+            <text height={1} wrapMode="none">{`Source: ${props.source}`}</text>
+            <Show when={props.collection}>
+              <text height={1} wrapMode="none">{`For Collection: ${props.collection}`}</text>
+            </Show>
+          </>
+        }
+      >
+        {props.children}
+      </ModalBody>
+    </ModalShell>
+  );
+}
+
 export function SourceSelectionOverlay(props: {
+  readonly inline?: boolean;
   readonly collection?: string;
   readonly review: DiscoveryReview;
   readonly installed: ReadonlySet<string>;
@@ -18,6 +49,7 @@ export function SourceSelectionOverlay(props: {
   readonly query: string;
   readonly onQuery: (query: string) => void;
   readonly pending: boolean;
+  readonly cancelling?: boolean;
   readonly error?: { readonly code: string; readonly message: string };
   readonly onToggle: (path: string) => void;
   readonly onSubmit: () => void;
@@ -26,8 +58,14 @@ export function SourceSelectionOverlay(props: {
 }) {
   const controls = createModalControlRegistry();
   const terminal = useTerminalDimensions();
+  const renderer = useRenderer();
+  const [showInstalled, setShowInstalled] = createSignal(false);
+  const [currentPath, setCurrentPath] = createSignal<string>();
+  const [reading, setReading] = createSignal(false);
+  const wide = () => terminal().width >= 100;
   const candidates = () =>
     props.review.observation.candidates
+      .filter((candidate) => showInstalled() || !props.installed.has(candidate.path))
       .filter((candidate) =>
         `${candidate.name} ${candidate.path} ${candidate.description}`
           .toLowerCase()
@@ -37,8 +75,32 @@ export function SourceSelectionOverlay(props: {
         ...candidate,
         selectable: !props.installed.has(candidate.path),
       }));
-  const registerSearch = useModalControl("source-operation-search", controls, 10);
-  const registerCandidates = useModalControl("source-operation-selection", controls, 20);
+  const currentIndex = () =>
+    Math.max(
+      0,
+      candidates().findIndex((item) => item.path === currentPath()),
+    );
+  const current = () => candidates()[currentIndex()];
+  const hiddenChecks = () =>
+    props.selected.filter((path) => !candidates().some((item) => item.path === path)).length;
+  const back = () => {
+    if (reading()) {
+      setReading(false);
+      queueMicrotask(() => renderer.root.findDescendantById("source-operation-selection")?.focus());
+    } else (props.onBack ?? props.onCancel)();
+  };
+  const registerSearch = useModalControl(
+    "source-operation-search",
+    controls,
+    10,
+    () => wide() || !reading(),
+  );
+  const registerCandidates = useModalControl(
+    "source-operation-selection",
+    controls,
+    20,
+    () => wide() || !reading(),
+  );
   controls.intercept((event, current) => {
     if (
       event.name !== "space" ||
@@ -52,35 +114,36 @@ export function SourceSelectionOverlay(props: {
     if (candidate?.selectable && !props.pending) props.onToggle(candidate.path);
     return true;
   });
-  useModalControlTraversal(controls, () => (props.onBack ?? props.onCancel)());
+  useModalControlTraversal(controls, back);
   const choices = () =>
     candidates().map((candidate) => ({
-      name: `${candidate.selectable ? (props.selected.includes(candidate.path) ? "[x]" : "[ ]") : "[-]"} ${candidate.selectable ? "Available" : "Installed"} ${candidate.name}`,
-      description: candidate.selectable
-        ? candidate.description
-        : `${candidate.description} (not selectable)`,
+      name: `${candidate.selectable ? (props.selected.includes(candidate.path) ? "[x]" : "[ ]") : "   "} ${candidate.name}${candidate.selectable ? "" : "  Installed"}`,
+      description: "",
       value: candidate.path,
     }));
   return (
-    <ModalShell
-      onMouseDown={(event) => {
-        event.stopPropagation();
-        event.preventDefault();
-      }}
-    >
+    <ModalShell transparent inline={props.inline}>
       <ModalBody
         controls={controls}
+        scroll={false}
+        inline={props.inline}
+        maxWidth={props.inline ? undefined : 120}
         header={
-          <>
-            <text
-              height={1}
-              wrapMode="none"
-            >{`Find Skills: ${props.review.observation.source}`}</text>
-          </>
+          !props.inline && (
+            <>
+              <text height={1} wrapMode="none">
+                Install Skills
+              </text>
+              <text height={1} wrapMode="none">{`Source: ${props.review.observation.source}`}</text>
+              <Show when={props.collection}>
+                <text height={1} wrapMode="none">{`For Collection: ${props.collection}`}</text>
+              </Show>
+            </>
+          )
         }
         footer={
           <box flexDirection="row" flexWrap="wrap" gap={1}>
-            {props.onBack && (
+            {(props.onBack || reading()) && (
               <ModalCommand
                 id="source-operation-back"
                 controls={controls}
@@ -91,7 +154,7 @@ export function SourceSelectionOverlay(props: {
                   "Keep the Collection draft",
                   !props.pending,
                 )}
-                execute={props.onBack}
+                execute={back}
               />
             )}
             <ModalCommand
@@ -101,7 +164,7 @@ export function SourceSelectionOverlay(props: {
               order={30}
               record={modalCommand(
                 "source-operation.submit",
-                `${props.pending ? "Applying" : "Install"} ${props.selected.length} Skills`,
+                `${props.pending ? "Installing" : "Install"} ${props.selected.length} ${props.selected.length === 1 ? "Skill" : "Skills"}`,
                 "Apply selected Skills",
                 !props.pending && props.selected.length > 0,
               )}
@@ -113,55 +176,148 @@ export function SourceSelectionOverlay(props: {
               order={40}
               record={modalCommand(
                 "source-operation.cancel",
-                "Cancel",
-                "Return without installing",
+                props.cancelling ? "Stopping…" : props.pending ? "Stop" : "Cancel",
+                props.pending ? "Request installation to stop" : "Return without installing",
+                !props.cancelling,
               )}
               execute={props.onCancel}
             />
           </box>
         }
       >
-        <Input
-          id="source-operation-search"
-          ref={registerSearch}
-          focused={false}
-          placeholder="Search Skills"
-          value={props.query}
-          onInput={props.onQuery}
-        />
-        <DataList
-          id="source-operation-selection"
-          ref={registerCandidates}
-          focused={true}
-          height={Math.max(1, Math.min(candidates().length * 2, terminal().height - 7))}
-          flexShrink={0}
-          options={choices()}
-          showDescription
-          onSelect={(_index, option) => {
-            const candidate = candidates().find((item) => item.path === option?.value);
-            if (candidate?.selectable && !props.pending) props.onToggle(candidate.path);
-          }}
-        />
-        <text wrapMode="word">{`Source: ${props.review.observation.source}`}</text>
-        {props.collection && <text wrapMode="word">{`For Collection: ${props.collection}`}</text>}
-        <text>{`${props.selected.length} selected`}</text>
-        {props.review.observation.exactRevision && (
-          <text wrapMode="word">{`Revision: ${props.review.observation.exactRevision}`}</text>
+        <Show when={wide() || !reading()}>
+          <box flexDirection="row" flexShrink={0} gap={1}>
+            <text>Search</text>
+            <Input
+              id="source-operation-search"
+              ref={registerSearch}
+              focused={false}
+              flexGrow={1}
+              value={props.query}
+              onInput={(value) => {
+                if (!props.pending) props.onQuery(value);
+              }}
+            />
+            <ModalCommand
+              id="source-operation-show-installed"
+              controls={controls}
+              order={15}
+              record={modalCommand(
+                "source-operation.show-installed",
+                showInstalled() ? "Hide installed" : "Show installed",
+                "Filter candidates",
+                !props.pending,
+              )}
+              execute={() => setShowInstalled((value) => !value)}
+            />
+          </box>
+        </Show>
+        <box flexDirection="row" flexGrow={1} minHeight={0}>
+          <box flexGrow={1} minWidth={0} visible={wide() || !reading()}>
+            <DataList
+              id="source-operation-selection"
+              ref={registerCandidates}
+              focused={true}
+              flexGrow={1}
+              minHeight={1}
+              options={choices()}
+              selectedIndex={currentIndex()}
+              showDescription={false}
+              onChange={(_index, option) => option && setCurrentPath(option.value)}
+              onRowPress={(_event, row) => {
+                if (row.x < 5) {
+                  const candidate = candidates()[row.index];
+                  if (candidate?.selectable && !props.pending) props.onToggle(candidate.path);
+                  return true;
+                }
+                return false;
+              }}
+              onSelect={() => {
+                if (!current()) return;
+                if (!wide()) setReading(true);
+                queueMicrotask(() =>
+                  renderer.root.findDescendantById("source-operation-detail")?.focus(),
+                );
+              }}
+            />
+            {!candidates().length && (
+              <text wrapMode="word">
+                {props.query.trim()
+                  ? "No matching Skills. Change the search to see other candidates."
+                  : props.review.observation.candidates.length && !showInstalled()
+                    ? "All Skills are installed. Choose Show installed to view them."
+                    : "No Skills found in this Source. Check its address and Source root."}
+              </text>
+            )}
+          </box>
+          <Show when={(wide() || reading()) && current()}>
+            <scrollbox
+              id="source-operation-detail"
+              focusable
+              flexGrow={1}
+              flexBasis={wide() && !reading() ? Math.floor(terminal().width * 0.4) : undefined}
+              minWidth={0}
+              scrollX={false}
+              ref={useModalControl("source-operation-detail", controls, 25)}
+            >
+              <text wrapMode="word">
+                <b>{current()?.name}</b>
+              </text>
+              <text wrapMode="word">
+                {current()?.description || "This Skill has no description."}
+              </text>
+              <text wrapMode="word">{`Path: ${current()?.path}`}</text>
+              <Show when={current() && !current()!.selectable}>
+                <text>Installed. No installation needed.</text>
+              </Show>
+              <Show when={props.error}>
+                <text wrapMode="word">{`Installation failed. ${props.error?.message}`}</text>
+              </Show>
+            </scrollbox>
+          </Show>
+        </box>
+        <box flexDirection="row" flexShrink={0} gap={1}>
+          <text>{`${props.selected.length} selected${hiddenChecks() ? ` (${hiddenChecks()} hidden)` : ""}`}</text>
+          <Show when={props.selected.length}>
+            <ModalCommand
+              id="source-operation-clear"
+              controls={controls}
+              order={28}
+              record={modalCommand(
+                "source-operation.clear",
+                "Clear",
+                "Clear all checked Skills",
+                !props.pending,
+              )}
+              execute={() => [...props.selected].forEach(props.onToggle)}
+            />
+          </Show>
+        </box>
+        {props.error && (
+          <ModalCommand
+            id="source-operation-error"
+            controls={controls}
+            order={29}
+            record={modalCommand(
+              "source-operation.error",
+              "View installation error…",
+              "Read failure details",
+            )}
+            execute={() => {
+              setReading(true);
+              queueMicrotask(() =>
+                renderer.root.findDescendantById("source-operation-detail")?.focus(),
+              );
+            }}
+          />
         )}
-        {!candidates().length && (
-          <text wrapMode="word">
-            {props.query.trim()
-              ? "No matching Skills. Change the search to see other candidates."
-              : "No Skills found in this Source. Check its address and Source root."}
-          </text>
-        )}
-        {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
       </ModalBody>
     </ModalShell>
   );
 }
 
 export function SourceObservationOverlay(props: {
+  readonly inline?: boolean;
   readonly title: "Discovering Skills" | "Observing Config";
   readonly source: string;
   readonly cancelling: boolean;
@@ -174,10 +330,22 @@ export function SourceObservationOverlay(props: {
   useModalControlTraversal(controls, () => (props.onBack ?? props.onClose)());
   const failed = () => !!props.error;
   return (
-    <ModalShell id="source-observation-overlay">
+    <ModalShell id="source-observation-overlay" transparent inline={props.inline}>
       <ModalBody
         controls={controls}
-        header={<text>{props.title}</text>}
+        inline={props.inline}
+        maxWidth={props.inline ? undefined : 120}
+        maxHeight={props.inline || props.error ? undefined : 9}
+        header={
+          !props.inline && (
+            <>
+              <text>
+                {props.title === "Discovering Skills" ? "Install Skills" : "Observing Config"}
+              </text>
+              <text height={1} wrapMode="none">{`Source: ${props.source}`}</text>
+            </>
+          )
+        }
         footer={
           <box flexDirection="row" flexWrap="wrap" gap={1}>
             {props.onBack && (
@@ -196,7 +364,12 @@ export function SourceObservationOverlay(props: {
             <ModalCommand
               id="source-observation-progress"
               controls={controls}
-              record={modalCommand("source-observation.close", "Cancel", "End this task")}
+              record={modalCommand(
+                "source-observation.close",
+                props.cancelling ? "Stopping…" : failed() ? "Cancel" : "Stop",
+                "End this task",
+                !props.cancelling,
+              )}
               initialFocus
               execute={props.onClose}
             />
@@ -207,7 +380,7 @@ export function SourceObservationOverlay(props: {
                 record={modalCommand(
                   "source-observation.retry",
                   "Retry",
-                  "Observe this Source again",
+                  "Find Skills in this Source again",
                 )}
                 execute={props.onRetry}
               />
@@ -215,15 +388,18 @@ export function SourceObservationOverlay(props: {
           </box>
         }
       >
-        <text>{`Source: ${props.source}`}</text>
-        <text>
+        <text wrapMode="word">
           {props.cancelling
-            ? "Cancelling observation"
+            ? "Stopping. Waiting for the current operation to finish."
             : failed()
-              ? "Observation failed"
-              : "Observing"}
+              ? props.title === "Discovering Skills"
+                ? "Could not find Skills. Retry or return to your workspace."
+                : "Could not read this Config. Retry or return to your workspace."
+              : props.title === "Discovering Skills"
+                ? "Finding Skills in this Source…"
+                : "Reading Config declarations…"}
         </text>
-        {props.error && <text>{`${props.error.code}: ${props.error.message}`}</text>}
+        {props.error && <text wrapMode="word">{props.error.message}</text>}
         {failed() && props.title === "Discovering Skills" && (
           <text>Source remains registered. Retry discovery when ready.</text>
         )}

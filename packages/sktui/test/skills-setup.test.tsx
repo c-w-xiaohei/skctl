@@ -3,7 +3,7 @@ import { testRender } from "@opentui/solid";
 import { App } from "../src/app";
 import { openMainPage } from "./main-page-controls";
 import { directSourceCore, workspaceProjection } from "./direct-source.fixture";
-import { parsedEnter, parsedEscape, enterLive } from "./reader-test-controls";
+import { parsedEnter, parsedEscape, enterLive, focusLive } from "./reader-test-controls";
 import { readerProjection } from "./installed-reader.fixture";
 import { InputRenderable, SelectRenderable } from "@opentui/core";
 import * as api from "@skctl/core";
@@ -198,7 +198,7 @@ test("configured Sources lead to discovery without a duplicate registration step
   }
 });
 
-test("installation result locates the newly installed Skill ahead of older Source contents", async () => {
+test("installation returns to the Source with new and existing Skills available", async () => {
   const base = workspaceProjection({ includeContribution: false });
   const skill = readerProjection().installedSkills[0]!;
   const source = base.effective.sources[0]!.id;
@@ -245,25 +245,18 @@ test("installation result locates the newly installed Skill ahead of older Sourc
     await setup.waitFor(
       () => !!setup.renderer.root.findDescendantById("source-operation-selection"),
     );
-    await enterLive(setup, "source-operation-selection");
+    await focusLive(setup, "source-operation-selection");
+    await setup.mockInput.typeText(" ");
+    await setup.flush();
     await enterLive(setup, "source-operation-submit");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-result-view"));
+    await setup.waitFor(
+      () => !setup.renderer.root.findDescendantById("source-operation-selection"),
+    );
+    await setup.waitForFrame((frame) => frame.includes("new") && frame.includes("older"));
+    expect(!!setup.renderer.root.findDescendantById("installed-result-view")).toBe(false);
     setup.resize(43, 13);
     await setup.flush();
-    const done = setup.renderer.root.findDescendantById("installed-result-done")!;
-    let parent = done.parent;
-    while (parent) {
-      expect(parent.constructor.name.includes("ScrollBox")).toBe(false);
-      parent = parent.parent;
-    }
-    expect(done.screenY + done.height).toBeLessThanOrEqual(12);
-    await enterLive(setup, "installed-result-view");
-    await setup.waitFor(() => !!setup.renderer.root.findDescendantById("installed-skill-browser"));
-    expect(
-      (
-        setup.renderer.root.findDescendantById("installed-skill-browser") as SelectRenderable
-      ).getSelectedOption()?.value,
-    ).toBe(JSON.stringify([source, "new"]));
+    expect(snapshot.installedSkills.map((item) => item.address.path)).toEqual(["older", "new"]);
   } finally {
     setup.renderer.destroy();
   }
@@ -490,18 +483,22 @@ test.each([120, 43])(
       await setup.waitFor(
         () => !!setup!.renderer.root.findDescendantById("source-operation-selection"),
       );
-      await enterLive(setup, "source-operation-selection");
+      await focusLive(setup, "source-operation-selection");
+      await setup.mockInput.typeText(" ");
+      await setup.flush();
       await enterLive(setup, "source-operation-submit");
       await installed.promise;
       await setup.waitFor(
-        () => !!setup!.renderer.root.findDescendantById("installed-result-collection"),
+        () => !setup!.renderer.root.findDescendantById("source-operation-selection"),
       );
       const state = await Bun.file(join(root, "state", "state.json")).json();
       expect(state.installed[0]).toMatchObject({ source: "mine", path: "guide", name: "guide" });
       const after = JSON.parse(await readFile(join(root, "skctl.jsonc"), "utf8"));
       expect(after.agents).toBeUndefined();
       expect(after.use).toBeUndefined();
-      await enterLive(setup, "installed-result-collection");
+      await openMainPage(setup, "skills");
+      await enterLive(setup, "installed-skill-browser");
+      await enterLive(setup, "reader-details-action-skill-add-to-collection");
       await enterLive(setup, "collection-handoff-create");
       await fill("collection-create-id", "frontend");
       await fill("collection-create-description", "Frontend workflow");
@@ -514,7 +511,10 @@ test.each([120, 43])(
         (setup.renderer.root.findDescendantById("collection-create-description") as InputRenderable)
           .value,
       ).toBe("Frontend workflow");
-      expect(!!setup.renderer.root.findDescendantById("collection-create-level")).toBe(false);
+      const level = setup.renderer.root.findDescendantById(
+        "collection-create-level",
+      ) as SelectRenderable;
+      expect(level.getSelectedOption()?.value).toBe("project");
       await enterLive(setup, "collection-create-submit");
       await created.promise;
       await setup.waitFor(

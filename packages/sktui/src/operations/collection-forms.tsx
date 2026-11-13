@@ -1,5 +1,6 @@
 import { InputRenderable, SelectRenderable } from "@opentui/core";
-import { createSignal, onMount } from "solid-js";
+import { useRenderer } from "@opentui/solid";
+import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { CollectionReview } from "../session";
 import type {
   ConfigDeclarationOwner,
@@ -14,6 +15,7 @@ import {
 import { DataList } from "../ui/data-list";
 import { Input } from "../ui/input";
 import { FormField } from "../ui/form";
+import { useTheme } from "../ui/use-theme";
 import { ModalBody, ModalCommand, modalCommand, ModalShell } from "./modal";
 
 export function CollectionRenameOverlay(props: {
@@ -79,6 +81,8 @@ export function CollectionRenameOverlay(props: {
 }
 
 export function CollectionContentOverlay(props: {
+  readonly inline?: boolean;
+  readonly registerLeave?: (request: () => void) => () => void;
   readonly collection: string;
   readonly owner: ConfigDeclarationOwner;
   readonly owners?: readonly ConfigDeclarationOwner[];
@@ -91,57 +95,136 @@ export function CollectionContentOverlay(props: {
 }) {
   const controls = createModalControlRegistry();
   const [owner, setOwner] = createSignal(props.owner);
+  const renderer = useRenderer();
+  const tokens = useTheme();
   const [description, setDescription] = createSignal(props.description ?? "");
   const [changedDescription, setChangedDescription] = createSignal(false);
   const [changedInstructions, setChangedInstructions] = createSignal(false);
+  const [discarding, setDiscarding] = createSignal(false);
+  const [choosingOwner, setChoosingOwner] = createSignal(false);
   let instructions: import("@opentui/core").TextareaRenderable | undefined;
-  useModalControlTraversal(controls, props.onCancel);
+  const cancel = () => {
+    if (props.pending) return;
+    if (discarding()) setDiscarding(false);
+    else if (changedDescription() || changedInstructions()) {
+      setDiscarding(true);
+      queueMicrotask(() => renderer.root.findDescendantById("collection-content-discard")?.focus());
+    } else props.onCancel();
+  };
+  if (props.registerLeave) onCleanup(props.registerLeave(cancel));
+  useModalControlTraversal(controls, cancel);
   return (
-    <ModalShell>
+    <ModalShell inline={props.inline}>
       <ModalBody
+        inline={props.inline}
         controls={controls}
         header={
-          <text height={1} wrapMode="none">
-            {`Edit ${props.collection}`}
-          </text>
+          <>
+            <Show when={!props.inline}>
+              <text height={1} wrapMode="none">
+                {`Edit ${props.collection}`}
+              </text>
+            </Show>
+            <Show when={props.error}>
+              <scrollbox
+                height={2}
+                focusable
+                scrollX={false}
+                ref={useModalControl("collection-content-error", controls, 25)}
+              >
+                <text wrapMode="word">{`Could not save changes. ${props.error?.message}`}</text>
+              </scrollbox>
+            </Show>
+          </>
         }
         footer={
-          <box flexDirection="row" gap={1} flexWrap="wrap">
-            <ModalCommand
-              id="collection-content-save"
-              controls={controls}
-              order={30}
-              intent="primary"
-              record={modalCommand(
-                "collection-content.save",
-                props.pending ? "Saving…" : "Save",
-                "Collection description and instructions",
-                !props.pending && (changedDescription() || changedInstructions()),
-              )}
-              execute={() =>
-                props.onSave({
-                  level: owner().level,
-                  collection: props.collection,
-                  expectedOwner: owner(),
-                  ...(changedDescription() ? { description: description() || null } : {}),
-                  ...(changedInstructions()
-                    ? { instructions: instructions?.plainText || null }
-                    : {}),
-                })
-              }
-            />
-            <ModalCommand
-              id="collection-content-cancel"
-              controls={controls}
-              order={40}
-              record={modalCommand("collection-content.cancel", "Cancel", "Discard edits")}
-              execute={props.onCancel}
-            />
+          <box flexDirection="column" flexShrink={0}>
+            <box flexDirection="row" gap={1} flexWrap="wrap" alignItems="center">
+              <text
+                fg={tokens().colors.mutedForeground}
+              >{`Save to: ${owner().level[0]!.toUpperCase() + owner().level.slice(1)}`}</text>
+              <Show when={(props.owners?.length ?? 0) > 1}>
+                <ModalCommand
+                  id="collection-content-change-owner"
+                  controls={controls}
+                  order={25}
+                  record={modalCommand(
+                    "collection-content.change-owner",
+                    "Change…",
+                    "Choose save location",
+                    !props.pending,
+                  )}
+                  execute={() => setChoosingOwner((value) => !value)}
+                />
+              </Show>
+            </box>
+            <box flexDirection="row" gap={1} flexWrap="wrap">
+              <ModalCommand
+                id="collection-content-save"
+                controls={controls}
+                order={30}
+                intent="primary"
+                record={modalCommand(
+                  "collection-content.save",
+                  props.pending ? "Saving…" : "Save changes",
+                  "Collection description and instructions",
+                  !props.pending && (changedDescription() || changedInstructions()),
+                )}
+                execute={() =>
+                  props.onSave({
+                    level: owner().level,
+                    collection: props.collection,
+                    expectedOwner: owner(),
+                    ...(changedDescription() ? { description: description() || null } : {}),
+                    ...(changedInstructions()
+                      ? { instructions: instructions?.plainText || null }
+                      : {}),
+                  })
+                }
+              />
+              <ModalCommand
+                id="collection-content-cancel"
+                controls={controls}
+                order={40}
+                record={modalCommand(
+                  "collection-content.cancel",
+                  "Cancel",
+                  "Discard edits",
+                  !props.pending,
+                )}
+                execute={cancel}
+              />
+            </box>
           </box>
         }
       >
-        <text wrapMode="word">{`Collection: ${props.collection}`}</text>
-        {(props.owners?.length ?? 0) > 1 && (
+        <Show when={discarding()}>
+          <text wrapMode="word">Discard unsaved changes?</text>
+          <box flexDirection="row" gap={1}>
+            <ModalCommand
+              id="collection-content-discard"
+              controls={controls}
+              record={modalCommand(
+                "collection-content.discard",
+                "Discard changes",
+                props.collection,
+              )}
+              execute={props.onCancel}
+            />
+            <ModalCommand
+              id="collection-content-keep"
+              controls={controls}
+              record={modalCommand("collection-content.keep", "Keep editing", props.collection)}
+              execute={() => {
+                setDiscarding(false);
+                queueMicrotask(() =>
+                  renderer.root.findDescendantById("collection-content-description")?.focus(),
+                );
+              }}
+            />
+          </box>
+        </Show>
+        {choosingOwner() && (props.owners?.length ?? 0) > 1 && (
           <DataList
             id="collection-content-owner"
             height={props.owners!.length}
@@ -156,37 +239,52 @@ export function CollectionContentOverlay(props: {
             onChange={(_index, option) => option && setOwner(option.value)}
           />
         )}
-        <text wrapMode="word">{`Save to ${owner().level}: ${owner().file}`}</text>
-        <text>Description</text>
-        <Input
-          id="collection-content-description"
-          ref={useModalControl("collection-content-description", controls, 10)}
-          focused
-          value={description()}
-          onInput={(value) => {
-            setDescription(value);
-            setChangedDescription(value !== (props.description ?? ""));
-          }}
-        />
-        <text>Instructions</text>
-        <text wrapMode="word">
-          Current effective content; only edited fields are written to this location.
-        </text>
-        <textarea
-          id="collection-content-instructions"
-          height={8}
-          initialValue={props.instructions ?? ""}
-          onContentChange={() =>
-            setChangedInstructions(instructions?.plainText !== (props.instructions ?? ""))
-          }
-          ref={(target) => {
-            instructions = target;
-            useModalControl("collection-content-instructions", controls, 20)(target);
-          }}
-        />
-        {props.error && (
-          <text wrapMode="word">{`${props.error.code}: ${props.error.message}`}</text>
-        )}
+        <box flexDirection="column" flexShrink={0} marginBottom={1} maxWidth={76}>
+          <text>
+            <b>Description</b>
+          </text>
+          <text wrapMode="word" fg={tokens().colors.mutedForeground}>
+            When should an agent use this Collection?
+          </text>
+          <Input
+            id="collection-content-description"
+            ref={useModalControl("collection-content-description", controls, 10)}
+            focused
+            value={description()}
+            onInput={(value) => {
+              setDescription(value);
+              setChangedDescription(value !== (props.description ?? ""));
+            }}
+          />
+        </box>
+        <box flexDirection="column" flexShrink={0} maxWidth={76}>
+          <box flexDirection="row" gap={1}>
+            <text>
+              <b>Instructions</b>
+            </text>
+            <text fg={tokens().colors.mutedForeground}>(optional)</text>
+          </box>
+          <text wrapMode="word" fg={tokens().colors.mutedForeground}>
+            Guidance after entry, alongside member descriptions.
+          </text>
+          <textarea
+            id="collection-content-instructions"
+            height={8}
+            backgroundColor={tokens().colors.input}
+            textColor={tokens().colors.controlForeground}
+            focusedBackgroundColor={tokens().colors.control}
+            focusedTextColor={tokens().colors.controlForeground}
+            cursorColor={tokens().colors.focus}
+            initialValue={props.instructions ?? ""}
+            onContentChange={() =>
+              setChangedInstructions(instructions?.plainText !== (props.instructions ?? ""))
+            }
+            ref={(target) => {
+              instructions = target;
+              useModalControl("collection-content-instructions", controls, 20)(target);
+            }}
+          />
+        </box>
       </ModalBody>
     </ModalShell>
   );

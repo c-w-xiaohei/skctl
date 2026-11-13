@@ -12,17 +12,11 @@ export interface PageReturn {
   readonly execute: () => void;
 }
 export interface PageNavigation {
-  readonly view?: {
-    readonly expanded: Accessor<boolean>;
-    readonly available: Accessor<boolean>;
-    readonly toggle: () => void;
-  };
   readonly registerReturn: (value: PageReturn) => () => void;
   readonly registerCommands: (value: readonly ExecutableCommand[]) => () => void;
 }
 const context = createContext<PageNavigation>();
 export const PageNavigationProvider = context.Provider;
-export const usePageView = () => useContext(context)?.view;
 
 /** Standalone pages without App navigation retain their own visible return. */
 export function usePageReturn(value: Accessor<PageReturn | undefined>): boolean {
